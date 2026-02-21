@@ -28,6 +28,7 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -1426,7 +1427,7 @@ class AuthManager:
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,

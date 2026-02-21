@@ -14,8 +14,9 @@ import pytest
 
 from traigent.utils.cost_calculator import (
     ESTIMATION_MODEL_PRICING,
+    MODEL_NAME_ALIASES,
     CostCalculator,
-    _fallback_cost_from_tokens,
+    UnknownModelError,
 )
 
 # Tolerance for pricing comparisons (20% — tight enough to catch real drift,
@@ -42,9 +43,12 @@ def _relative_error(actual: float, expected: float) -> float:
 def _canonical_cost(model: str) -> float:
     """Compute canonical cost for model using CostCalculator."""
     calc = CostCalculator()
-    input_cost, output_cost = calc._calculate_from_tokens(
-        INPUT_TOKENS, OUTPUT_TOKENS, model
-    )
+    try:
+        input_cost, output_cost = calc._calculate_from_tokens(
+            INPUT_TOKENS, OUTPUT_TOKENS, model
+        )
+    except UnknownModelError:
+        return 0.0
     return float(input_cost + output_cost)
 
 
@@ -118,6 +122,20 @@ class TestValidatorModelsResolvable:
             f"_build_model_cost_per_1k()."
         )
 
+    @pytest.mark.unit
+    def test_validator_aliases_follow_canonical_alias_map(self) -> None:
+        """hooks/validator alias costs must match canonical alias mapping source."""
+        from traigent.hooks.validator import MODEL_COST_PER_1K
+
+        for alias, canonical in MODEL_NAME_ALIASES.items():
+            assert alias in MODEL_COST_PER_1K, f"Missing alias in validator: {alias}"
+            assert (
+                canonical in MODEL_COST_PER_1K
+            ), f"Missing canonical model in validator: {canonical}"
+            assert MODEL_COST_PER_1K[alias] == pytest.approx(
+                MODEL_COST_PER_1K[canonical]
+            )
+
 
 # ---------------------------------------------------------------------------
 # Test 3: validator.py costs match CostCalculator
@@ -185,6 +203,7 @@ class TestHandlerFallbackMatchesCalculator:
         from traigent.integrations.langchain.handler import TraigentHandler
 
         handler = TraigentHandler.__new__(TraigentHandler)
+        handler._strict_cost_accounting = False
 
         models_to_test = [
             "gpt-4o",

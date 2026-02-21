@@ -7,7 +7,6 @@ parameter mappings and framework overrides.
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
 import logging
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from traigent.integrations.base_plugin import (
@@ -118,17 +117,11 @@ class MistralPlugin(LLMPlugin):
 
             discovery = get_model_discovery(self.FRAMEWORK)
             if discovery and not discovery.is_valid_model(value):
-                errors.append(
-                    f"Model '{value}' is not recognized as a valid Mistral model. "
-                    f"If this is a new model, it may still work."
-                )
                 # Log as warning but don't block - model might be valid
                 logger.warning(
                     f"Unrecognized Mistral model: {value}. "
                     f"Proceeding anyway as it may be a new model."
                 )
-                # Clear errors - we warn but don't block
-                errors.clear()
         except ImportError:
             # Discovery module not available, skip validation
             logger.debug("Model discovery not available, skipping model validation")
@@ -187,14 +180,7 @@ class MistralPlugin(LLMPlugin):
         # Apply base overrides
         overridden = super().apply_overrides(kwargs, config_obj)
 
-        custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
-        if isinstance(custom_params_raw, Mapping):
-            custom_params = dict(custom_params_raw)
-        else:
-            try:
-                custom_params = dict(custom_params_raw)
-            except Exception:
-                custom_params = {}
+        custom_params = self._extract_custom_params(config_obj)
 
         # Handle stop sequences - Mistral uses 'stop' parameter
         if "stop_sequences" in custom_params and "stop" not in overridden:

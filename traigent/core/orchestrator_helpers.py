@@ -344,6 +344,9 @@ def pre_trial_validate_config(
 
     Returns:
         True if all constraints are satisfied, False otherwise.
+
+    Raises:
+        TVLConstraintError: If a constraint callable raises.
     """
     if not constraints:
         return True
@@ -351,8 +354,12 @@ def pre_trial_validate_config(
         try:
             if not constraint(config):
                 return False
-        except Exception:
-            return False
+        except Exception as exc:
+            identifier = getattr(constraint, "__name__", "constraint")
+            raise TVLConstraintError(
+                f"Constraint '{identifier}' failed during pre_trial validation: {exc}",
+                details={"constraint": identifier, "stage": "pre_trial_validation"},
+            ) from exc
     return True
 
 

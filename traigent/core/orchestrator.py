@@ -39,12 +39,15 @@ if TYPE_CHECKING:
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
-from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
+from traigent.core.cost_enforcement import (
+    DEFAULT_COST_LIMIT_USD,
+    CostEnforcer,
+    CostEnforcerConfig,
+    Permit,
+)
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.logger_facade import LoggerFacade
-from traigent.core.metadata_helpers import (
-    merge_run_metrics_into_session_summary,
-)
+from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
@@ -65,14 +68,8 @@ from traigent.core.parallel_execution_manager import (
     ParallelExecutionManager,
     PermittedTrialResult,
 )
-from traigent.core.progress_manager import (
-    ProgressManager,
-)
-from traigent.core.result_selection import (
-    TieBreaker,
-    _is_minimization_objective,
-    select_best_configuration,
-)
+from traigent.core.progress_manager import ProgressManager
+from traigent.core.result_selection import TieBreaker, select_best_configuration
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
@@ -83,21 +80,17 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.exceptions import (
-    OptimizationError,
-)
+from traigent.utils.exceptions import OptimizationError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
 from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.optimization_logger import OptimizationLogger
 
-from .tracing import (
-    optimization_session_span,
-    record_optimization_complete,
-)
+from .tracing import optimization_session_span, record_optimization_complete
 
 logger = get_logger(__name__)
 
@@ -254,6 +247,7 @@ class OptimizationOrchestrator:
             cost_enforcer=self.cost_enforcer,
             max_trials=self._max_trials,
             max_total_examples=self._max_total_examples,
+            model_name=self.traigent_config.model,
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -380,7 +374,7 @@ class OptimizationOrchestrator:
         cost_config = None
         if cost_limit is not None or cost_approved:
             cost_config = CostEnforcerConfig(
-                limit=float(cost_limit) if cost_limit else 2.0,
+                limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
                 approved=bool(cost_approved),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
@@ -537,13 +531,18 @@ class OptimizationOrchestrator:
         # Find trial with best primary objective (assuming first objective is primary)
         if self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
-            best_trial = max(
-                self._trials,
-                key=lambda t: t.metrics.get(primary_objective, float("-inf")),
-                default=None,
-            )
-            if best_trial is not None:
-                self._best_trial_cached = best_trial
+            minimization = is_minimization_objective(primary_objective)
+            if minimization:
+                best_trial = min(
+                    self._trials,
+                    key=lambda t: t.metrics.get(primary_objective, float("inf")),
+                )
+            else:
+                best_trial = max(
+                    self._trials,
+                    key=lambda t: t.metrics.get(primary_objective, float("-inf")),
+                )
+            self._best_trial_cached = best_trial
             return best_trial
 
         # If no objectives defined, return last trial
@@ -693,7 +692,7 @@ class OptimizationOrchestrator:
         )
         current_score = current_score or 0.0
 
-        minimization = _is_minimization_objective(primary_objective)
+        minimization = is_minimization_objective(primary_objective)
         if minimization:
             return new_score < current_score
         return new_score > current_score

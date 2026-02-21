@@ -6,7 +6,6 @@ parameter mappings and framework overrides.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from traigent.integrations.base_plugin import (
@@ -92,14 +91,7 @@ class AzureOpenAIPlugin(LLMPlugin):
         # Apply base overrides
         overridden = super().apply_overrides(kwargs, config_obj)
 
-        custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
-        if isinstance(custom_params_raw, Mapping):
-            custom_params = dict(custom_params_raw)
-        else:
-            try:
-                custom_params = dict(custom_params_raw)
-            except Exception:
-                custom_params = {}
+        custom_params = self._extract_custom_params(config_obj)
 
         # Handle deployment vs model ambiguity
         # If 'deployment' is provided in custom_params, it should override 'model'

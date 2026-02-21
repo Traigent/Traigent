@@ -1068,13 +1068,17 @@ class TestPreTrialValidateConfig:
         config = {"temperature": 1.5}
         assert pre_trial_validate_config(config, constraints) is False
 
-    def test_constraint_exception_returns_false(self):
-        """Constraint that raises exception returns False (fail-closed)."""
+    def test_constraint_exception_raises_tvl_constraint_error(self):
+        """Constraint exceptions should be surfaced as TVLConstraintError."""
 
         def bad_constraint(c):
             raise ValueError("broken constraint")
 
-        assert pre_trial_validate_config({"x": 1}, [bad_constraint]) is False
+        with pytest.raises(TVLConstraintError) as exc_info:
+            pre_trial_validate_config({"x": 1}, [bad_constraint])
+
+        assert exc_info.value.details.get("constraint") == "bad_constraint"
+        assert exc_info.value.details.get("stage") == "pre_trial_validation"
 
     def test_first_constraint_fails_short_circuits(self):
         """Should stop checking after first failure."""

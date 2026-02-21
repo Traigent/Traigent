@@ -85,7 +85,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RagasConfigurationError,
         compute_ragas_metrics,
     )
-except Exception:  # pragma: no cover - executed only when module missing
+except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
     RAGAS_AVAILABLE = False
 

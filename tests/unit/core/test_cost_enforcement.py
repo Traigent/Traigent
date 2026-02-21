@@ -17,6 +17,8 @@ import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.cost_enforcement import (
+    DEFAULT_COST_LIMIT_USD,
+    EMA_COLD_START_WARNING_TRIALS,
     CostEnforcer,
     CostEnforcerConfig,
     CostEstimate,
@@ -68,7 +70,7 @@ class TestCostEnforcerConfig:
     def test_default_values(self) -> None:
         """Default config has sensible values."""
         config = CostEnforcerConfig()
-        assert config.limit == 2.0
+        assert config.limit == DEFAULT_COST_LIMIT_USD
         assert config.approved is False
         assert config.warning_threshold == 0.5
         assert config.fallback_trial_limit == 10
@@ -683,13 +685,21 @@ class TestCostEnforcerEnvironmentVariables:
         """Invalid environment values fall back to defaults."""
         with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "not_a_number"}):
             enforcer = CostEnforcer()
-            assert enforcer.config.limit == 2.0  # Default
+            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
 
     def test_negative_env_uses_default(self) -> None:
         """Negative values fall back to defaults."""
         with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "-5.0"}):
             enforcer = CostEnforcer()
-            assert enforcer.config.limit == 2.0  # Default
+            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+
+    def test_invalid_divergence_threshold_raises(self) -> None:
+        """Non-numeric divergence threshold should fail fast at initialization."""
+        with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "abc"}):
+            with pytest.raises(
+                ValueError, match="TRAIGENT_COST_DIVERGENCE_THRESHOLD"
+            ):
+                CostEnforcer()
 
 
 class TestCostEnforcerRepr:
@@ -1481,12 +1491,11 @@ class TestCostDivergenceWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Custom divergence threshold from environment variable."""
-        enforcer = CostEnforcer(
-            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
-        )
-
         # Set higher threshold (4.0x)
         with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "4.0"}):
+            enforcer = CostEnforcer(
+                config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+            )
             permit = enforcer.acquire_permit()
             with caplog.at_level("WARNING"):
                 enforcer.track_cost(0.15, permit=permit)  # 3x - now within threshold
@@ -1641,6 +1650,24 @@ class TestCostEnforcerEdgeCases:
             enforcer = CostEnforcer()
             # Should fall back to default
             assert enforcer.config.fallback_trial_limit == 10
+
+    def test_warns_when_ema_stays_at_cold_start_after_unknown_costs(
+        self, caplog
+    ) -> None:
+        """Repeated unknown costs should trigger a one-time cold-start warning."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        with caplog.at_level("WARNING"):
+            for idx in range(EMA_COLD_START_WARNING_TRIALS):
+                permit = enforcer.acquire_permit()
+                enforcer.track_cost(None, permit=permit, trial_id=f"unknown-{idx}")
+
+        cold_start_warnings = [
+            record.message
+            for record in caplog.records
+            if "Cost estimate is still at initial value" in record.message
+        ]
+        assert len(cold_start_warnings) == 1
 
     @pytest.mark.asyncio
     async def test_release_permit_async_double_release(self) -> None:
