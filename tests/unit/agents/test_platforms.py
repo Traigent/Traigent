@@ -536,23 +536,68 @@ class TestOpenAIAgentExecutor:
         with patch(
             "traigent.utils.cost_calculator.get_cost_calculator",
             side_effect=RuntimeError("test"),
+        ), patch(
+            "traigent.agents.platforms.is_strict_cost_accounting",
+            return_value=False,
         ):
             cost = executor._calculate_cost("gpt-4o", MockUsage())
             assert cost < 1e-12
+
+    def test_calculate_cost_exception_raises_in_strict_mode(self):
+        """Test _calculate_cost raises on cost errors in strict accounting mode."""
+        from unittest.mock import patch
+
+        executor = OpenAIAgentExecutor()
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        with patch(
+            "traigent.utils.cost_calculator.get_cost_calculator",
+            side_effect=RuntimeError("strict-test"),
+        ), patch(
+            "traigent.agents.platforms.is_strict_cost_accounting",
+            return_value=True,
+        ):
+            with pytest.raises(RuntimeError, match="strict-test"):
+                executor._calculate_cost("gpt-4o", MockUsage())
 
     @pytest.mark.asyncio
     async def test_estimate_cost(self, openai_agent_spec):
         """Test cost estimation."""
         executor = OpenAIAgentExecutor()
-
-        estimate = await executor.estimate_cost(
-            openai_agent_spec, {"query": "Test query"}
-        )
+        with patch(
+            "traigent.utils.cost_calculator.calculate_prompt_cost",
+            return_value=0.01,
+        ), patch(
+            "traigent.utils.cost_calculator.calculate_completion_cost",
+            return_value=0.02,
+        ):
+            estimate = await executor.estimate_cost(
+                openai_agent_spec, {"query": "Test query"}
+            )
 
         assert estimate["estimated_cost"] > 0
+        assert estimate["estimated_cost"] == pytest.approx(0.03)
         assert "estimated_input_cost" in estimate
+        assert estimate["estimated_input_cost"] == pytest.approx(0.01)
         assert "estimated_output_cost" in estimate
+        assert estimate["estimated_output_cost"] == pytest.approx(0.02)
         assert estimate["confidence"] > 0
+
+    @pytest.mark.asyncio
+    async def test_estimate_cost_raises_on_pricing_error(self, openai_agent_spec):
+        """Test estimate_cost fails fast when pricing lookup fails."""
+        executor = OpenAIAgentExecutor()
+
+        with patch(
+            "traigent.utils.cost_calculator.calculate_prompt_cost",
+            side_effect=RuntimeError("pricing failed"),
+        ):
+            with pytest.raises(RuntimeError, match="pricing failed"):
+                await executor.estimate_cost(openai_agent_spec, {"query": "Test query"})
 
     @pytest.mark.asyncio
     async def test_validate_platform_config(self):

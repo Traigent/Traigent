@@ -775,19 +775,19 @@ class TestOptimizationResultNormalizationMethods:
         )
         assert normalized == pytest.approx(0.5)
 
-    def test_legacy_normalize_value_clipping(self):
-        """Test _legacy_normalize_value clips to [0, 1]."""
+    def test_legacy_normalize_value_preserves_out_of_range_values(self):
+        """Test _legacy_normalize_value keeps out-of-range signal (no clipping)."""
         # Value below min
         normalized = OptimizationResult._legacy_normalize_value(
             value=-0.5, min_val=0.0, max_val=1.0, minimize=False
         )
-        assert normalized == pytest.approx(0.0)
+        assert normalized == pytest.approx(-0.5)
 
         # Value above max
         normalized = OptimizationResult._legacy_normalize_value(
             value=1.5, min_val=0.0, max_val=1.0, minimize=False
         )
-        assert normalized == pytest.approx(1.0)
+        assert normalized == pytest.approx(1.5)
 
     def test_legacy_normalize_value_invalid(self):
         """Test _legacy_normalize_value with invalid input."""

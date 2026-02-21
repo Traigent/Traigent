@@ -20,6 +20,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.core.constants import MAX_RETRIES
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -224,7 +225,7 @@ class PasswordAuthHandler:
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,

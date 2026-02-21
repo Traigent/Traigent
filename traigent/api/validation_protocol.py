@@ -429,23 +429,16 @@ class PythonConstraintValidator:
 
 
 class SATConstraintValidator:
-    """Placeholder for SAT/SMT-based constraint validator.
+    """Compatibility validator that currently delegates to PythonConstraintValidator.
 
-    This class provides a template for implementing a validator
-    using SAT/SMT solvers like Z3, PySAT, or similar.
-
-    Note:
-        This is a placeholder for future implementation.
-        The interface is defined to ensure compatibility with
-        the ConstraintValidator protocol.
-
-    Future Implementation Notes:
-        - Convert ParameterRange domains to SMT variables
-        - Convert Condition expressions to SMT constraints
-        - Use solver to check satisfiability
-        - Extract models (example configs) when SAT
-        - Extract unsat cores when UNSAT
+    The public class is preserved for backward compatibility with callers that
+    import SATConstraintValidator, but behavior is concrete and non-throwing:
+    all checks run through PythonConstraintValidator until a dedicated solver
+    backend is wired in.
     """
+
+    def __init__(self) -> None:
+        self._delegate = PythonConstraintValidator()
 
     def validate_config(
         self,
@@ -453,27 +446,16 @@ class SATConstraintValidator:
         constraints: list[Constraint],
         var_names: dict[int, str],
     ) -> ValidationResult:
-        """Validate using SAT solver (delegates to Python for config check)."""
-        # For single config validation, Python evaluation is efficient
-        return PythonConstraintValidator().validate_config(
-            config, constraints, var_names
-        )
+        """Validate config by delegating to the Python validator."""
+        return self._delegate.validate_config(config, constraints, var_names)
 
     def check_satisfiability(
         self,
         tvars: dict[str, ParameterRange],
         constraints: list[Constraint],
     ) -> SatResult:
-        """Check satisfiability using SAT/SMT solver.
-
-        Raises:
-            NotImplementedError: SAT solver integration not yet implemented
-        """
-        raise NotImplementedError(
-            "SAT/SMT solver integration not yet implemented. "
-            "Use PythonConstraintValidator for Python-based evaluation, "
-            "or contribute a solver integration."
-        )
+        """Check satisfiability by delegating to the Python validator."""
+        return self._delegate.check_satisfiability(tvars, constraints)
 
 
 __all__ = [

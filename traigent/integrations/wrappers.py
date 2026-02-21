@@ -8,13 +8,45 @@ for creating constructor and method wrappers used in framework overrides.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ..config.types import TraigentConfig
+
+logger = logging.getLogger(__name__)
+
+
+def _should_propagate_wrapper_exception(exc: Exception) -> bool:
+    """Return True for exceptions that must never be swallowed by fallback wrappers."""
+    # NOTE: KeyboardInterrupt/SystemExit are BaseException-only in current runtimes
+    # and won't pass through the local `except Exception` wrappers below. They stay
+    # listed here as defensive documentation in case catch boundaries widen later.
+    # asyncio.CancelledError also differs by Python version (Exception in 3.8,
+    # BaseException in newer versions), so this check keeps cross-version behavior.
+    critical_types: list[type[BaseException]] = [
+        KeyboardInterrupt,
+        SystemExit,
+        asyncio.CancelledError,
+    ]
+    try:
+        from traigent.core.cost_enforcement import (
+            CostTrackingRequiredError,
+            OptimizationAborted,
+        )
+        from traigent.utils.exceptions import CostLimitExceeded
+
+        critical_types.extend(
+            [CostLimitExceeded, OptimizationAborted, CostTrackingRequiredError]
+        )
+    except Exception:
+        # Keep conservative built-ins if optional imports fail.
+        pass
+    return isinstance(exc, tuple(critical_types))
 
 
 class OverrideContext(Protocol):
@@ -102,7 +134,20 @@ def apply_parameter_overrides(
         if config_space is not None and traigent_param not in config_space:
             continue
 
-        overridden_kwargs[framework_param] = config_dict[traigent_param]
+        new_value = config_dict[traigent_param]
+        if (
+            framework_param in overridden_kwargs
+            and overridden_kwargs[framework_param] != new_value
+        ):
+            logger.debug(
+                "Overriding user-provided %s=%r with config value %r "
+                "(source key: %s)",
+                framework_param,
+                overridden_kwargs[framework_param],
+                new_value,
+                traigent_param,
+            )
+        overridden_kwargs[framework_param] = new_value
 
     return overridden_kwargs
 
@@ -236,16 +281,27 @@ def create_resilient_wrapper(
     def resilient_sync_wrapper(*args, **kwargs):
         try:
             return wrapper(*args, **kwargs)
-        except Exception:
+        except Exception as exc:
+            if _should_propagate_wrapper_exception(exc):
+                raise
             # Fallback to original on any wrapper error
+            logger.debug(
+                "Resilient wrapper fell back to original after error", exc_info=True
+            )
             return original(*args, **kwargs)
 
     @functools.wraps(original)
     async def resilient_async_wrapper(*args, **kwargs):
         try:
             return await wrapper(*args, **kwargs)
-        except Exception:
+        except Exception as exc:
+            if _should_propagate_wrapper_exception(exc):
+                raise
             # Fallback to original on any wrapper error
+            logger.debug(
+                "Resilient async wrapper fell back to original after error",
+                exc_info=True,
+            )
             return await original(*args, **kwargs)
 
     if inspect.iscoroutinefunction(original):

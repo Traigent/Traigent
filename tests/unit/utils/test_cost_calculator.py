@@ -12,7 +12,7 @@ from traigent.utils.cost_calculator import (
     CostBreakdown,
     CostCalculator,
     UnknownModelError,
-    _fallback_cost_from_tokens,
+    _estimation_cost_from_tokens,
     calculate_completion_cost,
     calculate_llm_cost,
     calculate_prompt_cost,
@@ -266,11 +266,13 @@ class TestPricingHelpers:
         assert method == "litellm"
 
     def test_fallback_cost_from_tokens_paths(self) -> None:
-        exact = _fallback_cost_from_tokens("gpt-4o", 100, 50, _quiet=True)
-        alias = _fallback_cost_from_tokens("claude-3-sonnet", 100, 50, _quiet=True)
-        prefix = _fallback_cost_from_tokens("gpt-4o-2024-08-06", 100, 50, _quiet=True)
-        reverse_prefix = _fallback_cost_from_tokens("gpt-4", 100, 50, _quiet=True)
-        unknown = _fallback_cost_from_tokens("unknown-model", 100, 50, _quiet=True)
+        exact = _estimation_cost_from_tokens("gpt-4o", 100, 50, _quiet=True)
+        alias = _estimation_cost_from_tokens("claude-3-sonnet", 100, 50, _quiet=True)
+        prefix = _estimation_cost_from_tokens(
+            "gpt-4o-2024-08-06", 100, 50, _quiet=True
+        )
+        reverse_prefix = _estimation_cost_from_tokens("gpt-4", 100, 50, _quiet=True)
+        unknown = _estimation_cost_from_tokens("unknown-model", 100, 50, _quiet=True)
         assert exact[0] > 0
         assert alias[0] > 0
         assert prefix[0] > 0

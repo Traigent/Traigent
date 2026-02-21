@@ -8,7 +8,6 @@ parameter mappings and framework overrides.
 
 import importlib
 import logging
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -335,14 +334,7 @@ class LangChainPlugin(LLMPlugin):
         # Apply base overrides
         overridden = super().apply_overrides(kwargs, config_obj)
 
-        custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
-        if isinstance(custom_params_raw, Mapping):
-            custom_params = dict(custom_params_raw)
-        else:
-            try:
-                custom_params = dict(custom_params_raw)
-            except Exception:
-                custom_params = {}
+        custom_params = self._extract_custom_params(config_obj)
 
         # Note: model→model_name and stream→streaming mappings are handled
         # declaratively by the plugin's mapping pipeline (ParameterNormalizer +

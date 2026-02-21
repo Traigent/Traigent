@@ -746,11 +746,6 @@ class OptimizationResult:
         else:
             normalized = (numeric - min_val) / span
 
-        # Clip to [0, 1]
-        if normalized < 0.0:
-            return 0.0
-        if normalized > 1.0:
-            return 1.0
         return float(normalized)
 
     def _normalize_trial_metrics(
