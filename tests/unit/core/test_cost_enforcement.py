@@ -1271,6 +1271,22 @@ class TestCostEnforcerApprovalToken:
         assert enforcer._sync_used is False
         assert enforcer._async_used is False
 
+    def test_reset_preserves_latched_require_cost_tracking(self) -> None:
+        """Reset should not change latched strict/require tracking mode."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "true"}, clear=False
+        ):
+            enforcer = CostEnforcer()
+
+        assert enforcer._require_cost_tracking() is True
+
+        # Changing env after init should not affect this instance, including after reset.
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "false"}, clear=False
+        ):
+            enforcer.reset()
+            assert enforcer._require_cost_tracking() is True
+
 
 # =============================================================================
 # Adaptive Cost Estimation Tests (Issue #66)
