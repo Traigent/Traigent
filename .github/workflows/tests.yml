@@ -59,6 +59,10 @@ jobs:
       run: |
         ruff check traigent/ --output-format=github
 
+    - name: Enforce strict cost accounting guardrails
+      run: |
+        bash scripts/hooks/check-cost-strictness.sh
+
     - name: Type check with mypy
       run: |
         mypy traigent/
