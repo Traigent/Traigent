@@ -13,16 +13,15 @@ Tests validate:
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from traigent.utils.cost_calculator import (
-    CostCalculator,
-    UnknownModelError,
-    cost_from_tokens,
-)
+import traigent.utils.cost_calculator as cc
+from traigent.utils.cost_calculator import UnknownModelError, cost_from_tokens
 
 
 class TestCostFromTokensKnownModels:
@@ -65,9 +64,17 @@ class TestCostFromTokensKnownModels:
         assert cost_4o_in > cost_mini_in, "gpt-4o should cost more than gpt-4o-mini"
         assert cost_4o_out > cost_mini_out, "gpt-4o should cost more than gpt-4o-mini"
 
+    def test_anthropic_model_known(self) -> None:
+        """Anthropic dated model IDs resolve through canonical litellm path."""
+        input_cost, output_cost = cost_from_tokens(
+            100, 50, "claude-3-haiku-20240307"
+        )
+        assert input_cost > 0
+        assert output_cost > 0
+
 
 class TestCostFromTokensModelResolution:
-    """Tests for model name resolution (EXACT_MODEL_MAPPING + normalization)."""
+    """Tests for model name resolution (normalization + explicit aliases)."""
 
     def test_provider_prefixed_model(self) -> None:
         """Provider-prefixed model resolves correctly."""
@@ -77,39 +84,23 @@ class TestCostFromTokensModelResolution:
         assert cost_prefixed[0] == pytest.approx(cost_plain[0], rel=1e-6)
         assert cost_prefixed[1] == pytest.approx(cost_plain[1], rel=1e-6)
 
-    def test_exact_model_mapping(self) -> None:
-        """Short model names resolve via EXACT_MODEL_MAPPING."""
-        # "claude-3-haiku" maps to "claude-3-haiku-20240307"
-        input_cost, output_cost = cost_from_tokens(100, 50, "claude-3-haiku")
-        assert (
-            input_cost > 0 or output_cost > 0
-        ), "Mapped model should produce positive cost"
+    def test_alias_requires_explicit_litellm_alias_map(self) -> None:
+        """Alias names should only work when user/config registers an alias."""
+        with pytest.raises(UnknownModelError, match="has no known pricing"):
+            cost_from_tokens(100, 50, "custom-short-name")
 
-    def test_claude_haiku_alias_maps_to_priced_model(self) -> None:
-        """Legacy alias claude-haiku resolves to priced dated model."""
-        alias_cost = cost_from_tokens(100, 50, "claude-haiku")
-        dated_cost = cost_from_tokens(100, 50, "claude-3-haiku-20240307")
-        assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
-        assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
-
-    def test_claude_sonnet_alias_maps_to_priced_model(self) -> None:
-        """Legacy alias claude-sonnet resolves to priced dated model."""
-        alias_cost = cost_from_tokens(100, 50, "claude-sonnet")
-        dated_cost = cost_from_tokens(100, 50, "claude-3-5-sonnet-20241022")
-        assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
-        assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
-
-    def test_claude_opus_alias_maps_to_priced_model(self) -> None:
-        """Legacy alias claude-opus resolves to priced dated model."""
-        alias_cost = cost_from_tokens(100, 50, "claude-opus")
-        dated_cost = cost_from_tokens(100, 50, "claude-3-opus-20240229")
-        assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
-        assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
+        with patch(
+            "traigent.utils.cost_calculator.litellm.model_alias_map",
+            {"custom-short-name": "gpt-4o"},
+        ):
+            input_cost, output_cost = cost_from_tokens(100, 50, "custom-short-name")
+            assert input_cost > 0
+            assert output_cost > 0
 
     def test_colon_prefixed_model(self) -> None:
         """Colon-prefixed provider model resolves."""
-        cost_prefixed = cost_from_tokens(100, 50, "anthropic:claude-3-haiku")
-        cost_plain = cost_from_tokens(100, 50, "claude-3-haiku")
+        cost_prefixed = cost_from_tokens(100, 50, "anthropic:claude-3-haiku-20240307")
+        cost_plain = cost_from_tokens(100, 50, "claude-3-haiku-20240307")
         assert cost_prefixed[0] == pytest.approx(cost_plain[0], rel=1e-6)
         assert cost_prefixed[1] == pytest.approx(cost_plain[1], rel=1e-6)
 
@@ -119,7 +110,7 @@ class TestCostFromTokensUnknownModels:
 
     def test_unknown_model_strict_raises(self) -> None:
         """Unknown model with strict=True raises UnknownModelError."""
-        with pytest.raises(UnknownModelError, match="no pricing in litellm"):
+        with pytest.raises(UnknownModelError, match="has no known pricing"):
             cost_from_tokens(100, 50, "totally-nonexistent-model-xyz")
 
     def test_unknown_model_nonstrict_returns_zero(self) -> None:
@@ -227,3 +218,47 @@ class TestCostFromTokensEdgeCases:
             input_cost, output_cost = cost_from_tokens(100, 50, "gpt-4o")
             assert input_cost == pytest.approx(100 * 2.5e-6)
             assert output_cost == pytest.approx(50 * 10.0e-6)
+
+
+class TestCostFromTokensCustomPricing:
+    """Tests for explicit custom pricing overrides."""
+
+    @pytest.fixture(autouse=True)
+    def reset_custom_pricing_cache(self):
+        old_cache = cc._CUSTOM_PRICING_CACHE
+        old_cache_key = cc._CUSTOM_PRICING_CACHE_KEY
+        cc._CUSTOM_PRICING_CACHE = None
+        cc._CUSTOM_PRICING_CACHE_KEY = None
+        try:
+            yield
+        finally:
+            cc._CUSTOM_PRICING_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE_KEY = old_cache_key
+
+    def test_unknown_model_uses_custom_pricing_json(self, monkeypatch) -> None:
+        pricing = {
+            "brand-new-model": {
+                "input_cost_per_token": 3.0e-6,
+                "output_cost_per_token": 15.0e-6,
+            }
+        }
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", json.dumps(pricing))
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
+        input_cost, output_cost = cost_from_tokens(100, 50, "brand-new-model")
+        assert input_cost == pytest.approx(100 * 3.0e-6)
+        assert output_cost == pytest.approx(50 * 15.0e-6)
+
+    def test_unknown_model_uses_custom_pricing_file(self, monkeypatch, tmp_path) -> None:
+        payload = {
+            "file-model": {
+                "input_cost_per_token": 1.0e-6,
+                "output_cost_per_token": 2.0e-6,
+            }
+        }
+        file_path = Path(tmp_path) / "pricing.json"
+        file_path.write_text(json.dumps(payload), encoding="utf-8")
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", str(file_path))
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", raising=False)
+        input_cost, output_cost = cost_from_tokens(100, 50, "file-model")
+        assert input_cost == pytest.approx(100 * 1.0e-6)
+        assert output_cost == pytest.approx(50 * 2.0e-6)
