@@ -26,9 +26,7 @@ import pytest
 # Ensure mock mode is disabled for these tests - we want real cost tracking
 os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
-from traigent.api.types import (
-    TrialResult,
-)
+from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.stop_conditions import CostLimitStopCondition
@@ -50,6 +48,8 @@ def disable_mock_mode() -> None:
     os.environ["TRAIGENT_MOCK_LLM"] = "false"
     if "TRAIGENT_REQUIRE_COST_TRACKING" in os.environ:
         del os.environ["TRAIGENT_REQUIRE_COST_TRACKING"]
+    if "TRAIGENT_STRICT_COST_ACCOUNTING" in os.environ:
+        del os.environ["TRAIGENT_STRICT_COST_ACCOUNTING"]
 
 
 @pytest.fixture(autouse=True)
