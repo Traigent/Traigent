@@ -272,11 +272,15 @@ class TraigentHandler(BaseCallbackHandler):
             )
 
         super().__init__()
+        from traigent.utils.env_config import is_strict_cost_accounting
+
         self._trace_id = trace_id or (
             trace_id_generator() if trace_id_generator else str(uuid4())
         )
         self._metric_prefix = metric_prefix
         self._include_per_node = include_per_node
+        # Latch strict mode at handler creation for consistent per-run behavior.
+        self._strict_cost_accounting = is_strict_cost_accounting()
 
         # Thread-safe state
         self._lock = threading.Lock()
@@ -657,9 +661,7 @@ class TraigentHandler(BaseCallbackHandler):
         In default mode, unknown models return 0.0 with a warning.
         When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
-        from traigent.utils.env_config import is_strict_cost_accounting
-
-        strict_cost_accounting = is_strict_cost_accounting()
+        strict_cost_accounting = self._strict_cost_accounting
         try:
             from traigent.utils.cost_calculator import cost_from_tokens
 

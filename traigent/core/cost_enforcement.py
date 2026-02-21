@@ -217,6 +217,13 @@ class CostEnforcer:
         # cause stranded permits (acquired with tracking, released without tracking).
         # If you need to change mock mode, create a new CostEnforcer instance.
         self._mock_mode_cached: bool = self._check_mock_mode()
+        # Cache strict-cost-tracking mode at init for consistent run semantics.
+        # NOTE: Changing TRAIGENT_REQUIRE_COST_TRACKING or
+        # TRAIGENT_STRICT_COST_ACCOUNTING after CostEnforcer initialization has
+        # NO EFFECT. This mirrors mock-mode latching and avoids env reads in hot paths.
+        self._require_cost_tracking_cached: bool = (
+            self._check_require_cost_tracking_mode()
+        )
 
         # Sync/async usage tracking for mixing detection (Phase 3.2)
         self._sync_used: bool = False
@@ -231,8 +238,8 @@ class CostEnforcer:
         return os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
     @staticmethod
-    def _require_cost_tracking() -> bool:
-        """Return True when missing runtime cost must raise immediately."""
+    def _check_require_cost_tracking_mode() -> bool:
+        """Read strict cost-tracking mode from environment."""
         require_tracking = (
             os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true"
         )
@@ -240,6 +247,10 @@ class CostEnforcer:
             os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING", "").lower() == "true"
         )
         return require_tracking or strict_accounting
+
+    def _require_cost_tracking(self) -> bool:
+        """Return latched strict cost-tracking mode for this instance."""
+        return self._require_cost_tracking_cached
 
     def _check_mixing(self, is_async: bool) -> None:
         """Log when switching between sync and async method usage."""
