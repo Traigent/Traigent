@@ -8,8 +8,8 @@ Synced to: `origin/develop` @ `0c7fcd3`
 
 - Total findings reviewed: 35
 - Open: 0
-- Partially fixed: 2
-- Fixed: 31
+- Partially fixed: 0
+- Fixed: 33
 - Stale/superseded (report drift): 2
 
 ## Status Matrix
@@ -22,7 +22,7 @@ Synced to: `origin/develop` @ `0c7fcd3`
 | F-004 | FIXED | Cost estimator now uses model-aware pricing via `get_model_token_pricing()` with conservative fallback (`traigent/core/cost_estimator.py:48`). |
 | F-005 | FIXED | Resilient wrapper now propagates critical exceptions (`CostLimitExceeded`, `OptimizationAborted`, `CostTrackingRequiredError`) (`traigent/integrations/wrappers.py:24`). |
 | F-006 | FIXED | `pre_trial_validate_config()` now raises wrapped `TVLConstraintError` on constraint exceptions (`traigent/core/orchestrator_helpers.py:331`). |
-| F-007 | PARTIAL | Inconsistency reduced after cost refactor, but alias sources are still duplicated (`traigent/utils/cost_calculator.py:498`, `traigent/hooks/validator.py:22`). |
+| F-007 | FIXED | Canonical alias mapping is now centralized as `MODEL_NAME_ALIASES` and reused by both pricing fallback and hook validation (`traigent/utils/cost_calculator.py:97`, `traigent/hooks/validator.py:16`, `traigent/hooks/validator.py:39`). |
 | F-008 | FIXED | Retry defaults now use shared `MAX_RETRIES` constant in all targeted auth/retry paths (`traigent/cli/auth_commands.py:200`, `traigent/cloud/auth.py:1430`, `traigent/cloud/password_auth_handler.py:228`, `traigent/cloud/token_manager.py:326`). |
 | F-009 | FIXED | Heuristic tier fallback removed from primary pricing path; `get_model_token_pricing()` is now fail-fast (`traigent/utils/cost_calculator.py:590`). |
 | F-010 | FIXED | Divergence threshold is now cached at init and invalid env values fail fast (`traigent/core/cost_enforcement.py:231`, `traigent/core/cost_enforcement.py:263`). |
@@ -34,7 +34,7 @@ Synced to: `origin/develop` @ `0c7fcd3`
 | F-016 | FIXED | `custom_params` extraction is now centralized via `_extract_custom_params()` with typed fallback + warning (no broad swallow) and adopted by all targeted plugins (`traigent/integrations/llms/base_llm_plugin.py:169`, `traigent/integrations/llms/openai_plugin.py:177`, `traigent/integrations/llms/langchain_plugin.py:337`). |
 | F-017 | FIXED | Consolidated lifecycle naming/structure: one public lifecycle manager (`SessionLifecycleManager`) backed by private registry (`_SessionStateRegistry`) with compatibility alias retained (`traigent/cloud/sessions.py:378`, `traigent/cloud/sessions.py:944`, `traigent/cloud/sessions.py:1242`). |
 | F-018 | FIXED | `SATConstraintValidator` is now a concrete compatibility adapter delegating validation/satisfiability checks to `PythonConstraintValidator` (no `NotImplementedError`) (`traigent/api/validation_protocol.py:431`, `traigent/api/validation_protocol.py:443`, `traigent/api/validation_protocol.py:452`). |
-| F-019 | PARTIAL | Logger facade logs exceptions, but still degrades to no-op logger state on init failure (`traigent/core/logger_facade.py:34`). |
+| F-019 | FIXED | Logger facade now emits visible one-time warnings when logger initialization fails or runtime logging degrades, while preserving non-blocking behavior (`traigent/core/logger_facade.py:30`, `traigent/core/logger_facade.py:52`, `traigent/core/logger_facade.py:147`). |
 | F-020 | STALE | Cited `TrialResult` coercion properties no longer exist in current structure; finding needs re-scoping. |
 | F-021 | FIXED | Complex fuzzy matcher removed from current cost calculator implementation. |
 | F-022 | FIXED | Removed deprecated pricing alias `FALLBACK_MODEL_PRICING`; canonical map remains `ESTIMATION_MODEL_PRICING` (`traigent/utils/cost_calculator.py:50`). |

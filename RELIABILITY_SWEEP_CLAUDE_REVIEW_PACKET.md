@@ -10,8 +10,8 @@ Canonical status matrix: `RELIABILITY_SWEEP_POSTSYNC_STATUS.md`
 
 - Initial findings in report: 35 (`F-001` to `F-035`)
 - Current status after code + test revalidation:
-  - Fixed: 31
-  - Partial: 2 (`F-007`, `F-019`)
+  - Fixed: 33
+  - Partial: 0
   - Stale/superseded: 2 (`F-012`, `F-020`)
   - Open: 0
 
@@ -22,6 +22,8 @@ Additional post-review hardening has now been applied for merge readiness:
 - Heuristic substring limitations are explicitly documented at the shared helper.
 - Extra regression coverage added for session minimization guard and `create_sampler({})` behavior.
 - Existing plugin warning regression coverage for `F-034` confirmed in `tests/unit/integrations/test_model_validation_warnings.py`.
+- Alias-table drift (`F-007`) is closed by canonical `MODEL_NAME_ALIASES` shared between cost estimation and hooks validation.
+- Logger facade degradation visibility (`F-019`) is closed with one-time warning banners for initialization/runtime logging failures.
 
 ## 2) Sync Verification (Develop Baseline)
 
@@ -56,10 +58,10 @@ Interpretation: the worktree is synced to the latest `develop` tip, and all reli
 | Initial Severity | Fixed | Partial | Stale | Total |
 |---|---:|---:|---:|---:|
 | S0 | 6 | 0 | 0 | 6 |
-| S1 | 7 | 1 | 1 | 9 |
-| S2 | 10 | 1 | 1 | 12 |
+| S1 | 8 | 0 | 1 | 9 |
+| S2 | 11 | 0 | 1 | 12 |
 | S3 | 8 | 0 | 0 | 8 |
-| **Total** | **31** | **2** | **2** | **35** |
+| **Total** | **33** | **0** | **2** | **35** |
 
 ### Per-finding ledger (initial severity -> current status)
 
@@ -71,7 +73,7 @@ Interpretation: the worktree is synced to the latest `develop` tip, and all reli
 | F-004 | S0 | FIXED |
 | F-005 | S0 | FIXED |
 | F-006 | S0 | FIXED |
-| F-007 | S1 | PARTIAL |
+| F-007 | S1 | FIXED |
 | F-008 | S1 | FIXED |
 | F-009 | S1 | FIXED |
 | F-010 | S1 | FIXED |
@@ -83,7 +85,7 @@ Interpretation: the worktree is synced to the latest `develop` tip, and all reli
 | F-016 | S2 | FIXED |
 | F-017 | S2 | FIXED |
 | F-018 | S2 | FIXED |
-| F-019 | S2 | PARTIAL |
+| F-019 | S2 | FIXED |
 | F-020 | S2 | STALE |
 | F-021 | S3 | FIXED |
 | F-022 | S3 | FIXED |
@@ -135,20 +137,23 @@ Detailed notes for each row (code references and rationale) are in `RELIABILITY_
 - Legacy normalization no longer clips outliers to `[0,1]`: `traigent/api/types.py:727`
 - Orchestrator best-result path uses min/max by objective direction: `traigent/core/orchestrator.py:535`
 
+6. Alias-source consolidation (`F-007`)
+- Canonical alias map: `traigent/utils/cost_calculator.py` (`MODEL_NAME_ALIASES`)
+- Hooks validator now consumes canonical aliases directly: `traigent/hooks/validator.py:16`
+- Cross-module parity check: `tests/unit/architecture/test_pricing_consistency.py`
+
+7. Logger degradation visibility (`F-019`)
+- One-time unavailable warning and one-time runtime failure warning:
+  - `traigent/core/logger_facade.py`
+- Regression coverage:
+  - `tests/unit/core/test_logger_facade.py`
+
 ## 6) Remaining Non-Closed Findings (Intentional)
 
-1. `F-007` (PARTIAL)
-- Duplicate alias source remains across cost and hook validation layers.
-- Reduced inconsistency, but full canonical single-source mapping is not complete.
-
-2. `F-019` (PARTIAL)
-- `LoggerFacade` still falls back to no-op behavior when logger initialization fails.
-- Exceptions are logged, but execution remains degraded rather than fail-fast.
-
-3. `F-012` (STALE)
+1. `F-012` (STALE)
 - Original cited paths changed behavior shape (explicit fallbacks/booleans), so original finding no longer maps 1:1 to current implementation.
 
-4. `F-020` (STALE)
+2. `F-020` (STALE)
 - Original coercion properties cited in `TrialResult` no longer exist in the current structure; finding requires re-scope.
 
 ## 7) Regression Validation (Fresh Run)
@@ -175,18 +180,23 @@ Executed:
   tests/unit/cloud/test_integration_manager_validation.py \
   tests/unit/cloud/test_integration_manager_cancelled.py \
   tests/integration/test_backend_integration.py::TestSessionLifecycleManager \
-  tests/unit/utils/test_objectives.py
+  tests/unit/utils/test_objectives.py \
+  tests/unit/core/test_logger_facade.py \
+  tests/unit/hooks/test_validator.py \
+  tests/unit/architecture/test_pricing_consistency.py \
+  tests/unit/utils/test_cost_calculator.py
 ```
 
 Result:
 
-- `483 passed, 1 warning`
-- Warning is pre-existing and non-regression:
-  - `traigent/api/constraints.py:1130` unnamed `ParameterRange` advisory in `tests/unit/api/test_constraints.py::TestDecoratorIntegration::test_unnamed_ranges_work_with_config_key`
+- `617 passed, 11 warnings`
+- Warnings are expected/non-regression:
+  - 1 user-warning from `traigent/api/constraints.py:1130` (unnamed `ParameterRange` advisory).
+  - 10 deprecation warnings from legacy cost-calculator/analytics test paths.
 
 ## 8) Review-Focused Change Inventory
 
-Net reliability-cycle code/test surface currently changed: 44 tracked files (+5 untracked artifacts), including:
+Net reliability-cycle code/test surface currently changed: 44 tracked files in this sweep, including:
 
 - Core hot paths:
   - `traigent/core/cost_enforcement.py`
@@ -198,6 +208,7 @@ Net reliability-cycle code/test surface currently changed: 44 tracked files (+5 
 - Cost/pricing/model handling:
   - `traigent/utils/cost_calculator.py`
   - `traigent/utils/objectives.py`
+  - `traigent/hooks/validator.py`
   - `traigent/agents/platforms.py`
   - `traigent/utils/constraints.py`
 - Integration wrappers/plugins:
@@ -222,6 +233,8 @@ Net reliability-cycle code/test surface currently changed: 44 tracked files (+5 
   - `tests/unit/cloud/test_session_management.py`
   - `tests/unit/core/samplers/test_factory.py`
   - `tests/unit/integrations/test_model_validation_warnings.py`
+  - `tests/unit/core/test_logger_facade.py`
+  - `tests/unit/architecture/test_pricing_consistency.py`
 
 ## 9) Requested Deep Review Checklist for Claude
 
@@ -243,16 +256,14 @@ Net reliability-cycle code/test surface currently changed: 44 tracked files (+5 
 - zeroization coverage in both crypto and non-crypto paths
 - no decryption/encryption regressions in edge/mock flows
 
-5. Re-assess two PARTIAL findings (`F-007`, `F-019`) for whether they should become:
-- follow-up fixes in this branch, or
-- explicit debt items in separate PRs.
+5. Re-scope stale findings (`F-012`, `F-020`) against current code shape before carrying them into a follow-up report.
 
 ## 10) Bottom Line
 
 Against the initial 35 findings, current branch state is internally consistent with:
 
-- `31 FIXED`
-- `2 PARTIAL`
+- `33 FIXED`
+- `0 PARTIAL`
 - `2 STALE`
 - `0 OPEN`
 
