@@ -14,6 +14,7 @@ import pytest
 
 from traigent.utils.cost_calculator import (
     ESTIMATION_MODEL_PRICING,
+    MODEL_NAME_ALIASES,
     CostCalculator,
     UnknownModelError,
 )
@@ -120,6 +121,20 @@ class TestValidatorModelsResolvable:
             f"Add them to ESTIMATION_MODEL_PRICING or as aliases in "
             f"_build_model_cost_per_1k()."
         )
+
+    @pytest.mark.unit
+    def test_validator_aliases_follow_canonical_alias_map(self) -> None:
+        """hooks/validator alias costs must match canonical alias mapping source."""
+        from traigent.hooks.validator import MODEL_COST_PER_1K
+
+        for alias, canonical in MODEL_NAME_ALIASES.items():
+            assert alias in MODEL_COST_PER_1K, f"Missing alias in validator: {alias}"
+            assert (
+                canonical in MODEL_COST_PER_1K
+            ), f"Missing canonical model in validator: {canonical}"
+            assert MODEL_COST_PER_1K[alias] == pytest.approx(
+                MODEL_COST_PER_1K[canonical]
+            )
 
 
 # ---------------------------------------------------------------------------

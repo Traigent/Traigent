@@ -89,6 +89,19 @@ ESTIMATION_MODEL_PRICING = {
     },
 }
 
+# Canonical model-name aliases used by estimation and validation code paths.
+# This avoids duplicated alias tables drifting across modules.
+MODEL_NAME_ALIASES: dict[str, str] = {
+    "gpt-4": "gpt-4-turbo",
+    "gpt-4-32k": "gpt-4-turbo",
+    "claude-3-haiku": "claude-3-haiku-20240307",
+    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
+    "claude-3-opus": "claude-3-opus-20240229",
+    "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+}
+
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
 _warned_models: set[str] = set()
 _warned_models_lock = threading.Lock()
@@ -490,14 +503,6 @@ def _normalize_model_for_fallback(model: str) -> str:
     return normalized.lower() if normalized else model.lower()
 
 
-# Legacy model name aliases for fallback pricing lookup.
-# Maps names not in ESTIMATION_MODEL_PRICING to their closest canonical equivalent.
-_FALLBACK_ALIASES: dict[str, str] = {
-    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
-    "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
-}
-
-
 def _find_fallback_pricing(
     base_model: str,
 ) -> tuple[dict[str, float] | None, str | None]:
@@ -553,8 +558,8 @@ def _estimation_cost_from_tokens(
     """
     base_model = _normalize_model_for_fallback(model)
 
-    # Resolve legacy aliases before lookup
-    for alias, canonical in _FALLBACK_ALIASES.items():
+    # Resolve canonical aliases before lookup
+    for alias, canonical in MODEL_NAME_ALIASES.items():
         if base_model == alias.lower():
             base_model = canonical.lower()
             break
