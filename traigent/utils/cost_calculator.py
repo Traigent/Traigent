@@ -1,20 +1,21 @@
 """LLM cost calculation utilities.
 
-Runtime pricing is resolved via litellm's native model registry and alias map.
-Pre-estimation keeps a separate conservative fallback table.
+Cost resolution is intentionally fail-fast:
+- Runtime and pre-estimation pricing use litellm first.
+- Unknown models raise with actionable remediation by default.
+- Users can provide explicit custom pricing for private/unsupported models.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
+import json
 import logging
 import os
 import re
 import threading
 import warnings
 from dataclasses import dataclass
-from json import loads
 from typing import Any
-from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -35,48 +36,15 @@ except (ImportError, KeyError):
 # Backward compatibility alias
 TOKENCOST_AVAILABLE = LITELLM_AVAILABLE
 
-# Canonical model name constants (referenced in ESTIMATION_MODEL_PRICING and aliases)
+# Canonical model name constants (referenced in ESTIMATION_MODEL_PRICING)
 _GPT35_TURBO = "gpt-3.5-turbo"
 _GPT4O = "gpt-4o"
 
-# Convenience aliases registered into litellm's native alias map.
-# These are intentionally limited to informal shorthands and legacy names.
-_CONVENIENCE_ALIASES: dict[str, str] = {
-    "claude-haiku": "claude-3-haiku-20240307",
-    "claude-sonnet": "claude-3-5-sonnet-20241022",
-    "claude-opus": "claude-3-opus-20240229",
-    "claude3-haiku": "claude-3-haiku-20240307",
-    "claude3-sonnet": "claude-3-sonnet-20240229",
-    "claude3-opus": "claude-3-opus-20240229",
-    "claude-3-haiku": "claude-3-haiku-20240307",
-    "claude-3-sonnet": "claude-3-sonnet-20240229",
-    "claude-3-opus": "claude-3-opus-20240229",
-    "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-    "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
-    "claude-4-sonnet": "claude-sonnet-4-20250514",
-    "claude-4-opus": "claude-opus-4-20250514",
-    "gpt4": _GPT4O,
-    "gpt-3.5": _GPT35_TURBO,
-    "gpt3.5": _GPT35_TURBO,
-}
-
-
-def _register_convenience_aliases() -> None:
-    """Register Traigent's convenience aliases in litellm.model_alias_map."""
-    if not LITELLM_AVAILABLE:
-        return
-
-    alias_map = getattr(litellm, "model_alias_map", None)
-    if not isinstance(alias_map, dict):
-        litellm.model_alias_map = {}
-        alias_map = litellm.model_alias_map
-
-    for alias, target in _CONVENIENCE_ALIASES.items():
-        alias_map.setdefault(alias, target)
-
-
-_register_convenience_aliases()
+_CUSTOM_PRICING_FILE_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_FILE"
+_CUSTOM_PRICING_JSON_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_JSON"
+_CUSTOM_PRICING_CACHE: dict[str, tuple[float, float]] | None = None
+_CUSTOM_PRICING_CACHE_KEY: tuple[str, str] | None = None
+_CUSTOM_PRICING_LOCK = threading.Lock()
 
 # Estimation pricing for pre-optimization cost estimation (per-token costs).
 # Post-call cost tracking uses litellm exclusively via cost_from_tokens().
@@ -163,8 +131,8 @@ def _normalize_model_name(model: str) -> str:
 
     Note:
         Ollama-style "model:tag" identifiers (e.g., "llama3:latest") will have
-        the tag stripped. For Ollama models, use the full model name directly
-        or add to ESTIMATION_MODEL_PRICING for pricing lookup.
+        the tag stripped. For tagged models, configure explicit aliasing or
+        custom pricing if needed.
 
     Args:
         model: Raw model name
@@ -248,74 +216,129 @@ def _resolve_litellm_alias(model: str) -> str:
     return normalized
 
 
-_OPENROUTER_MODEL_INDEX_CACHE: dict[str, tuple[float, float]] | None = None
-_OPENROUTER_CACHE_LOCK = threading.Lock()
-_OPENROUTER_MODELS_ENDPOINT = "https://openrouter.ai/api/v1/models"
+def _parse_custom_pricing_entry(
+    model: str, entry: Any, source: str
+) -> tuple[float, float]:
+    """Parse one custom pricing entry into (input_cost_per_token, output_cost_per_token)."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"Invalid pricing entry for model '{model}' in {source}: expected object"
+        )
+
+    input_val = entry.get("input_cost_per_token", entry.get("input"))
+    output_val = entry.get("output_cost_per_token", entry.get("output"))
+
+    if input_val is None or output_val is None:
+        raise ValueError(
+            f"Invalid pricing entry for model '{model}' in {source}: "
+            "expected input_cost_per_token/output_cost_per_token"
+        )
+
+    try:
+        input_cost = float(input_val)
+        output_cost = float(output_val)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid numeric pricing for model '{model}' in {source}"
+        ) from exc
+
+    if input_cost < 0 or output_cost < 0:
+        raise ValueError(f"Invalid negative pricing for model '{model}' in {source}")
+
+    return input_cost, output_cost
 
 
-def _fetch_openrouter_models() -> dict[str, tuple[float, float]]:
-    """Fetch OpenRouter model pricing index.
+def _normalize_custom_pricing_map(
+    raw: dict[str, Any], source: str
+) -> dict[str, tuple[float, float]]:
+    """Normalize custom pricing payload into lowercase model index."""
+    normalized: dict[str, tuple[float, float]] = {}
+    for model, entry in raw.items():
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError(
+                f"Invalid model key in {source}: expected non-empty string"
+            )
+        input_cost, output_cost = _parse_custom_pricing_entry(model, entry, source)
+        keys = {model.lower(), _normalize_model_name(model).lower()}
+        for key in keys:
+            normalized[key] = (input_cost, output_cost)
+    return normalized
 
-    Returns a map of lowercase model identifiers to per-token rates:
-    ``{model_id: (input_cost_per_token, output_cost_per_token)}``
-    """
-    request = Request(
-        _OPENROUTER_MODELS_ENDPOINT,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "traigent-cost-calculator/1.0",
-        },
-    )
-    with urlopen(request, timeout=5.0) as response:  # nosec B310
-        payload = loads(response.read().decode("utf-8"))
-    data = payload.get("data", []) if isinstance(payload, dict) else []
 
-    index: dict[str, tuple[float, float]] = {}
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        model_id = item.get("id")
-        pricing = item.get("pricing", {})
-        if not isinstance(model_id, str) or not isinstance(pricing, dict):
-            continue
+def _load_custom_pricing_from_sources() -> dict[str, tuple[float, float]]:
+    """Load custom model pricing from env-configured file and/or JSON payload."""
+    pricing: dict[str, tuple[float, float]] = {}
+
+    file_path = os.environ.get(_CUSTOM_PRICING_FILE_ENV, "").strip()
+    if file_path:
         try:
-            input_rate = float(pricing.get("prompt", 0.0))
-            output_rate = float(pricing.get("completion", 0.0))
-        except (TypeError, ValueError):
-            continue
+            with open(file_path, encoding="utf-8") as f:
+                file_payload = json.load(f)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse custom pricing file '{file_path}'."
+            ) from exc
+        if not isinstance(file_payload, dict):
+            raise ValueError(
+                f"Invalid custom pricing file '{file_path}': root must be an object"
+            )
+        pricing.update(_normalize_custom_pricing_map(file_payload, file_path))
 
-        if input_rate < 0 or output_rate < 0:
-            continue
+    env_json = os.environ.get(_CUSTOM_PRICING_JSON_ENV, "").strip()
+    if env_json:
+        try:
+            env_payload = json.loads(env_json)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse {_CUSTOM_PRICING_JSON_ENV}: invalid JSON"
+            ) from exc
+        if not isinstance(env_payload, dict):
+            raise ValueError(
+                f"Invalid {_CUSTOM_PRICING_JSON_ENV}: root must be an object"
+            )
+        pricing.update(
+            _normalize_custom_pricing_map(env_payload, _CUSTOM_PRICING_JSON_ENV)
+        )
 
-        key = model_id.lower()
-        index[key] = (input_rate, output_rate)
-        if "/" in key:
-            bare_model = key.split("/", 1)[1]
-            index.setdefault(bare_model, (input_rate, output_rate))
-
-    return index
+    return pricing
 
 
-def _try_openrouter_pricing(model: str) -> tuple[float, float] | None:
-    """Try resolving per-token model pricing from OpenRouter's public API."""
-    if os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true":
-        return None
+def _get_custom_pricing_index() -> dict[str, tuple[float, float]]:
+    """Get cached custom model pricing index keyed by lowercase model names."""
+    file_path = os.environ.get(_CUSTOM_PRICING_FILE_ENV, "").strip()
+    env_json = os.environ.get(_CUSTOM_PRICING_JSON_ENV, "").strip()
+    cache_key = (file_path, env_json)
 
-    global _OPENROUTER_MODEL_INDEX_CACHE
-    if _OPENROUTER_MODEL_INDEX_CACHE is None:
-        with _OPENROUTER_CACHE_LOCK:
-            if _OPENROUTER_MODEL_INDEX_CACHE is None:
-                try:
-                    _OPENROUTER_MODEL_INDEX_CACHE = _fetch_openrouter_models()
-                except Exception:
-                    logger.debug("OpenRouter pricing fetch failed", exc_info=True)
-                    _OPENROUTER_MODEL_INDEX_CACHE = {}
+    global _CUSTOM_PRICING_CACHE, _CUSTOM_PRICING_CACHE_KEY
+    if _CUSTOM_PRICING_CACHE is not None and _CUSTOM_PRICING_CACHE_KEY == cache_key:
+        return _CUSTOM_PRICING_CACHE
 
+    with _CUSTOM_PRICING_LOCK:
+        if _CUSTOM_PRICING_CACHE is not None and _CUSTOM_PRICING_CACHE_KEY == cache_key:
+            return _CUSTOM_PRICING_CACHE
+        _CUSTOM_PRICING_CACHE = _load_custom_pricing_from_sources()
+        _CUSTOM_PRICING_CACHE_KEY = cache_key
+        return _CUSTOM_PRICING_CACHE
+
+
+def _try_custom_model_pricing(model: str) -> tuple[float, float] | None:
+    """Try resolving pricing from explicit user-provided custom pricing."""
     normalized = _normalize_model_name(model).lower()
-    cache = _OPENROUTER_MODEL_INDEX_CACHE
-    if cache is None:
-        return None
-    return cache.get(model.lower()) or cache.get(normalized)
+    index = _get_custom_pricing_index()
+    return index.get(model.lower()) or index.get(normalized)
+
+
+def _unknown_model_resolution_message(model: str) -> str:
+    """Build actionable unknown-model remediation instructions."""
+    return (
+        f"Model '{model}' has no known pricing. "
+        "Fix by choosing one of: "
+        "1) use a provider model id that litellm can price, "
+        "2) configure litellm.model_alias_map for your alias, "
+        f"3) provide explicit pricing via {_CUSTOM_PRICING_FILE_ENV} or {_CUSTOM_PRICING_JSON_ENV}. "
+        "Example JSON: "
+        '{"my-model":{"input_cost_per_token":1e-6,"output_cost_per_token":2e-6}}'
+    )
 
 
 def _try_litellm_prompt_cost(
@@ -330,7 +353,7 @@ def _try_litellm_prompt_cost(
 
     Returns:
         Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
-        determine pricing and the caller should fall through to the fallback.
+        determine pricing and the caller should try custom pricing.
     """
     model_known = _is_model_known_to_litellm(model)
     if prompt is not None:
@@ -367,7 +390,7 @@ def calculate_prompt_cost(
 
     Raises:
         UnknownModelError: If the model's pricing cannot be determined from
-            litellm or the fallback pricing table.
+            litellm or explicit custom pricing configuration.
     """
     warnings.warn(
         "calculate_prompt_cost() is deprecated. Use cost_from_tokens() with "
@@ -387,16 +410,12 @@ def calculate_prompt_cost(
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
 
-    # Try estimation pricing with whatever token count we have
-    fallback_cost = _estimation_cost_from_tokens(model, max(tokens, 0), 0)[0]
-    if fallback_cost > 0:
-        return fallback_cost
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        input_cost_per_token, _ = custom_pricing
+        return float(max(tokens, 0) * input_cost_per_token)
 
-    # Unknown model - raise exception (mimics tokencost behavior)
-    raise UnknownModelError(
-        f"Model '{model}' is not in litellm's pricing database or fallback table. "
-        "Add it to ESTIMATION_MODEL_PRICING or use a known model."
-    )
+    raise UnknownModelError(_unknown_model_resolution_message(model))
 
 
 def _try_litellm_completion_cost(
@@ -411,7 +430,7 @@ def _try_litellm_completion_cost(
 
     Returns:
         Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
-        determine pricing and the caller should fall through to the fallback.
+        determine pricing and the caller should try custom pricing.
     """
     model_known = _is_model_known_to_litellm(model)
     if completion is not None:
@@ -443,7 +462,7 @@ def calculate_completion_cost(completion: str | None, model: str) -> float:
 
     Raises:
         UnknownModelError: If the model's pricing cannot be determined from
-            litellm or the fallback pricing table.
+            litellm or explicit custom pricing configuration.
     """
     warnings.warn(
         "calculate_completion_cost() is deprecated. Use cost_from_tokens() with "
@@ -463,16 +482,12 @@ def calculate_completion_cost(completion: str | None, model: str) -> float:
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
 
-    # Try estimation pricing with whatever token count we have
-    fallback_cost = _estimation_cost_from_tokens(model, 0, max(tokens, 0))[1]
-    if fallback_cost > 0:
-        return fallback_cost
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        _, output_cost_per_token = custom_pricing
+        return float(max(tokens, 0) * output_cost_per_token)
 
-    # Unknown model - raise exception (mimics tokencost behavior)
-    raise UnknownModelError(
-        f"Model '{model}' is not in litellm's pricing database or fallback table. "
-        "Add it to ESTIMATION_MODEL_PRICING or use a known model."
-    )
+    raise UnknownModelError(_unknown_model_resolution_message(model))
 
 
 def _normalize_model_for_fallback(model: str) -> str:
@@ -584,63 +599,14 @@ def _estimation_cost_from_tokens(
 _fallback_cost_from_tokens = _estimation_cost_from_tokens
 
 
-# ---------------------------------------------------------------------------
-# Heuristic tier pricing for pre-optimization cost estimation
-# ---------------------------------------------------------------------------
-
-# Per-token costs for each pricing tier (conservative estimates)
-_TIER_EXPENSIVE = {"input": 10.0e-6, "output": 30.0e-6}  # ~GPT-4-turbo class
-_TIER_MID = {"input": 3.0e-6, "output": 15.0e-6}  # ~GPT-4o / Sonnet class
-_TIER_CHEAP = {"input": 0.25e-6, "output": 1.25e-6}  # ~Haiku / Mini class
-
-# Ordered regex rules for model tier classification.
-# Order is critical: most specific patterns first to avoid substring collisions.
-# \b treats `-` as a word boundary, so "gpt-4o-mini" matches r"gpt-4o\b".
-# We rely on ordering (gpt-4o-mini checked BEFORE gpt-4o) to handle this.
-_TIER_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"gpt-4o-mini|gpt-4-mini", re.IGNORECASE), "cheap"),
-    (re.compile(r"gpt-4-turbo", re.IGNORECASE), "expensive"),
-    (re.compile(r"gpt-4o\b", re.IGNORECASE), "mid"),
-    (re.compile(r"gpt-4\b(?!o)", re.IGNORECASE), "expensive"),
-    (re.compile(r"gpt-3\.5", re.IGNORECASE), "cheap"),
-    (re.compile(r"opus", re.IGNORECASE), "expensive"),
-    (re.compile(r"sonnet", re.IGNORECASE), "mid"),
-    (re.compile(r"haiku", re.IGNORECASE), "cheap"),
-    (re.compile(r"\bmini|flash|nano", re.IGNORECASE), "cheap"),
-    (re.compile(r"pro\b", re.IGNORECASE), "mid"),
-]
-
-_TIER_PRICING = {
-    "expensive": _TIER_EXPENSIVE,
-    "mid": _TIER_MID,
-    "cheap": _TIER_CHEAP,
-}
-
-
-def _classify_model_tier(model_name: str) -> str:
-    """Classify a model name into a pricing tier using regex matching.
-
-    Returns one of ``"expensive"``, ``"mid"``, or ``"cheap"``.
-    Falls back to ``"mid"`` (conservative) when no pattern matches.
-    """
-    for pattern, tier in _TIER_RULES:
-        if pattern.search(model_name):
-            return tier
-    return "mid"
-
-
 def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
-    """Get per-token pricing for a model, with graceful fallback.
+    """Get per-token pricing for a model with fail-fast behavior.
 
-    Uses a 3-tier lookup chain for conservative pre-optimization cost estimation:
+    Resolution order:
+    1. litellm pricing database
+    2. explicit custom pricing overrides (env/file)
 
-    1. **litellm**: exact per-token pricing from litellm's database.
-       Models that return ``(0, 0)`` are NOT treated as free — falls through
-       to heuristic tier (EMA will correct after the first trial).
-    2. **Fallback dict**: prefix-matching against ``ESTIMATION_MODEL_PRICING``.
-       Does NOT apply convenience aliases so that e.g. ``gpt-4`` stays in
-       the EXPENSIVE tier rather than being downgraded to ``gpt-4o`` (MID tier).
-    3. **Heuristic tier**: regex-based classification into EXPENSIVE / MID / CHEAP.
+    Unknown models raise ``UnknownModelError`` with remediation instructions.
 
     Args:
         model_name: Model identifier (may include provider prefix).
@@ -648,54 +614,37 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     Returns:
         ``(input_cost_per_token, output_cost_per_token, estimation_method)``
     """
-    # --- Tier 1: litellm ---
-    if LITELLM_AVAILABLE and _is_model_known_to_litellm(model_name):
-        try:
-            input_cost, output_cost = litellm.cost_per_token(
-                model=model_name, prompt_tokens=1, completion_tokens=1
-            )
-            if input_cost > 0 or output_cost > 0:
-                logger.debug(
-                    "Model pricing from litellm for %r: input=%.2e, output=%.2e",
-                    model_name,
-                    input_cost,
-                    output_cost,
+    if not model_name or not model_name.strip():
+        raise UnknownModelError(_unknown_model_resolution_message(model_name))
+
+    normalized = _normalize_model_name(model_name)
+    alias_resolved = _resolve_litellm_alias(normalized)
+    candidates = [
+        candidate for candidate in [model_name, normalized, alias_resolved] if candidate
+    ]
+    candidates = list(dict.fromkeys(candidates))
+
+    if LITELLM_AVAILABLE:
+        for candidate in candidates:
+            try:
+                input_cost, output_cost = litellm.cost_per_token(
+                    model=candidate, prompt_tokens=1, completion_tokens=1
                 )
-                return float(input_cost), float(output_cost), "litellm"
-            # litellm returned (0, 0) — may lack pricing data. Fall through.
-        except Exception:
-            logger.debug(
-                "litellm pricing lookup failed for %r, trying fallback",
-                model_name,
-                exc_info=True,
-            )
+                if input_cost > 0 or output_cost > 0:
+                    return float(input_cost), float(output_cost), "litellm"
+                if _is_model_known_to_litellm(candidate):
+                    return float(input_cost), float(output_cost), "litellm"
+            except Exception:
+                logger.debug(
+                    "litellm pricing lookup failed for %r", candidate, exc_info=True
+                )
 
-    # --- Tier 2: Fallback dict (prefix matching, no alias remapping) ---
-    normalized = _normalize_model_for_fallback(model_name)
-    # Use _quiet=True to log at DEBUG during estimation (not WARNING)
-    input_cost_fb, output_cost_fb = _estimation_cost_from_tokens(
-        normalized, 1, 1, _quiet=True
-    )
-    if input_cost_fb > 0 or output_cost_fb > 0:
-        logger.debug(
-            "Model pricing from fallback dict for %r: input=%.2e, output=%.2e",
-            model_name,
-            input_cost_fb,
-            output_cost_fb,
-        )
-        return input_cost_fb, output_cost_fb, "fallback_dict"
+    custom_pricing = _try_custom_model_pricing(model_name)
+    if custom_pricing is not None:
+        input_cost, output_cost = custom_pricing
+        return float(input_cost), float(output_cost), "custom_pricing"
 
-    # --- Tier 3: Heuristic tier classification ---
-    tier = _classify_model_tier(model_name)
-    pricing = _TIER_PRICING[tier]
-    logger.debug(
-        "Model pricing from heuristic tier %r for %r: input=%.2e, output=%.2e",
-        tier,
-        model_name,
-        pricing["input"],
-        pricing["output"],
-    )
-    return pricing["input"], pricing["output"], f"heuristic:{tier}"
+    raise UnknownModelError(_unknown_model_resolution_message(model_name))
 
 
 @dataclass
@@ -728,16 +677,35 @@ class CostCalculator:
     compatibility with non-token paths and diagnostics.
     """
 
-    # Legacy compatibility alias (prefer module-level _CONVENIENCE_ALIASES)
-    EXACT_MODEL_MAPPING = dict(_CONVENIENCE_ALIASES)
+    # Legacy compatibility mappings (not used by canonical cost_from_tokens).
+    EXACT_MODEL_MAPPING = {
+        "claude-3-haiku": "claude-3-haiku-20240307",
+        "claude-3-sonnet": "claude-3-sonnet-20240229",
+        "claude-3-opus": "claude-3-opus-20240229",
+        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+        "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
+        "claude-4-sonnet": "claude-sonnet-4-20250514",
+        "claude-4-opus": "claude-opus-4-20250514",
+        "claude-haiku": "claude-3-haiku-20240307",
+        "claude-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-opus": "claude-3-opus-20240229",
+        "gpt-3.5": _GPT35_TURBO,
+        "gpt-4": _GPT4O,
+        "gpt4": _GPT4O,
+        "gpt3.5": _GPT35_TURBO,
+        "gpt-4o-mini": "gpt-4o-mini",
+        "claude3-haiku": "claude-3-haiku-20240307",
+        "claude3-sonnet": "claude-3-sonnet-20240229",
+        "claude3-opus": "claude-3-opus-20240229",
+    }
 
-    # Model family defaults for generic names
     FAMILY_DEFAULTS = {
-        "claude-3": "claude-3-5-sonnet-latest",  # Most capable general model
+        "claude-3": "claude-3-5-sonnet-latest",
         "claude": "claude-3-5-sonnet-latest",
-        "gpt-4": _GPT4O,  # Latest GPT-4 variant
-        "gpt": _GPT4O,  # Default to latest
-        "gpt-3.5": _GPT35_TURBO,  # Standard 3.5 model
+        "gpt-4": _GPT4O,
+        "gpt": _GPT4O,
+        "gpt-3.5": _GPT35_TURBO,
     }
 
     def __init__(self, logger=None, enable_caching: bool = True) -> None:
@@ -765,7 +733,7 @@ class CostCalculator:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
     ) -> CostBreakdown:
-        """Calculate cost for an LLM request with multiple fallback methods.
+        """Calculate cost for an LLM request.
 
         Args:
             prompt: The input prompt (string or message list)
@@ -1153,9 +1121,8 @@ def cost_from_tokens(
 ) -> tuple[float, float]:
     """Canonical cost calculation from token counts.
 
-    This is the single entry point for post-call cost tracking. It uses
-    litellm's pricing database exclusively — no heuristic estimation,
-    no fallback pricing table, no silent zeros in strict mode.
+    This is the single entry point for post-call cost tracking. It is
+    fail-fast by default and does not guess pricing for unknown models.
 
     Args:
         input_tokens: Number of input tokens (0 is valid for output-only).
@@ -1189,8 +1156,6 @@ def cost_from_tokens(
 
     normalized = _normalize_model_name(model)
     alias_resolved = _resolve_litellm_alias(normalized)
-
-    # Build unique candidate list preserving priority order.
     candidates = [
         candidate for candidate in [model, normalized, alias_resolved] if candidate
     ]
@@ -1225,23 +1190,26 @@ def cost_from_tokens(
                 float(output_tokens * output_cpt),
             )
 
-    # Step 3: OpenRouter fallback (optional online pricing source)
-    openrouter_pricing = _try_openrouter_pricing(model)
-    if openrouter_pricing is not None:
-        input_rate, output_rate = openrouter_pricing
+    # Step 3: explicit custom pricing (user-provided)
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        input_rate, output_rate = custom_pricing
         return (
             float(input_tokens * input_rate),
             float(output_tokens * output_rate),
         )
 
-    # Model not found in litellm or OpenRouter
+    # Model not found in litellm or custom pricing config
     if strict:
-        raise UnknownModelError(
-            f"Model '{model}' has no pricing in litellm/OpenRouter. "
-            "Use strict=False for pre-estimation or register model pricing."
-        )
+        raise UnknownModelError(_unknown_model_resolution_message(model))
 
-    logger.warning("Unknown model %r — returning zero cost (strict=False)", model)
+    logger.warning(
+        "Unknown model %r — returning zero cost (strict=False). "
+        "Configure %s or %s to provide explicit pricing.",
+        model,
+        _CUSTOM_PRICING_FILE_ENV,
+        _CUSTOM_PRICING_JSON_ENV,
+    )
     return 0.0, 0.0
 
 
@@ -1291,8 +1259,8 @@ def get_model_pricing_per_1k(model_name: str) -> tuple[float, float]:
     """Get model pricing rates in USD per 1K tokens.
 
     Returns a tuple ``(input_per_1k, output_per_1k)`` via the canonical cost
-    pipeline (litellm first, then estimation pricing). Unknown models return
-    ``(0.0, 0.0)``.
+    pipeline (litellm first, then explicit custom pricing). Unknown models
+    return ``(0.0, 0.0)``.
 
     This is a query function (not budget-enforcement), so it uses
     strict=False to avoid raising on unknown models.

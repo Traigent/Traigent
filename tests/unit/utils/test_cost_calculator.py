@@ -117,32 +117,22 @@ class TestCostCalculatorModelMapping:
         """Create test calculator instance."""
         return CostCalculator()
 
-    def test_map_model_name_exact_match(self, calculator: CostCalculator) -> None:
-        """Test exact model name mapping."""
-        result = calculator._map_model_name("claude-3-haiku")
-        assert result == "claude-3-haiku-20240307"
-
-    def test_map_model_name_exact_match_sonnet(
+    def test_map_model_name_legacy_mapping_still_available(
         self, calculator: CostCalculator
     ) -> None:
-        """Test exact mapping for Claude Sonnet models."""
-        assert (
-            calculator._map_model_name("claude-3-sonnet") == "claude-3-sonnet-20240229"
-        )
-        assert (
-            calculator._map_model_name("claude-3-5-sonnet")
-            == "claude-3-5-sonnet-20241022"
-        )
+        """Legacy helper mapping remains available for compatibility."""
+        result = calculator._map_model_name("claude-haiku")
+        assert result == "claude-3-haiku-20240307"
 
-    def test_map_model_name_exact_match_gpt(self, calculator: CostCalculator) -> None:
-        """Test exact mapping for GPT models."""
-        assert calculator._map_model_name("gpt-3.5") == "gpt-3.5-turbo"
-        assert calculator._map_model_name("gpt-4") == "gpt-4o"
-
-    def test_map_model_name_family_defaults(self, calculator: CostCalculator) -> None:
-        """Test model family default mapping."""
-        result = calculator._map_model_name("claude-3")
-        assert result == "claude-3-5-sonnet-latest"
+    def test_map_model_name_uses_explicit_litellm_alias(
+        self, calculator: CostCalculator
+    ) -> None:
+        with patch(
+            "traigent.utils.cost_calculator.litellm.model_alias_map",
+            {"claude-haiku": "claude-3-haiku-20240307"},
+        ):
+            result = calculator._map_model_name("claude-haiku")
+            assert result == "claude-3-haiku-20240307"
 
     def test_map_model_name_empty_string(self, calculator: CostCalculator) -> None:
         """Test mapping with empty string returns None."""
@@ -158,8 +148,11 @@ class TestCostCalculatorModelMapping:
         """Test model name mapping logs debug messages."""
         mock_logger = MagicMock()
         calculator = CostCalculator(logger=mock_logger)
-        calculator._map_model_name("claude-3-haiku")
-        # Should log debug message for exact match
+        with patch(
+            "traigent.utils.cost_calculator.litellm.model_alias_map",
+            {"my-alias": "gpt-4o"},
+        ):
+            calculator._map_model_name("my-alias")
         assert mock_logger.debug.called
 
 
@@ -1003,54 +996,45 @@ class TestFamilyDefaults:
         assert calculator._map_model_name("gpt-3.5") == "gpt-3.5-turbo"
 
 
-class TestOpenRouterPricingFallback:
-    """Tests for OpenRouter pricing cache and offline behavior."""
+class TestCustomPricingOverrides:
+    """Tests for explicit custom pricing configuration."""
 
     @pytest.fixture(autouse=True)
     def reset_cache(self):
-        old_cache = cc._OPENROUTER_MODEL_INDEX_CACHE
-        cc._OPENROUTER_MODEL_INDEX_CACHE = None
+        old_cache = cc._CUSTOM_PRICING_CACHE
+        old_cache_key = cc._CUSTOM_PRICING_CACHE_KEY
+        cc._CUSTOM_PRICING_CACHE = None
+        cc._CUSTOM_PRICING_CACHE_KEY = None
         try:
             yield
         finally:
-            cc._OPENROUTER_MODEL_INDEX_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE_KEY = old_cache_key
 
-    def test_try_openrouter_pricing_skips_when_offline(self, monkeypatch) -> None:
-        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
-        assert cc._try_openrouter_pricing("any-model") is None
+    def test_json_env_pricing_is_loaded(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",
+            '{"x-model":{"input_cost_per_token":1e-6,"output_cost_per_token":2e-6}}',
+        )
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
+        assert cc._try_custom_model_pricing("x-model") == (1e-6, 2e-6)
 
-    def test_try_openrouter_pricing_uses_cache(self, monkeypatch) -> None:
-        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
-        cc._OPENROUTER_MODEL_INDEX_CACHE = {"a/model": (1e-6, 2e-6)}
-        assert cc._try_openrouter_pricing("a/model") == (1e-6, 2e-6)
+    def test_file_env_pricing_is_loaded(self, monkeypatch, tmp_path) -> None:
+        path = tmp_path / "pricing.json"
+        path.write_text(
+            '{"y-model":{"input_cost_per_token":3e-6,"output_cost_per_token":4e-6}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", str(path))
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", raising=False)
+        assert cc._try_custom_model_pricing("y-model") == (3e-6, 4e-6)
 
-    def test_try_openrouter_pricing_fetch_failure_returns_none(
-        self, monkeypatch
-    ) -> None:
-        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
-        cc._OPENROUTER_MODEL_INDEX_CACHE = None
-        with patch.object(cc, "_fetch_openrouter_models", side_effect=RuntimeError):
-            assert cc._try_openrouter_pricing("unknown-model") is None
-            # Failure should cache an empty dict to avoid repeated retries.
-            assert cc._OPENROUTER_MODEL_INDEX_CACHE == {}
+    def test_invalid_json_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", "{bad-json")
+        with pytest.raises(ValueError, match="invalid JSON"):
+            cc._get_custom_pricing_index()
 
-    def test_fetch_openrouter_models_parses_payload(self) -> None:
-        payload = {
-            "data": [
-                {
-                    "id": "anthropic/claude-sonnet-4.6",
-                    "pricing": {"prompt": "0.000003", "completion": "0.000015"},
-                }
-            ]
-        }
-        mock_response = MagicMock()
-        mock_response.read.return_value = str(payload).replace("'", '"').encode("utf-8")
-        mock_context = MagicMock()
-        mock_context.__enter__.return_value = mock_response
-        mock_context.__exit__.return_value = None
-
-        with patch.object(cc, "urlopen", return_value=mock_context):
-            parsed = cc._fetch_openrouter_models()
-
-        assert parsed["anthropic/claude-sonnet-4.6"] == (3e-6, 15e-6)
-        assert parsed["claude-sonnet-4.6"] == (3e-6, 15e-6)
+    def test_invalid_file_path_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", "/missing/pricing.json")
+        with pytest.raises(ValueError, match="Failed to parse custom pricing file"):
+            cc._get_custom_pricing_index()
