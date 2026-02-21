@@ -959,9 +959,10 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
-    from traigent.utils.env_config import is_mock_llm
+    from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 
     mock_mode = is_mock_llm()
+    strict_cost_accounting = is_strict_cost_accounting()
     generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
 
     if mock_mode or generate_mocks_env == "true":
@@ -985,7 +986,10 @@ def _calculate_cost_for_metrics(
             e,
             exc_info=True,
         )
-        if os.environ.get("TRAIGENT_DEBUG", "").lower() == "true":
+        if (
+            strict_cost_accounting
+            or os.environ.get("TRAIGENT_DEBUG", "").lower() == "true"
+        ):
             raise
 
 
@@ -1016,6 +1020,7 @@ def _compute_cost(
 ) -> None:
     """Compute cost using cost_from_tokens (preferred) or legacy text path."""
     from traigent.utils.cost_calculator import cost_from_tokens
+    from traigent.utils.env_config import is_strict_cost_accounting
 
     # Ensure total tokens computed
     if metrics.tokens.total_tokens == 0:
@@ -1025,11 +1030,12 @@ def _compute_cost(
 
     if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
         # Preferred path: use canonical cost_from_tokens directly
+        strict_cost_accounting = is_strict_cost_accounting()
         input_cost, output_cost = cost_from_tokens(
             metrics.tokens.input_tokens,
             metrics.tokens.output_tokens,
             model_name,
-            strict=False,
+            strict=strict_cost_accounting,
         )
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost

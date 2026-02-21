@@ -319,6 +319,17 @@ class TestPydanticAIHandler:
         # Should return a float (may be 0.0 for unknown models)
         assert isinstance(cost, float)
 
+    def test_estimate_cost_unknown_model_raises_in_strict_mode(self) -> None:
+        """Strict cost accounting raises for unknown model pricing."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        handler = self._make_handler(_make_agent("openai:unknown-model-xyz-123"))
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            with pytest.raises(UnknownModelError):
+                handler._estimate_cost(100, 50)
+
     @patch(
         "traigent.utils.cost_calculator.cost_from_tokens",
         side_effect=RuntimeError("cost calc failed"),

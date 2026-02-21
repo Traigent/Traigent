@@ -22,6 +22,7 @@ from traigent.core.cost_enforcement import (
     CostEstimate,
     CostLimitExceeded,
     CostStatus,
+    CostTrackingRequiredError,
     OptimizationAborted,
     Permit,
 )
@@ -199,7 +200,14 @@ class TestCostEnforcerUnknownCost:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": "false",
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "false",
+            },
+        ):
             yield
 
     def test_unknown_cost_triggers_fallback(self) -> None:
@@ -237,6 +245,20 @@ class TestCostEnforcerUnknownCost:
         enforcer.track_cost(None, permit=permit)
         permit = enforcer.acquire_permit()
         assert not permit.is_granted, "Third permit should be denied (limit=2)"
+
+    def test_unknown_cost_raises_when_strict_accounting_enabled(self) -> None:
+        """Strict accounting mode raises instead of entering fallback mode."""
+        config = CostEnforcerConfig(fallback_trial_limit=5)
+        enforcer = CostEnforcer(config=config)
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            with pytest.raises(CostTrackingRequiredError) as exc_info:
+                enforcer.track_cost(None, permit=_create_mock_permit())
+
+        assert "TRAIGENT_STRICT_COST_ACCOUNTING=true" in str(exc_info.value)
+        assert enforcer.get_status().unknown_cost_mode is False
 
 
 class TestCostEnforcerThreadSafety:
@@ -277,7 +299,14 @@ class TestCostEnforcerAsync:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": "false",
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "false",
+            },
+        ):
             yield
 
     @pytest.mark.asyncio
@@ -318,6 +347,20 @@ class TestCostEnforcerAsync:
 
         expected = 10 * 50 * 0.01
         assert abs(enforcer.accumulated_cost - expected) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_unknown_cost_async_raises_when_strict_accounting_enabled(self) -> None:
+        """Strict accounting mode raises on async unknown cost."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig())
+        permit = _create_mock_permit()
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            with pytest.raises(CostTrackingRequiredError) as exc_info:
+                await enforcer.track_cost_async(None, permit=permit)
+
+        assert "TRAIGENT_STRICT_COST_ACCOUNTING=true" in str(exc_info.value)
 
 
 class TestCostEnforcerApproval:

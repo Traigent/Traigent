@@ -831,6 +831,16 @@ class TestCostEstimation:
             0.0
         ), "Unknown model should return 0.0 with strict=False"
 
+    def test_estimate_cost_unknown_model_raises_in_strict_mode(self, handler):
+        """Strict cost accounting raises for unknown model pricing."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            with pytest.raises(UnknownModelError):
+                handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
+
     def test_estimate_cost_exception_handling(self, handler):
         """Test _estimate_cost handles exceptions gracefully."""
         with patch(

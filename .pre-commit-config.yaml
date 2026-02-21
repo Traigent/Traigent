@@ -81,6 +81,12 @@ repos:
   # Prevent committing gitignored files
   - repo: local
     hooks:
+      - id: check-cost-strictness
+        name: Check strict cost accounting guardrails
+        language: script
+        entry: scripts/hooks/check-cost-strictness.sh
+        pass_filenames: false
+        always_run: true
       - id: check-ignored-files
         name: Check for ignored files staged for commit
         language: script
