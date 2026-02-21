@@ -38,7 +38,7 @@ class SessionCreateDTO:
     max_trials: int | None = None
     max_total_examples: int | None = None  # Optional for backward compat
     # ... other fields
-    
+
     def to_dict(self) -> dict:
         d = {...}
         if self.max_total_examples is not None:
@@ -57,9 +57,9 @@ def update_include_pruned(self, include_pruned: bool) -> None:
     for condition in self._conditions:
         if isinstance(condition, MaxSamplesStopCondition):
             condition._include_pruned = include_pruned
-            
+
 # CLI flag
-@click.option('--samples-include-pruned/--samples-exclude-pruned', 
+@click.option('--samples-include-pruned/--samples-exclude-pruned',
               default=True,
               help='Include pruned trials in sample count')
 Rationale:
@@ -73,7 +73,7 @@ Question: "Should we add clone() or document per-worker factory invocation?" Rec
 def clone(self) -> BaseSampler:
     """Create an independent copy suitable for parallel execution."""
     raise NotImplementedError("Subclasses must implement clone()")
-    
+
 # In RandomSampler
 def clone(self) -> RandomSampler:
     """Create independent copy with same config but fresh state."""
@@ -152,7 +152,7 @@ traigent optimize --max-total-examples 10000
 #### 1. **Add Telemetry Events**
 ```python
 # When limit is hit
-logger.info("Sample budget exhausted: %d/%d examples", 
+logger.info("Sample budget exhausted: %d/%d examples",
            consumed, self._max_total_examples)
 self._emit_telemetry("sample_budget_exhausted", {
     "requested": self._max_total_examples,
@@ -166,7 +166,7 @@ def on_trial_complete(self, trial: TrialResult):
         pct = (total_attempted / self._max_total_examples) * 100
         logger.info(f"Sample budget: {pct:.1f}% used")
 3. Validation Helper
-def validate_sample_limits(max_trials: int | None, 
+def validate_sample_limits(max_trials: int | None,
                           max_examples: int | None,
                           max_total_examples: int | None) -> None:
     """Validate consistency of limit configuration."""
