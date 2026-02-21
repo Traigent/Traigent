@@ -302,6 +302,8 @@ def _build_parallel_permits(
     permit_state: str,
 ) -> list[Permit]:
     if permit_state in {"already_released", "foreign"}:
+        # Intentional: reuse one stale/foreign permit across threads to exercise
+        # lock contention around mark_released() and repeated already-released paths.
         return [base_permit, base_permit, base_permit]
 
     permits = [base_permit]
@@ -388,7 +390,11 @@ class TestCostEnforcerCTDPairwise:
 
     def test_pairwise_matrix_covers_all_valid_pairs(self) -> None:
         valid_cases = _all_valid_cases()
+        # Guard against accidental over-pruning in _is_valid_case(), which could
+        # otherwise make coverage checks pass vacuously with a shrunk domain.
+        assert len(valid_cases) == 134
         required_pairs = set().union(*(_pairs_for_case(case) for case in valid_cases))
+        assert len(required_pairs) == 107
         covered_pairs = set().union(*(_pairs_for_case(case) for case in PAIRWISE_CASES))
         assert covered_pairs >= required_pairs, (
             f"Pair coverage {len(covered_pairs & required_pairs)}/{len(required_pairs)} "

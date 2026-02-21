@@ -1152,11 +1152,14 @@ Options:
             I1: in_flight_count >= 0
             I2: reserved_cost >= 0
             I3: len(active_permits) == in_flight_count
-            I4: accumulated_cost + reserved_cost <= limit + ε (during reservations)
+            I4: accumulated_cost + reserved_cost <= limit + ε
+                (enforced only when in_flight_count > 0 and not unknown_cost_mode;
+                 post-execution actuals may exceed reserved estimates)
             I5: Released permits have active=False (structural - verified via Permit design)
             I6: Permit IDs monotonically increasing (structural - verified via counter)
             I7: Denied permits: id=-1, amount=0 (structural - verified via construction)
-            I8: Sum of active permit amounts equals reserved_cost (normal mode)
+            I8: Sum of active permit amounts equals reserved_cost
+                (enforced only outside unknown_cost_mode)
         """
         violations: list[str] = []
 
