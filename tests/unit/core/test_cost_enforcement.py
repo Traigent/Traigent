@@ -34,6 +34,34 @@ def _create_mock_permit(amount: float = 0.0) -> Permit:
     return Permit(id=0, amount=amount, active=True)
 
 
+UNKNOWN_COST_PAIRWISE_CASES = [
+    pytest.param(
+        False,
+        False,
+        False,
+        id="require-off_strict-off_permit-active",
+    ),
+    pytest.param(
+        False,
+        True,
+        True,
+        id="require-off_strict-on_permit-released",
+    ),
+    pytest.param(
+        True,
+        False,
+        True,
+        id="require-on_strict-off_permit-released",
+    ),
+    pytest.param(
+        True,
+        True,
+        False,
+        id="require-on_strict-on_permit-active",
+    ),
+]
+
+
 class TestCostEnforcerConfig:
     """Tests for CostEnforcerConfig defaults and validation."""
 
@@ -259,6 +287,79 @@ class TestCostEnforcerUnknownCost:
 
         assert "TRAIGENT_STRICT_COST_ACCOUNTING=true" in str(exc_info.value)
         assert enforcer.get_status().unknown_cost_mode is False
+
+
+class TestCostEnforcerUnknownCostCTD:
+    """Pairwise coverage of strict-mode unknown-cost behavior."""
+
+    @pytest.mark.parametrize(
+        ("require_tracking", "strict_accounting", "permit_pre_released"),
+        UNKNOWN_COST_PAIRWISE_CASES,
+    )
+    def test_unknown_cost_sync_pairwise(
+        self,
+        require_tracking: bool,
+        strict_accounting: bool,
+        permit_pre_released: bool,
+    ) -> None:
+        """Pairwise matrix: env flags x permit state for sync track_cost."""
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": str(require_tracking).lower(),
+                "TRAIGENT_STRICT_COST_ACCOUNTING": str(strict_accounting).lower(),
+            },
+            clear=False,
+        ):
+            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+            permit = _create_mock_permit()
+            if permit_pre_released:
+                assert permit.mark_released() is True
+
+            should_raise = require_tracking or strict_accounting
+            if should_raise:
+                with pytest.raises(CostTrackingRequiredError):
+                    enforcer.track_cost(None, permit=permit)
+                assert enforcer.get_status().unknown_cost_mode is False
+            else:
+                enforcer.track_cost(None, permit=permit)
+                assert enforcer.get_status().unknown_cost_mode is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("require_tracking", "strict_accounting", "permit_pre_released"),
+        UNKNOWN_COST_PAIRWISE_CASES,
+    )
+    async def test_unknown_cost_async_pairwise(
+        self,
+        require_tracking: bool,
+        strict_accounting: bool,
+        permit_pre_released: bool,
+    ) -> None:
+        """Pairwise matrix: env flags x permit state for async track_cost."""
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": str(require_tracking).lower(),
+                "TRAIGENT_STRICT_COST_ACCOUNTING": str(strict_accounting).lower(),
+            },
+            clear=False,
+        ):
+            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+            permit = _create_mock_permit()
+            if permit_pre_released:
+                assert permit.mark_released() is True
+
+            should_raise = require_tracking or strict_accounting
+            if should_raise:
+                with pytest.raises(CostTrackingRequiredError):
+                    await enforcer.track_cost_async(None, permit=permit)
+                assert enforcer.get_status().unknown_cost_mode is False
+            else:
+                await enforcer.track_cost_async(None, permit=permit)
+                assert enforcer.get_status().unknown_cost_mode is True
 
 
 class TestCostEnforcerThreadSafety:
