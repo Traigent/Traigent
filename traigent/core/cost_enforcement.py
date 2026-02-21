@@ -1153,10 +1153,13 @@ Options:
             I2: reserved_cost >= 0
             I3: len(active_permits) == in_flight_count
             I4: accumulated_cost + reserved_cost <= limit + ε
+                (enforced only when in_flight_count > 0 and not unknown_cost_mode;
+                 post-execution actuals may exceed reserved estimates)
             I5: Released permits have active=False (structural - verified via Permit design)
             I6: Permit IDs monotonically increasing (structural - verified via counter)
             I7: Denied permits: id=-1, amount=0 (structural - verified via construction)
             I8: Sum of active permit amounts equals reserved_cost
+                (enforced only outside unknown_cost_mode)
         """
         violations: list[str] = []
 
@@ -1181,10 +1184,17 @@ Options:
                     f"in_flight_count = {self._in_flight_count}"
                 )
 
-            # I4: accumulated + reserved <= limit + ε
+            # I4: accumulated + reserved <= limit + ε (reservation phase only)
+            # Actual accumulated spend can exceed limit after execution if per-trial
+            # actuals are higher than reserved estimates. Also, unknown-cost mode
+            # enforces fallback trial-count limits rather than budget arithmetic.
             total = self._accumulated_cost + self._reserved_cost
             epsilon = 0.0001  # Floating point tolerance
-            if total > self.config.limit + epsilon:
+            if (
+                self._in_flight_count > 0
+                and not self._unknown_cost_mode
+                and total > self.config.limit + epsilon
+            ):
                 violations.append(
                     f"I4 violated: accumulated ({self._accumulated_cost:.4f}) + "
                     f"reserved ({self._reserved_cost:.4f}) = {total:.4f} > "
@@ -1196,13 +1206,16 @@ Options:
             # - I6: _permit_counter only increments, never decreases
             # - I7: Denied permits are constructed with id=-1, amount=0.0, active=False
 
-            # I8: Sum of active permit amounts equals reserved_cost
-            permit_sum = sum(p.amount for p in self._active_permits.values())
-            if abs(permit_sum - self._reserved_cost) > epsilon:
-                violations.append(
-                    f"I8 violated: sum(permit.amount) = {permit_sum:.4f} != "
-                    f"reserved_cost = {self._reserved_cost:.4f}"
-                )
+            # I8: Sum of active permit amounts equals reserved_cost in normal mode.
+            # In unknown-cost mode, permits remain tracked for single-release safety
+            # but reserved_cost accounting is intentionally bypassed.
+            if not self._unknown_cost_mode:
+                permit_sum = sum(p.amount for p in self._active_permits.values())
+                if abs(permit_sum - self._reserved_cost) > epsilon:
+                    violations.append(
+                        f"I8 violated: sum(permit.amount) = {permit_sum:.4f} != "
+                        f"reserved_cost = {self._reserved_cost:.4f}"
+                    )
 
         if violations:
             for v in violations:
