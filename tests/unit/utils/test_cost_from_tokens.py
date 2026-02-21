@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import traigent.utils.cost_calculator as cc
 from traigent.utils.cost_calculator import UnknownModelError, cost_from_tokens
 
 
@@ -62,6 +63,14 @@ class TestCostFromTokensKnownModels:
         cost_mini_in, cost_mini_out = cost_from_tokens(1000, 1000, "gpt-4o-mini")
         assert cost_4o_in > cost_mini_in, "gpt-4o should cost more than gpt-4o-mini"
         assert cost_4o_out > cost_mini_out, "gpt-4o should cost more than gpt-4o-mini"
+
+    def test_anthropic_model_known(self) -> None:
+        """Anthropic dated model IDs resolve through canonical litellm path."""
+        input_cost, output_cost = cost_from_tokens(
+            100, 50, "claude-3-haiku-20240307"
+        )
+        assert input_cost > 0
+        assert output_cost > 0
 
 
 class TestCostFromTokensModelResolution:
@@ -214,6 +223,18 @@ class TestCostFromTokensEdgeCases:
 class TestCostFromTokensCustomPricing:
     """Tests for explicit custom pricing overrides."""
 
+    @pytest.fixture(autouse=True)
+    def reset_custom_pricing_cache(self):
+        old_cache = cc._CUSTOM_PRICING_CACHE
+        old_cache_key = cc._CUSTOM_PRICING_CACHE_KEY
+        cc._CUSTOM_PRICING_CACHE = None
+        cc._CUSTOM_PRICING_CACHE_KEY = None
+        try:
+            yield
+        finally:
+            cc._CUSTOM_PRICING_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE_KEY = old_cache_key
+
     def test_unknown_model_uses_custom_pricing_json(self, monkeypatch) -> None:
         pricing = {
             "brand-new-model": {
@@ -223,12 +244,9 @@ class TestCostFromTokensCustomPricing:
         }
         monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", json.dumps(pricing))
         monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
-        with patch(
-            "traigent.utils.cost_calculator._CUSTOM_PRICING_CACHE", None
-        ), patch("traigent.utils.cost_calculator._CUSTOM_PRICING_CACHE_KEY", None):
-            input_cost, output_cost = cost_from_tokens(100, 50, "brand-new-model")
-            assert input_cost == pytest.approx(100 * 3.0e-6)
-            assert output_cost == pytest.approx(50 * 15.0e-6)
+        input_cost, output_cost = cost_from_tokens(100, 50, "brand-new-model")
+        assert input_cost == pytest.approx(100 * 3.0e-6)
+        assert output_cost == pytest.approx(50 * 15.0e-6)
 
     def test_unknown_model_uses_custom_pricing_file(self, monkeypatch, tmp_path) -> None:
         payload = {
@@ -241,9 +259,6 @@ class TestCostFromTokensCustomPricing:
         file_path.write_text(json.dumps(payload), encoding="utf-8")
         monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", str(file_path))
         monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", raising=False)
-        with patch(
-            "traigent.utils.cost_calculator._CUSTOM_PRICING_CACHE", None
-        ), patch("traigent.utils.cost_calculator._CUSTOM_PRICING_CACHE_KEY", None):
-            input_cost, output_cost = cost_from_tokens(100, 50, "file-model")
-            assert input_cost == pytest.approx(100 * 1.0e-6)
-            assert output_cost == pytest.approx(50 * 2.0e-6)
+        input_cost, output_cost = cost_from_tokens(100, 50, "file-model")
+        assert input_cost == pytest.approx(100 * 1.0e-6)
+        assert output_cost == pytest.approx(50 * 2.0e-6)

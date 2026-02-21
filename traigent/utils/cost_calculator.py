@@ -11,7 +11,6 @@ Cost resolution is intentionally fail-fast:
 import json
 import logging
 import os
-import re
 import threading
 import warnings
 from dataclasses import dataclass
@@ -92,17 +91,6 @@ ESTIMATION_MODEL_PRICING = {
 
 # Backward-compat alias (external code may import the old name)
 FALLBACK_MODEL_PRICING = ESTIMATION_MODEL_PRICING
-
-# Model scoring constants for fuzzy matching preference
-# Used in _calculate_model_score to prioritize model selection
-LATEST_MODEL_PRIORITY = (9999, 12, 31, 99)  # "latest" models get highest priority
-VERSION_FALLBACK_DATE = (
-    2024,
-    1,
-    1,
-)  # Base date for version-numbered models (e.g., v1, v2)
-UNVERSIONED_FALLBACK_DATE = (2020, 1, 1)  # Base date for unversioned models
-DATE_MATCH_PRIORITY = 50  # Priority value for date-matched models
 
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
 _warned_models: set[str] = set()
@@ -670,54 +658,17 @@ class CostBreakdown:
 
 
 class CostCalculator:
-    """LLM cost calculator.
-
-    Runtime pricing should resolve through ``cost_from_tokens()`` using litellm
-    aliases and pricing tables. Mapping/fuzzy helpers are kept for legacy
-    compatibility with non-token paths and diagnostics.
-    """
-
-    # Legacy compatibility mappings (not used by canonical cost_from_tokens).
-    EXACT_MODEL_MAPPING = {
-        "claude-3-haiku": "claude-3-haiku-20240307",
-        "claude-3-sonnet": "claude-3-sonnet-20240229",
-        "claude-3-opus": "claude-3-opus-20240229",
-        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-        "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
-        "claude-4-sonnet": "claude-sonnet-4-20250514",
-        "claude-4-opus": "claude-opus-4-20250514",
-        "claude-haiku": "claude-3-haiku-20240307",
-        "claude-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-opus": "claude-3-opus-20240229",
-        "gpt-3.5": _GPT35_TURBO,
-        "gpt-4": _GPT4O,
-        "gpt4": _GPT4O,
-        "gpt3.5": _GPT35_TURBO,
-        "gpt-4o-mini": "gpt-4o-mini",
-        "claude3-haiku": "claude-3-haiku-20240307",
-        "claude3-sonnet": "claude-3-sonnet-20240229",
-        "claude3-opus": "claude-3-opus-20240229",
-    }
-
-    FAMILY_DEFAULTS = {
-        "claude-3": "claude-3-5-sonnet-latest",
-        "claude": "claude-3-5-sonnet-latest",
-        "gpt-4": _GPT4O,
-        "gpt": _GPT4O,
-        "gpt-3.5": _GPT35_TURBO,
-    }
+    """LLM cost calculator using strict canonical pricing resolution."""
 
     def __init__(self, logger=None, enable_caching: bool = True) -> None:
         """Initialize the cost calculator.
 
         Args:
             logger: Optional logger instance for debug/warning messages
-            enable_caching: Whether to cache fuzzy match results for performance
+            enable_caching: Deprecated and ignored (kept for compatibility)
         """
         self.logger = logger
         self.enable_caching = enable_caching
-        self._fuzzy_match_cache: dict[str, str | None] = {}
 
         if not LITELLM_AVAILABLE:
             raise RuntimeError(
@@ -814,235 +765,19 @@ class CostCalculator:
 
         result.total_cost = result.input_cost + result.output_cost
 
-    def _normalize_model_name(self, model_name: str) -> str:
-        """Strip provider prefixes like 'openai/gpt-4o' -> 'gpt-4o'."""
-        if "/" in model_name:
-            # Handle nested prefixes like 'openrouter/openai/gpt-4o'
-            return model_name.split("/")[-1]
-        return model_name
-
-    def _map_model_name(self, model_name: str) -> str | None:
-        """Map model names to litellm-compatible names (legacy helper)."""
-        if not model_name:
-            return None
-
-        # Step 1: litellm-native alias resolution
-        resolved = _resolve_litellm_alias(model_name)
-        if resolved != _normalize_model_name(model_name):
-            if self.logger:
-                self.logger.debug(
-                    "litellm alias mapping: %r -> %r",
-                    model_name,
-                    resolved,
-                )
-            return resolved
-
-        # Step 2: Try exact compatibility mapping
-        exact_match = self.EXACT_MODEL_MAPPING.get(model_name)
-        if exact_match:
-            if self.logger:
-                self.logger.debug(
-                    f"Exact model mapping: '{model_name}' -> '{exact_match}'"
-                )
-            return exact_match
-
-        # Step 3: Try with normalized name (strip provider prefix)
-        normalized = self._normalize_model_name(model_name)
-        if normalized != model_name:
-            exact_match = self.EXACT_MODEL_MAPPING.get(normalized)
-            if exact_match:
-                if self.logger:
-                    self.logger.debug(
-                        f"Exact model mapping (normalized): '{model_name}' -> '{exact_match}'"
-                    )
-                return exact_match
-
-        # Step 4: Try family defaults for generic names
-        family_match = self.FAMILY_DEFAULTS.get(model_name)
-        if family_match:
-            if self.logger:
-                self.logger.debug(
-                    f"Family model mapping: '{model_name}' -> '{family_match}'"
-                )
-            return family_match
-
-        # Step 5: Try fuzzy matching (legacy behavior)
-        return self._fuzzy_match_model(model_name)
-
-    def _fuzzy_match_model(self, user_model: str) -> str | None:
-        """Find best matching litellm model using fuzzy matching."""
-        # Check cache first
-        if self.enable_caching and user_model in self._fuzzy_match_cache:
-            cached_result = self._fuzzy_match_cache[user_model]
-            if self.logger and cached_result:
-                self.logger.debug(
-                    f"Cached fuzzy match: '{user_model}' -> '{cached_result}'"
-                )
-            return cached_result
-
-        # Normalize model name for checking
-        normalized = self._normalize_model_name(user_model)
-
-        # First check if the model exists as-is in litellm
-        if LITELLM_AVAILABLE and normalized in litellm.model_cost:
-            if self.logger:
-                self.logger.debug(
-                    f"Direct model match: '{user_model}' found in litellm"
-                )
-            if self.enable_caching:
-                self._fuzzy_match_cache[user_model] = normalized
-            return normalized
-
-        result = self._perform_fuzzy_match(user_model)
-
-        # Cache the result
-        if self.enable_caching:
-            self._fuzzy_match_cache[user_model] = result
-
-        return result
-
-    def _perform_fuzzy_match(self, user_model: str) -> str | None:
-        """Perform actual fuzzy matching algorithm."""
-        if not LITELLM_AVAILABLE or len(user_model) < 5:
-            return None
-
-        # Get all available litellm models
-        available_models = list(litellm.model_cost.keys())
-
-        # Normalize the user model
-        normalized_user = self._normalize_model_name(user_model)
-
-        # Find substring matches
-        matches = []
-        user_lower = normalized_user.lower()
-
-        for litellm_model in available_models:
-            # Normalize litellm model name too
-            normalized_litellm = self._normalize_model_name(litellm_model)
-            if self._is_semantic_match(user_lower, normalized_litellm.lower()):
-                matches.append(litellm_model)
-
-        if not matches:
-            if self.logger:
-                self.logger.debug(f"No fuzzy matches found for '{user_model}'")
-            return None
-
-        if len(matches) == 1:
-            result = matches[0]
-            if self.logger:
-                self.logger.info(f"Fuzzy match found: '{user_model}' -> '{result}'")
-            return str(result)
-
-        # Multiple matches - select the latest/best one
-        best_match = self._select_best_model(matches, user_model)
-        if self.logger:
-            self.logger.info(
-                f"Best fuzzy match: '{user_model}' -> '{best_match}' (from {len(matches)} options)"
-            )
-
-        return best_match
-
-    def _is_semantic_match(self, user_model: str, litellm_model: str) -> bool:
-        """Check if a litellm model is a meaningful semantic match for user model."""
-        # Basic substring matching
-        if user_model not in litellm_model:
-            return False
-
-        # Avoid over-broad matches
-        if len(user_model) < 5:
-            return False
-
-        # Special case: ensure model family alignment
-        if "gpt" in user_model and "gpt" not in litellm_model:
-            return False
-        if "claude" in user_model and "claude" not in litellm_model:
-            return False
-
-        # Avoid mixing different model generations inappropriately
-        if "gpt-4" in user_model and "gpt-3" in litellm_model:
-            return False
-        if "gpt-3" in user_model and "gpt-4" in litellm_model:
-            return False
-
-        # Check for model version mismatches that don't make sense
-        if "claude-3" in user_model and "claude-2" in litellm_model:
-            return False
-
-        return True
-
-    def _select_best_model(self, matches: list[str], user_model: str) -> str:
-        """Select the best model from multiple matches using date/version sorting."""
-        if not matches:
-            return ""
-
-        if len(matches) == 1:
-            return matches[0]
-
-        # Sort by preference: latest > dated versions > version numbers > plain names
-        scored_matches = []
-        for match in matches:
-            score = self._calculate_model_score(match, user_model)
-            scored_matches.append((score, match))
-
-        # Sort by score (highest first) and return the best match
-        scored_matches.sort(key=lambda x: x[0], reverse=True)
-        return scored_matches[0][1]
-
-    def _calculate_model_score(
-        self, model_name: str, user_model: str
-    ) -> tuple[int, int, int, int]:
-        """Calculate a sortable score for model preference."""
-        suffix = model_name.lower().replace(user_model.lower(), "")
-
-        # "latest" gets highest priority
-        if "latest" in suffix:
-            return LATEST_MODEL_PRIORITY
-
-        # Parse YYYYMMDD format
-        date_match = re.search(r"(\d{4})(\d{2})(\d{2})", suffix)
-        if date_match:
-            year, month, day = map(int, date_match.groups())
-            return (year, month, day, DATE_MATCH_PRIORITY)
-
-        # Parse YYYY-MM-DD format
-        date_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", suffix)
-        if date_match:
-            year, month, day = map(int, date_match.groups())
-            return (year, month, day, DATE_MATCH_PRIORITY)
-
-        # Parse version numbers (v1, v2, etc.)
-        version_match = re.search(r"v(\d+)", suffix)
-        if version_match:
-            version = int(version_match.group(1))
-            return (*VERSION_FALLBACK_DATE, version)
-
-        # Prefer shorter model names (more specific)
-        specificity = 100 - len(model_name)
-        return (*UNVERSIONED_FALLBACK_DATE, specificity)
-
     def _safe_calculate_prompt_cost(
         self, prompt: str | list[dict[str, Any]], model: str
     ) -> float:
-        """Safely calculate prompt cost with error handling."""
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                return calculate_prompt_cost(prompt, model)
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"Prompt cost calculation failed: {e}")
-            return 0.0
+        """Calculate prompt cost and propagate pricing failures."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return calculate_prompt_cost(prompt, model)
 
     def _safe_calculate_completion_cost(self, response: str, model: str) -> float:
-        """Safely calculate completion cost with error handling."""
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                return calculate_completion_cost(response, model)
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"Completion cost calculation failed: {e}")
-            return 0.0
+        """Calculate completion cost and propagate pricing failures."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return calculate_completion_cost(response, model)
 
     def _calculate_from_tokens(
         self, input_tokens: int, output_tokens: int, model: str
@@ -1064,43 +799,63 @@ class CostCalculator:
         return list(litellm.model_cost.keys())
 
     def clear_cache(self) -> None:
-        """Clear the fuzzy match cache."""
-        self._fuzzy_match_cache.clear()
-        # Note: get_available_models is not cached, so no need to clear
+        """Clear internal pricing caches."""
+        global _CUSTOM_PRICING_CACHE, _CUSTOM_PRICING_CACHE_KEY
+        with _CUSTOM_PRICING_LOCK:
+            _CUSTOM_PRICING_CACHE = None
+            _CUSTOM_PRICING_CACHE_KEY = None
 
     def validate_model_name(self, model_name: str) -> dict[str, Any]:
-        """Validate and provide information about a model name."""
+        """Validate and provide information about a model name.
+
+        This method does not perform fuzzy guessing or implicit family mapping.
+        """
+        normalized = _normalize_model_name(model_name) if model_name else model_name
+        resolved = _resolve_litellm_alias(normalized) if model_name else None
         result = {
             "original": model_name,
+            "normalized": normalized,
             "mapped": None,
+            "resolved": resolved,
             "available": LITELLM_AVAILABLE,
+            "known_to_litellm": False,
+            "custom_pricing": False,
             "exact_match": False,
             "fuzzy_match": False,
             "family_match": False,
             "not_found": False,
         }
 
+        if not model_name:
+            result["not_found"] = True
+            return result
+
         if not LITELLM_AVAILABLE:
             result["error"] = "litellm library not available"
             return result
 
-        # Check exact mapping
-        if model_name in self.EXACT_MODEL_MAPPING:
-            result["mapped"] = self.EXACT_MODEL_MAPPING[model_name]
-            result["exact_match"] = True
+        candidates = [
+            candidate for candidate in [model_name, normalized, resolved] if candidate
+        ]
+        candidates = list(dict.fromkeys(candidates))
+        for candidate in candidates:
+            if _is_model_known_to_litellm(candidate):
+                result["known_to_litellm"] = True
+                result["mapped"] = candidate
+                result["not_found"] = False
+                return result
+
+        try:
+            custom_pricing = _try_custom_model_pricing(model_name)
+        except ValueError as exc:
+            result["error"] = str(exc)
+            result["not_found"] = True
             return result
 
-        # Check family mapping
-        if model_name in self.FAMILY_DEFAULTS:
-            result["mapped"] = self.FAMILY_DEFAULTS[model_name]
-            result["family_match"] = True
-            return result
-
-        # Try fuzzy matching
-        fuzzy_result = self._perform_fuzzy_match(model_name)
-        if fuzzy_result:
-            result["mapped"] = fuzzy_result
-            result["fuzzy_match"] = True
+        if custom_pricing is not None:
+            result["custom_pricing"] = True
+            result["mapped"] = resolved or normalized or model_name
+            result["not_found"] = False
             return result
 
         result["not_found"] = True
