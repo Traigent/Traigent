@@ -542,7 +542,7 @@ class TestParallelUnknownCostCTD:
                 try:
                     await enforcer.track_cost_async(None, permit=permit)
                     return None
-                except Exception as exc:  # pragma: no cover - asserted below
+                except Exception as exc:
                     return exc
 
             results = await asyncio.gather(*[track_unknown(p) for p in permits])
