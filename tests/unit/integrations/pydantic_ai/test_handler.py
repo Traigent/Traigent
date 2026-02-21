@@ -323,10 +323,11 @@ class TestPydanticAIHandler:
         """Strict cost accounting raises for unknown model pricing."""
         from traigent.utils.cost_calculator import UnknownModelError
 
-        handler = self._make_handler(_make_agent("openai:unknown-model-xyz-123"))
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
         ):
+            # strict mode is latched at handler construction
+            handler = self._make_handler(_make_agent("openai:unknown-model-xyz-123"))
             with pytest.raises(UnknownModelError):
                 handler._estimate_cost(100, 50)
 
@@ -339,6 +340,31 @@ class TestPydanticAIHandler:
         handler = self._make_handler()
         cost = handler._estimate_cost(100, 50)
         assert cost == 0.0
+
+    def test_strict_mode_is_latched_at_handler_init(self) -> None:
+        """Strict flag changes after init do not alter existing handler behavior."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
+        ):
+            non_strict_handler = self._make_handler(
+                _make_agent("openai:unknown-model-xyz-123")
+            )
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            assert non_strict_handler._estimate_cost(100, 50) == 0.0
+
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            strict_handler = self._make_handler(_make_agent("openai:unknown-model-xyz-123"))
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
+        ):
+            with pytest.raises(UnknownModelError):
+                strict_handler._estimate_cost(100, 50)
 
     @patch(
         "traigent.integrations.pydantic_ai.handler.PydanticAIHandler._estimate_cost",

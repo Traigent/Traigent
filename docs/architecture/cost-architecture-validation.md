@@ -17,6 +17,8 @@ The following items from this validation were implemented on
     unknown/unpriced models.
   - This surfaces all cost-path failures (not only `UnknownModelError`) in integration
     handlers that intentionally catch generic exceptions in non-strict mode.
+  - Strict-mode flags are latched at object construction for runtime consistency:
+    create a new handler/enforcer instance after env changes.
 - `CostEnforcer` fail-fast behavior now treats either flag as strict:
   - `TRAIGENT_REQUIRE_COST_TRACKING=true` or
   - `TRAIGENT_STRICT_COST_ACCOUNTING=true`.
