@@ -7,9 +7,15 @@ from __future__ import annotations
 from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
+from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE = 2000
+_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE = 500
+_CONSERVATIVE_INPUT_COST_PER_TOKEN = 15.0e-6
+_CONSERVATIVE_OUTPUT_COST_PER_TOKEN = 75.0e-6
 
 
 class CostEstimator:
@@ -24,6 +30,7 @@ class CostEstimator:
         cost_enforcer: CostEnforcer,
         max_trials: int | None,
         max_total_examples: int | None,
+        model_name: str | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -31,10 +38,42 @@ class CostEstimator:
             cost_enforcer: Cost enforcement instance for approval checks
             max_trials: Maximum number of trials
             max_total_examples: Global sample budget (None = unlimited)
+            model_name: Primary model name for model-aware pricing estimation
         """
         self._cost_enforcer = cost_enforcer
         self._max_trials = max_trials
         self._max_total_examples = max_total_examples
+        self._model_name = model_name
+
+    def _estimate_base_cost_per_example(self) -> tuple[float, str]:
+        """Estimate per-example cost from model pricing with conservative fallback."""
+        if self._model_name:
+            try:
+                input_rate, output_rate, source = get_model_token_pricing(
+                    self._model_name
+                )
+                base_cost = (
+                    _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * input_rate
+                    + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * output_rate
+                )
+                return float(base_cost), source
+            except UnknownModelError:
+                logger.warning(
+                    "Unknown model %r for pre-approval estimate; using conservative pricing.",
+                    self._model_name,
+                )
+            except Exception:
+                logger.debug(
+                    "Model-aware estimate failed for %r; using conservative pricing.",
+                    self._model_name,
+                    exc_info=True,
+                )
+
+        conservative_cost = (
+            _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_INPUT_COST_PER_TOKEN
+            + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_OUTPUT_COST_PER_TOKEN
+        )
+        return float(conservative_cost), "conservative_fallback"
 
     def check_cost_approval(self, dataset: Dataset) -> None:
         """Check cost approval before optimization.
@@ -78,9 +117,7 @@ class CostEstimator:
         Returns:
             Estimated cost in USD.
         """
-        # Base cost per example (conservative estimate for GPT-4 class models)
-        # Assumes ~2000 tokens input, ~500 tokens output per example
-        base_cost_per_example = 0.01  # $0.01 per example (conservative)
+        base_cost_per_example, pricing_source = self._estimate_base_cost_per_example()
 
         # Get dataset size
         dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
@@ -110,7 +147,8 @@ class CostEstimator:
 
         logger.debug(
             f"Cost estimate ({estimation_mode}): {total_samples} total samples "
-            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f}"
+            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f} "
+            f"(pricing_source={pricing_source})"
         )
 
         return estimated_total
@@ -121,7 +159,7 @@ class CostEstimator:
 
         Attempts to find cost from multiple sources:
         1. trial_result.metrics["total_cost"] or ["cost"]
-        2. trial_result.metadata["total_example_cost"]
+        2. trial_result.metadata["total_example_cost"], ["total_cost"], or ["cost"]
         3. Returns None if cost cannot be determined (triggers fallback mode)
 
         Args:
@@ -141,9 +179,11 @@ class CostEstimator:
 
         # Try metadata
         metadata = trial_result.metadata or {}
-        if "total_example_cost" in metadata:
+        for key in ("total_example_cost", "total_cost", "cost"):
+            if key not in metadata:
+                continue
             try:
-                return float(metadata["total_example_cost"])
+                return float(metadata[key])
             except (TypeError, ValueError):
                 pass
 

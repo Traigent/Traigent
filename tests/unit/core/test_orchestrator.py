@@ -18,17 +18,14 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.api.types import (
-    OptimizationStatus,
-    TrialResult,
-    TrialStatus,
-)
+from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -844,6 +841,43 @@ class TestOptimizationOrchestrator:
         # Best result should have highest accuracy (0.3)
         assert abs(result.best_metrics["accuracy"] - 0.3) < 1e-9
         assert abs(orchestrator.best_result.metrics["accuracy"] - 0.3) < 1e-9
+
+    def test_best_result_tracking_minimization_objective(self, orchestrator):
+        """Best result should use minimum for minimize-oriented objectives."""
+        orchestrator.optimizer.objectives = ["latency"]
+        orchestrator._best_trial_cached = None
+
+        orchestrator._trials = [
+            TrialResult(
+                trial_id="t1",
+                config={"param1": 1},
+                metrics={"latency": 120.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+            TrialResult(
+                trial_id="t2",
+                config={"param1": 2},
+                metrics={"latency": 80.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+            TrialResult(
+                trial_id="t3",
+                config={"param1": 3},
+                metrics={"latency": 95.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+        ]
+
+        best = orchestrator.best_result
+        assert best is not None
+        assert best.trial_id == "t2"
+        assert best.metrics["latency"] == 80.0
 
     # Timeout Handling Tests
 
@@ -1840,19 +1874,19 @@ class TestCostEstimation:
 
         # Estimate should use the full budget (1000), not clip to dataset size (10)
         estimate = orchestrator._estimate_optimization_cost(small_dataset)
+        base_cost_per_example, _pricing_source = (
+            orchestrator._cost_estimator._estimate_base_cost_per_example()
+        )
 
-        # With base_cost_per_example = 0.01, retry_factor = 1.2:
-        # estimate = 1000 * 0.01 * 1.2 = 12.0
-        # If it was clipped to dataset (10), it would be: 10 * 0.01 * 1.2 = 0.12
-        # The estimate should be much higher than 0.12
-        assert estimate > 1.0, (
-            f"Expected estimate > 1.0 (using full budget), got {estimate}. "
+        expected_full_budget = 1000 * base_cost_per_example * 1.2
+        clipped_to_dataset = 10 * base_cost_per_example * 1.2
+        assert estimate > clipped_to_dataset, (
+            f"Expected estimate > {clipped_to_dataset} (using full budget), got {estimate}. "
             "Cost estimate may be incorrectly clipping to dataset size."
         )
-        # More specific check: should be approximately 12.0 (1000 * 0.01 * 1.2)
         assert estimate == pytest.approx(
-            12.0, rel=0.1
-        ), f"Expected estimate ~12.0, got {estimate}"
+            expected_full_budget, rel=0.1
+        ), f"Expected estimate ~{expected_full_budget}, got {estimate}"
 
     def test_cost_estimate_without_budget_uses_dataset_size(
         self,
@@ -1869,10 +1903,9 @@ class TestCostEstimation:
         )
 
         estimate = orchestrator._estimate_optimization_cost(small_dataset)
+        base_cost_per_example, _pricing_source = (
+            orchestrator._cost_estimator._estimate_base_cost_per_example()
+        )
 
-        # Without budget, uses samples_per_trial (dataset_size) * max_trials
-        # = 10 * 5 * 0.01 * 1.2 = 0.60
-        # But may use samples_per_trial estimate
-        assert estimate > 0, "Estimate should be positive"
-        # Should be reasonable for 5 trials of 10 examples each
-        assert estimate < 10.0, f"Estimate {estimate} seems too high"
+        expected = 10 * 5 * base_cost_per_example * 1.2
+        assert estimate == pytest.approx(expected, rel=0.1)

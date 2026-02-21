@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from traigent.api.types import TrialResult
+from traigent.utils.objectives import is_minimization_objective
 
 __all__ = [
     "SelectionResult",
@@ -27,12 +28,6 @@ class SelectionResult:
     best_config: dict[str, Any]
     best_score: float
     session_summary: dict[str, Any] | None
-
-
-def _is_minimization_objective(objective: str) -> bool:
-    minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
-    objective_lower = objective.lower()
-    return any(pattern in objective_lower for pattern in minimize_patterns)
 
 
 def apply_tie_breaker(
@@ -97,7 +92,7 @@ def _apply_min_abs_deviation(
         for name, value in (t.metrics or {}).items():
             if isinstance(value, (int, float)) and name != objective:
                 # For cost/latency metrics, invert (lower is better)
-                if _is_minimization_objective(name):
+                if is_minimization_objective(name):
                     total -= float(value)
                 else:
                     total += float(value)
@@ -113,7 +108,7 @@ def _select_best_single_trial(
     band_target: float | None,
 ) -> SelectionResult:
     """Select best trial without aggregation, applying tie-breakers."""
-    minimization = _is_minimization_objective(primary_objective)
+    minimization = is_minimization_objective(primary_objective)
     chooser = min if minimization else max
 
     # Find the best score
@@ -229,7 +224,7 @@ def _apply_aggregated_tie_breaker(
             total = 0.0
             for name, value in _compute_mean_metrics(entry).items():
                 if name != primary_objective:
-                    if _is_minimization_objective(name):
+                    if is_minimization_objective(name):
                         total -= value
                     else:
                         total += value
@@ -251,7 +246,7 @@ def _select_best_aggregated(
     if not aggregated:
         return SelectionResult(best_config={}, best_score=0.0, session_summary=None)
 
-    minimization = _is_minimization_objective(primary_objective)
+    minimization = is_minimization_objective(primary_objective)
 
     def score(entry: dict[str, Any]) -> float:
         return _compute_mean_metrics(entry).get(primary_objective, 0.0)

@@ -144,6 +144,62 @@ class TestEncryptionManager:
             encrypted_result["classification"] == DataClassification.CONFIDENTIAL.value
         )
 
+    def test_zeroize_key_buffer_mutates_buffer_in_place(self):
+        """Key buffer zeroization should clear all bytes."""
+        key_buffer = bytearray(b"secret")
+
+        EncryptionManager._zeroize_key_buffer(key_buffer)
+
+        assert key_buffer == bytearray(b"\x00" * 6)
+
+    def test_encrypt_invokes_key_buffer_zeroization(self, monkeypatch):
+        """Encrypt path should invoke best-effort key buffer zeroization."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        observed_buffers: list[bytes] = []
+
+        def capture_and_zeroize(key_buffer: bytearray | None) -> None:
+            if key_buffer is not None:
+                observed_buffers.append(bytes(key_buffer))
+                for idx in range(len(key_buffer)):
+                    key_buffer[idx] = 0
+
+        monkeypatch.setattr(
+            EncryptionManager,
+            "_zeroize_key_buffer",
+            staticmethod(capture_and_zeroize),
+        )
+
+        encryption_manager.encrypt("buffer wipe check")
+
+        assert observed_buffers
+        assert any(any(byte != 0 for byte in before) for before in observed_buffers)
+
+    def test_decrypt_invokes_key_buffer_zeroization(self, monkeypatch):
+        """Decrypt path should invoke best-effort key buffer zeroization."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        encrypted_result = encryption_manager.encrypt("decrypt wipe check")
+        observed_buffers: list[bytes] = []
+
+        def capture_and_zeroize(key_buffer: bytearray | None) -> None:
+            if key_buffer is not None:
+                observed_buffers.append(bytes(key_buffer))
+                for idx in range(len(key_buffer)):
+                    key_buffer[idx] = 0
+
+        monkeypatch.setattr(
+            EncryptionManager,
+            "_zeroize_key_buffer",
+            staticmethod(capture_and_zeroize),
+        )
+
+        decrypted = encryption_manager.decrypt(encrypted_result)
+
+        assert decrypted == b"decrypt wipe check"
+        assert observed_buffers
+        assert any(any(byte != 0 for byte in before) for before in observed_buffers)
+
     def test_file_encryption(self):
         """Test file encryption and decryption"""
         key_manager = KeyManager()

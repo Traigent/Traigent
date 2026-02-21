@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.core.constants import DEFAULT_MODEL
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -494,7 +495,7 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
 
         Returns float('inf') for unknown models to ensure they fail the constraint.
         """
-        model = config.get("model", "gpt-4o-mini")
+        model = config.get("model", DEFAULT_MODEL)
         max_tokens = config.get("max_tokens", 150)
 
         # Method 1: Try litellm.cost_per_token directly with 1000 tokens
