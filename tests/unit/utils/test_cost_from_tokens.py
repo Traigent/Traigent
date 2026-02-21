@@ -92,6 +92,20 @@ class TestCostFromTokensModelResolution:
         assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
         assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
 
+    def test_claude_sonnet_alias_maps_to_priced_model(self) -> None:
+        """Legacy alias claude-sonnet resolves to priced dated model."""
+        alias_cost = cost_from_tokens(100, 50, "claude-sonnet")
+        dated_cost = cost_from_tokens(100, 50, "claude-3-5-sonnet-20241022")
+        assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
+        assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
+
+    def test_claude_opus_alias_maps_to_priced_model(self) -> None:
+        """Legacy alias claude-opus resolves to priced dated model."""
+        alias_cost = cost_from_tokens(100, 50, "claude-opus")
+        dated_cost = cost_from_tokens(100, 50, "claude-3-opus-20240229")
+        assert alias_cost[0] == pytest.approx(dated_cost[0], rel=1e-6)
+        assert alias_cost[1] == pytest.approx(dated_cost[1], rel=1e-6)
+
     def test_colon_prefixed_model(self) -> None:
         """Colon-prefixed provider model resolves."""
         cost_prefixed = cost_from_tokens(100, 50, "anthropic:claude-3-haiku")

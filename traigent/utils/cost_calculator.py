@@ -624,10 +624,10 @@ class CostCalculator:
         "claude-4-sonnet": "claude-sonnet-4-20250514",
         "claude-4-opus": "claude-opus-4-20250514",
         # Add latest versions for convenience
-        # Use dated alias for pricing compatibility (litellm pricing coverage).
+        # Use dated aliases for pricing compatibility (litellm pricing coverage).
         "claude-haiku": "claude-3-haiku-20240307",
-        "claude-sonnet": "claude-3-5-sonnet-latest",
-        "claude-opus": "claude-3-opus-latest",
+        "claude-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-opus": "claude-3-opus-20240229",
         # OpenAI models are usually fine as-is but add common aliases
         "gpt-3.5": _GPT35_TURBO,
         "gpt-4": _GPT4O,
