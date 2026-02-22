@@ -180,7 +180,7 @@ Executed:
   tests/unit/cloud/test_integration_manager_validation.py \
   tests/unit/cloud/test_integration_manager_cancelled.py \
   tests/integration/test_backend_integration.py::TestSessionLifecycleManager \
-  tests/unit/utils/test_objectives.py \
+  tests/unit/utils/test_objective_utils.py \
   tests/unit/core/test_logger_facade.py \
   tests/unit/hooks/test_validator.py \
   tests/unit/architecture/test_pricing_consistency.py \
@@ -229,7 +229,7 @@ Net reliability-cycle code/test surface currently changed: 44 tracked files in t
   - `traigent/core/samplers/base.py` (deleted)
   - `traigent/core/samplers/factory.py` (deleted)
 - New/updated test focus:
-  - `tests/unit/utils/test_objectives.py`
+  - `tests/unit/utils/test_objective_utils.py`
   - `tests/unit/cloud/test_session_management.py`
   - `tests/unit/core/samplers/test_factory.py`
   - `tests/unit/integrations/test_model_validation_warnings.py`
