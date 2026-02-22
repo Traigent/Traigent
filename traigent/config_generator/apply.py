@@ -47,7 +47,14 @@ def apply_config(
     if not function_name:
         raise ValueError("function_name is required for apply_config")
 
-    source = file_path.read_text()
+    # Resolve and validate path to prevent traversal attacks (S2083)
+    resolved = file_path.resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError(f"Not a file: {resolved}")
+    if resolved.suffix != ".py":
+        raise ValueError(f"Expected a .py file, got: {resolved}")
+
+    source = resolved.read_text()
     lines = source.splitlines(keepends=True)
 
     try:
@@ -93,10 +100,10 @@ def apply_config(
 
     # Write back
     if backup:
-        shutil.copy2(file_path, file_path.with_suffix(".py.bak"))
+        shutil.copy2(resolved, resolved.with_suffix(".py.bak"))
 
-    file_path.write_text("".join(lines))
-    return file_path
+    resolved.write_text("".join(lines))
+    return resolved
 
 
 def _find_function(
