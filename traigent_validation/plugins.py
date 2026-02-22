@@ -35,9 +35,7 @@ def _coerce_factory(candidate: Any) -> Callable[[], Any] | None:
     if callable(candidate):
         return cast(Callable[[], Any], candidate)
 
-    logger.warning(
-        "Ignoring validator plugin %r because it is not callable", candidate
-    )
+    logger.warning("Ignoring validator plugin %r because it is not callable", candidate)
     return None
 
 
@@ -51,16 +49,19 @@ def load_entry_point_validators() -> None:
 
         _ensure_builtin_validators()
 
+        eps: list[Any]
         try:
-            eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
+            eps = list(importlib.metadata.entry_points(group=ENTRY_POINT_GROUP))
         except TypeError:
             all_eps = importlib.metadata.entry_points()
             legacy_getter = getattr(all_eps, "get", None)
             if callable(legacy_getter):
-                eps = legacy_getter(ENTRY_POINT_GROUP, [])
+                eps = list(legacy_getter(ENTRY_POINT_GROUP, []))
             else:
                 eps = [
-                    ep for ep in all_eps if getattr(ep, "group", None) == ENTRY_POINT_GROUP
+                    ep
+                    for ep in all_eps
+                    if getattr(ep, "group", None) == ENTRY_POINT_GROUP
                 ]
         except Exception as exc:
             logger.warning("Failed to inspect validator entry points: %s", exc)
