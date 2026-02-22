@@ -81,7 +81,7 @@ def mock_accuracy_score(output: str, expected: str, config: dict | None = None, 
     execution_mode="edge_analytics",
     mock_mode_config=MOCK_MODE_CONFIG,
 )
-def classify_text(text: str) -> str:
+def ai_agent_classify_text_sentiment(text: str) -> str:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
@@ -106,7 +106,7 @@ async def main() -> None:
     print("Balancing accuracy (50%), cost (30%), latency (20%).")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
-    results = await classify_text.optimize(
+    results = await ai_agent_classify_text_sentiment.optimize(
         algorithm="random", max_trials=8, random_seed=42
     )
 
