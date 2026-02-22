@@ -662,8 +662,12 @@ class TraigentHandler(BaseCallbackHandler):
         When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
         strict_cost_accounting = self._strict_cost_accounting
+        total_tokens = input_tokens + output_tokens
         try:
-            from traigent.utils.cost_calculator import cost_from_tokens
+            from traigent.utils.cost_calculator import (
+                _estimation_cost_from_tokens,
+                cost_from_tokens,
+            )
 
             input_cost, output_cost = cost_from_tokens(
                 input_tokens,
@@ -671,14 +675,34 @@ class TraigentHandler(BaseCallbackHandler):
                 model,
                 strict=strict_cost_accounting,
             )
-            return float(input_cost + output_cost)
+            total_cost = float(input_cost + output_cost)
+
+            # Non-strict mode may return zero for unknown/unmapped aliases.
+            # Preserve backward-compatible estimator behavior by attempting
+            # the local estimation table before returning zero.
+            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
+                est_input_cost, est_output_cost = _estimation_cost_from_tokens(
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    _quiet=True,
+                )
+                est_total = float(est_input_cost + est_output_cost)
+                if est_total > 0.0:
+                    logger.debug(
+                        "Using estimation pricing fallback for model %r in TraigentHandler",
+                        model,
+                    )
+                    return est_total
+
+            return total_cost
         except Exception:
             if strict_cost_accounting:
                 raise
             logger.warning(
                 "Cost calculation failed for model %r with %d tokens",
                 model,
-                input_tokens + output_tokens,
+                total_tokens,
             )
             return 0.0
 

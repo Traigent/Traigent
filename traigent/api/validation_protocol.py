@@ -438,6 +438,7 @@ class SATConstraintValidator:
     """
 
     def __init__(self) -> None:
+        """Initialize with a Python validator delegate for compatibility mode."""
         self._delegate = PythonConstraintValidator()
 
     def validate_config(
