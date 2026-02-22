@@ -383,9 +383,7 @@ class AuthManager:
         self._unified_auth = self
 
         self._provided_credentials: AuthCredentials | None = None
-        initial_api_key = (
-            api_key or os.getenv("TRAIGENT_API_KEY") or os.getenv("OPTIGEN_API_KEY")
-        )
+        initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
         initial_source = (
             "explicit" if api_key else ("environment" if initial_api_key else None)
         )

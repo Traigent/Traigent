@@ -6,7 +6,7 @@ This example simulates a LangGraph-like workflow and sends traces to the backend
 
 Run with: python 04_workflow_traces_demo.py
 
-Uses TRAIGENT_BACKEND_URL from .env (or defaults to https://api.traigent.ai)
+Uses TRAIGENT_BACKEND_URL from .env (or defaults to http://localhost:5000)
 """
 
 import os
@@ -231,7 +231,7 @@ def main() -> None:
     print("=" * 60)
 
     # Get backend URL and auth token (uses same env vars as rest of SDK)
-    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "https://api.traigent.ai")
+    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     auth_token = os.environ.get("TRAIGENT_API_KEY")
     print(f"\nBackend URL: {backend_url}")
     print(f"Auth token: {'set' if auth_token else 'NOT SET (will fail with 401)'}")

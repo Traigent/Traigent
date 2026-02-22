@@ -216,9 +216,7 @@ class CredentialResolver:
                 else:
                     api_key = CredentialManager.get_api_key()
                     if not api_key:
-                        api_key = os.getenv("TRAIGENT_API_KEY") or os.getenv(
-                            "OPTIGEN_API_KEY"
-                        )
+                        api_key = os.getenv("TRAIGENT_API_KEY")
                         if api_key:
                             metadata["source"] = "environment"
 

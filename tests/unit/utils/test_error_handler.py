@@ -256,9 +256,7 @@ class TestErrorHandlerAPIKeyErrors:
         with pytest.raises(APIKeyError) as exc_info:
             ErrorHandler.handle_api_key_error(error)
 
-        assert "TRAIGENT_API_KEY" in str(exc_info.value) or "OPTIGEN_API_KEY" in str(
-            exc_info.value
-        )
+        assert "TRAIGENT_API_KEY" in str(exc_info.value)
 
     def test_handle_api_key_error_generic(self):
         """Test handling of generic API key error."""

@@ -25,7 +25,6 @@ def test_backend_config():
     for var in [
         "TRAIGENT_BACKEND_URL",
         "TRAIGENT_API_URL",
-        "OPTIGEN_API_KEY",
         "TRAIGENT_API_KEY",
         "TRAIGENT_DEFAULT_LOCAL_URL",
         "TRAIGENT_ENV",
@@ -122,17 +121,6 @@ def test_backend_config():
     assert config["api_key_prefix"] == "traigent...", "Should show prefix"
     assert config["api_key_env"] == "TRAIGENT_API_KEY"
 
-    print("   Ensuring legacy OPTIGEN_API_KEY still works:")
-    os.environ["OPTIGEN_API_KEY"] = "optigen-key-67890"
-    config = BackendConfig.get_config_summary()
-    assert (
-        config["api_key_prefix"] == "traigent..."
-    ), "TRAIGENT_API_KEY should remain preferred when both set"
-    os.environ.pop("TRAIGENT_API_KEY", None)
-    config = BackendConfig.get_config_summary()
-    assert (
-        config["api_key_env"] == "OPTIGEN_API_KEY"
-    ), "Legacy OPTIGEN_API_KEY should be used when TRAIGENT_API_KEY absent"
     print("   ✅ API key configuration working correctly\n")
 
     # Test 5: Test with traigent.initialize()
@@ -143,7 +131,6 @@ def test_backend_config():
     for var in [
         "TRAIGENT_BACKEND_URL",
         "TRAIGENT_API_URL",
-        "OPTIGEN_API_KEY",
         "TRAIGENT_API_KEY",
         "TRAIGENT_DEFAULT_LOCAL_URL",
         "TRAIGENT_ENV",
@@ -151,7 +138,7 @@ def test_backend_config():
         os.environ.pop(var, None)
 
     os.environ["TRAIGENT_BACKEND_URL"] = "http://localhost:5000"
-    os.environ["OPTIGEN_API_KEY"] = "test-api-key"
+    os.environ["TRAIGENT_API_KEY"] = "test-api-key"
 
     # Initialize without explicit URL (should use env var)
     result = traigent.initialize()
@@ -175,7 +162,7 @@ def test_backend_client_config():
 
     # Set up environment for local backend
     os.environ["TRAIGENT_BACKEND_URL"] = "http://localhost:5000"
-    os.environ["OPTIGEN_API_KEY"] = "test-key"
+    os.environ["TRAIGENT_API_KEY"] = "test-key"
     os.environ["TRAIGENT_ENV"] = "development"
 
     # Import after setting env vars
