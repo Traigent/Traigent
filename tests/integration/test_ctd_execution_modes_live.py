@@ -23,7 +23,7 @@ LIVE_CASES = [case for case in CTD_CASES if case["combo"].get("has_api_key")]
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("TRAIGENT_CTD_LIVE"),
-    reason="Set TRAIGENT_CTD_LIVE=1 and provide TRAIGENT_API_KEY (or legacy OPTIGEN_API_KEY) to run live backend tests",
+    reason="Set TRAIGENT_CTD_LIVE=1 and provide TRAIGENT_API_KEY to run live backend tests",
 )
 @pytest.mark.parametrize("case", LIVE_CASES, ids=lambda payload: payload["id"])
 async def test_ctd_execution_behavior_live(case: dict, monkeypatch) -> None:
@@ -60,11 +60,9 @@ async def test_ctd_execution_behavior_live(case: dict, monkeypatch) -> None:
         monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://api.traigent.ai")
 
     # We expect an API key to be available in the environment
-    api_key = os.getenv("TRAIGENT_API_KEY") or os.getenv("OPTIGEN_API_KEY")
+    api_key = os.getenv("TRAIGENT_API_KEY")
     if not api_key:
-        pytest.skip(
-            "TRAIGENT_API_KEY (or legacy OPTIGEN_API_KEY) must be set for live backend test"
-        )
+        pytest.skip("TRAIGENT_API_KEY must be set for live backend test")
 
     # Instantiate real client
     client = TraigentClient(
