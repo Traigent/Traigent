@@ -428,7 +428,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
         monkeypatch.setenv("TRAIGENT_BACKEND_URL", f"https://{backend_host}")
 
     # Clear sensitive env to prevent leakage between cases
-    for key in ["TRAIGENT_API_KEY", "OPTIGEN_API_KEY", "TRAIGENT_BACKEND_URL"]:
+    for key in ["TRAIGENT_API_KEY", "TRAIGENT_BACKEND_URL"]:
         monkeypatch.delenv(key, raising=False)
 
     api_key = None

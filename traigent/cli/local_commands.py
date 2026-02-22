@@ -473,7 +473,7 @@ def sync_to_cloud(
                 "❌ API key required for cloud sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
                 err=True,
             )
-            click.echo("💡 Get your API key at: https://traigent.ai/api-keys")
+            click.echo("💡 Configure a key with `traigent auth login` or export TRAIGENT_API_KEY.")
             sys.exit(1)
 
         sync_manager = SyncManager(config, api_key)
