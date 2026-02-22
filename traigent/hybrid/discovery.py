@@ -245,7 +245,6 @@ class ConfigSpaceDiscovery:
         pseudo_path = Path(f"hybrid-{response.tunable_id or 'unknown'}-config-space")
         compiled_constraints, derived_constraints = _compile_constraints_unified(
             constraints_input if constraints_input is not None else [],
-            validate_constraints=True,
             path=pseudo_path,
         )
         constraint_wrappers = [
