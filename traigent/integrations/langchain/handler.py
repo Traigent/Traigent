@@ -680,7 +680,7 @@ class TraigentHandler(BaseCallbackHandler):
             # Non-strict mode may return zero for unknown/unmapped aliases.
             # Preserve backward-compatible estimator behavior by attempting
             # the local estimation table before returning zero.
-            if not strict_cost_accounting and total_cost == 0.0 and total_tokens > 0:
+            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
                 est_input_cost, est_output_cost = _estimation_cost_from_tokens(
                     model,
                     input_tokens,
