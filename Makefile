@@ -15,6 +15,7 @@ COVERAGE := $(PYTHON) -m coverage
 
 # Directories
 SRC_DIR := traigent
+VALIDATION_SRC_DIR := traigent_validation
 TEST_DIR := tests
 # NOTE: examples, playground, paper_experiments moved to TraigentDemo
 
@@ -81,23 +82,23 @@ test-coverage:  ## Run tests with coverage report
 
 lint:  ## Run all linters (ruff, mypy, bandit)
 	@echo "Running Ruff..."
-	$(RUFF) check $(SRC_DIR) --fix
+	$(RUFF) check $(SRC_DIR) $(VALIDATION_SRC_DIR) --fix
 	@echo "Running MyPy..."
-	$(MYPY) $(SRC_DIR) --install-types --non-interactive
+	$(MYPY) $(SRC_DIR) $(VALIDATION_SRC_DIR) --install-types --non-interactive
 	@echo "Running Bandit..."
-	$(BANDIT) -r $(SRC_DIR) -ll --skip B101,B601
+	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -ll --skip B101,B601
 
 format:  ## Format code with black and isort
 	@echo "Formatting with Black..."
-	$(BLACK) $(SRC_DIR) $(TEST_DIR)
+	$(BLACK) $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	@echo "Sorting imports with isort..."
-	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) --profile black
+	$(PYTHON) -m isort $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR) --profile black
 
 security:  ## Run security checks
 	@echo "Running Bandit security scan..."
-	$(BANDIT) -r $(SRC_DIR) -f json -o security_report.json
+	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -f json -o security_report.json
 	@echo "Checking for hardcoded secrets..."
-	@grep -r "sk-proj\|sk-ant\|api_key\|secret\|password" --include="*.py" $(SRC_DIR) || echo "No hardcoded secrets found"
+	@grep -r "sk-proj\|sk-ant\|api_key\|secret\|password" --include="*.py" $(SRC_DIR) $(VALIDATION_SRC_DIR) || echo "No hardcoded secrets found"
 
 clean:  ## Clean up generated files
 	rm -rf build/
@@ -117,14 +118,14 @@ optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint
-	$(BLACK) --check $(SRC_DIR) $(TEST_DIR)
+	$(BLACK) --check $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	$(MAKE) test-coverage
 	$(MAKE) security
 
 quick-fix:  ## Quick fix common issues (format, simple lint fixes)
 	@echo "Applying quick fixes..."
 	$(MAKE) format
-	$(RUFF) check $(SRC_DIR) --fix --unsafe-fixes
+	$(RUFF) check $(SRC_DIR) $(VALIDATION_SRC_DIR) --fix --unsafe-fixes
 	@echo "Quick fixes applied!"
 
 pre-commit:  ## Run pre-commit hooks on all files

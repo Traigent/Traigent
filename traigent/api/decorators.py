@@ -43,6 +43,7 @@ Examples:
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +58,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
+    ParameterRange,
     is_inline_param_definition,
     normalize_configuration_space,
 )
@@ -346,6 +348,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
+    "algorithm": "random",
     "max_trials": 50,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
@@ -365,6 +368,19 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
 _REMOVED_PARAMETERS = frozenset(
     ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+)
+_ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
+    (
+        "budget_limit",
+        "budget_metric",
+        "budget_include_pruned",
+        "plateau_window",
+        "plateau_epsilon",
+        "cost_limit",
+        "cost_approved",
+        "tie_breakers",
+        "tvl_parameter_agents",
+    )
 )
 
 
@@ -427,6 +443,8 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
+    algorithm: str | None = None
+    max_trials: int | None = None
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None
     agent_prefixes: list[str] | None = None
@@ -505,6 +523,8 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("mock", self.mock),
+            ("algorithm", self.algorithm),
+            ("max_trials", self.max_trials),
             ("agents", self.agents),
             ("agent_prefixes", self.agent_prefixes),
             ("agent_measures", self.agent_measures),
@@ -671,15 +691,106 @@ def _extract_inline_params(
     return inline_params, remaining_overrides
 
 
+def _normalize_runtime_override_aliases(
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize deprecated runtime override aliases."""
+    if "strategy" not in overrides:
+        return dict(overrides)
+
+    normalized = dict(overrides)
+    strategy_value = normalized.pop("strategy")
+    existing_algorithm = normalized.get("algorithm")
+    if (
+        existing_algorithm is not None
+        and strategy_value is not None
+        and existing_algorithm != strategy_value
+    ):
+        raise TypeError(
+            "Conflicting optimization selector: received both "
+            f"'algorithm={existing_algorithm}' and 'strategy={strategy_value}'. "
+            "Use only 'algorithm'."
+        )
+
+    warnings.warn(
+        "'strategy' is deprecated; use 'algorithm' instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    normalized["algorithm"] = (
+        existing_algorithm if existing_algorithm is not None else strategy_value
+    )
+    return normalized
+
+
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
-    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
+    unknown_keys = (
+        set(remaining_overrides.keys())
+        - _DIRECT_OPTION_KEYS
+        - _ALLOWED_RUNTIME_OVERRIDE_KEYS
+    )
     if unknown_keys:
         raise TypeError(
             f"Unknown keyword arguments: {sorted(unknown_keys)}. "
             f"If you meant to define parameter ranges, use Range(), IntRange(), "
             f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
         )
+
+
+def _ensure_scope_name(scope_var_names: dict[int, str], name: str) -> None:
+    """Ensure a parameter name appears in scope even without a live object id."""
+    if name in scope_var_names.values():
+        return
+
+    synthetic_id = -1
+    while synthetic_id in scope_var_names:
+        synthetic_id -= 1
+    scope_var_names[synthetic_id] = name
+
+
+def _build_constraint_scope_var_names(
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+    config_space_var_names: dict[int, str] | None,
+) -> dict[int, str] | None:
+    """Build var-name scope used for compile-time constraint validation."""
+    scope_var_names: dict[int, str] = dict(config_space_var_names or {})
+
+    sources: list[dict[str, Any]] = []
+    if isinstance(raw_configuration_space, dict):
+        sources.append(raw_configuration_space)
+    elif hasattr(raw_configuration_space, "tvars"):
+        tvars = getattr(raw_configuration_space, "tvars", None)
+        if isinstance(tvars, dict):
+            sources.append(tvars)
+    if inline_params:
+        sources.append(inline_params)
+
+    for source in sources:
+        for name, value in source.items():
+            if not isinstance(name, str):
+                continue
+            _ensure_scope_name(scope_var_names, name)
+            if isinstance(value, ParameterRange):
+                scope_var_names[id(value)] = name
+
+    return scope_var_names or None
+
+
+def _augment_constraint_scope_var_names(
+    scope_var_names: dict[int, str] | None,
+    configuration_space: dict[str, Any] | None,
+) -> dict[int, str] | None:
+    """Augment scope map with normalized configuration-space keys."""
+    if scope_var_names is None and not configuration_space:
+        return None
+
+    merged = dict(scope_var_names or {})
+    for name in configuration_space or {}:
+        if isinstance(name, str):
+            _ensure_scope_name(merged, name)
+    return merged
 
 
 def _resolve_evaluation_bundle_options(
@@ -1263,9 +1374,15 @@ def _process_runtime_overrides(
     """Process runtime overrides, handling removed parameters."""
     combined_runtime_overrides: dict[str, Any] = {}
     if legacy_args:
-        combined_runtime_overrides.update(legacy_args.extra)
+        combined_runtime_overrides.update(
+            _normalize_runtime_override_aliases(legacy_args.extra)
+        )
 
-    for key, value in runtime_overrides.items():
+    normalized_runtime_overrides = _normalize_runtime_override_aliases(
+        runtime_overrides
+    )
+
+    for key, value in normalized_runtime_overrides.items():
         if key in _REMOVED_PARAMETERS:
             raise TypeError(
                 "The following optimize() parameters have been removed: "
@@ -1659,6 +1776,11 @@ def optimize(
     config_space_constraints, config_space_var_names, _ = (
         _process_config_space_constraints(configuration_space, constraints)
     )
+    constraint_scope_var_names = _build_constraint_scope_var_names(
+        configuration_space,
+        inline_params,
+        config_space_var_names,
+    )
 
     # Normalize configuration_space and merge defaults
     configuration_space, default_config, constraints = (
@@ -1709,6 +1831,7 @@ def optimize(
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    algorithm_value = combined_settings["algorithm"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
     # Tuned variable auto-detection
@@ -1819,6 +1942,9 @@ def optimize(
         eval_dataset,
         combined_runtime_overrides,
     )
+    constraint_scope_var_names = _augment_constraint_scope_var_names(
+        constraint_scope_var_names, configuration_space
+    )
 
     if samples_include_pruned is None:
         samples_include_pruned = True
@@ -1884,13 +2010,14 @@ def optimize(
             from traigent.api.constraints import normalize_constraints
 
             normalized_constraints = normalize_constraints(
-                constraints, config_space_var_names
+                constraints, constraint_scope_var_names
             )
 
         # Remove keys from runtime overrides that are passed explicitly below
         # to avoid "got multiple values for keyword argument" errors.
         # TVL budget application can inject max_trials into runtime_overrides
         # (via _apply_tvl_artifact), but we pass it explicitly as well.
+        combined_runtime_overrides.pop("algorithm", None)
         combined_runtime_overrides.pop("max_trials", None)
 
         # Tuned variable auto-detection: when opted in and no config space is set,
@@ -1903,6 +2030,7 @@ def optimize(
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
             configuration_space=configuration_space,
+            algorithm=algorithm_value,
             default_config=default_config,
             constraints=normalized_constraints,
             safety_constraints=safety_constraints,
