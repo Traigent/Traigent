@@ -6,7 +6,7 @@ import importlib.metadata
 import logging
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from traigent_validation.validators import (
     PythonConstraintValidator,
@@ -33,7 +33,7 @@ def _coerce_factory(candidate: Any) -> Callable[[], Any] | None:
         return candidate
 
     if callable(candidate):
-        return candidate
+        return cast(Callable[[], Any], candidate)
 
     logger.warning(
         "Ignoring validator plugin %r because it is not callable", candidate
@@ -55,7 +55,13 @@ def load_entry_point_validators() -> None:
             eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
         except TypeError:
             all_eps = importlib.metadata.entry_points()
-            eps = all_eps.get(ENTRY_POINT_GROUP, [])
+            legacy_getter = getattr(all_eps, "get", None)
+            if callable(legacy_getter):
+                eps = legacy_getter(ENTRY_POINT_GROUP, [])
+            else:
+                eps = [
+                    ep for ep in all_eps if getattr(ep, "group", None) == ENTRY_POINT_GROUP
+                ]
         except Exception as exc:
             logger.warning("Failed to inspect validator entry points: %s", exc)
             _entry_points_loaded = True
