@@ -127,7 +127,7 @@ def _heuristic_from_value(name: str, value: Any) -> TVarSpec | None:
         )
 
     if isinstance(value, float):
-        if value == 0.0:
+        if abs(value) < 1e-10:
             low, high = 0.0, 1.0
         else:
             low = round(max(0.0, value * 0.5), 4)
