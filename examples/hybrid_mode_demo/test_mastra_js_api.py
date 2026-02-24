@@ -19,7 +19,9 @@ import sys
 
 import requests
 
-BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
+BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "https://755e-46-116-17-120.ngrok-free.app"
+AUTH_TOKEN = "Bearer QYG7VHh32VMZg7hLVBRvPEbTgFtco6dU"
+HEADERS = {"Authorization": AUTH_TOKEN, "Content-Type": "application/json"}
 
 
 def print_response(name: str, response):
@@ -35,7 +37,7 @@ def print_response(name: str, response):
 def test_capabilities():
     """Test capabilities endpoint."""
     print("\n>>> Testing GET /traigent/v1/capabilities")
-    response = requests.get(f"{BASE_URL}/traigent/v1/capabilities")
+    response = requests.get(f"{BASE_URL}/traigent/v1/capabilities", headers=HEADERS)
     print_response("Capabilities", response)
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -52,6 +54,7 @@ def test_config_space(tunable_id: str):
     response = requests.get(
         f"{BASE_URL}/traigent/v1/config-space",
         params={"tunable_id": tunable_id},
+        headers=HEADERS,
     )
     print_response("Config Space", response)
 
@@ -101,15 +104,15 @@ def test_execute(tunable_id: str, config: dict):
         "tunable_id": tunable_id,
         "config": config,
         "inputs": [
-            {"input_id": "case_001"},
-            {"input_id": "case_051"},
+            {"input_id": "q001"},
+            {"input_id": "q051"},
         ],
     }
 
     response = requests.post(
         f"{BASE_URL}/traigent/v1/execute",
         json=request_data,
-        headers={"Content-Type": "application/json"},
+        headers=HEADERS,
     )
     print_response("Execute", response)
 
@@ -163,7 +166,7 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     response = requests.post(
         f"{BASE_URL}/traigent/v1/evaluate",
         json=request_data,
-        headers={"Content-Type": "application/json"},
+        headers=HEADERS,
     )
     print_response("Evaluate", response)
 
@@ -195,7 +198,7 @@ def test_evaluate(execute_data: dict, tunable_id: str):
 def test_health():
     """Test health endpoint."""
     print("\n>>> Testing GET /traigent/v1/health")
-    response = requests.get(f"{BASE_URL}/traigent/v1/health")
+    response = requests.get(f"{BASE_URL}/traigent/v1/health", headers=HEADERS)
     print_response("Health", response)
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
