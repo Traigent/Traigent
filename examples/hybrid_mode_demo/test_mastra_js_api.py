@@ -26,8 +26,10 @@ from collections import Counter
 
 import requests
 
-BASE_URL = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
-    "MASTRA_API_URL", "http://localhost:8080"
+BASE_URL = (
+    sys.argv[1]
+    if len(sys.argv) > 1
+    else os.environ.get("MASTRA_API_URL", "http://localhost:8080")
 )
 _auth_token = os.environ.get("MASTRA_AUTH_TOKEN", "")
 HEADERS = {"Content-Type": "application/json"}
@@ -72,8 +74,12 @@ def test_config_space(tunable_id: str):
 
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     data = response.json()
-    assert "schema_version" in data, "Missing schema_version (required by ConfigSpaceResponse spec)"
-    assert "tunable_id" in data, "Missing tunable_id (required by ConfigSpaceResponse spec)"
+    assert (
+        "schema_version" in data
+    ), "Missing schema_version (required by ConfigSpaceResponse spec)"
+    assert (
+        "tunable_id" in data
+    ), "Missing tunable_id (required by ConfigSpaceResponse spec)"
     assert "tunables" in data, "Missing tunables in response"
     assert len(data["tunables"]) > 0, "No tunables defined"
 
@@ -136,7 +142,9 @@ def test_execute(tunable_id: str, config: dict):
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     data = response.json()
     assert data["status"] == "completed", f"Expected completed, got {data['status']}"
-    assert "execution_id" in data, "Missing execution_id (required by ExecuteResponse spec)"
+    assert (
+        "execution_id" in data
+    ), "Missing execution_id (required by ExecuteResponse spec)"
     assert "request_id" in data, "Missing request_id (required by ExecuteResponse spec)"
     assert data["request_id"] == sent_request_id, (
         f"request_id not echoed correctly: sent {sent_request_id!r}, "
@@ -156,15 +164,15 @@ def test_execute(tunable_id: str, config: dict):
     # See traigent-api#44 for spec wording on exact preservation requirement.
     sent_ids = Counter(inp["input_id"] for inp in request_data["inputs"])
     received_ids = Counter(out["input_id"] for out in data["outputs"])
-    assert sent_ids == received_ids, (
-        f"input_id mismatch: sent {dict(sent_ids)}, got {dict(received_ids)}"
-    )
+    assert (
+        sent_ids == received_ids
+    ), f"input_id mismatch: sent {dict(sent_ids)}, got {dict(received_ids)}"
 
     # Validate quality_metrics shape when present (combined mode)
     if data.get("quality_metrics") is not None:
-        assert isinstance(data["quality_metrics"], dict), (
-            "Combined mode quality_metrics must be a dict (per ExecuteResponse spec)"
-        )
+        assert isinstance(
+            data["quality_metrics"], dict
+        ), "Combined mode quality_metrics must be a dict (per ExecuteResponse spec)"
 
     # Check operational metrics
     metrics = data["operational_metrics"]
@@ -211,9 +219,9 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     data = response.json()
     assert data["status"] == "completed", f"Expected completed, got {data['status']}"
     assert "results" in data, "Missing results"
-    assert "aggregate_metrics" in data, (
-        "Missing aggregate_metrics (required by EvaluateResponse spec)"
-    )
+    assert (
+        "aggregate_metrics" in data
+    ), "Missing aggregate_metrics (required by EvaluateResponse spec)"
 
     # Check results
     assert len(data["results"]) == 2, f"Expected 2 results, got {len(data['results'])}"
@@ -224,9 +232,15 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     # Check aggregate metrics — validate required fields per AggregateMetricStats
     agg = data["aggregate_metrics"]
     for metric_name, stats in agg.items():
-        assert "mean" in stats, f"{metric_name} missing 'mean' (required by AggregateMetricStats)"
-        assert "std" in stats, f"{metric_name} missing 'std' (required by AggregateMetricStats)"
-        assert "n" in stats, f"{metric_name} missing 'n' (required by AggregateMetricStats)"
+        assert (
+            "mean" in stats
+        ), f"{metric_name} missing 'mean' (required by AggregateMetricStats)"
+        assert (
+            "std" in stats
+        ), f"{metric_name} missing 'std' (required by AggregateMetricStats)"
+        assert (
+            "n" in stats
+        ), f"{metric_name} missing 'n' (required by AggregateMetricStats)"
 
     print("\n  Evaluate test passed!")
     print(f"  Evaluated {len(data['results'])} examples")
@@ -270,15 +284,15 @@ def test_error_format(tunable_id: str):
     print_response("Error Format", response)
 
     # Server should return 4xx (400 or 422)
-    assert 400 <= response.status_code < 500, (
-        f"Expected 4xx for bad request, got {response.status_code}"
-    )
+    assert (
+        400 <= response.status_code < 500
+    ), f"Expected 4xx for bad request, got {response.status_code}"
     data = response.json()
 
     # Validate ErrorResponse shape per spec
-    assert "error" in data or "message" in data, (
-        "Error response must contain 'error' or 'message' field (per ErrorResponse spec)"
-    )
+    assert (
+        "error" in data or "message" in data
+    ), "Error response must contain 'error' or 'message' field (per ErrorResponse spec)"
 
     print("\n  Error format test passed!")
     return data
@@ -304,7 +318,9 @@ def main():
         #   quality_metrics null + supports_evaluate=true  => two-phase (call /evaluate)
         #   quality_metrics null + supports_evaluate=false => execute-only (skip)
         if execute_result.get("quality_metrics") is not None:
-            print("\nSKIP /evaluate: combined mode (quality_metrics in /execute response)")
+            print(
+                "\nSKIP /evaluate: combined mode (quality_metrics in /execute response)"
+            )
         elif not caps.get("supports_evaluate", True):
             print("\nSKIP /evaluate: execute-only mode (supports_evaluate=false)")
         else:
