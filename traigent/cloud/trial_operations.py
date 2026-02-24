@@ -556,8 +556,8 @@ class TrialOperations:
             mode = self.client._normalize_execution_mode(execution_mode)
 
             # Extract transport-only fields before validating trial metrics.
-            measures, summary_stats, clean_metrics = self._extract_measures_from_metrics(
-                metrics
+            measures, summary_stats, clean_metrics = (
+                self._extract_measures_from_metrics(metrics)
             )
 
             # Validate key naming and cardinality for numeric metrics while
