@@ -181,7 +181,6 @@ class TraigentClient:
         else:
             # Edge Analytics mode
             return await self._optimize_local(
-                function,
                 dataset,
                 configuration_space,
                 objectives,
@@ -385,7 +384,6 @@ class TraigentClient:
 
     async def _optimize_local(
         self,
-        function: Callable[..., Any],
         dataset: dict[str, Any],
         configuration_space: dict[str, Any],
         objectives: list[str],

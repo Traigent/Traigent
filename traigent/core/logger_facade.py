@@ -11,6 +11,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
 
 logger = get_logger(__name__)
+LOGGER_UNAVAILABLE_REASON = "logger is unavailable"
 
 
 class LoggerFacade:
@@ -62,7 +63,7 @@ class LoggerFacade:
     def log_session_start(self, **kwargs: Any) -> None:
         """Log session start while enriching dataset metadata when available."""
         if not self._logger:
-            self._warn_unavailable_once("logger is unavailable")
+            self._warn_unavailable_once(LOGGER_UNAVAILABLE_REASON)
             return
 
         payload = dict(kwargs)
@@ -84,7 +85,7 @@ class LoggerFacade:
     def log_trial(self, trial_result: Any) -> None:
         """Log a trial result using the underlying optimization logger."""
         if not self._logger:
-            self._warn_unavailable_once("logger is unavailable")
+            self._warn_unavailable_once(LOGGER_UNAVAILABLE_REASON)
             return
         try:
             self._logger.log_trial_result(trial_result)
@@ -102,7 +103,7 @@ class LoggerFacade:
     def log_checkpoint(self, **kwargs: Any) -> None:
         """Persist checkpoint information if the logger exposes the capability."""
         if not self._logger:
-            self._warn_unavailable_once("logger is unavailable")
+            self._warn_unavailable_once(LOGGER_UNAVAILABLE_REASON)
             return
         if not hasattr(self._logger, "save_checkpoint"):
             return
@@ -119,7 +120,7 @@ class LoggerFacade:
 
     def log_session_end(self, **kwargs: Any) -> None:
         if not self._logger:
-            self._warn_unavailable_once("logger is unavailable")
+            self._warn_unavailable_once(LOGGER_UNAVAILABLE_REASON)
             return
         try:
             self._logger.log_session_end(**kwargs)
