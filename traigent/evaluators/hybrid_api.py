@@ -161,6 +161,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         # Initialize transport (may be provided or created on demand)
         self._transport: HybridTransport | None = transport
         self._owns_transport = transport is None
+        self._transport_lock = asyncio.Lock()
 
         # Lazy-initialized components
         self._lifecycle_manager: AgentLifecycleManager | None = None
@@ -186,16 +187,20 @@ class HybridAPIEvaluator(BaseEvaluator):
 
     async def _get_transport(self) -> HybridTransport:
         """Get or create the transport."""
-        if self._transport is None:
-            self._transport = create_transport(
-                transport_type=self._transport_type,
-                base_url=self._api_endpoint,
-                auth_header=self._auth_header,
-                timeout=self._timeout,
-                mcp_client=self._mcp_client,
-                mcp_config=self._mcp_config,
-            )
-            self._owns_transport = True
+        if self._transport is not None:
+            return self._transport
+
+        async with self._transport_lock:
+            if self._transport is None:
+                self._transport = create_transport(
+                    transport_type=self._transport_type,
+                    base_url=self._api_endpoint,
+                    auth_header=self._auth_header,
+                    timeout=self._timeout,
+                    mcp_client=self._mcp_client,
+                    mcp_config=self._mcp_config,
+                )
+                self._owns_transport = True
 
         return self._transport
 

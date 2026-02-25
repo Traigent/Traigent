@@ -523,11 +523,12 @@ def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
     # Validate convergence if present
     if "convergence" in exploration:
         convergence = exploration["convergence"]
-        if isinstance(convergence, dict):
-            if "threshold" in convergence and not isinstance(
-                convergence["threshold"], (int, float)
-            ):
-                issues.append("exploration.convergence.threshold should be numeric")
+        if (
+            isinstance(convergence, dict)
+            and "threshold" in convergence
+            and not isinstance(convergence["threshold"], (int, float))
+        ):
+            issues.append("exploration.convergence.threshold should be numeric")
 
     return issues
 

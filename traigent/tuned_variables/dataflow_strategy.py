@@ -216,7 +216,6 @@ def _names_in_expr_acc(node: ast.AST, acc: set[str]) -> None:
             _names_in_expr_acc(v, acc)
         return
     # ast.Constant, ast.Slice, etc. — no Name references
-    return
 
 
 def _receiver_name(node: ast.expr) -> str | None:
