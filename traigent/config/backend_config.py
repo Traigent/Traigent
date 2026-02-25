@@ -164,29 +164,23 @@ class BackendConfig:
     def get_api_key(cls) -> str | None:
         """Get API key from environment.
 
-        TRAIGENT_API_KEY is preferred, falling back to OPTIGEN_API_KEY for
-        backwards compatibility.
-
         Returns:
             str | None: API key if configured, None otherwise
         """
-        env_var_preference = (
-            "TRAIGENT_API_KEY",
-            "OPTIGEN_API_KEY",
-        )
-
-        for env_var in env_var_preference:
-            api_key = os.environ.get(env_var)
-            if api_key:
-                logger.info(f"✅ Using API key from {env_var} (length={len(api_key)})")
-                return api_key
+        api_key = os.environ.get("TRAIGENT_API_KEY")
+        if api_key:
+            logger.info(
+                "✅ Using API key from TRAIGENT_API_KEY (length=%d)", len(api_key)
+            )
+            return api_key
 
         # Only warn if not in offline mode - offline mode doesn't need API keys
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
             logger.warning(
-                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
+                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY). "
+                "For cloud tracking, run `traigent auth login` or export TRAIGENT_API_KEY."
             )
         return None
 
@@ -248,10 +242,7 @@ class BackendConfig:
             "api_key_env": next(
                 (
                     env_var
-                    for env_var in (
-                        "TRAIGENT_API_KEY",
-                        "OPTIGEN_API_KEY",
-                    )
+                    for env_var in ("TRAIGENT_API_KEY",)
                     if os.environ.get(env_var)
                 ),
                 None,
