@@ -916,49 +916,12 @@ class ResolvedExecutionOptions:
 
 def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
-    execution_mode: Any,
-    hybrid_api_endpoint: Any,
-    tunable_id: Any,
-    hybrid_api_transport: Any,
-    hybrid_api_transport_type: Any,
-    hybrid_api_batch_size: Any,
-    hybrid_api_batch_parallelism: Any,
-    hybrid_api_keep_alive: Any,
-    hybrid_api_heartbeat_interval: Any,
-    hybrid_api_timeout: Any,
-    hybrid_api_auth_header: Any,
-    hybrid_api_auto_discover_tvars: Any,
-    local_storage_path: Any,
-    minimal_logging: Any,
-    parallel_config: Any,
-    privacy_enabled: Any,
-    max_total_examples: Any,
-    samples_include_pruned: Any,
+    base_options: ResolvedExecutionOptions,
     defaults: dict[str, Any],
 ) -> ResolvedExecutionOptions:
     """Resolve execution options from bundle and validate enterprise features."""
     if execution_bundle is None:
-        return ResolvedExecutionOptions(
-            execution_mode=execution_mode,
-            hybrid_api_endpoint=hybrid_api_endpoint,
-            tunable_id=tunable_id,
-            hybrid_api_transport=hybrid_api_transport,
-            hybrid_api_transport_type=hybrid_api_transport_type,
-            hybrid_api_batch_size=hybrid_api_batch_size,
-            hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
-            hybrid_api_keep_alive=hybrid_api_keep_alive,
-            hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
-            hybrid_api_timeout=hybrid_api_timeout,
-            hybrid_api_auth_header=hybrid_api_auth_header,
-            hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
-            local_storage_path=local_storage_path,
-            minimal_logging=minimal_logging,
-            parallel_config=parallel_config,
-            privacy_enabled=privacy_enabled,
-            max_total_examples=max_total_examples,
-            samples_include_pruned=samples_include_pruned,
-            js_runtime_config=None,
-        )
+        return base_options
 
     # Validate enterprise-gated features
     if execution_bundle.reps_per_trial != 1:
@@ -997,107 +960,110 @@ def _resolve_execution_bundle_options(
 
     return ResolvedExecutionOptions(
         execution_mode=_resolve_option(
-            "execution_mode", execution_mode, execution_bundle.execution_mode, defaults
+            "execution_mode",
+            base_options.execution_mode,
+            execution_bundle.execution_mode,
+            defaults,
         ),
         hybrid_api_endpoint=_resolve_option(
             "hybrid_api_endpoint",
-            hybrid_api_endpoint,
+            base_options.hybrid_api_endpoint,
             execution_bundle.hybrid_api_endpoint,
             defaults,
         ),
         tunable_id=_resolve_option(
             "tunable_id",
-            tunable_id,
+            base_options.tunable_id,
             execution_bundle.tunable_id,
             defaults,
         ),
         hybrid_api_transport=_resolve_option(
             "hybrid_api_transport",
-            hybrid_api_transport,
+            base_options.hybrid_api_transport,
             execution_bundle.hybrid_api_transport,
             defaults,
         ),
         hybrid_api_transport_type=_resolve_option(
             "hybrid_api_transport_type",
-            hybrid_api_transport_type,
+            base_options.hybrid_api_transport_type,
             execution_bundle.hybrid_api_transport_type,
             defaults,
         ),
         hybrid_api_batch_size=_resolve_option(
             "hybrid_api_batch_size",
-            hybrid_api_batch_size,
+            base_options.hybrid_api_batch_size,
             execution_bundle.hybrid_api_batch_size,
             defaults,
         ),
         hybrid_api_batch_parallelism=_resolve_option(
             "hybrid_api_batch_parallelism",
-            hybrid_api_batch_parallelism,
+            base_options.hybrid_api_batch_parallelism,
             execution_bundle.hybrid_api_batch_parallelism,
             defaults,
         ),
         hybrid_api_keep_alive=_resolve_option(
             "hybrid_api_keep_alive",
-            hybrid_api_keep_alive,
+            base_options.hybrid_api_keep_alive,
             execution_bundle.hybrid_api_keep_alive,
             defaults,
         ),
         hybrid_api_heartbeat_interval=_resolve_option(
             "hybrid_api_heartbeat_interval",
-            hybrid_api_heartbeat_interval,
+            base_options.hybrid_api_heartbeat_interval,
             execution_bundle.hybrid_api_heartbeat_interval,
             defaults,
         ),
         hybrid_api_timeout=_resolve_option(
             "hybrid_api_timeout",
-            hybrid_api_timeout,
+            base_options.hybrid_api_timeout,
             execution_bundle.hybrid_api_timeout,
             defaults,
         ),
         hybrid_api_auth_header=_resolve_option(
             "hybrid_api_auth_header",
-            hybrid_api_auth_header,
+            base_options.hybrid_api_auth_header,
             execution_bundle.hybrid_api_auth_header,
             defaults,
         ),
         hybrid_api_auto_discover_tvars=_resolve_option(
             "hybrid_api_auto_discover_tvars",
-            hybrid_api_auto_discover_tvars,
+            base_options.hybrid_api_auto_discover_tvars,
             execution_bundle.hybrid_api_auto_discover_tvars,
             defaults,
         ),
         local_storage_path=_resolve_option(
             "local_storage_path",
-            local_storage_path,
+            base_options.local_storage_path,
             execution_bundle.local_storage_path,
             defaults,
         ),
         minimal_logging=_resolve_option(
             "minimal_logging",
-            minimal_logging,
+            base_options.minimal_logging,
             execution_bundle.minimal_logging,
             defaults,
         ),
         parallel_config=_resolve_option(
             "parallel_config",
-            parallel_config,
+            base_options.parallel_config,
             execution_bundle.parallel_config,
             defaults,
         ),
         privacy_enabled=_resolve_option(
             "privacy_enabled",
-            privacy_enabled,
+            base_options.privacy_enabled,
             execution_bundle.privacy_enabled,
             defaults,
         ),
         max_total_examples=_resolve_option(
             "max_total_examples",
-            max_total_examples,
+            base_options.max_total_examples,
             execution_bundle.max_total_examples,
             defaults,
         ),
         samples_include_pruned=_resolve_option(
             "samples_include_pruned",
-            samples_include_pruned,
+            base_options.samples_include_pruned,
             execution_bundle.samples_include_pruned,
             defaults,
         ),
@@ -1511,7 +1477,9 @@ def optimize(
     load_from: str | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
-) -> Callable[[Callable[..., Any]], Any]:
+) -> Callable[
+    [Callable[..., Any]], Any
+]:  # NOSONAR - stable public API intentionally exposes broad options
     """Decorator to make functions optimizable with Traigent.
 
     This is the main entry point for Traigent optimization. Decorate any function
@@ -1881,26 +1849,30 @@ def optimize(
         defaults,
     )
 
+    base_execution_options = ResolvedExecutionOptions(
+        execution_mode=execution_mode,
+        hybrid_api_endpoint=hybrid_api_endpoint,
+        tunable_id=tunable_id,
+        hybrid_api_transport=hybrid_api_transport,
+        hybrid_api_transport_type=hybrid_api_transport_type,
+        hybrid_api_batch_size=hybrid_api_batch_size,
+        hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
+        hybrid_api_keep_alive=hybrid_api_keep_alive,
+        hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
+        hybrid_api_timeout=hybrid_api_timeout,
+        hybrid_api_auth_header=hybrid_api_auth_header,
+        hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+        local_storage_path=local_storage_path,
+        minimal_logging=minimal_logging,
+        parallel_config=parallel_config,
+        privacy_enabled=privacy_enabled,
+        max_total_examples=max_total_examples,
+        samples_include_pruned=samples_include_pruned,
+        js_runtime_config=None,
+    )
     resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
-        execution_mode,
-        hybrid_api_endpoint,
-        tunable_id,
-        hybrid_api_transport,
-        hybrid_api_transport_type,
-        hybrid_api_batch_size,
-        hybrid_api_batch_parallelism,
-        hybrid_api_keep_alive,
-        hybrid_api_heartbeat_interval,
-        hybrid_api_timeout,
-        hybrid_api_auth_header,
-        hybrid_api_auto_discover_tvars,
-        local_storage_path,
-        minimal_logging,
-        parallel_config,
-        privacy_enabled,
-        max_total_examples,
-        samples_include_pruned,
+        base_execution_options,
         defaults,
     )
     execution_mode = resolved_execution.execution_mode
