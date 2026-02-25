@@ -50,6 +50,7 @@ from traigent.core.objectives import (
     schema_to_objective_names,
 )
 from traigent.core.optimization_pipeline import (
+    HybridAPIEvaluatorOptions,
     collect_orchestrator_kwargs,
     create_effective_evaluator,
     create_traigent_config,
@@ -870,7 +871,7 @@ class OptimizedFunction:
         *,
         algorithm: str | None,
         max_trials: int | None,
-        timeout: float | None,
+        evaluation_timeout: float | None,
         effective_config_space: dict[str, Any],
         algorithm_kwargs: dict[str, Any],
     ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
@@ -882,7 +883,13 @@ class OptimizedFunction:
 
         discover = getattr(evaluator, "discover_config_space", None)
         if not callable(discover):
-            return algorithm, max_trials, timeout, effective_config_space, state
+            return (
+                algorithm,
+                max_trials,
+                evaluation_timeout,
+                effective_config_space,
+                state,
+            )
 
         discovered_config_space = await discover()
         if not discovered_config_space:
@@ -898,7 +905,13 @@ class OptimizedFunction:
 
         discovered_spec = getattr(evaluator, "optimization_spec", None) or {}
         if not isinstance(discovered_spec, dict):
-            return algorithm, max_trials, timeout, effective_config_space, state
+            return (
+                algorithm,
+                max_trials,
+                evaluation_timeout,
+                effective_config_space,
+                state,
+            )
 
         discovered_schema = discovered_spec.get("objective_schema")
         if discovered_schema is not None:
@@ -917,10 +930,14 @@ class OptimizedFunction:
 
         runtime_overrides = discovered_spec.get("runtime_overrides")
         if isinstance(runtime_overrides, dict) and runtime_overrides:
-            algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+            (
                 algorithm,
                 max_trials,
-                timeout,
+                evaluation_timeout,
+            ) = self._apply_tvl_runtime_overrides(
+                algorithm,
+                max_trials,
+                evaluation_timeout,
                 algorithm_kwargs,
                 runtime_overrides,
             )
@@ -947,7 +964,13 @@ class OptimizedFunction:
             if merged_metrics:
                 evaluator.metrics = merged_metrics
 
-        return algorithm, max_trials, timeout, effective_config_space, state
+        return (
+            algorithm,
+            max_trials,
+            evaluation_timeout,
+            effective_config_space,
+            state,
+        )
 
     def _restore_hybrid_discovery_state(
         self,
@@ -1254,17 +1277,19 @@ class OptimizedFunction:
             else self.hybrid_api_auto_discover_tvars
         )
         return {
-            "hybrid_api_endpoint": self.hybrid_api_endpoint,
-            "hybrid_api_tunable_id": self.hybrid_api_tunable_id,
-            "hybrid_api_transport": self.hybrid_api_transport,
-            "hybrid_api_transport_type": self.hybrid_api_transport_type,
-            "hybrid_api_batch_size": self.hybrid_api_batch_size,
-            "hybrid_api_batch_parallelism": self.hybrid_api_batch_parallelism,
-            "hybrid_api_keep_alive": self.hybrid_api_keep_alive,
-            "hybrid_api_heartbeat_interval": self.hybrid_api_heartbeat_interval,
-            "hybrid_api_timeout": self.hybrid_api_timeout,
-            "hybrid_api_auth_header": self.hybrid_api_auth_header,
-            "hybrid_api_auto_discover_tvars": auto_discover,
+            "hybrid_api_options": HybridAPIEvaluatorOptions(
+                endpoint=self.hybrid_api_endpoint,
+                tunable_id=self.hybrid_api_tunable_id,
+                transport=self.hybrid_api_transport,
+                transport_type=self.hybrid_api_transport_type,
+                batch_size=self.hybrid_api_batch_size,
+                batch_parallelism=self.hybrid_api_batch_parallelism,
+                keep_alive=self.hybrid_api_keep_alive,
+                heartbeat_interval=self.hybrid_api_heartbeat_interval,
+                timeout=self.hybrid_api_timeout,
+                auth_header=self.hybrid_api_auth_header,
+                auto_discover_tvars=auto_discover,
+            ),
         }
 
     def _create_effective_evaluator(
@@ -1537,7 +1562,7 @@ class OptimizedFunction:
                     evaluator=precreated_evaluator,
                     algorithm=algorithm,
                     max_trials=max_trials,
-                    timeout=timeout,
+                    evaluation_timeout=timeout,
                     effective_config_space=pre_discovery_space or {},
                     algorithm_kwargs=algorithm_kwargs,
                 )
