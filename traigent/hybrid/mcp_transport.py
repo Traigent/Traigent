@@ -8,6 +8,7 @@ services using the existing ProductionMCPClient infrastructure.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -77,19 +78,24 @@ class MCPTransport:
 
         self._owns_client = mcp_client is None
         self._client = mcp_client
+        self._client_lock = asyncio.Lock()
         self._mcp_config = mcp_config
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
 
     async def _get_client(self) -> ProductionMCPClient:
         """Get or create the MCP client."""
-        if self._client is None:
-            from traigent.cloud.production_mcp_client import ProductionMCPClient
+        if self._client is not None:
+            return self._client
 
-            if self._mcp_config is None:
-                raise ValueError("MCP config required to create client")
-            self._client = ProductionMCPClient(self._mcp_config)
-            self._owns_client = True
+        async with self._client_lock:
+            if self._client is None:
+                from traigent.cloud.production_mcp_client import ProductionMCPClient
+
+                if self._mcp_config is None:
+                    raise ValueError("MCP config required to create client")
+                self._client = ProductionMCPClient(self._mcp_config)
+                self._owns_client = True
 
         return self._client
 
