@@ -67,6 +67,7 @@ from traigent.api.constraints import (
 from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
+    configure_for_budget,
     get_available_strategies,
     get_config,
     get_current_config,
@@ -193,6 +194,7 @@ __all__ = [
     "when",
     # Configuration functions
     "configure",
+    "configure_for_budget",
     "initialize",
     "override_config",
     "get_available_strategies",
