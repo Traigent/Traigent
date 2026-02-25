@@ -115,6 +115,50 @@ def test_compiled_constraints_attach_metadata() -> None:
     assert isinstance(constraint({"response_latency_ms": 800}, None), bool)
 
 
+def test_structural_constraint_validation_rejects_unknown_params(tmp_path: Path) -> None:
+    """validate_constraints=True should fail fast on unknown params.* references."""
+    spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+constraints:
+  structural:
+    - expr: "params.model == 'gpt-4o' and params.unknown_model == 'gpt-4o'"
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "unknown_params.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    with pytest.raises(TVLValidationError, match="unknown_model"):
+        load_tvl_spec(spec_path=spec_file, validate_constraints=True)
+
+
+def test_structural_constraint_validation_can_be_disabled(tmp_path: Path) -> None:
+    """validate_constraints=False should skip plugin-based structural validation."""
+    spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+constraints:
+  structural:
+    - expr: "params.model == 'gpt-4o' and params.unknown_model == 'gpt-4o'"
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+    spec_file = tmp_path / "unknown_params_skip.tvl.yml"
+    spec_file.write_text(spec_content)
+
+    artifact = load_tvl_spec(spec_path=spec_file, validate_constraints=False)
+    assert len(artifact.constraints) == 1
+
+
 def test_legacy_formats_emit_deprecation_warnings() -> None:
     """Legacy TVL formats emit DeprecationWarnings during spec loading."""
     # Use the environment_overlays example which is intentionally legacy format
