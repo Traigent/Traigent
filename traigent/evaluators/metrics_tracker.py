@@ -1120,6 +1120,7 @@ class CostCalculator:
         prompt_length: int | None = None,
         response_length: int | None = None,
     ) -> None:
+        del prompt_length, response_length
         from traigent.utils.env_config import is_strict_cost_accounting
 
         _compute_cost(
