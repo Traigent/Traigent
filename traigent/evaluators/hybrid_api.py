@@ -94,6 +94,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
     """
 
+    # NOSONAR - public constructor intentionally exposes transport/runtime knobs.
     def __init__(
         self,
         # Transport options (one required)
