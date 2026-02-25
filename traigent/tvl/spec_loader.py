@@ -607,6 +607,7 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    validator: str = "python",
     validate_schema: bool = True,
     registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
@@ -619,6 +620,7 @@ def load_tvl_spec(
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
         validate_constraints: Whether to compile and validate structural constraints.
+        validator: Constraint validator plugin name (``traigent.validators`` entry point).
         validate_schema: Whether to perform early schema validation (T-5).
             When True, validates the TVL spec structure before detailed parsing
             to catch errors early with clearer error messages.
@@ -670,9 +672,16 @@ def load_tvl_spec(
             stacklevel=2,
         )
 
+    _validate_structural_constraints_if_enabled(
+        constraints_section=constraints_section,
+        configuration_space=config_space,
+        validate_constraints=validate_constraints,
+        validator_name=validator,
+    )
+
     # Parse constraints - support both legacy and TVL 0.9 format
     compiled_constraints, derived_constraints = _compile_constraints_unified(
-        resolved.get("constraints", []) or [], validate_constraints, path
+        resolved.get("constraints", []) or [], path
     )
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
@@ -1175,9 +1184,112 @@ def _parse_exploration_parallelism(exploration_data: Any) -> int | None:
     return None
 
 
+def _extract_structural_constraints_for_validation(
+    constraints_section: Any,
+) -> list[StructuralConstraint]:
+    """Normalize constraints into StructuralConstraint objects for plugin validation."""
+    if isinstance(constraints_section, dict):
+        entries = constraints_section.get("structural", [])
+    elif isinstance(constraints_section, list):
+        entries = constraints_section
+    else:
+        return []
+
+    if not isinstance(entries, list):
+        return []
+
+    normalized: list[StructuralConstraint] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+
+        # TVL 0.9 structural format already aligns with StructuralConstraint.
+        if any(key in entry for key in ("expr", "when", "then")):
+            try:
+                normalized.append(StructuralConstraint.from_dict(entry, index))
+            except ValueError:
+                # Let the main compile path emit the canonical validation error.
+                continue
+            continue
+
+        # Legacy list format maps ``rule``/``type`` into expression or implication.
+        constraint_type = (entry.get("type") or "expression").lower()
+        if constraint_type == "conditional":
+            when_expr = entry.get("when")
+            then_expr = entry.get("then")
+            if isinstance(when_expr, str) and isinstance(then_expr, str):
+                normalized.append(
+                    StructuralConstraint(when=when_expr, then=then_expr, index=index)
+                )
+            continue
+
+        rule_expr = entry.get("rule")
+        if isinstance(rule_expr, str):
+            normalized.append(StructuralConstraint(expr=rule_expr, index=index))
+
+    return normalized
+
+
+def _validate_structural_constraints_if_enabled(
+    *,
+    constraints_section: Any,
+    configuration_space: dict[str, Any],
+    validate_constraints: bool,
+    validator_name: str,
+) -> None:
+    """Validate structural constraints through optional validator plugins."""
+    if not validate_constraints:
+        return
+
+    structural_constraints = _extract_structural_constraints_for_validation(
+        constraints_section
+    )
+    if not structural_constraints:
+        return
+
+    try:
+        from traigent_validation.plugins import get_validator
+    except ImportError:
+        logger.warning(
+            "Constraint validation package is unavailable; skipping structural validation."
+        )
+        return
+
+    validator = get_validator(validator_name)
+    if validator is None:
+        logger.warning(
+            "No constraint validator named '%s' is registered; skipping structural validation.",
+            validator_name,
+        )
+        return
+
+    validate_fn = getattr(validator, "validate_structural_constraints", None)
+    if not callable(validate_fn):
+        logger.warning(
+            "Validator '%s' does not implement validate_structural_constraints(); skipping.",
+            validator_name,
+        )
+        return
+
+    available_parameters = set(configuration_space.keys())
+    try:
+        issues = validate_fn(structural_constraints, available_parameters)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        raise TVLValidationError(
+            f"Constraint validator '{validator_name}' failed: {exc}"
+        ) from exc
+
+    if issues:
+        rendered = "\n".join(f"- {issue}" for issue in issues)
+        raise TVLValidationError(
+            "Structural constraint validation failed:\n"
+            f"{rendered}\n"
+            f"Available parameters: {sorted(available_parameters)}"
+        )
+
+
 def _compile_constraints_unified(
     entries: list[Any] | dict[str, Any],
-    validate_constraints: bool,
     path: Path,
 ) -> tuple[list[CompiledConstraint], list[DerivedConstraint] | None]:
     """Compile constraints supporting both legacy and TVL 0.9 formats.
@@ -1199,7 +1311,7 @@ def _compile_constraints_unified(
 
     # Handle legacy format (list)
     if isinstance(entries, list):
-        return _compile_constraints(entries, validate_constraints, path), None
+        return _compile_constraints(entries, path), None
 
     return [], None
 
@@ -1475,7 +1587,6 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
 
 def _compile_constraints(
     entries: list[Any],
-    _validate_constraints: bool,  # Reserved for future validation logic
     path: Path,
 ) -> list[CompiledConstraint]:
     compiled: list[CompiledConstraint] = []
