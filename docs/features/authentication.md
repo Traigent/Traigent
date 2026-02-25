@@ -26,8 +26,6 @@ Set your API key as an environment variable:
 
 ```bash
 export TRAIGENT_API_KEY=your_api_key_here
-# or (legacy)
-export OPTIGEN_API_KEY=your_api_key_here
 ```
 
 > Tip: Credentials saved through `traigent auth login` are resolved by the SDK automatically via the built-in Credential Manager, so you never need to copy keys into code.
@@ -120,7 +118,7 @@ traigent auth whoami tg_your_api_key_here
 Unified authentication leverages the shared `CredentialManager` to look for credentials in a secure order. When the CLI stores an API key or refresh token, the SDK reuses it automatically during runtime. This removes the need to duplicate configuration across environments while keeping sensitive material out of source code.
 
 The discovery order is:
-- System environment variables (`TRAIGENT_API_KEY`, legacy `OPTIGEN_API_KEY`)
+- System environment variable (`TRAIGENT_API_KEY`)
 - CLI-managed credentials saved via `traigent auth login` (keyring or encrypted file)
 - Development defaults only when explicit test flags are enabled
 
@@ -142,7 +140,7 @@ Credentials are stored securely using multiple layers:
 - Contents are JSON-encoded (no additional encryption)
 
 ### 3. Environment Variables
-- `TRAIGENT_API_KEY` (or legacy `OPTIGEN_API_KEY`)
+- `TRAIGENT_API_KEY`
 - Useful for CI/CD environments
 
 ## Priority Order
@@ -276,7 +274,7 @@ For automated environments:
 ```yaml
 - name: Configure Traigent
   env:
-    TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}  # Use OPTIGEN_API_KEY only for legacy jobs
+    TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
   run: |
     # SDK automatically uses environment variable
     python your_optimization_script.py
@@ -379,10 +377,10 @@ os.environ["TRAIGENT_API_KEY"] = "your_key"
 traigent auth login
 
 # Or continue using environment variables
-export TRAIGENT_API_KEY=your_key  # export OPTIGEN_API_KEY=your_key (legacy)
+export TRAIGENT_API_KEY=your_key
 ```
 
-The new system is backward compatible - existing environment variables continue to work.
+The new system remains compatible with existing `TRAIGENT_API_KEY` workflows.
 
 ## Support
 
