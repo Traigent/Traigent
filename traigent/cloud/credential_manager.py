@@ -43,7 +43,7 @@ class CredentialManager:
         """Get API key from available sources.
 
         Priority order:
-        1. TRAIGENT_API_KEY / OPTIGEN_API_KEY environment variables
+        1. TRAIGENT_API_KEY environment variable
         2. Stored credentials from CLI auth
         3. Default test credentials (dev only)
 
@@ -182,11 +182,7 @@ class CredentialManager:
     def _get_env_api_key() -> str | None:
         """Return API key from supported environment variables."""
 
-        for env_var in ("TRAIGENT_API_KEY", "OPTIGEN_API_KEY"):
-            api_key = os.environ.get(env_var)
-            if api_key:
-                return api_key
-        return None
+        return os.environ.get("TRAIGENT_API_KEY")
 
     @classmethod
     def clear_credentials(cls) -> bool:
