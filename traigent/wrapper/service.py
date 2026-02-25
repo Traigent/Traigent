@@ -53,7 +53,7 @@ logger = get_logger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
-_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
 
 
 @dataclass

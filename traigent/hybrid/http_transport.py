@@ -8,6 +8,7 @@ following the Traigent hybrid API protocol.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -79,43 +80,48 @@ class HTTPTransport:
         self._auth_header = auth_header
         self.require_http2 = require_http2
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client with connection pooling."""
-        if self._client is None or self._closed:
-            headers: dict[str, str] = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Traigent-SDK/1.0",
-            }
-            if self._auth_header:
-                headers["Authorization"] = self._auth_header
+        if self._client is not None and not self._closed:
+            return self._client
 
-            # Configure connection pooling
-            limits = httpx.Limits(
-                max_connections=self.max_connections,
-                max_keepalive_connections=self.max_connections,
-            )
+        async with self._client_lock:
+            if self._client is None or self._closed:
+                headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "Traigent-SDK/1.0",
+                }
+                if self._auth_header:
+                    headers["Authorization"] = self._auth_header
 
-            # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
-            try:
-                import h2  # noqa: F401
+                # Configure connection pooling
+                limits = httpx.Limits(
+                    max_connections=self.max_connections,
+                    max_keepalive_connections=self.max_connections,
+                )
 
-                use_http2 = True
-            except ImportError:
-                use_http2 = False
-                logger.debug("h2 package not installed, using HTTP/1.1")
+                # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
+                try:
+                    import h2  # noqa: F401
 
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=headers,
-                timeout=httpx.Timeout(self.timeout),
-                limits=limits,
-                http2=use_http2,
-            )
-            self._closed = False
+                    use_http2 = True
+                except ImportError:
+                    use_http2 = False
+                    logger.debug("h2 package not installed, using HTTP/1.1")
+
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers=headers,
+                    timeout=httpx.Timeout(self.timeout),
+                    limits=limits,
+                    http2=use_http2,
+                )
+                self._closed = False
 
         return self._client
 

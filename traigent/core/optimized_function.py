@@ -1311,7 +1311,6 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
-        invocations_per_example: int = 1,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1599,22 +1598,9 @@ class OptimizedFunction:
             )
         )
 
-        # Phase 5.5: Pop cost-estimation params before optimizer creation
-        raw_invocations = algorithm_kwargs.pop("invocations_per_example", 1)
-        try:
-            invocations_per_example = max(1, int(raw_invocations))
-            if invocations_per_example != raw_invocations:
-                logger.debug(
-                    "invocations_per_example coerced: %r -> %d",
-                    raw_invocations,
-                    invocations_per_example,
-                )
-        except (TypeError, ValueError):
-            invocations_per_example = 1
-            logger.warning(
-                "Invalid invocations_per_example=%r, defaulting to 1",
-                raw_invocations,
-            )
+        # Phase 5.5: Pop legacy cost-estimation param before optimizer creation.
+        # It is not consumed by orchestrator and should not leak into optimizer kwargs.
+        algorithm_kwargs.pop("invocations_per_example", None)
 
         # Phase 6: Determine privacy and create evaluator
         if precreated_evaluator is not None:
@@ -1655,7 +1641,6 @@ class OptimizedFunction:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
-            invocations_per_example=invocations_per_example,
         )
 
         # Phase 9: Run optimization and finalize
