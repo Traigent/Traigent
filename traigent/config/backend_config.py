@@ -169,7 +169,9 @@ class BackendConfig:
         """
         api_key = os.environ.get("TRAIGENT_API_KEY")
         if api_key:
-            logger.info("✅ Using API key from TRAIGENT_API_KEY (length=%d)", len(api_key))
+            logger.info(
+                "✅ Using API key from TRAIGENT_API_KEY (length=%d)", len(api_key)
+            )
             return api_key
 
         # Only warn if not in offline mode - offline mode doesn't need API keys
