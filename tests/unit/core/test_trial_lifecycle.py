@@ -29,6 +29,7 @@ from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import TrialPrunedError
 
 # =============================================================================
@@ -260,10 +261,93 @@ class TestCollectWorkflowSpan:
             "ex_2",
         ]
         assert lineage["example_outcomes"][0]["metric_name"] == "score"
+        assert lineage["example_outcomes"][0]["metric_delta"] == pytest.approx(0.06)
+        assert lineage["example_outcomes"][0]["direction"] == "positive"
+        assert lineage["example_outcomes"][0]["segment"] == "mild"
+        assert lineage["example_outcomes"][0]["failure_classification"] == "stable"
+        assert lineage["example_outcomes"][0]["failure_classification_detail"] == "improved"
+        assert lineage["example_outcomes"][0]["confidence"] == "low"
+        assert lineage["example_outcomes"][0]["trace_linkage"]["configuration_run_id"] == "cfg_123"
+        assert lineage["example_outcomes"][1]["failure_classification"] == "below_trial_mean"
+        assert lineage["example_outcomes"][1]["direction"] == "negative"
         assert outcome["metric_name"] == "score"
         assert outcome["metric_value"] == 0.84
         assert outcome["sample_size"] == 2
         assert outcome["confidence"] == "low"
+
+    def test_collect_workflow_span_deduplicates_duplicate_example_ids(self) -> None:
+        orchestrator = MockOrchestrator()
+        orchestrator._workflow_traces_tracker = object()
+        orchestrator.collect_workflow_span = MagicMock()
+
+        lifecycle = TrialLifecycle(orchestrator)
+        now_ts = time.time()
+        trial_result = TrialResult(
+            trial_id="trial_002",
+            config={"temperature": 0.2},
+            metrics={"score": 0.80},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "measures": [
+                    {"example_id": "ex_dup", "metrics": {"score": 0.7}},
+                    {"example_id": "ex_dup", "metrics": {"score": 0.6}},
+                ],
+            },
+        )
+
+        lifecycle._collect_workflow_span(
+            trial_id="cfg_456",
+            trial_result=trial_result,
+            start_time=now_ts - 1.0,
+            end_time=now_ts,
+        )
+
+        span = orchestrator.collect_workflow_span.call_args.args[0]
+        lineage = span.metadata["lineage"]
+        assert lineage["example_ids"] == ["ex_dup"]
+        assert len(lineage["example_outcomes"]) == 1
+        assert lineage["example_outcomes"][0]["example_id"] == "ex_dup"
+
+    @pytest.mark.parametrize(
+        ("trial_status", "expected_span_status"),
+        [
+            (TrialStatus.PRUNED, "REJECTED"),
+            (TrialStatus.FAILED, "FAILED"),
+        ],
+    )
+    def test_collect_workflow_span_maps_non_completed_status(
+        self,
+        trial_status: TrialStatus,
+        expected_span_status: str,
+    ) -> None:
+        orchestrator = MockOrchestrator()
+        orchestrator._workflow_traces_tracker = object()
+        orchestrator.collect_workflow_span = MagicMock()
+
+        lifecycle = TrialLifecycle(orchestrator)
+        now_ts = time.time()
+        trial_result = TrialResult(
+            trial_id="trial_status_case",
+            config={"temperature": 0.2},
+            metrics={"score": 0.75},
+            status=trial_status,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={"measures": []},
+            error_message="status failure" if trial_status == TrialStatus.FAILED else None,
+        )
+
+        lifecycle._collect_workflow_span(
+            trial_id="cfg_status",
+            trial_result=trial_result,
+            start_time=now_ts - 1.0,
+            end_time=now_ts,
+        )
+
+        span = orchestrator.collect_workflow_span.call_args.args[0]
+        assert span.status == expected_span_status
 
 
 # =============================================================================
@@ -843,6 +927,29 @@ class TestRunTrial:
             )
 
             assert result.status == TrialStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_trial_propagates_api_key_error(self):
+        orchestrator = MockOrchestrator()
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        async def mock_func(input_data):
+            return "result"
+
+        with patch.object(
+            orchestrator.evaluator, "evaluate", new_callable=AsyncMock
+        ) as mock_eval:
+            mock_eval.side_effect = APIKeyError("invalid provider key")
+
+            with pytest.raises(APIKeyError):
+                await lifecycle.run_trial(
+                    func=mock_func,
+                    config={"temp": 0.5},
+                    dataset=dataset,
+                    trial_number=0,
+                    session_id=None,
+                )
 
 
 # =============================================================================
