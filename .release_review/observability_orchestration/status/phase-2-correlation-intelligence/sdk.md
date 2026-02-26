@@ -6,11 +6,14 @@
 ## Progress
 - status: in_progress
 - completed_tasks:
-  - Phase 2 prompt upgraded with hardening port map and correlation deliverables.
-  - File-level task list defined for current branch codepaths.
+  - Added lock-protected span buffer access in `WorkflowTraceManager`.
+  - Added deterministic span `idempotency_key` generation and emission.
+  - Added recursive normalization/redaction coverage for tuple/set/dataclass/model payloads.
+  - Added explicit async client-session close path in workflow trace client.
+  - Added concurrency and payload/redaction tests.
 - tests:
-  - N/A (orchestration update only)
+  - `pytest tests/unit/core/test_workflow_trace_manager.py tests/unit/integrations/observability/test_workflow_traces.py -q` (pass)
 - blockers:
-  - Phase 2 branch does not yet contain Phase 1 hardening code; must be ported manually.
+  - None in SDK hardening slice.
 - notes:
-  - Source of truth: `.release_review/observability_orchestration/PHASE_2_PORT_PLAN.md`
+  - latest_commit: `325e917`

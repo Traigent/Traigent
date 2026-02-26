@@ -6,11 +6,14 @@
 ## Progress
 - status: in_progress
 - completed_tasks:
-  - Phase 2 prompt upgraded with trace UX hardening and correlation UX deliverables.
-  - Single-fetch, cache TTL, selection persistence, and error-path test gates defined.
+  - Removed preflight trace availability call from `WorkflowTracesTab` load path.
+  - Added cache TTL (`60s`) in `workflowTraceService`.
+  - Added selection-preservation logic for previously selected trial.
+  - Added explicit empty-data handling and large-trace fallback banner (`>1000` spans, render first 1000).
+  - Added service/tab tests for single-fetch behavior, cache TTL expiry, and large-trace mode.
 - tests:
-  - N/A (orchestration update only)
+  - `npm test -- src/services/__tests__/workflowTraceService.test.ts src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx` (pass)
 - blockers:
-  - Current frontend branch lacks the previously reviewed hardening changes; needs targeted port.
+  - None in frontend hardening slice.
 - notes:
-  - Source of truth: `.release_review/observability_orchestration/PHASE_2_PORT_PLAN.md`
+  - latest_commit: `77c28ce`
