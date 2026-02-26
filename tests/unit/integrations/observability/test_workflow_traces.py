@@ -286,8 +286,13 @@ class TestSpanPayload:
                 "creds": ("user", {"api_key": "sample-value"}),  # pragma: allowlist secret
                 "token_set": {"safe", "another"},
                 "payload": Credentials(api_key="sample-key", note="ok"),
+                "notes": "Authorization: Bearer token_value_12345",
             },
-            input_data={"auth_token": "abc123", "items": (1, 2, 3)},
+            input_data={
+                "auth_token": "abc123",
+                "items": (1, 2, 3),
+                "prompt": "api_key=abc123",
+            },
             output_data={"password": "not-a-password", "result": "ok"},  # pragma: allowlist secret
         )
 
@@ -296,7 +301,9 @@ class TestSpanPayload:
         assert metadata["creds"][1]["api_key"] == "[REDACTED]"
         assert isinstance(metadata["token_set"], list)
         assert metadata["payload"]["api_key"] == "[REDACTED]"
+        assert metadata["notes"] == "[REDACTED]"
         assert payload["input_data"]["auth_token"] == "[REDACTED]"
+        assert payload["input_data"]["prompt"] == "[REDACTED]"
         assert payload["output_data"]["password"] == "[REDACTED]"
 
 

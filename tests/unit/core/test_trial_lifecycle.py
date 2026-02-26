@@ -255,8 +255,15 @@ class TestCollectWorkflowSpan:
         assert lineage["training_run_id"] == "test-optimization-123"
         assert lineage["dataset_id"] == "dataset_alpha"
         assert lineage["example_ids"] == ["ex_1", "ex_2"]
+        assert [item["example_id"] for item in lineage["example_outcomes"]] == [
+            "ex_1",
+            "ex_2",
+        ]
+        assert lineage["example_outcomes"][0]["metric_name"] == "score"
         assert outcome["metric_name"] == "score"
         assert outcome["metric_value"] == 0.84
+        assert outcome["sample_size"] == 2
+        assert outcome["confidence"] == "low"
 
 
 # =============================================================================
