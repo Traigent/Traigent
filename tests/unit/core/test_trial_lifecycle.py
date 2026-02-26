@@ -15,6 +15,7 @@ Tests cover:
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -211,6 +212,51 @@ class TestGenerateTrialId:
                 "dataset_name"
             )
             assert dataset_name == "custom_dataset"
+
+
+class TestCollectWorkflowSpan:
+    def test_collect_workflow_span_includes_lineage_and_training_outcome(self) -> None:
+        orchestrator = MockOrchestrator()
+        orchestrator._workflow_traces_tracker = object()
+        orchestrator._dataset_name = "dataset_alpha"
+        orchestrator.collect_workflow_span = MagicMock()
+
+        lifecycle = TrialLifecycle(orchestrator)
+        now_ts = time.time()
+        trial_result = TrialResult(
+            trial_id="trial_001",
+            config={"temperature": 0.2},
+            metrics={"score": 0.84, "total_cost": 0.11},
+            status=TrialStatus.COMPLETED,
+            duration=1.23,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "trial_number": 7,
+                "examples_attempted": 12,
+                "measures": [
+                    {"example_id": "ex_1", "metrics": {"score": 0.9}},
+                    {"example_id": "ex_2", "metrics": {"score": 0.8}},
+                ],
+            },
+        )
+
+        lifecycle._collect_workflow_span(
+            trial_id="cfg_123",
+            trial_result=trial_result,
+            start_time=now_ts - 1.0,
+            end_time=now_ts,
+        )
+
+        orchestrator.collect_workflow_span.assert_called_once()
+        span = orchestrator.collect_workflow_span.call_args.args[0]
+        lineage = span.metadata["lineage"]
+        outcome = span.metadata["training_outcome"]
+
+        assert lineage["training_run_id"] == "test-optimization-123"
+        assert lineage["dataset_id"] == "dataset_alpha"
+        assert lineage["example_ids"] == ["ex_1", "ex_2"]
+        assert outcome["metric_name"] == "score"
+        assert outcome["metric_value"] == 0.84
 
 
 # =============================================================================

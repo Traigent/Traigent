@@ -699,6 +699,29 @@ class TrialLifecycle:
             # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
             # Use timezone-aware datetime with UTC; .isoformat() includes +00:00 offset
             # DO NOT add "Z" suffix - that would create invalid "+00:00Z" format
+            trial_metrics = trial_result.metrics or {}
+            trial_metadata = trial_result.metadata or {}
+
+            quality_metric_name = "score"
+            quality_metric_value = None
+            for candidate in ("score", "quality_score", "accuracy"):
+                if candidate in trial_metrics:
+                    quality_metric_name = candidate
+                    quality_metric_value = trial_metrics.get(candidate)
+                    break
+
+            measures = trial_metadata.get("measures", [])
+            example_ids: list[str] = []
+            if isinstance(measures, list):
+                for measure in measures:
+                    if not isinstance(measure, dict):
+                        continue
+                    example_id = measure.get("example_id")
+                    if isinstance(example_id, str) and example_id:
+                        example_ids.append(example_id)
+            if len(example_ids) > 50:
+                example_ids = example_ids[:50]
+
             span = SpanPayload(
                 span_id=uuid.uuid4().hex[:16],
                 trace_id=orchestrator._optimization_id,  # Use optimization ID as trace
@@ -728,16 +751,19 @@ class TrialLifecycle:
                 input_data={"config": trial_result.config},
                 output_data={"metrics": trial_result.metrics},
                 metadata={
-                    "trial_number": (
-                        trial_result.metadata.get("trial_number")
-                        if trial_result.metadata
-                        else None
-                    ),
-                    "examples_attempted": (
-                        trial_result.metadata.get("examples_attempted")
-                        if trial_result.metadata
-                        else None
-                    ),
+                    "trial_number": trial_metadata.get("trial_number"),
+                    "examples_attempted": trial_metadata.get("examples_attempted"),
+                    "lineage": {
+                        "training_run_id": orchestrator._optimization_id,
+                        "dataset_id": getattr(orchestrator, "_dataset_name", None),
+                        "example_ids": example_ids,
+                    },
+                    "training_outcome": {
+                        "metric_name": quality_metric_name,
+                        "metric_value": quality_metric_value,
+                        "total_cost": trial_metrics.get("total_cost"),
+                        "duration": trial_result.duration,
+                    },
                 },
             )
 
