@@ -339,6 +339,7 @@ markers = [
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "smoke: marks smoke tests for fast phase-gate validation",
     "asyncio: marks tests as async tests",
     "analytics: marks tests as analytics tests",
     "security: marks tests as security tests",
