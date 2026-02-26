@@ -712,6 +712,16 @@ class TrialLifecycle:
 
             measures = trial_metadata.get("measures", [])
             example_ids: list[str] = []
+            example_outcomes: list[dict[str, Any]] = []
+
+            def _as_float(value: Any) -> float | None:
+                if isinstance(value, bool):
+                    return None
+                if isinstance(value, (int, float)):
+                    return float(value)
+                return None
+
+            trial_metric_float = _as_float(quality_metric_value)
             if isinstance(measures, list):
                 for measure in measures:
                     if not isinstance(measure, dict):
@@ -719,8 +729,68 @@ class TrialLifecycle:
                     example_id = measure.get("example_id")
                     if isinstance(example_id, str) and example_id:
                         example_ids.append(example_id)
+                    if not isinstance(example_id, str) or not example_id:
+                        continue
+
+                    metrics = measure.get("metrics")
+                    metric_value = None
+                    if isinstance(metrics, dict):
+                        metric_value = metrics.get(quality_metric_name)
+                        if metric_value is None:
+                            for fallback in ("score", "quality_score", "accuracy"):
+                                if fallback in metrics:
+                                    metric_value = metrics.get(fallback)
+                                    break
+
+                    metric_float = _as_float(metric_value)
+                    metric_delta = (
+                        metric_float - trial_metric_float
+                        if metric_float is not None and trial_metric_float is not None
+                        else None
+                    )
+                    if metric_float is None:
+                        failure_classification = "unknown"
+                    elif (
+                        trial_metric_float is not None
+                        and metric_float < trial_metric_float
+                    ):
+                        failure_classification = "below_trial_mean"
+                    else:
+                        failure_classification = "stable"
+
+                    example_outcomes.append(
+                        {
+                            "example_id": example_id,
+                            "metric_name": quality_metric_name,
+                            "metric_value": metric_float,
+                            "metric_delta": metric_delta,
+                            "failure_classification": failure_classification,
+                            "confidence": "medium",
+                            "sample_size": 1,
+                        }
+                    )
             if len(example_ids) > 50:
                 example_ids = example_ids[:50]
+            if len(example_outcomes) > 50:
+                example_outcomes = example_outcomes[:50]
+
+            outcome_sample_size = len(example_outcomes) or trial_metadata.get(
+                "examples_attempted",
+                0,
+            )
+            if isinstance(outcome_sample_size, bool):
+                outcome_sample_size = 0
+            if not isinstance(outcome_sample_size, int):
+                try:
+                    outcome_sample_size = int(outcome_sample_size)
+                except (TypeError, ValueError):
+                    outcome_sample_size = 0
+            if outcome_sample_size >= 20:
+                outcome_confidence = "high"
+            elif outcome_sample_size >= 5:
+                outcome_confidence = "medium"
+            else:
+                outcome_confidence = "low"
 
             span = SpanPayload(
                 span_id=uuid.uuid4().hex[:16],
@@ -757,12 +827,15 @@ class TrialLifecycle:
                         "training_run_id": orchestrator._optimization_id,
                         "dataset_id": getattr(orchestrator, "_dataset_name", None),
                         "example_ids": example_ids,
+                        "example_outcomes": example_outcomes,
                     },
                     "training_outcome": {
                         "metric_name": quality_metric_name,
                         "metric_value": quality_metric_value,
                         "total_cost": trial_metrics.get("total_cost"),
                         "duration": trial_result.duration,
+                        "sample_size": outcome_sample_size,
+                        "confidence": outcome_confidence,
                     },
                 },
             )
@@ -772,7 +845,12 @@ class TrialLifecycle:
             logger.debug(f"Collected workflow span for trial {trial_id}")
 
         except Exception as exc:
-            logger.debug(f"Failed to collect workflow span for trial {trial_id}: {exc}")
+            logger.warning(
+                "Failed to collect workflow span for trial %s: %s",
+                trial_id,
+                exc,
+                exc_info=True,
+            )
 
     # =========================================================================
     # Error Result Building
