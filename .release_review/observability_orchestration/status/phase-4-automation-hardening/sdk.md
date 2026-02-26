@@ -34,5 +34,5 @@
 - residual_risks:
   - Smoke currently validates observability emission through trial lifecycle internals; it does not execute full public optimize-loop orchestration.
 - notes:
-  - latest_verification_report: `.release_review/observability_orchestration/verification/phase-4-automation-hardening_20260226_232444.md`
-  - latest_commit: `pending commit in this push`
+  - latest_verification_report: `.release_review/observability_orchestration/verification/phase-4-automation-hardening_20260226_233120.md`
+  - latest_commit: `e0a2f9c44f77c3fa5e0ae183400b23a78f9ce9bf`
