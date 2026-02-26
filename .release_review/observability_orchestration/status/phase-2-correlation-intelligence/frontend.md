@@ -4,16 +4,20 @@
 - `observability-frontend-phase-2-correlation-intelligence`
 
 ## Progress
-- status: in_progress
+- status: done
 - completed_tasks:
-  - Removed preflight trace availability call from `WorkflowTracesTab` load path.
-  - Added cache TTL (`60s`) in `workflowTraceService`.
+  - Kept single-fetch load path (no preflight dependency in main traces tab flow).
+  - Switched workflow trace fetches to canonical observability endpoint (`/api/observability/runs/<run_id>?include_spans=true`).
+  - Added adaptive trace cache TTL policy (`5s` for active runs, `60s` for stable runs).
+  - Added strict malformed-payload validation in `workflowTraceService`.
   - Added selection-preservation logic for previously selected trial.
-  - Added explicit empty-data handling and large-trace fallback banner (`>1000` spans, render first 1000).
-  - Added service/tab tests for single-fetch behavior, cache TTL expiry, and large-trace mode.
+  - Replaced naive large-trace slicing with topology-preserving truncation (`<=1000` spans without orphaning children).
+  - Expanded service/tab tests for canonical endpoint usage, adaptive TTL hit/miss/expiry, malformed payload handling, and large-trace banner behavior.
 - tests:
-  - `npm test -- src/services/__tests__/workflowTraceService.test.ts src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx` (pass)
+  - `npx eslint src/services/workflowTraceService.ts src/services/__tests__/workflowTraceService.test.ts src/components/experiment/workflow/WorkflowTracesTab.tsx src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx` -> PASS
+  - `npm run test -- src/services/__tests__/workflowTraceService.test.ts src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx` -> PASS (`75 passed`)
+  - `npm run type-check` -> PASS
 - blockers:
-  - None in frontend hardening slice.
+  - None.
 - notes:
-  - latest_commit: `77c28ce`
+  - latest_commit: `e60c07fae008769864139b6e4c937744ab5cd280`
