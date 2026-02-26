@@ -42,13 +42,22 @@ from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
-SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "http://localhost:8080")
+SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
+AUTH_TOKEN: Final[str] = os.getenv(
+    "MASTRA_JS_AUTH_TOKEN", "Bearer QYG7VHh32VMZg7hLVBRvPEbTgFtco6dU"
+)
+AUTH_HEADERS: Final[dict[str, str]] = {
+    "Authorization": AUTH_TOKEN,
+    "User-Agent": "Traigent-SDK/1.0",
+}
 TUNABLE_ID: Final[str | None] = os.getenv(
     "MASTRA_JS_TUNABLE_ID"
 )  # None = auto-select first
-DATASET_SIZE: Final[int] = int(
-    os.getenv("MASTRA_JS_DATASET_SIZE", "100")
-)  # case_001 through case_100
+INPUT_IDS: Final[list[str]] = [
+    "no-filter-single-search-trashcan-blue",
+    "product-search-specific-model",
+    "consultant-fridge",
+]
 MAX_TRIALS: Final[int] = int(
     os.getenv("MASTRA_JS_MAX_TRIALS", "10")
 )  # Let Traigent decide which configs to try
@@ -164,11 +173,11 @@ def discover_tunable_id(url: str) -> str:
 
 
 def build_dataset() -> Dataset:
-    """Build the full dataset using the demo server's input_ids."""
+    """Build the dataset from the known input_ids."""
     return Dataset(
         [
-            EvaluationExample(input_data={"input_id": f"case_{i:03d}"})
-            for i in range(1, DATASET_SIZE + 1)
+            EvaluationExample(input_data={"input_id": iid})
+            for iid in INPUT_IDS
         ]
     )
 
@@ -189,8 +198,9 @@ async def run_optimization() -> None:
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
         tunable_id=tunable_id,
-        batch_size=50,
+        batch_size=1,
         auto_discover_tvars=True,
+        auth_header=AUTH_TOKEN,
     )
 
     async with evaluator:
