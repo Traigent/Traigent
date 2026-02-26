@@ -10,6 +10,7 @@ Tests for Traigent workflow traces with LangGraph visualization support.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -204,6 +205,10 @@ class TestSpanPayload:
         assert result["span_name"] == "Test Span"
         assert result["span_type"] == "node"
         assert result["start_time"] == "2026-01-13T10:00:00Z"
+        assert (
+            result["idempotency_key"]
+            == "trace_abc:config_001:span_001"
+        )
         assert result["status"] == SpanStatus.RUNNING.value
         assert result["input_tokens"] == 0
         assert result["output_tokens"] == 0
@@ -228,6 +233,7 @@ class TestSpanPayload:
         result = span.to_dict()
 
         assert result["end_time"] == "2026-01-13T10:00:05Z"
+        assert result["idempotency_key"] == "trace_abc:config_001:span_001"
         assert result["parent_span_id"] == "span_root"
         assert result["node_id"] == "node_1"
         assert result["error_message"] == "Test error"
@@ -250,6 +256,48 @@ class TestSpanPayload:
         assert "parent_span_id" not in result
         assert "node_id" not in result
         assert "error_message" not in result
+
+    def test_explicit_idempotency_key_is_preserved(self) -> None:
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            idempotency_key="custom-key",
+        )
+        assert span.to_dict()["idempotency_key"] == "custom-key"
+
+    def test_redacts_tuple_set_and_dataclass_values(self) -> None:
+        @dataclass
+        class Credentials:
+            api_key: str
+            note: str
+
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Sensitive Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={
+                "creds": ("user", {"api_key": "sample-value"}),  # pragma: allowlist secret
+                "token_set": {"safe", "another"},
+                "payload": Credentials(api_key="sample-key", note="ok"),
+            },
+            input_data={"auth_token": "abc123", "items": (1, 2, 3)},
+            output_data={"password": "not-a-password", "result": "ok"},  # pragma: allowlist secret
+        )
+
+        payload = span.to_dict()
+        metadata = payload["metadata"]
+        assert metadata["creds"][1]["api_key"] == "[REDACTED]"
+        assert isinstance(metadata["token_set"], list)
+        assert metadata["payload"]["api_key"] == "[REDACTED]"
+        assert payload["input_data"]["auth_token"] == "[REDACTED]"
+        assert payload["output_data"]["password"] == "[REDACTED]"
 
 
 class TestWorkflowNode:
@@ -929,14 +977,20 @@ class TestEdgeCases:
         )
 
         results = {}
+        start_barrier = threading.Barrier(4)
+        done_barrier = threading.Barrier(4)
 
         def thread_func(thread_id: int) -> None:
+            start_barrier.wait()
             with tracker.trace_trial(f"config_{thread_id}") as ctx:
                 results[thread_id] = ctx["configuration_run_id"]
+            done_barrier.wait()
 
         threads = [threading.Thread(target=thread_func, args=(i,)) for i in range(3)]
         for t in threads:
             t.start()
+        start_barrier.wait()
+        done_barrier.wait()
         for t in threads:
             t.join()
 

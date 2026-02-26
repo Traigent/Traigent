@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -206,10 +207,38 @@ class TestGroupSpansByConfigRun:
             _FakeSpan(configuration_run_id="b"),
             _FakeSpan(configuration_run_id="a"),
         ]
-        groups = mgr._group_spans_by_config_run()
+        groups = mgr._group_spans_by_config_run(mgr._collected_spans)
         assert len(groups) == 2
         assert len(groups["a"]) == 2
         assert len(groups["b"]) == 1
+
+    def test_collect_span_is_thread_safe(self) -> None:
+        mgr = _make_manager(tracker=MagicMock())
+        start_barrier = threading.Barrier(9)
+        done_barrier = threading.Barrier(9)
+
+        def _worker(worker_id: int) -> None:
+            start_barrier.wait()
+            for idx in range(25):
+                mgr.collect_span(
+                    _FakeSpan(
+                        trace_id=f"t-{worker_id}",
+                        configuration_run_id=f"run-{worker_id}-{idx}",
+                    )
+                )
+            done_barrier.wait()
+
+        threads = [threading.Thread(target=_worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+
+        start_barrier.wait()
+        done_barrier.wait()
+
+        for thread in threads:
+            thread.join()
+
+        assert len(mgr._collected_spans) == 200
 
 
 # ---------------------------------------------------------------------------

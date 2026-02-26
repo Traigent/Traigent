@@ -35,10 +35,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -106,6 +107,61 @@ class SpanType(StrEnum):
     EDGE = "edge"
 
 
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(password|secret|token|api[_-]?key|authorization|credential|private[_-]?key)",
+    re.IGNORECASE,
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    return bool(_SENSITIVE_KEY_PATTERN.search(key))
+
+
+def _to_observability_object(value: Any) -> Any:
+    """Normalize supported object types into JSON-serializable containers."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {str(key): _to_observability_object(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_observability_object(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _to_observability_object(asdict(value))
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        try:
+            return _to_observability_object(value.model_dump())
+        except Exception:
+            return str(value)
+    if hasattr(value, "dict") and callable(value.dict):
+        try:
+            return _to_observability_object(value.dict())
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _redact_observability_object(value: Any, parent_key: str | None = None) -> Any:
+    """Redact values for sensitive keys in normalized observability payloads."""
+    if isinstance(value, dict):
+        return {
+            str(key): _redact_observability_object(item, str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_observability_object(item, parent_key) for item in value]
+    if parent_key and _is_sensitive_key(parent_key):
+        return "[REDACTED]"
+    return value
+
+
+def _normalize_and_redact(value: Any) -> Any:
+    return _redact_observability_object(_to_observability_object(value))
+
+
 # =============================================================================
 # Data Models / DTOs
 # =============================================================================
@@ -125,6 +181,7 @@ class SpanPayload:
     span_name: str
     span_type: str
     start_time: str
+    idempotency_key: str | None = None
 
     # Optional fields
     parent_span_id: str | None = None
@@ -146,6 +203,36 @@ class SpanPayload:
     # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Enforce deterministic idempotency and redaction at capture time."""
+        if not self.idempotency_key:
+            self.idempotency_key = (
+                f"{self.trace_id}:{self.configuration_run_id}:{self.span_id}"
+            )
+
+        normalized_metadata = _normalize_and_redact(self.metadata or {})
+        self.metadata = (
+            normalized_metadata
+            if isinstance(normalized_metadata, dict)
+            else {"value": normalized_metadata}
+        )
+
+        if self.input_data is not None:
+            normalized_input = _normalize_and_redact(self.input_data)
+            self.input_data = (
+                normalized_input
+                if isinstance(normalized_input, dict)
+                else {"value": normalized_input}
+            )
+
+        if self.output_data is not None:
+            normalized_output = _normalize_and_redact(self.output_data)
+            self.output_data = (
+                normalized_output
+                if isinstance(normalized_output, dict)
+                else {"value": normalized_output}
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
         result: dict[str, Any] = {
@@ -155,6 +242,7 @@ class SpanPayload:
             "span_name": self.span_name,
             "span_type": self.span_type,
             "start_time": self.start_time,
+            "idempotency_key": self.idempotency_key,
             "status": self.status,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -692,8 +780,6 @@ class WorkflowTracesClient:
             or os.environ.get("TRAIGENT_API_TOKEN")
         )
         self.timeout = timeout
-        self._session: aiohttp.ClientSession | None = None  # type: ignore[assignment]
-        self._lock = threading.Lock()
 
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with authentication."""
@@ -798,11 +884,12 @@ class WorkflowTracesClient:
                 success=False, error="Either graph or spans must be provided"
             )
 
+        session: aiohttp.ClientSession | None = None
         try:
             url = f"{self.backend_url}/api/v1/traces/ingest"
             headers = self._get_headers()
-
-            async with aiohttp.ClientSession() as session:
+            session = aiohttp.ClientSession()
+            async with session:
                 async with session.post(
                     url,
                     json=request_payload,
@@ -815,6 +902,9 @@ class WorkflowTracesClient:
         except aiohttp.ClientError as e:
             logger.error(f"Failed to ingest traces: {e}")
             return TraceIngestionResponse(success=False, error=str(e))
+        finally:
+            if session and not session.closed:
+                await session.close()
 
 
 # =============================================================================

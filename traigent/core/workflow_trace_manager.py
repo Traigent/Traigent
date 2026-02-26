@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -58,6 +59,7 @@ class WorkflowTraceManager:
         self._optimizer_class_name = optimizer_class_name
         self._optimization_id = optimization_id
         self._collected_spans: list[SpanPayload] = []
+        self._spans_lock = threading.RLock()
 
     def collect_span(self, span_data: SpanPayload) -> None:
         """Collect a workflow span for later submission to backend.
@@ -66,7 +68,8 @@ class WorkflowTraceManager:
             span_data: Span payload to collect
         """
         if self._workflow_traces_tracker is not None:
-            self._collected_spans.append(span_data)
+            with self._spans_lock:
+                self._collected_spans.append(span_data)
 
     async def submit_traces(self, session_id: str | None = None) -> None:
         """Submit collected workflow spans and graph to backend.
@@ -83,7 +86,8 @@ class WorkflowTraceManager:
         if self._workflow_traces_tracker is None:
             return
 
-        if not self._collected_spans:
+        spans_to_submit = self._snapshot_and_clear_spans()
+        if not spans_to_submit:
             logger.debug("No workflow spans to submit")
             return
 
@@ -92,7 +96,6 @@ class WorkflowTraceManager:
         # in the backend database, so trace ingestion would fail with 404
         if is_backend_offline():
             logger.debug("Skipping workflow trace submission: backend is offline")
-            self._collected_spans = []
             return
 
         # Check if session_id is a mock ID (created when backend was unavailable)
@@ -103,18 +106,17 @@ class WorkflowTraceManager:
             logger.debug(
                 f"Skipping workflow trace submission: mock session '{session_id}'"
             )
-            self._collected_spans = []
             return
 
         try:
             # Get trace_id from first span (all spans share same trace)
-            trace_id = self._collected_spans[0].trace_id
+            trace_id = spans_to_submit[0].trace_id
 
             # Try to create workflow graph for visualization (only submit once)
             graph = self._create_optimization_workflow_graph(session_id)
 
             # Group spans by configuration_run_id so each trial gets trace_id in its metadata
-            spans_by_config_run = self._group_spans_by_config_run()
+            spans_by_config_run = self._group_spans_by_config_run(spans_to_submit)
 
             # Submit each group separately
             total_submitted = 0
@@ -148,16 +150,22 @@ class WorkflowTraceManager:
 
         except Exception as exc:
             logger.warning(f"Workflow trace submission failed: {exc}")
-        finally:
-            # Clear collected spans after submission attempt
-            self._collected_spans = []
 
-    def _group_spans_by_config_run(self) -> dict[str, list]:
-        """Group collected spans by configuration_run_id."""
+    def _group_spans_by_config_run(self, spans: list[SpanPayload]) -> dict[str, list]:
+        """Group spans by configuration_run_id."""
         spans_by_config_run: dict[str, list] = defaultdict(list)
-        for span in self._collected_spans:
+        for span in spans:
             spans_by_config_run[span.configuration_run_id].append(span)
         return dict(spans_by_config_run)
+
+    def _snapshot_and_clear_spans(self) -> list[SpanPayload]:
+        """Atomically snapshot collected spans and clear the shared buffer."""
+        with self._spans_lock:
+            if not self._collected_spans:
+                return []
+            spans = list(self._collected_spans)
+            self._collected_spans.clear()
+            return spans
 
     def _create_optimization_workflow_graph(
         self, session_id: str | None
