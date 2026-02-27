@@ -14,6 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -348,6 +349,184 @@ class TestCollectWorkflowSpan:
 
         span = orchestrator.collect_workflow_span.call_args.args[0]
         assert span.status == expected_span_status
+
+
+class TestObservabilityOutcomeHelpers:
+    def test_as_float_metric_and_classifiers_cover_edge_cases(self) -> None:
+        assert TrialLifecycle._as_float_metric(True) is None
+        assert TrialLifecycle._as_float_metric("0.5") is None
+        assert TrialLifecycle._as_float_metric(3) == 3.0
+
+        assert TrialLifecycle._example_direction(None) == "neutral"
+        assert TrialLifecycle._example_direction(0.01) == "neutral"
+        assert TrialLifecycle._example_direction(0.03) == "positive"
+        assert TrialLifecycle._example_direction(-0.03) == "negative"
+
+        assert TrialLifecycle._example_segment(None) == "mild"
+        assert TrialLifecycle._example_segment(-0.2) == "severe"
+        assert TrialLifecycle._example_segment(-0.08) == "moderate"
+        assert TrialLifecycle._example_segment(-0.01) == "mild"
+
+        assert TrialLifecycle._classify_failure_detail(None) == "unknown"
+        assert TrialLifecycle._classify_failure_detail(-0.2) == "severe_regression"
+        assert TrialLifecycle._classify_failure_detail(-0.08) == "regression"
+        assert TrialLifecycle._classify_failure_detail(-0.03) == "below_trial_mean"
+        assert TrialLifecycle._classify_failure_detail(0.03) == "improved"
+        assert TrialLifecycle._classify_failure_detail(0.0) == "stable"
+
+        assert (
+            TrialLifecycle._classify_failure_legacy(
+                metric_float=None,
+                trial_metric_float=0.5,
+            )
+            == "unknown"
+        )
+        assert (
+            TrialLifecycle._classify_failure_legacy(
+                metric_float=0.2,
+                trial_metric_float=0.5,
+            )
+            == "below_trial_mean"
+        )
+        assert (
+            TrialLifecycle._classify_failure_legacy(
+                metric_float=0.7,
+                trial_metric_float=0.5,
+            )
+            == "stable"
+        )
+
+        assert TrialLifecycle._confidence_from_delta(None) == ("low", 0.0)
+        confidence, score = TrialLifecycle._confidence_from_delta(0.2)
+        assert confidence == "high"
+        assert score == pytest.approx(0.8)
+
+    def test_extract_measure_metric_value_fallback_keys(self) -> None:
+        assert (
+            TrialLifecycle._extract_measure_metric_value(
+                measure={"metrics": {"quality_score": 0.61}},
+                quality_metric_name="score",
+            )
+            == pytest.approx(0.61)
+        )
+        assert (
+            TrialLifecycle._extract_measure_metric_value(
+                measure={"metrics": {"accuracy": 0.79}},
+                quality_metric_name="score",
+            )
+            == pytest.approx(0.79)
+        )
+
+    def test_build_example_outcomes_handles_non_list_and_caps(self) -> None:
+        empty_ids, empty_outcomes = TrialLifecycle._build_example_outcomes(
+            measures="not-a-list",
+            quality_metric_name="score",
+            trial_metric_float=0.5,
+            trial_metadata={},
+            trace_id="trace_1",
+            configuration_run_id="cfg_1",
+            trial_result_id="trial_1",
+        )
+        assert empty_ids == []
+        assert empty_outcomes == []
+
+        measures: list[object] = [
+            "skip-me",
+            {"example_id": "", "metrics": {"score": 0.1}},
+        ]
+        measures.extend(
+            {"example_id": f"ex_{idx}", "metrics": {"score": 0.5}}
+            for idx in range(60)
+        )
+        example_ids, example_outcomes = TrialLifecycle._build_example_outcomes(
+            measures=measures,
+            quality_metric_name="score",
+            trial_metric_float=0.5,
+            trial_metadata={},
+            trace_id="trace_2",
+            configuration_run_id="cfg_2",
+            trial_result_id="trial_2",
+        )
+
+        assert len(example_ids) == 50
+        assert len(example_outcomes) == 50
+        assert example_ids[0] == "ex_0"
+        assert example_ids[-1] == "ex_49"
+
+    @pytest.mark.parametrize(
+        ("examples_attempted", "expected_size", "expected_confidence"),
+        [
+            (True, 0, "low"),
+            ("8", 8, "medium"),
+            ("not-an-int", 0, "low"),
+            (25, 25, "high"),
+        ],
+    )
+    def test_collect_workflow_span_coerces_sample_size_and_confidence(
+        self,
+        examples_attempted: object,
+        expected_size: int,
+        expected_confidence: str,
+    ) -> None:
+        orchestrator = MockOrchestrator()
+        orchestrator._workflow_traces_tracker = object()
+        orchestrator.collect_workflow_span = MagicMock()
+        lifecycle = TrialLifecycle(orchestrator)
+        now_ts = time.time()
+
+        trial_result = TrialResult(
+            trial_id="trial_sample_size",
+            config={"temperature": 0.2},
+            metrics={"score": 0.75},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "measures": [],
+                "examples_attempted": examples_attempted,
+            },
+        )
+
+        lifecycle._collect_workflow_span(
+            trial_id="cfg_sample",
+            trial_result=trial_result,
+            start_time=now_ts - 1.0,
+            end_time=now_ts,
+        )
+
+        span = orchestrator.collect_workflow_span.call_args.args[0]
+        outcome = span.metadata["training_outcome"]
+        assert outcome["sample_size"] == expected_size
+        assert outcome["confidence"] == expected_confidence
+
+    def test_collect_workflow_span_logs_warning_on_exception(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        orchestrator = MockOrchestrator()
+        orchestrator._workflow_traces_tracker = object()
+        orchestrator.collect_workflow_span = MagicMock(side_effect=RuntimeError("boom"))
+        lifecycle = TrialLifecycle(orchestrator)
+        now_ts = time.time()
+        trial_result = TrialResult(
+            trial_id="trial_error",
+            config={"temperature": 0.2},
+            metrics={"score": 0.75},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={"measures": []},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            lifecycle._collect_workflow_span(
+                trial_id="cfg_error",
+                trial_result=trial_result,
+                start_time=now_ts - 1.0,
+                end_time=now_ts,
+            )
+
+        assert "Failed to collect workflow span" in caplog.text
 
 
 # =============================================================================

@@ -776,13 +776,13 @@ class TestBackupManagerCreateBackup:
 
         assert len(manager.backups) == 2
 
-    @patch("traigent.security.deployment.time.time")
+    @patch("traigent.security.deployment._backup_unix_seconds")
     def test_create_backup_unique_ids(
         self, mock_time: MagicMock, manager: BackupManager
     ) -> None:
         """Test each backup gets unique ID."""
         # Mock time to return different values
-        mock_time.side_effect = [1000.0, 1001.0]
+        mock_time.side_effect = [1000, 1001]
 
         backup1 = manager.create_backup()
         backup2 = manager.create_backup()

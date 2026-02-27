@@ -471,7 +471,7 @@ class TestEdgeAnalyticsCommands:
 
         assert result.exit_code == 1
         assert "API key required" in result.output
-        assert "Get your API key at:" in result.output
+        assert "traigent auth login" in result.output
 
     def test_sync_to_cloud_dry_run(self):
         """Test sync to cloud in dry run mode."""
