@@ -10,9 +10,10 @@ Tests for Traigent workflow traces with LangGraph visualization support.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -204,6 +205,10 @@ class TestSpanPayload:
         assert result["span_name"] == "Test Span"
         assert result["span_type"] == "node"
         assert result["start_time"] == "2026-01-13T10:00:00Z"
+        assert (
+            result["idempotency_key"]
+            == "trace_abc:config_001:span_001"
+        )
         assert result["status"] == SpanStatus.RUNNING.value
         assert result["input_tokens"] == 0
         assert result["output_tokens"] == 0
@@ -228,6 +233,7 @@ class TestSpanPayload:
         result = span.to_dict()
 
         assert result["end_time"] == "2026-01-13T10:00:05Z"
+        assert result["idempotency_key"] == "trace_abc:config_001:span_001"
         assert result["parent_span_id"] == "span_root"
         assert result["node_id"] == "node_1"
         assert result["error_message"] == "Test error"
@@ -250,6 +256,90 @@ class TestSpanPayload:
         assert "parent_span_id" not in result
         assert "node_id" not in result
         assert "error_message" not in result
+
+    def test_explicit_idempotency_key_is_preserved(self) -> None:
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            idempotency_key="custom-key",
+        )
+        assert span.to_dict()["idempotency_key"] == "custom-key"
+
+    def test_redacts_tuple_set_and_dataclass_values(self) -> None:
+        @dataclass
+        class Credentials:
+            api_key: str
+            note: str
+
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Sensitive Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={
+                "creds": ("user", {"api_key": "sample-value"}),  # pragma: allowlist secret
+                "token_set": {"safe", "another"},
+                "payload": Credentials(api_key="sample-key", note="ok"),
+                "notes": "Authorization: Bearer token_value_12345",
+            },
+            input_data={
+                "auth_token": "abc123",
+                "items": (1, 2, 3),
+                "prompt": "api_key=abc123",
+            },
+            output_data={"password": "not-a-password", "result": "ok"},  # pragma: allowlist secret
+        )
+
+        payload = span.to_dict()
+        metadata = payload["metadata"]
+        assert metadata["creds"][1]["api_key"] == "[REDACTED]"
+        assert isinstance(metadata["token_set"], list)
+        assert metadata["payload"]["api_key"] == "[REDACTED]"
+        assert metadata["notes"] == "[REDACTED]"
+        assert payload["input_data"]["auth_token"] == "[REDACTED]"
+        assert payload["input_data"]["prompt"] == "[REDACTED]"
+        assert payload["output_data"]["password"] == "[REDACTED]"
+
+    def test_to_observability_object_handles_model_like_values(self) -> None:
+        from traigent.integrations.observability.workflow_traces import (
+            _to_observability_object,
+        )
+
+        class ModelDumpValue:
+            def model_dump(self) -> dict[str, Any]:
+                return {"payload": "ok"}
+
+        class ModelDumpFailure:
+            def model_dump(self) -> dict[str, Any]:
+                raise RuntimeError("boom")
+
+            def __str__(self) -> str:
+                return "model_dump_fallback"
+
+        class DictValue:
+            def dict(self) -> dict[str, Any]:
+                return {"payload": "dict-ok"}
+
+        class DictFailure:
+            def dict(self) -> dict[str, Any]:
+                raise RuntimeError("boom")
+
+            def __str__(self) -> str:
+                return "dict_fallback"
+
+        now = datetime(2026, 2, 1, tzinfo=UTC)
+        assert _to_observability_object(now) == now.isoformat()
+        assert _to_observability_object(b"bytes-value") == "bytes-value"
+        assert _to_observability_object(ModelDumpValue()) == {"payload": "ok"}
+        assert _to_observability_object(ModelDumpFailure()) == "model_dump_fallback"
+        assert _to_observability_object(DictValue()) == {"payload": "dict-ok"}
+        assert _to_observability_object(DictFailure()) == "dict_fallback"
 
 
 class TestWorkflowNode:
@@ -929,14 +1019,20 @@ class TestEdgeCases:
         )
 
         results = {}
+        start_barrier = threading.Barrier(4)
+        done_barrier = threading.Barrier(4)
 
         def thread_func(thread_id: int) -> None:
+            start_barrier.wait()
             with tracker.trace_trial(f"config_{thread_id}") as ctx:
                 results[thread_id] = ctx["configuration_run_id"]
+            done_barrier.wait()
 
         threads = [threading.Thread(target=thread_func, args=(i,)) for i in range(3)]
         for t in threads:
             t.start()
+        start_barrier.wait()
+        done_barrier.wait()
         for t in threads:
             t.join()
 
@@ -1207,6 +1303,51 @@ class TestAsyncMethods:
         response = await client.ingest_traces_async()
         assert response.success is False
         assert response.error is not None
+
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_success_closes_session(
+        self,
+        patched_aiohttp: MagicMock,
+        sample_span: SpanPayload,
+    ) -> None:
+        client = WorkflowTracesClient(backend_url="http://localhost:5000")
+
+        patched_aiohttp.ClientError = Exception
+        patched_aiohttp.ClientTimeout.return_value = object()
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(
+            return_value={
+                "success": True,
+                "data": {
+                    "trace_id": "trace_async",
+                    "spans_ingested": 1,
+                },
+            }
+        )
+
+        post_context = AsyncMock()
+        post_context.__aenter__.return_value = mock_response
+        post_context.__aexit__.return_value = None
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        session.post = MagicMock(return_value=post_context)
+        session.closed = False
+        session.close = AsyncMock()
+        patched_aiohttp.ClientSession.return_value = session
+
+        response = await client.ingest_traces_async(
+            spans=[sample_span],
+            trace_id="trace_async",
+            configuration_run_id="cfg_async",
+        )
+
+        assert response.success is True
+        session.post.assert_called_once()
+        session.close.assert_awaited_once()
 
 
 # =============================================================================

@@ -15,6 +15,11 @@ from ..utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _backup_unix_seconds() -> int:
+    """Return current UNIX seconds for backup ID generation."""
+    return int(time.time())
+
+
 class DeploymentMode(Enum):
     """Deployment modes."""
 
@@ -271,7 +276,7 @@ class BackupManager:
 
     def create_backup(self, backup_type: str = "full") -> dict[str, Any]:
         """Create system backup."""
-        backup_id = f"backup_{int(time.time())}"
+        backup_id = f"backup_{_backup_unix_seconds()}"
 
         backup_info = {
             "backup_id": backup_id,

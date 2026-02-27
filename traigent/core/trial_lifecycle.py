@@ -657,6 +657,164 @@ class TrialLifecycle:
         trial_result.metadata = metadata
         trial_result.metrics = metrics
 
+    @staticmethod
+    def _as_float_metric(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    @staticmethod
+    def _example_direction(metric_delta: float | None) -> str:
+        if metric_delta is None:
+            return "neutral"
+        if metric_delta > 0.02:
+            return "positive"
+        if metric_delta < -0.02:
+            return "negative"
+        return "neutral"
+
+    @staticmethod
+    def _example_segment(metric_delta: float | None) -> str:
+        if metric_delta is None:
+            return "mild"
+        if metric_delta <= -0.15:
+            return "severe"
+        if metric_delta <= -0.05:
+            return "moderate"
+        return "mild"
+
+    @staticmethod
+    def _classify_failure_detail(metric_delta: float | None) -> str:
+        if metric_delta is None:
+            return "unknown"
+        if metric_delta <= -0.15:
+            return "severe_regression"
+        if metric_delta <= -0.05:
+            return "regression"
+        if metric_delta < -0.02:
+            return "below_trial_mean"
+        if metric_delta >= 0.02:
+            return "improved"
+        return "stable"
+
+    @staticmethod
+    def _classify_failure_legacy(
+        *,
+        metric_float: float | None,
+        trial_metric_float: float | None,
+    ) -> str:
+        if metric_float is None:
+            return "unknown"
+        if trial_metric_float is not None and metric_float < trial_metric_float:
+            return "below_trial_mean"
+        return "stable"
+
+    @staticmethod
+    def _confidence_from_delta(metric_delta: float | None) -> tuple[str, float]:
+        if metric_delta is None:
+            return "low", 0.0
+        score = min(1.0, abs(metric_delta) / 0.25)
+        if score >= 0.7:
+            return "high", score
+        if score >= 0.35:
+            return "medium", score
+        return "low", score
+
+    @classmethod
+    def _extract_measure_metric_value(
+        cls,
+        *,
+        measure: dict[str, Any],
+        quality_metric_name: str,
+    ) -> float | None:
+        measure_metrics = measure.get("metrics")
+        raw_metric_value = None
+        if isinstance(measure_metrics, dict):
+            raw_metric_value = measure_metrics.get(quality_metric_name)
+            if raw_metric_value is None:
+                for fallback in ("score", "quality_score", "accuracy"):
+                    if fallback in measure_metrics:
+                        raw_metric_value = measure_metrics.get(fallback)
+                        break
+        return cls._as_float_metric(raw_metric_value)
+
+    @classmethod
+    def _build_example_outcomes(
+        cls,
+        *,
+        measures: Any,
+        quality_metric_name: str,
+        trial_metric_float: float | None,
+        trial_metadata: dict[str, Any],
+        trace_id: str,
+        configuration_run_id: str,
+        trial_result_id: str,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        if not isinstance(measures, list):
+            return [], []
+
+        max_outcomes = 50
+        example_ids: list[str] = []
+        example_outcomes: list[dict[str, Any]] = []
+        seen_example_ids: set[str] = set()
+        for measure in measures:
+            if len(example_outcomes) >= max_outcomes:
+                break
+            if not isinstance(measure, dict):
+                continue
+            example_id = measure.get("example_id")
+            if not isinstance(example_id, str) or not example_id:
+                continue
+            if example_id in seen_example_ids:
+                continue
+            seen_example_ids.add(example_id)
+            example_ids.append(example_id)
+
+            metric_float = cls._extract_measure_metric_value(
+                measure=measure,
+                quality_metric_name=quality_metric_name,
+            )
+            metric_delta = (
+                metric_float - trial_metric_float
+                if metric_float is not None and trial_metric_float is not None
+                else None
+            )
+            failure_classification_detail = cls._classify_failure_detail(metric_delta)
+            failure_classification = cls._classify_failure_legacy(
+                metric_float=metric_float,
+                trial_metric_float=trial_metric_float,
+            )
+            confidence, confidence_score = cls._confidence_from_delta(metric_delta)
+
+            example_outcomes.append(
+                {
+                    "example_id": example_id,
+                    "metric_name": quality_metric_name,
+                    "metric_value": metric_float,
+                    "metric_delta": metric_delta,
+                    "failure_classification": failure_classification,
+                    "failure_classification_detail": failure_classification_detail,
+                    "direction": cls._example_direction(metric_delta),
+                    "segment": cls._example_segment(metric_delta),
+                    "confidence": confidence,
+                    "confidence_score": round(confidence_score, 4),
+                    "sample_size": 1,
+                    "sample_context": {
+                        "trial_metric_value": trial_metric_float,
+                        "examples_attempted": trial_metadata.get("examples_attempted"),
+                    },
+                    "trace_linkage": {
+                        "trace_id": trace_id,
+                        "configuration_run_id": configuration_run_id,
+                        "trial_id": trial_result_id,
+                    },
+                }
+            )
+
+        return example_ids, example_outcomes
+
     def _collect_workflow_span(
         self,
         trial_id: str,
@@ -699,6 +857,47 @@ class TrialLifecycle:
             # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
             # Use timezone-aware datetime with UTC; .isoformat() includes +00:00 offset
             # DO NOT add "Z" suffix - that would create invalid "+00:00Z" format
+            trial_metrics = trial_result.metrics or {}
+            trial_metadata = trial_result.metadata or {}
+
+            quality_metric_name = "score"
+            quality_metric_value = None
+            for candidate in ("score", "quality_score", "accuracy"):
+                if candidate in trial_metrics:
+                    quality_metric_name = candidate
+                    quality_metric_value = trial_metrics.get(candidate)
+                    break
+
+            measures = trial_metadata.get("measures", [])
+            trial_metric_float = self._as_float_metric(quality_metric_value)
+            example_ids, example_outcomes = self._build_example_outcomes(
+                measures=measures,
+                quality_metric_name=quality_metric_name,
+                trial_metric_float=trial_metric_float,
+                trial_metadata=trial_metadata,
+                trace_id=orchestrator._optimization_id,
+                configuration_run_id=trial_id,
+                trial_result_id=trial_result.trial_id,
+            )
+
+            outcome_sample_size = len(example_outcomes) or trial_metadata.get(
+                "examples_attempted",
+                0,
+            )
+            if isinstance(outcome_sample_size, bool):
+                outcome_sample_size = 0
+            if not isinstance(outcome_sample_size, int):
+                try:
+                    outcome_sample_size = int(outcome_sample_size)
+                except (TypeError, ValueError):
+                    outcome_sample_size = 0
+            if outcome_sample_size >= 20:
+                outcome_confidence = "high"
+            elif outcome_sample_size >= 5:
+                outcome_confidence = "medium"
+            else:
+                outcome_confidence = "low"
+
             span = SpanPayload(
                 span_id=uuid.uuid4().hex[:16],
                 trace_id=orchestrator._optimization_id,  # Use optimization ID as trace
@@ -728,16 +927,22 @@ class TrialLifecycle:
                 input_data={"config": trial_result.config},
                 output_data={"metrics": trial_result.metrics},
                 metadata={
-                    "trial_number": (
-                        trial_result.metadata.get("trial_number")
-                        if trial_result.metadata
-                        else None
-                    ),
-                    "examples_attempted": (
-                        trial_result.metadata.get("examples_attempted")
-                        if trial_result.metadata
-                        else None
-                    ),
+                    "trial_number": trial_metadata.get("trial_number"),
+                    "examples_attempted": trial_metadata.get("examples_attempted"),
+                    "lineage": {
+                        "training_run_id": orchestrator._optimization_id,
+                        "dataset_id": getattr(orchestrator, "_dataset_name", None),
+                        "example_ids": example_ids,
+                        "example_outcomes": example_outcomes,
+                    },
+                    "training_outcome": {
+                        "metric_name": quality_metric_name,
+                        "metric_value": quality_metric_value,
+                        "total_cost": trial_metrics.get("total_cost"),
+                        "duration": trial_result.duration,
+                        "sample_size": outcome_sample_size,
+                        "confidence": outcome_confidence,
+                    },
                 },
             )
 
@@ -746,7 +951,12 @@ class TrialLifecycle:
             logger.debug(f"Collected workflow span for trial {trial_id}")
 
         except Exception as exc:
-            logger.debug(f"Failed to collect workflow span for trial {trial_id}: {exc}")
+            logger.warning(
+                "Failed to collect workflow span for trial %s: %s",
+                trial_id,
+                exc,
+                exc_info=True,
+            )
 
     # =========================================================================
     # Error Result Building

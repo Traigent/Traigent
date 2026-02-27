@@ -15,9 +15,7 @@ from traigent.core.optimized_function import OptimizedFunction
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
 from traigent.optimizers.base import BaseOptimizer
-from traigent.storage.local_storage import (
-    LocalStorageManager,
-)
+from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.exceptions import OptimizationError
 
 
@@ -441,7 +439,7 @@ class TestSafeguardTelemetry:
 class TestCIApproval:
     """Test CI/CD approval gates."""
 
-    def test_ci_detection(self):
+    def test_ci_detection(self, tmp_path: Path):
         """Test CI environment detection."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -450,7 +448,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Test various CI environment variables (10 providers)
@@ -621,7 +620,7 @@ class TestCIApproval:
 
         # Test with CI environment and valid HMAC token
         with patch.dict(
-            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret"}
+            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret"}  # pragma: allowlist secret
         ):
             result = func._check_ci_approval()  # Should not raise
             assert result is None  # HMAC approval returns None
@@ -655,7 +654,7 @@ class TestCIApproval:
             os.environ,
             {
                 "CI": "true",
-                "TRAIGENT_APPROVAL_SECRET": "test_secret",
+                "TRAIGENT_APPROVAL_SECRET": "test_secret",  # pragma: allowlist secret
                 "TRAIGENT_MOCK_LLM": "false",
             },
         ):

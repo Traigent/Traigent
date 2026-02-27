@@ -104,7 +104,7 @@ class TestRefactoringValidator:
         validator = RefactoringValidator()
         validator.baseline_metrics = {"import_time": 0.1}
 
-        with patch("traigent.core.refactoring_utils.time.time") as mock_time:
+        with patch("traigent.core.refactoring_utils._now") as mock_time:
             # logger.info + start_time + time.time() + logger.info (no regression path)
             mock_time.return_value = 100.0
 
@@ -119,7 +119,7 @@ class TestRefactoringValidator:
         validator = RefactoringValidator()
         validator.baseline_metrics = {"import_time": 0.1}
 
-        with patch("traigent.core.refactoring_utils.time.time") as mock_time:
+        with patch("traigent.core.refactoring_utils._now") as mock_time:
             # start_time=100.0, current=time.time()-start_time=100.2-100.0=0.2
             # regression_ratio = 0.2 / 0.1 = 2.0 > 1.05 → regression detected
             mock_time.side_effect = [100.0, 100.2] + [100.2] * 20
@@ -406,7 +406,7 @@ class TestEdgeCases:
 
         # Test high threshold - should not detect regression
         # start=100.0, current=100.15-100.0=0.15 → ratio 1.5 < 1.6
-        with patch("traigent.core.refactoring_utils.time.time") as mock_time:
+        with patch("traigent.core.refactoring_utils._now") as mock_time:
             mock_time.side_effect = [100.0, 100.15] + [100.15] * 10
 
             result = validator.validate_performance_regression(threshold=0.6)
@@ -414,7 +414,7 @@ class TestEdgeCases:
 
         # Test low threshold - should detect regression
         # start=100.0, current=100.15-100.0=0.15 → ratio 1.5 > 1.3
-        with patch("traigent.core.refactoring_utils.time.time") as mock_time:
+        with patch("traigent.core.refactoring_utils._now") as mock_time:
             mock_time.side_effect = [100.0, 100.15] + [100.15] * 10
 
             result = validator.validate_performance_regression(threshold=0.3)

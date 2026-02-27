@@ -18,6 +18,15 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _now() -> float:
+    """Return current UNIX timestamp.
+
+    Isolated behind a helper so tests can patch timing deterministically
+    without patching global ``time.time`` usage across other modules.
+    """
+    return time.time()
+
+
 class RefactoringValidator:
     """Validation tools for safe refactoring of core architecture."""
 
@@ -30,12 +39,12 @@ class RefactoringValidator:
         logger.info("Establishing refactoring baseline...")
 
         # Measure import time
-        start_time = time.time()
+        start_time = _now()
         importlib.import_module("traigent.core.orchestrator")
-        import_time = time.time() - start_time
+        import_time = _now() - start_time
 
         # Measure instantiation time
-        start_time = time.time()
+        start_time = _now()
         # Create minimal instances for baseline
         try:
             from traigent.config import TraigentConfig, get_provider
@@ -49,7 +58,7 @@ class RefactoringValidator:
                 evaluator=type("MockEvaluator", (), {})(),
                 config=TraigentConfig(),
             )
-            instantiation_time = time.time() - start_time
+            instantiation_time = _now() - start_time
         except Exception as e:
             instantiation_time = float("inf")
             logger.warning(f"Baseline instantiation failed: {e}")
@@ -57,7 +66,7 @@ class RefactoringValidator:
         baseline = {
             "import_time": import_time,
             "instantiation_time": instantiation_time,
-            "timestamp": time.time(),
+            "timestamp": _now(),
         }
 
         self.baseline_metrics = baseline
@@ -114,8 +123,8 @@ class RefactoringValidator:
             self.establish_baseline()
 
         # Measure current performance
-        start_time = time.time()
-        current_import_time = time.time() - start_time
+        start_time = _now()
+        current_import_time = _now() - start_time
 
         # Check for regression
         baseline_import = self.baseline_metrics.get("import_time", 0)
@@ -183,7 +192,7 @@ class RefactoringValidator:
         logger.info("Running comprehensive refactoring validation...")
 
         results = {
-            "timestamp": time.time(),
+            "timestamp": _now(),
             "baseline": self.establish_baseline(),
             "api_compatibility": self.validate_api_compatibility(),
             "performance": self.validate_performance_regression(),
