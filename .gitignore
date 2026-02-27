@@ -294,6 +294,8 @@ validate_*.py
 # Keep core protocol/tracking files versioned for team sharing
 !.release_review/
 !.release_review/*.md
+.release_review/pre_pr_prompts.zip
+.release_review/observability_orchestration/state.json
 # Ignore agent artifacts (scratch outputs, notes)
 .release_review/**/artifacts/
 .release_review/**/.mypy_cache/
@@ -354,6 +356,10 @@ test_concurrent.db
 scripts/secrets/
 .scannerwork/
 sonar-project.local.properties
+coverage_observability_modules.xml
+sonarcloud_issues_*.csv
+test_timeout*.py
+test_redact*.py
 
 # Traigent generated results and caches
 **/.traigent_results/
