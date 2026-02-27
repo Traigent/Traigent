@@ -1,0 +1,55 @@
+# Phase 1 - Frontend Status
+
+## Branch
+- `observability-frontend-phase-1-dashboard-foundation`
+- latest_commit_sha: `b0d56aeb0f6ff44a9b682e579abe9ca8139a973d`
+
+## Progress
+- status: done
+- completed_tasks:
+  - Implemented a new Observability Dashboard route (`/observability`) with 3 views:
+    - Run Health (`/api/observability/dashboard/run-health`)
+    - Benchmark aggregates (`/api/observability/dashboard/benchmarks`)
+    - Cost/Latency per run (`/api/observability/dashboard/runs/<run_id>/cost-latency`)
+  - Added typed frontend DTO contracts for dashboard payloads:
+    - `RunHealthDashboardDTO`
+    - `BenchmarkDashboardDTO`
+    - `CostLatencyDashboardDTO`
+    - `DashboardCursorPageDTO<T>`
+  - Added a dedicated typed dashboard service with:
+    - strict payload normalization
+    - cursor pagination handling
+    - in-memory TTL cache + in-flight dedupe for faster render paths
+    - canonical observability path usage (no legacy rewrite fallback)
+  - Added explicit loading/empty/error degradations for all 3 views and route bootstrap failure.
+  - Added route-level entry in app routing and navbar link for dashboard access.
+  - Added test coverage for:
+    - dashboard data normalization and caching behavior
+    - route-level loading/error/recovery behavior
+  - UI polish pass (Phase 1 dashboard foundation alignment):
+    - Refactored shared UI primitives (`ModernComponents`) to remove glass/gradient-heavy defaults and use cleaner semantic surfaces.
+    - Refreshed `Navbar` chrome from high-saturation gradient treatment to neutral enterprise styling with restrained accent usage.
+    - Removed emoji-based tab/status presentation in experiment results and normalized labels for clearer hierarchy.
+    - Reworked configuration run status cells to semantic icon + badge rendering (no emoji), and improved table scanability labels.
+  - Applied UI detox stash onto Phase 1 branch and retained enterprise cleanup choices (solid card defaults, text-first tabs, semantic badges/icons, reduced chrome noise).
+  - Fixed observability loading resilience and warning noise:
+    - Added wildcard route handling for `/observability/*` to avoid route fallthrough to 404.
+    - Hardened feature flag checks to dedupe undefined-feature warnings.
+    - Standardized navbar feature flag keys to stable constants (`MEASURES`, `PLANNER`).
+    - Enabled lazy mounting for heavy experiment tabs to prevent hidden chart initialization warnings.
+    - Added explicit graph container sizing guards for ReactFlow layouts.
+- tests:
+  - `npm run test -- src/services/__tests__/observabilityDashboardService.test.ts src/pages/__tests__/ObservabilityDashboard.test.tsx src/services/__tests__/workflowTraceService.test.ts src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx` -> PASS (`27 passed`)
+  - `npx eslint src/services/observabilityDashboardService.ts src/pages/ObservabilityDashboard.tsx src/services/__tests__/observabilityDashboardService.test.ts src/pages/__tests__/ObservabilityDashboard.test.tsx src/App.tsx src/components/Navbar.tsx src/types/observability.ts src/types/index.ts` -> PASS (0 errors, 1 warning in pre-existing `Navbar.tsx`)
+  - `npx eslint src/components/ui/ModernComponents.tsx src/components/Navbar.tsx src/components/experiment/ExperimentResultsTab.tsx src/components/experiment/DynamicConfigurationTable.tsx` -> PASS (0 errors, pre-existing warnings in `ExperimentResultsTab.tsx`)
+  - `npm run test -- src/components/__tests__/Navbar.test.tsx src/components/experiment/__tests__/ExperimentResultsTab.test.tsx` -> PASS (`31 passed`, `8 skipped`)
+  - `npx eslint src/config/constants.ts src/config/featureFlags.ts src/components/Navbar.tsx src/components/experiment/ExperimentResultsTab.tsx src/components/experiment/DynamicConfigurationTable.tsx src/components/ui/ModernComponents.tsx src/components/experiment/workflow/WorkflowTracesTab.tsx src/components/experiment/workflow/GraphView.tsx src/App.tsx` -> PASS (0 errors, pre-existing warnings in `ExperimentResultsTab.tsx`)
+  - `npm run test -- src/components/__tests__/Navbar.test.tsx src/components/experiment/__tests__/ExperimentResultsTab.test.tsx src/components/experiment/workflow/__tests__/WorkflowTracesTab.test.tsx src/components/experiment/workflow/__tests__/GraphView.test.tsx src/pages/__tests__/ObservabilityDashboard.test.tsx` -> PASS (`76 passed`, `8 skipped`)
+  - `npm run type-check` -> PASS
+- blockers:
+  - None blocking Phase 1 scope.
+- notes:
+  - Risk: dashboard tables currently optimize via service cache and pagination, but do not yet use row virtualization for very large cursor traversals.
+  - Risk: cost/latency view depends on run IDs from run-health data; direct ad-hoc run lookup input is not included in this phase.
+  - Risk: some legacy lint warnings remain in `ExperimentResultsTab.tsx` (hook dependency + complexity), pre-existing and outside this UI styling pass.
+  - Revalidated by Codex on 2026-02-26 with Phase 1 tests/lint/type-check rerun.
