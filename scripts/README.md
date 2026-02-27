@@ -22,6 +22,7 @@ scripts/
 ├── development/                 # 🔨 Development utilities
 ├── hooks/                       # 🪝 Git hooks and automation
 ├── linting/                     # 🧹 Code quality and linting
+├── orchestration/               # 🎛️ Phase-gate and release orchestration
 ├── quality/                     # 📈 Code quality analysis tools
 ├── smoke/                       # 💨 Smoke testing scripts
 ├── tools/                       # 🔧 Development tools
@@ -145,6 +146,14 @@ Development and testing utilities:
 Code quality and linting automation:
 - **`install_linters.sh`** - Installs all required linters and formatters
 - **`run_linters.sh`** - Runs comprehensive linting checks across the project
+
+### 🎛️ Orchestration (`orchestration/`)
+Phase validation and release-gate automation:
+- **`run_observability_phase_gate.py`** - Runs observability gates in order: smoke -> targeted -> broader, then writes a markdown verification report.
+
+### 💨 Smoke (`smoke/`)
+Fast confidence checks:
+- **`run_observability_smoke.sh`** - Runs the observability smoke suite (`tests/smoke/test_observability_phase4_smoke.py`).
 
 ### 💻 Workspace (`workspace/`)
 IDE and workspace setup:

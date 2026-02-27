@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -305,6 +305,41 @@ class TestSpanPayload:
         assert payload["input_data"]["auth_token"] == "[REDACTED]"
         assert payload["input_data"]["prompt"] == "[REDACTED]"
         assert payload["output_data"]["password"] == "[REDACTED]"
+
+    def test_to_observability_object_handles_model_like_values(self) -> None:
+        from traigent.integrations.observability.workflow_traces import (
+            _to_observability_object,
+        )
+
+        class ModelDumpValue:
+            def model_dump(self) -> dict[str, Any]:
+                return {"payload": "ok"}
+
+        class ModelDumpFailure:
+            def model_dump(self) -> dict[str, Any]:
+                raise RuntimeError("boom")
+
+            def __str__(self) -> str:
+                return "model_dump_fallback"
+
+        class DictValue:
+            def dict(self) -> dict[str, Any]:
+                return {"payload": "dict-ok"}
+
+        class DictFailure:
+            def dict(self) -> dict[str, Any]:
+                raise RuntimeError("boom")
+
+            def __str__(self) -> str:
+                return "dict_fallback"
+
+        now = datetime(2026, 2, 1, tzinfo=UTC)
+        assert _to_observability_object(now) == now.isoformat()
+        assert _to_observability_object(b"bytes-value") == "bytes-value"
+        assert _to_observability_object(ModelDumpValue()) == {"payload": "ok"}
+        assert _to_observability_object(ModelDumpFailure()) == "model_dump_fallback"
+        assert _to_observability_object(DictValue()) == {"payload": "dict-ok"}
+        assert _to_observability_object(DictFailure()) == "dict_fallback"
 
 
 class TestWorkflowNode:
@@ -1268,6 +1303,51 @@ class TestAsyncMethods:
         response = await client.ingest_traces_async()
         assert response.success is False
         assert response.error is not None
+
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_success_closes_session(
+        self,
+        patched_aiohttp: MagicMock,
+        sample_span: SpanPayload,
+    ) -> None:
+        client = WorkflowTracesClient(backend_url="http://localhost:5000")
+
+        patched_aiohttp.ClientError = Exception
+        patched_aiohttp.ClientTimeout.return_value = object()
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(
+            return_value={
+                "success": True,
+                "data": {
+                    "trace_id": "trace_async",
+                    "spans_ingested": 1,
+                },
+            }
+        )
+
+        post_context = AsyncMock()
+        post_context.__aenter__.return_value = mock_response
+        post_context.__aexit__.return_value = None
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        session.post = MagicMock(return_value=post_context)
+        session.closed = False
+        session.close = AsyncMock()
+        patched_aiohttp.ClientSession.return_value = session
+
+        response = await client.ingest_traces_async(
+            spans=[sample_span],
+            trace_id="trace_async",
+            configuration_run_id="cfg_async",
+        )
+
+        assert response.success is True
+        session.post.assert_called_once()
+        session.close.assert_awaited_once()
 
 
 # =============================================================================

@@ -827,6 +827,10 @@ pytest --cov=traigent --cov-report=html
 
 # Run specific test module
 pytest tests/unit/test_api.py
+
+# Observability smoke and phase gate (Phase 4)
+./scripts/smoke/run_observability_smoke.sh
+python scripts/orchestration/run_observability_phase_gate.py --phase phase-4-automation-hardening
 ```
 
 ### Areas for Contribution

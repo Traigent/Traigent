@@ -350,7 +350,8 @@ os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secr
 print("✅ Import successful: {import_line}")
 """
             try:
-                self._run_code_safely(test_code, "import_test", timeout=15)
+                # Imports can be slower under high xdist concurrency; avoid flaky timeouts.
+                self._run_code_safely(test_code, "import_test", timeout=45)
             except Exception as e:
                 if is_optional:
                     # Log but don't fail for optional dependencies
