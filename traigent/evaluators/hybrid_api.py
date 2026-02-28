@@ -10,11 +10,13 @@ hybrid API protocol.
 from __future__ import annotations
 
 import asyncio
+import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from traigent._version import get_version
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.hybrid import (
     AgentLifecycleManager,
@@ -290,6 +292,161 @@ class HybridAPIEvaluator(BaseEvaluator):
             return "target_id", expected["target_id"]
         return "target", expected
 
+    @staticmethod
+    def _compute_describe_stats(values: list[float]) -> dict[str, float]:
+        """Compute pandas.describe()-style statistics for numeric values."""
+        if not values:
+            return {
+                "count": 0.0,
+                "mean": 0.0,
+                "std": 0.0,
+                "min": 0.0,
+                "25%": 0.0,
+                "50%": 0.0,
+                "75%": 0.0,
+                "max": 0.0,
+            }
+
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+
+        def percentile(p: float) -> float:
+            k = (n - 1) * p
+            low = int(k)
+            frac = k - low
+            if low + 1 < n:
+                return float(
+                    sorted_values[low] * (1 - frac) + sorted_values[low + 1] * frac
+                )
+            return float(sorted_values[low])
+
+        return {
+            "count": float(n),
+            "mean": float(statistics.mean(sorted_values)),
+            "std": float(statistics.stdev(sorted_values)) if n > 1 else 0.0,
+            "min": float(sorted_values[0]),
+            "25%": percentile(0.25),
+            "50%": percentile(0.50),
+            "75%": percentile(0.75),
+            "max": float(sorted_values[-1]),
+        }
+
+    @classmethod
+    def _derive_accuracy_from_metrics(cls, metrics: dict[str, Any]) -> float | None:
+        """Derive canonical accuracy from a metric dictionary.
+
+        Preference order:
+        1. explicit `accuracy`
+        2. `overall_accuracy`
+        3. mean of numeric `*_accuracy` metrics
+        """
+        explicit = cls._coerce_metric(metrics.get("accuracy"), default=-1.0)
+        if explicit >= 0.0:
+            return explicit
+
+        overall = cls._coerce_metric(metrics.get("overall_accuracy"), default=-1.0)
+        if overall >= 0.0:
+            return overall
+
+        split_accuracies = [
+            float(v)
+            for k, v in metrics.items()
+            if k.endswith("_accuracy")
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+        ]
+        if split_accuracies:
+            return float(sum(split_accuracies) / len(split_accuracies))
+        return None
+
+    @classmethod
+    def _normalize_example_metrics(cls, metrics: Any) -> dict[str, float]:
+        """Normalize per-example metrics to numeric values and derive accuracy."""
+        if not isinstance(metrics, dict):
+            return {}
+
+        normalized: dict[str, float] = {}
+        for key, value in metrics.items():
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                normalized[key] = float(value)
+
+        if "accuracy" not in normalized:
+            derived_accuracy = cls._derive_accuracy_from_metrics(normalized)
+            if derived_accuracy is not None:
+                normalized["accuracy"] = derived_accuracy
+
+        return normalized
+
+    def _build_summary_stats(
+        self,
+        results: list[HybridExampleResult],
+        duration: float,
+    ) -> dict[str, Any] | None:
+        """Build summary_stats from per-example hybrid results."""
+        if not results:
+            return None
+
+        metric_values: dict[str, list[float]] = {}
+        accuracy_values: list[float] = []
+        cost_values: list[float] = []
+        latency_values: list[float] = []
+        success_values: list[float] = []
+
+        for result in results:
+            success_values.append(1.0 if result.success else 0.0)
+
+            if result.cost_usd > 0:
+                cost_values.append(float(result.cost_usd))
+
+            if result.latency_ms > 0:
+                latency_values.append(float(result.latency_ms))
+
+            per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
+            if per_example_accuracy is not None:
+                accuracy_values.append(float(per_example_accuracy))
+
+            for metric_name, value in result.metrics.items():
+                if isinstance(value, bool):
+                    continue
+                if not isinstance(value, (int, float)):
+                    continue
+                metric_values.setdefault(metric_name, []).append(float(value))
+
+        if accuracy_values and "accuracy" not in metric_values:
+            metric_values["accuracy"] = accuracy_values
+        if cost_values:
+            metric_values.setdefault("cost", cost_values)
+            metric_values.setdefault("total_cost", cost_values)
+        if latency_values:
+            metric_values.setdefault("latency", latency_values)
+            metric_values.setdefault("response_time_ms", latency_values)
+        if success_values:
+            metric_values.setdefault("success_rate", success_values)
+        if "score" not in metric_values and "accuracy" in metric_values:
+            metric_values["score"] = list(metric_values["accuracy"])
+
+        summary_metrics = {
+            metric_name: self._compute_describe_stats(values)
+            for metric_name, values in metric_values.items()
+            if values
+        }
+        if not summary_metrics:
+            return None
+
+        return {
+            "metrics": summary_metrics,
+            "execution_time": float(duration),
+            "total_examples": len(results),
+            "metadata": {
+                "sdk_version": get_version(),
+                "aggregation_method": "pandas.describe",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "source": "hybrid_api",
+            },
+        }
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -389,6 +546,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         aggregated_metrics = self._compute_aggregated_metrics(
             example_results, total_cost
         )
+        summary_stats = self._build_summary_stats(example_results, duration)
 
         return EvaluationResult(
             config=config,
@@ -397,6 +555,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=sum(1 for r in example_results if r.success),
             duration=duration,
+            summary_stats=summary_stats,
             sample_budget_exhausted=sample_lease is not None and sample_lease.exhausted,
             examples_consumed=len(example_results),
         )
@@ -538,7 +697,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
             per_example_metrics = (
-                output_item.get("metrics", {})
+                self._normalize_example_metrics(output_item.get("metrics", {}))
                 if isinstance(output_item.get("metrics"), dict)
                 else {}
             )
@@ -599,6 +758,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
             session_id=self._session_id,
+            timeout_ms=int(self._timeout * 1000),
         )
 
         try:
@@ -628,7 +788,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                 eval_error: str | None = None
                 for result in eval_response.results:
                     if result.get("input_id") == input_id:
-                        per_example_metrics = result.get("metrics", {})
+                        per_example_metrics = self._normalize_example_metrics(
+                            result.get("metrics", {})
+                        )
                         if isinstance(result.get("error"), str):
                             eval_error = result.get("error")
                         break
@@ -685,6 +847,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
             error = output_item.get("error")
+            per_example_metrics = self._normalize_example_metrics(
+                output_item.get("metrics", {})
+            )
             cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
             latency = self._coerce_metric(
                 output_item.get("latency_ms"), fallback_latency
@@ -695,7 +860,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     input_id=input_id,
                     actual_output=output_data,
                     expected_output=expected,
-                    metrics={},  # No quality metrics
+                    metrics=per_example_metrics,
                     cost_usd=cost,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
@@ -742,6 +907,16 @@ class HybridAPIEvaluator(BaseEvaluator):
         latencies = [r.latency_ms for r in results if r.latency_ms > 0]
         if latencies:
             aggregated["latency"] = sum(latencies) / len(latencies)
+
+        if "accuracy" not in aggregated:
+            derived_accuracy = self._derive_accuracy_from_metrics(aggregated)
+            if derived_accuracy is not None:
+                aggregated["accuracy"] = derived_accuracy
+
+        if "score" not in aggregated and "accuracy" in aggregated:
+            aggregated["score"] = aggregated["accuracy"]
+        if "response_time_ms" not in aggregated and "latency" in aggregated:
+            aggregated["response_time_ms"] = aggregated["latency"]
 
         return aggregated
 

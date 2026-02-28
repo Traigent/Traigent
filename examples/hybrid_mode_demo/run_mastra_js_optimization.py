@@ -66,6 +66,9 @@ _REASONING_LEVEL_ORDER: Final[list[str]] = [
     "high",
     "highest",
 ]
+REQUEST_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Traigent-SDK/1.0",
+}
 
 
 def _resolve_execution_mode(mode: str | None) -> str:
@@ -136,7 +139,11 @@ def _apply_reasoning_cap(
 def check_server(url: str) -> bool:
     """Verify demo server is running."""
     try:
-        resp = requests.get(f"{url}/traigent/v1/health", timeout=3)
+        resp = requests.get(
+            f"{url}/traigent/v1/health",
+            timeout=3,
+            headers=REQUEST_HEADERS,
+        )
         return resp.status_code == 200
     except requests.ConnectionError:
         return False
@@ -144,7 +151,11 @@ def check_server(url: str) -> bool:
 
 def discover_tunable_id(url: str) -> str:
     """GET /capabilities and return the selected tunable_id."""
-    resp = requests.get(f"{url}/traigent/v1/capabilities", timeout=5)
+    resp = requests.get(
+        f"{url}/traigent/v1/capabilities",
+        timeout=5,
+        headers=REQUEST_HEADERS,
+    )
     resp.raise_for_status()
     tunable_ids = resp.json().get("tunable_ids", [])
     if not tunable_ids:
