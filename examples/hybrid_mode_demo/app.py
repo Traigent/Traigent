@@ -140,11 +140,60 @@ def execute():
         }
     """
     data = request.get_json()
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload"}), 400
+
+    missing_fields = [
+        field for field in ("config", "inputs") if field not in data
+    ]
+    if missing_fields:
+        return (
+            jsonify(
+                {
+                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+
+    config = data.get("config")
+    inputs = data.get("inputs")
+    if not isinstance(config, dict):
+        return (
+            jsonify(
+                {
+                    "error": "Field 'config' must be an object",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+    if not isinstance(inputs, list) or len(inputs) == 0:
+        return (
+            jsonify(
+                {
+                    "error": "Field 'inputs' must be a non-empty array",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+
+    for idx, inp in enumerate(inputs):
+        if not isinstance(inp, dict) or not inp.get("input_id"):
+            return (
+                jsonify(
+                    {
+                        "error": f"Input at index {idx} must include non-empty 'input_id'",
+                        "message": "Request body failed validation",
+                    }
+                ),
+                400,
+            )
 
     request_id = data.get("request_id", str(uuid.uuid4()))
     execution_id = str(uuid.uuid4())
-    config = data.get("config", {})
-    inputs = data.get("inputs", [])
 
     # --------------------------------------------------------
     # YOUR AGENT LOGIC HERE

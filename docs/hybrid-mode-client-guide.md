@@ -492,6 +492,26 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 See the [test client](../examples/hybrid_mode_demo/test_mastra_js_api.py) for a complete testing script.
 
+### CDN/WAF Troubleshooting (403 on Python requests)
+
+If your Hybrid API is behind Cloudflare or a similar WAF/CDN, default Python
+clients may be blocked when using the default `python-requests/*` User-Agent.
+
+Use an explicit User-Agent in ad-hoc scripts:
+
+```python
+import requests
+
+headers = {
+    "User-Agent": "Traigent-SDK/1.0",
+    "Content-Type": "application/json",
+}
+resp = requests.get("https://your-service/traigent/v1/health", headers=headers)
+print(resp.status_code)
+```
+
+Traigent SDK transport already sets `User-Agent: Traigent-SDK/1.0` automatically.
+
 ### Contract Validation (Recommended)
 
 Validate your OpenAPI contract before sharing with clients:
@@ -669,6 +689,7 @@ Status-code handling matrix (recommended client behavior):
 | `401` | Authentication failure | Refresh credentials then retry |
 | `404` | Route/session/capability missing | Re-discover or recreate state before retry |
 | `408` | Request timeout | Retry with backoff and/or increase `timeout_ms` |
+| `409` | State conflict (e.g. stale session/execution state) | Recreate state/session, then retry |
 | `429` | Rate-limited | Retry with backoff; honor `Retry-After` |
 | `500` | Internal server error | Retry with bounded backoff |
 | `503` | Temporary outage | Retry with backoff; honor `Retry-After` |
