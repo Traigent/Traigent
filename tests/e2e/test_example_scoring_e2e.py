@@ -198,10 +198,10 @@ class TestExampleInsightsClient:
     async def test_client_initialization(self):
         """Client should initialize with proper configuration."""
         client = ExampleInsightsClient(
-            backend_url="https://api.traigent.ai", api_key="test_key"
+            backend_url="http://localhost:5000", api_key="test_key"
         )
 
-        assert client.backend_url == "https://api.traigent.ai"
+        assert client.backend_url == "http://localhost:5000"
         assert client.api_key == "test_key"
         assert client.timeout == 30.0
 

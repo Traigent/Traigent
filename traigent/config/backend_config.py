@@ -25,7 +25,7 @@ class BackendConfig:
 
     # Default backend URLs (overridable via environment variables)
     _FALLBACK_LOCAL_URL = "http://localhost:5000"
-    DEFAULT_PROD_URL = "https://api.traigent.ai"
+    DEFAULT_PROD_URL = _FALLBACK_LOCAL_URL  # No cloud service yet; default to local
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod

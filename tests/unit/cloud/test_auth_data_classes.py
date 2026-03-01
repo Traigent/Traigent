@@ -330,7 +330,7 @@ class TestAuthCredentials:
         assert creds.client_id is None
         assert creds.client_secret is None
         assert creds.service_key is None
-        assert creds.backend_url == "https://api.traigent.ai"
+        assert creds.backend_url is None
         assert creds.expires_at is None
         assert creds.scopes == []
         assert creds.metadata == {}
