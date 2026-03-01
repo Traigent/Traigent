@@ -143,9 +143,7 @@ def execute():
     if not isinstance(data, dict):
         return jsonify({"error": "Invalid JSON payload"}), 400
 
-    missing_fields = [
-        field for field in ("config", "inputs") if field not in data
-    ]
+    missing_fields = [field for field in ("config", "inputs") if field not in data]
     if missing_fields:
         return (
             jsonify(
