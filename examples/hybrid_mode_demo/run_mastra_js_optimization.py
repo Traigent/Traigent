@@ -52,14 +52,15 @@ def _block_443(self: _socket.socket, addr: object) -> None:
 
 _socket.socket.connect = _block_443  # type: ignore[assignment]
 
-from traigent.config.types import TraigentConfig
-from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators import HybridAPIEvaluator
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.optimizers.random import RandomSearchOptimizer
-
-# Restore normal socket behavior for the actual HTTP calls.
-_socket.socket.connect = _orig_connect  # type: ignore[assignment]
+try:
+    from traigent.config.types import TraigentConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.evaluators import HybridAPIEvaluator
+    from traigent.evaluators.base import Dataset, EvaluationExample
+    from traigent.optimizers.random import RandomSearchOptimizer
+finally:
+    # Restore normal socket behavior for the actual HTTP calls.
+    _socket.socket.connect = _orig_connect  # type: ignore[assignment]
 
 SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
 AUTH_TOKEN: Final[str] = os.getenv("MASTRA_JS_AUTH_TOKEN", "")
