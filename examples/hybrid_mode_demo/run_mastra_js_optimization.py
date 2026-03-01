@@ -36,6 +36,7 @@ PROJECT_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Importing env_config triggers automatic .env loading from the project root.
+from traigent.api.types import OptimizationResult
 from traigent.config.types import TraigentConfig, resolve_execution_mode
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators import HybridAPIEvaluator
@@ -150,7 +151,7 @@ def build_dataset() -> Dataset:
     )
 
 
-def _print_results(result: object) -> None:
+def _print_results(result: OptimizationResult) -> None:
     """Print optimization results report."""
     print("\n" + "=" * 70)
     print("  OPTIMIZATION RESULTS")
