@@ -122,6 +122,55 @@ class ExampleInsightsClient:
         """Async context manager exit."""
         await self.close()
 
+    async def _poll_endpoint(
+        self,
+        path: str,
+        error_label: str,
+        poll_interval: float,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Poll a GET endpoint until it returns 200 or timeout is reached.
+
+        Args:
+            path: API path to poll
+            error_label: Human-readable label for timeout error messages
+            poll_interval: Seconds between attempts
+            params: Optional query parameters
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            httpx.HTTPStatusError: For non-404 HTTP errors
+            TimeoutError: If endpoint still returns 404 after ``self.timeout``
+        """
+        client = self._get_client()
+        timeout = self.timeout
+        start_time = time.monotonic()
+
+        while True:
+            try:
+                response = await client.get(path, params=params or {})
+                response.raise_for_status()
+                return cast(dict[str, Any], response.json())
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 404:
+                    raise
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout:
+                    raise TimeoutError(
+                        f"{error_label} not ready after {timeout}s. "
+                        f"Check job status or increase timeout."
+                    ) from e
+                logger.debug(
+                    "%s not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
+                    error_label,
+                    poll_interval,
+                    elapsed,
+                    timeout,
+                )
+                await asyncio.sleep(poll_interval)
+
     async def compute_scores(
         self,
         experiment_run_id: str,
@@ -189,45 +238,19 @@ class ExampleInsightsClient:
             httpx.HTTPError: If request fails
             TimeoutError: If scores not ready within timeout
         """
-        client = self._get_client()
-        timeout = self.timeout
-
-        # Build query parameters
         params: dict[str, Any] = {}
         if example_ids:
             params["example_ids"] = example_ids
 
-        start_time = time.time()
-
-        while True:
-            try:
-                response = await client.get(
-                    f"/analytics/example-scoring/{experiment_run_id}/scores",
-                    params=params,
-                )
-                response.raise_for_status()
-
-                return cast(dict[str, dict[str, Any]], response.json())
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    # Scores not yet computed - poll
-                    elapsed = time.time() - start_time
-                    if elapsed >= timeout:
-                        raise TimeoutError(
-                            f"Scores not ready after {timeout}s. "
-                            f"Check job status or increase timeout."
-                        ) from e
-
-                    logger.debug(
-                        "Scores not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
-                        poll_interval,
-                        elapsed,
-                        timeout,
-                    )
-                    await asyncio.sleep(poll_interval)
-                else:
-                    raise
+        return cast(
+            dict[str, dict[str, Any]],
+            await self._poll_endpoint(
+                f"/analytics/example-scoring/{experiment_run_id}/scores",
+                "Scores",
+                poll_interval,
+                params=params,
+            ),
+        )
 
     async def get_dataset_quality(
         self,
@@ -261,39 +284,11 @@ class ExampleInsightsClient:
             httpx.HTTPError: If request fails
             TimeoutError: If metrics not ready within timeout
         """
-        client = self._get_client()
-        timeout = self.timeout
-
-        start_time = time.time()
-
-        while True:
-            try:
-                response = await client.get(
-                    f"/analytics/example-scoring/{experiment_run_id}/dataset-quality"
-                )
-                response.raise_for_status()
-
-                return cast(dict[str, Any], response.json())
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    # Quality not yet computed - poll
-                    elapsed = time.time() - start_time
-                    if elapsed >= timeout:
-                        raise TimeoutError(
-                            f"Quality metrics not ready after {timeout}s. "
-                            f"Check job status or increase timeout."
-                        ) from e
-
-                    logger.debug(
-                        "Quality metrics not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
-                        poll_interval,
-                        elapsed,
-                        timeout,
-                    )
-                    await asyncio.sleep(poll_interval)
-                else:
-                    raise
+        return await self._poll_endpoint(
+            f"/analytics/example-scoring/{experiment_run_id}/dataset-quality",
+            "Quality metrics",
+            poll_interval,
+        )
 
     async def get_job_status(self, job_id: str) -> dict[str, Any]:
         """Get status of a scoring computation job.
