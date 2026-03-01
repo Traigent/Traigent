@@ -798,9 +798,7 @@ def scenario_runner(
         if "random_seed" not in mock_config:
             # Use a stable hash to avoid process-randomized Python hash() output.
             seed_bytes = hashlib.sha256(scenario.name.encode("utf-8")).digest()
-            mock_config["random_seed"] = int.from_bytes(seed_bytes[:8], "big") % (
-                2**31
-            )
+            mock_config["random_seed"] = int.from_bytes(seed_bytes[:8], "big") % (2**31)
 
         # Apply decorator
         try:

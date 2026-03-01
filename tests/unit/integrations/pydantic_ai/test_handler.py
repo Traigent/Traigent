@@ -359,7 +359,9 @@ class TestPydanticAIHandler:
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
         ):
-            strict_handler = self._make_handler(_make_agent("openai:unknown-model-xyz-123"))
+            strict_handler = self._make_handler(
+                _make_agent("openai:unknown-model-xyz-123")
+            )
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
         ):
