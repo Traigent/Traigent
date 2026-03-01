@@ -28,14 +28,16 @@ def _sanitize_source_path(file_path: Path) -> Path:
     Returns a freshly-constructed ``Path`` whose components are derived
     from the validated canonical string — not from the original argument.
     """
-    base = os.path.realpath(_SAFE_BASE_DIR or os.getcwd())
     canonical = os.path.realpath(str(file_path))
 
-    # Containment check — recognised as sanitisation by SAST (S2083)
-    if not canonical.startswith(base + os.sep) and canonical != base:
-        raise ValueError(
-            f"Path '{canonical}' is outside the allowed base directory '{base}'"
-        )
+    # Optional containment check (S2083): enforce only when explicitly configured.
+    # Default behavior allows CLI usage on arbitrary source files (including temp paths).
+    if _SAFE_BASE_DIR:
+        base = os.path.realpath(_SAFE_BASE_DIR)
+        if not canonical.startswith(base + os.sep) and canonical != base:
+            raise ValueError(
+                f"Path '{canonical}' is outside the allowed base directory '{base}'"
+            )
 
     # Reconstruct Path from the validated canonical string
     safe = Path(canonical)
