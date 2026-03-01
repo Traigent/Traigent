@@ -377,10 +377,9 @@ class TestExampleInsightsClient:
             client = ExampleInsightsClient(api_key="test_key")
 
             # Should timeout after 1 second
+            client.timeout = 1.0
             with pytest.raises(TimeoutError, match="Scores not ready after"):
-                await client.get_example_scores(
-                    "run_123", timeout=1.0, poll_interval=0.1
-                )
+                await client.get_example_scores("run_123", poll_interval=0.1)
 
             await client.close()
 
