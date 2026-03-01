@@ -85,7 +85,7 @@ class AuthCredentials:
     client_id: str | None = None
     client_secret: str | None = None
     service_key: str | None = None
-    backend_url: str | None = "https://api.traigent.ai"
+    backend_url: str | None = None  # Resolved from BackendConfig at runtime
     expires_at: float | None = None
     scopes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -149,7 +149,7 @@ class UnifiedAuthConfig:
     backend_base_url: str | None = (
         None  # Will be set from BackendConfig if not provided
     )
-    cloud_base_url: str = "https://api.traigent.ai"
+    cloud_base_url: str = "http://localhost:5000"
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True

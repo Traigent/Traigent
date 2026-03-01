@@ -35,7 +35,7 @@ class TestExampleInsightsClientInit:
         with patch("traigent.utils.env_config.get_api_key", return_value="test_key"):
             client = ExampleInsightsClient()
 
-            assert client.backend_url == "https://api.traigent.ai"
+            assert client.backend_url == "http://localhost:5000"
             assert client.timeout == 30.0
             assert client.api_key == "test_key"
             assert client._client is None
@@ -61,11 +61,11 @@ class TestExampleInsightsClientInit:
         from traigent.analytics.example_insights import ExampleInsightsClient
 
         client = ExampleInsightsClient(
-            backend_url="https://api.traigent.ai/",
+            backend_url="http://localhost:5000/",
             api_key="key",
         )
 
-        assert client.backend_url == "https://api.traigent.ai"
+        assert client.backend_url == "http://localhost:5000"
 
     @pytest.mark.skipif(HTTPX_AVAILABLE, reason="Test for httpx not available")
     def test_init_raises_without_httpx(self) -> None:
