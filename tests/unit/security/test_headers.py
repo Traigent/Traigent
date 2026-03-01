@@ -631,11 +631,11 @@ class TestDefaultBackendOrigin:
     @patch("traigent.security.headers.BackendConfig.get_backend_url")
     def test_default_backend_origin_with_scheme(self, mock_get_url: MagicMock) -> None:
         """Test default backend origin with full URL."""
-        mock_get_url.return_value = "https://api.traigent.ai/api/v1"
+        mock_get_url.return_value = "https://api.example.com/api/v1"
 
         origin = _default_backend_origin()
 
-        assert origin == "https://api.traigent.ai"
+        assert origin == "https://api.example.com"
 
     @patch("traigent.security.headers.BackendConfig.get_backend_url")
     def test_default_backend_origin_with_port(self, mock_get_url: MagicMock) -> None:
@@ -651,16 +651,16 @@ class TestDefaultBackendOrigin:
         self, mock_get_url: MagicMock
     ) -> None:
         """Test that trailing slashes are stripped."""
-        mock_get_url.return_value = "https://api.traigent.ai/"
+        mock_get_url.return_value = "https://api.example.com/"
 
         origin = _default_backend_origin()
 
-        assert origin == "https://api.traigent.ai"
+        assert origin == "https://api.example.com"
 
     @patch("traigent.security.headers.BackendConfig.get_backend_url")
     @patch(
         "traigent.security.headers.BackendConfig.DEFAULT_PROD_URL",
-        "https://api.traigent.ai",
+        "http://localhost:5000",
     )
     def test_default_backend_origin_fallback(self, mock_get_url: MagicMock) -> None:
         """Test fallback to DEFAULT_PROD_URL when URL is empty."""
@@ -668,7 +668,7 @@ class TestDefaultBackendOrigin:
 
         origin = _default_backend_origin()
 
-        assert origin == "https://api.traigent.ai"
+        assert origin == "http://localhost:5000"
 
     @patch("traigent.security.headers.BackendConfig.get_backend_url")
     def test_default_backend_origin_no_scheme(self, mock_get_url: MagicMock) -> None:

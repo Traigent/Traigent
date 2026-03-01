@@ -115,7 +115,9 @@ def test_compiled_constraints_attach_metadata() -> None:
     assert isinstance(constraint({"response_latency_ms": 800}, None), bool)
 
 
-def test_structural_constraint_validation_rejects_unknown_params(tmp_path: Path) -> None:
+def test_structural_constraint_validation_rejects_unknown_params(
+    tmp_path: Path,
+) -> None:
     """validate_constraints=True should fail fast on unknown params.* references."""
     spec_content = """
 tvl_version: "0.9"

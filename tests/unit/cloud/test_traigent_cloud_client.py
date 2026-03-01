@@ -48,14 +48,14 @@ class TestTraigentCloudClient:
         """Test client initialization with different parameters."""
         client = TraigentCloudClient(
             api_key="tg_test_key",
-            base_url="https://api.traigent.ai",
+            base_url="http://localhost:5000",
             enable_fallback=False,
             max_retries=5,
             timeout=60.0,
         )
 
-        assert client.base_url == "https://api.traigent.ai"
-        assert client.api_base_url == "https://api.traigent.ai/api/v1"
+        assert client.base_url == "http://localhost:5000"
+        assert client.api_base_url == "http://localhost:5000/api/v1"
         assert client.enable_fallback is False
         assert client.max_retries == 5
         assert client.timeout == 60.0
