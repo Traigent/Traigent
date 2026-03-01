@@ -52,7 +52,9 @@ class TestCostCalculatorInit:
 class TestCostCalculatorCalculateCost:
     def test_no_model_name_returns_empty_breakdown(self) -> None:
         calculator = CostCalculator()
-        result = calculator.calculate_cost(prompt="hi", response="hello", model_name=None)
+        result = calculator.calculate_cost(
+            prompt="hi", response="hello", model_name=None
+        )
         assert result.calculation_method == "no_model_name"
         assert result.total_cost == 0.0
 
@@ -119,7 +121,9 @@ class TestCostCalculatorCalculateCost:
     def test_calculate_cost_logs_unexpected_exception(self) -> None:
         mock_logger = MagicMock()
         calculator = CostCalculator(logger=mock_logger)
-        with patch.object(calculator, "_populate_cost", side_effect=RuntimeError("boom")):
+        with patch.object(
+            calculator, "_populate_cost", side_effect=RuntimeError("boom")
+        ):
             result = calculator.calculate_cost(
                 model_name="gpt-4o",
                 input_tokens=100,
@@ -257,7 +261,10 @@ class TestPricingHelpers:
         mock_litellm.cost_per_token.return_value = (0.0, 0.0)
         with (
             patch("traigent.utils.cost_calculator.litellm", mock_litellm),
-            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+            patch(
+                "traigent.utils.cost_calculator._is_model_known_to_litellm",
+                return_value=True,
+            ),
             patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", True),
         ):
             inp, out, method = get_model_token_pricing("known-zero-model")
@@ -268,9 +275,7 @@ class TestPricingHelpers:
     def test_fallback_cost_from_tokens_paths(self) -> None:
         exact = _estimation_cost_from_tokens("gpt-4o", 100, 50, _quiet=True)
         alias = _estimation_cost_from_tokens("claude-3-sonnet", 100, 50, _quiet=True)
-        prefix = _estimation_cost_from_tokens(
-            "gpt-4o-2024-08-06", 100, 50, _quiet=True
-        )
+        prefix = _estimation_cost_from_tokens("gpt-4o-2024-08-06", 100, 50, _quiet=True)
         reverse_prefix = _estimation_cost_from_tokens("gpt-4", 100, 50, _quiet=True)
         unknown = _estimation_cost_from_tokens("unknown-model", 100, 50, _quiet=True)
         assert exact[0] > 0
@@ -295,9 +300,17 @@ class TestDeprecatedPromptCompletionCost:
 
     def test_calculate_prompt_cost_with_message_list(self) -> None:
         with (
-            patch("traigent.utils.cost_calculator.litellm.token_counter", return_value=17),
-            patch("traigent.utils.cost_calculator.litellm.cost_per_token", return_value=(17e-6, 0.0)),
-            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+            patch(
+                "traigent.utils.cost_calculator.litellm.token_counter", return_value=17
+            ),
+            patch(
+                "traigent.utils.cost_calculator.litellm.cost_per_token",
+                return_value=(17e-6, 0.0),
+            ),
+            patch(
+                "traigent.utils.cost_calculator._is_model_known_to_litellm",
+                return_value=True,
+            ),
         ):
             cost = calculate_prompt_cost(
                 [{"role": "user", "content": "hello"}],
@@ -327,14 +340,24 @@ class TestDeprecatedPromptCompletionCost:
 
     def test_calculate_completion_cost_known_zero_model_branch(self) -> None:
         with (
-            patch("traigent.utils.cost_calculator.litellm.token_counter", return_value=12),
-            patch("traigent.utils.cost_calculator.litellm.cost_per_token", return_value=(0.0, 0.0)),
-            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+            patch(
+                "traigent.utils.cost_calculator.litellm.token_counter", return_value=12
+            ),
+            patch(
+                "traigent.utils.cost_calculator.litellm.cost_per_token",
+                return_value=(0.0, 0.0),
+            ),
+            patch(
+                "traigent.utils.cost_calculator._is_model_known_to_litellm",
+                return_value=True,
+            ),
         ):
             cost = calculate_completion_cost("world", "gpt-4o")
         assert cost == 0.0
 
-    def test_calculate_completion_cost_unknown_raises_after_litellm_failure(self) -> None:
+    def test_calculate_completion_cost_unknown_raises_after_litellm_failure(
+        self,
+    ) -> None:
         with patch(
             "traigent.utils.cost_calculator._try_litellm_completion_cost",
             side_effect=RuntimeError("boom"),

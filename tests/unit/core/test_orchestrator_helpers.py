@@ -1020,7 +1020,9 @@ class TestExtractCostFromResults:
                 self.aggregated_metrics = {"cost": 0.999}  # Must not override examples
 
         result = MockHybridResult()
-        examples, cost = extract_cost_from_results(result, None, "trial_hybrid_cost_key")
+        examples, cost = extract_cost_from_results(
+            result, None, "trial_hybrid_cost_key"
+        )
         assert examples == 3
         assert abs(cost - 0.041) < 0.0001
 

@@ -353,7 +353,9 @@ class TestSessionManager:
         assert session.best_metrics["accuracy"] == 0.90
 
     @pytest.mark.asyncio
-    async def test_submit_lower_value_wins_for_minimize_objective(self, session_manager):
+    async def test_submit_lower_value_wins_for_minimize_objective(
+        self, session_manager
+    ):
         """For minimize objectives (e.g., latency), lower values should win."""
         session = await session_manager.create_session(
             function_name="latency_test",

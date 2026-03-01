@@ -66,9 +66,7 @@ class TestCostFromTokensKnownModels:
 
     def test_anthropic_model_known(self) -> None:
         """Anthropic dated model IDs resolve through canonical litellm path."""
-        input_cost, output_cost = cost_from_tokens(
-            100, 50, "claude-3-haiku-20240307"
-        )
+        input_cost, output_cost = cost_from_tokens(100, 50, "claude-3-haiku-20240307")
         assert input_cost > 0
         assert output_cost > 0
 
@@ -248,7 +246,9 @@ class TestCostFromTokensCustomPricing:
         assert input_cost == pytest.approx(100 * 3.0e-6)
         assert output_cost == pytest.approx(50 * 15.0e-6)
 
-    def test_unknown_model_uses_custom_pricing_file(self, monkeypatch, tmp_path) -> None:
+    def test_unknown_model_uses_custom_pricing_file(
+        self, monkeypatch, tmp_path
+    ) -> None:
         payload = {
             "file-model": {
                 "input_cost_per_token": 1.0e-6,
