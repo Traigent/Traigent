@@ -294,7 +294,9 @@ class TestApplyConfig:
         optimize_idx = next(
             i for i, line in enumerate(lines) if "@traigent.optimize(" in line
         )
-        other_idx = next(i for i, line in enumerate(lines) if "@some_other_decorator" in line)
+        other_idx = next(
+            i for i, line in enumerate(lines) if "@some_other_decorator" in line
+        )
         assert optimize_idx < other_idx
 
     def test_replaces_fully_qualified_decorator(

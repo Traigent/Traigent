@@ -61,7 +61,9 @@ PAIRWISE_CASES: tuple[CTDCase, ...] = (
         "parallel",
     ),
     CTDCase(False, "zero", True, "under_limit", "foreign", "not_entered", "single"),
-    CTDCase(False, "none", False, "under_limit", "active", "already_entered", "parallel"),
+    CTDCase(
+        False, "none", False, "under_limit", "active", "already_entered", "parallel"
+    ),
     CTDCase(
         False,
         "none",
@@ -117,8 +119,12 @@ PAIRWISE_CASES: tuple[CTDCase, ...] = (
         "already_entered",
         "parallel",
     ),
-    CTDCase(False, "positive", True, "under_limit", "active", "not_entered", "parallel"),
-    CTDCase(False, "zero", True, "under_limit", "foreign", "already_entered", "parallel"),
+    CTDCase(
+        False, "positive", True, "under_limit", "active", "not_entered", "parallel"
+    ),
+    CTDCase(
+        False, "zero", True, "under_limit", "foreign", "already_entered", "parallel"
+    ),
 )
 
 FACTOR_NAMES = (

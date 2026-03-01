@@ -28,6 +28,7 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
@@ -85,7 +86,7 @@ class AuthCredentials:
     client_id: str | None = None
     client_secret: str | None = None
     service_key: str | None = None
-    backend_url: str | None = "https://api.traigent.ai"
+    backend_url: str | None = None  # Resolved from BackendConfig at runtime
     expires_at: float | None = None
     scopes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -149,7 +150,7 @@ class UnifiedAuthConfig:
     backend_base_url: str | None = (
         None  # Will be set from BackendConfig if not provided
     )
-    cloud_base_url: str = "https://api.traigent.ai"
+    cloud_base_url: str = DEFAULT_LOCAL_URL
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True

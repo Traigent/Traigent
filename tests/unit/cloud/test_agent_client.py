@@ -67,7 +67,7 @@ def agent_client(mock_aiohttp_session):
     # Create a valid format API key (tg_ + 61 characters = 64 total)
     valid_api_key = "tg_" + "1234567890abcdef" * 3 + "1234567890abc"  # 64 chars total
     client = TraigentCloudClient(
-        base_url="https://api.traigent.ai", api_key=valid_api_key
+        base_url="http://localhost:5000", api_key=valid_api_key
     )
     client._session = mock_aiohttp_session
     return client
@@ -178,7 +178,7 @@ class TestAgentOptimization:
         from traigent.utils.exceptions import AuthenticationError
 
         client = TraigentCloudClient(
-            base_url="https://api.traigent.ai", api_key="test-key"
+            base_url="http://localhost:5000", api_key="test-key"
         )
         # Don't set _session - this will cause authentication to fail
 

@@ -77,7 +77,7 @@ from traigent.cloud.client import TraigentCloudClient
 
 client = TraigentCloudClient(
     api_key="your-api-key",
-    base_url="https://api.traigent.ai"
+    base_url="http://localhost:5000"
 )
 ```
 

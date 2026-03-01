@@ -31,7 +31,7 @@ from traigent.cloud.token_manager import TokenManager
 def config():
     """Create a test configuration."""
     return UnifiedAuthConfig(
-        cloud_base_url="https://api.traigent.ai",
+        cloud_base_url="http://localhost:5000",
         token_refresh_threshold=300,
         auto_refresh=True,
         cache_credentials=False,
