@@ -15,11 +15,11 @@ Usage:
     >>> job_result = await client.compute_scores(experiment_run_id="run_123")
     >>> print(f"Job ID: {job_result['job_id']}")
     >>>
-    >>> # Poll for completion
-    >>> scores = await client.get_example_scores(
-    ...     experiment_run_id="run_123",
-    ...     timeout=60,  # Wait up to 60s for job to complete
-    ... )
+    >>> # Poll for completion (use asyncio.timeout for custom deadline)
+    >>> async with asyncio.timeout(60):
+    ...     scores = await client.get_example_scores(
+    ...         experiment_run_id="run_123",
+    ...     )
     >>>
     >>> # Retrieve dataset quality metrics
     >>> quality = await client.get_dataset_quality(experiment_run_id="run_123")
