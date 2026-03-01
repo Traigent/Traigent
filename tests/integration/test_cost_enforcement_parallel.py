@@ -550,8 +550,7 @@ class TestParallelUnknownCostCTD:
             should_raise = require_tracking or strict_accounting
             if should_raise:
                 assert all(
-                    isinstance(result, CostTrackingRequiredError)
-                    for result in results
+                    isinstance(result, CostTrackingRequiredError) for result in results
                 )
                 assert enforcer.get_status().unknown_cost_mode is False
             else:

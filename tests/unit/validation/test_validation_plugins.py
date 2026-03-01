@@ -59,7 +59,9 @@ def test_register_validator_without_overwrite_rejected() -> None:
         plugins.register_validator("duplicate", _CustomValidator, overwrite=False)
 
 
-def test_get_validator_returns_none_when_factory_raises(caplog: pytest.LogCaptureFixture) -> None:
+def test_get_validator_returns_none_when_factory_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Factory construction errors should be logged and return None."""
 
     def _broken_factory() -> Any:

@@ -44,7 +44,7 @@ class TestLocalAnalyticsInitialization:
             execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
-            analytics_endpoint="https://test.traigent.ai/analytics",
+            analytics_endpoint="http://localhost:5000/analytics",
             anonymous_user_id=None,
         )
 
@@ -56,7 +56,7 @@ class TestLocalAnalyticsInitialization:
 
         assert analytics.config == edge_analytics_config
         assert analytics.enabled is True
-        assert analytics.analytics_endpoint == "https://test.traigent.ai/analytics"
+        assert analytics.analytics_endpoint == "http://localhost:5000/analytics"
         assert isinstance(analytics.storage, LocalStorageManager)
         assert analytics.user_id is not None
         assert len(analytics.user_id) > 0

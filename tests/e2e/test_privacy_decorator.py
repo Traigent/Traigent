@@ -28,7 +28,7 @@ class MockTraigentCloudClientWithPrivacyServer:
     def __init__(self, privacy_server: DummyPrivacyServer):
         self.server = privacy_server
         self.api_key = "test-privacy-key"
-        self.base_url = "https://mock-privacy.traigent.ai"
+        self.base_url = "http://localhost:5000"
 
     async def __aenter__(self):
         return self
