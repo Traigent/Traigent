@@ -71,11 +71,12 @@ AUTH_HEADERS: Final[dict[str, str]] = {
 TUNABLE_ID: Final[str | None] = os.getenv(
     "MASTRA_JS_TUNABLE_ID"
 )  # None = auto-select first
-INPUT_IDS: Final[list[str]] = [
-    "no-filter-single-search-trashcan-blue",
-    "product-search-specific-model",
-    "consultant-fridge",
-]
+_INPUT_IDS_ENV = os.getenv("MASTRA_JS_INPUT_IDS", "")
+INPUT_IDS: Final[list[str]] = (
+    [x.strip() for x in _INPUT_IDS_ENV.split(",") if x.strip()]
+    if _INPUT_IDS_ENV
+    else [f"case_{i:03d}" for i in range(1, 6)]  # local dataset default
+)
 MAX_TRIALS: Final[int] = int(
     os.getenv("MASTRA_JS_MAX_TRIALS", "10")
 )  # Let Traigent decide which configs to try
