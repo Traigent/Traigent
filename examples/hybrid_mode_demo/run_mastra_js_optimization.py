@@ -42,13 +42,20 @@ from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
-SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "http://localhost:8080")
+SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
+AUTH_TOKEN: Final[str] = os.getenv("MASTRA_JS_AUTH_TOKEN", "")
+AUTH_HEADERS: Final[dict[str, str]] = {
+    "Authorization": AUTH_TOKEN,
+    "User-Agent": "Traigent-SDK/1.0",
+}
 TUNABLE_ID: Final[str | None] = os.getenv(
     "MASTRA_JS_TUNABLE_ID"
 )  # None = auto-select first
-DATASET_SIZE: Final[int] = int(
-    os.getenv("MASTRA_JS_DATASET_SIZE", "100")
-)  # case_001 through case_100
+INPUT_IDS: Final[list[str]] = [
+    "no-filter-single-search-trashcan-blue",
+    "product-search-specific-model",
+    "consultant-fridge",
+]
 MAX_TRIALS: Final[int] = int(
     os.getenv("MASTRA_JS_MAX_TRIALS", "10")
 )  # Let Traigent decide which configs to try
@@ -136,7 +143,9 @@ def _apply_reasoning_cap(
 def check_server(url: str) -> bool:
     """Verify demo server is running."""
     try:
-        resp = requests.get(f"{url}/traigent/v1/health", timeout=3)
+        resp = requests.get(
+            f"{url}/traigent/v1/health", headers=AUTH_HEADERS, timeout=3
+        )
         return resp.status_code == 200
     except requests.ConnectionError:
         return False
@@ -144,7 +153,9 @@ def check_server(url: str) -> bool:
 
 def discover_tunable_id(url: str) -> str:
     """GET /capabilities and return the selected tunable_id."""
-    resp = requests.get(f"{url}/traigent/v1/capabilities", timeout=5)
+    resp = requests.get(
+        f"{url}/traigent/v1/capabilities", headers=AUTH_HEADERS, timeout=5
+    )
     resp.raise_for_status()
     tunable_ids = resp.json().get("tunable_ids", [])
     if not tunable_ids:
@@ -164,12 +175,9 @@ def discover_tunable_id(url: str) -> str:
 
 
 def build_dataset() -> Dataset:
-    """Build the full dataset using the demo server's input_ids."""
+    """Build the dataset from the known input_ids."""
     return Dataset(
-        [
-            EvaluationExample(input_data={"input_id": f"case_{i:03d}"})
-            for i in range(1, DATASET_SIZE + 1)
-        ]
+        [EvaluationExample(input_data={"input_id": iid}) for iid in INPUT_IDS]
     )
 
 
@@ -189,8 +197,9 @@ async def run_optimization() -> None:
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
         tunable_id=tunable_id,
-        batch_size=50,
+        batch_size=1,
         auto_discover_tvars=True,
+        auth_header=AUTH_TOKEN,
     )
 
     async with evaluator:
