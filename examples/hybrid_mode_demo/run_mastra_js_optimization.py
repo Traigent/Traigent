@@ -43,9 +43,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
 SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
-AUTH_TOKEN: Final[str] = os.getenv(
-    "MASTRA_JS_AUTH_TOKEN", "Bearer QYG7VHh32VMZg7hLVBRvPEbTgFtco6dU"
-)
+AUTH_TOKEN: Final[str] = os.getenv("MASTRA_JS_AUTH_TOKEN", "")
 AUTH_HEADERS: Final[dict[str, str]] = {
     "Authorization": AUTH_TOKEN,
     "User-Agent": "Traigent-SDK/1.0",
@@ -145,7 +143,9 @@ def _apply_reasoning_cap(
 def check_server(url: str) -> bool:
     """Verify demo server is running."""
     try:
-        resp = requests.get(f"{url}/traigent/v1/health", headers=AUTH_HEADERS, timeout=3)
+        resp = requests.get(
+            f"{url}/traigent/v1/health", headers=AUTH_HEADERS, timeout=3
+        )
         return resp.status_code == 200
     except requests.ConnectionError:
         return False
@@ -153,7 +153,9 @@ def check_server(url: str) -> bool:
 
 def discover_tunable_id(url: str) -> str:
     """GET /capabilities and return the selected tunable_id."""
-    resp = requests.get(f"{url}/traigent/v1/capabilities", headers=AUTH_HEADERS, timeout=5)
+    resp = requests.get(
+        f"{url}/traigent/v1/capabilities", headers=AUTH_HEADERS, timeout=5
+    )
     resp.raise_for_status()
     tunable_ids = resp.json().get("tunable_ids", [])
     if not tunable_ids:
@@ -175,10 +177,7 @@ def discover_tunable_id(url: str) -> str:
 def build_dataset() -> Dataset:
     """Build the dataset from the known input_ids."""
     return Dataset(
-        [
-            EvaluationExample(input_data={"input_id": iid})
-            for iid in INPUT_IDS
-        ]
+        [EvaluationExample(input_data={"input_id": iid}) for iid in INPUT_IDS]
     )
 
 
