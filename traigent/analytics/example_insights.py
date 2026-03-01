@@ -32,6 +32,7 @@ import asyncio
 import time
 from typing import Any, cast
 
+from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class ExampleInsightsClient:
 
     def __init__(
         self,
-        backend_url: str = "http://localhost:5000",
+        backend_url: str = DEFAULT_LOCAL_URL,
         api_key: str | None = None,
         timeout: float = 30.0,
     ):
