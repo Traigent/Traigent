@@ -35,14 +35,34 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Importing env_config triggers automatic .env loading from the project root.
-from traigent.api.types import OptimizationResult
-from traigent.config.types import TraigentConfig, resolve_execution_mode
-from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators import HybridAPIEvaluator
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.optimizers.random import RandomSearchOptimizer
-from traigent.utils.env_config import get_env_var
+# A dependency makes a blocking HTTPS call at import time (to
+# raw.githubusercontent.com). Temporarily block outgoing port-443
+# connections so the import finishes instantly instead of hanging.
+import socket as _socket
+
+_orig_connect = _socket.socket.connect
+
+
+def _block_443(self: _socket.socket, addr: object) -> None:
+    if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] == 443:
+        raise ConnectionRefusedError("blocked during import")
+    return _orig_connect(self, addr)
+
+
+_socket.socket.connect = _block_443  # type: ignore[assignment]
+
+try:
+    # Importing env_config triggers automatic .env loading from the project root.
+    from traigent.api.types import OptimizationResult
+    from traigent.config.types import TraigentConfig, resolve_execution_mode
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.evaluators import HybridAPIEvaluator
+    from traigent.evaluators.base import Dataset, EvaluationExample
+    from traigent.optimizers.random import RandomSearchOptimizer
+    from traigent.utils.env_config import get_env_var
+finally:
+    # Restore normal socket behavior for the actual HTTP calls.
+    _socket.socket.connect = _orig_connect  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Configuration — all values come from environment / .env (no hardcoded secrets)
@@ -51,14 +71,16 @@ SERVER_URL: Final[str] = get_env_var("MASTRA_JS_BASE_URL", "https://ai.bazak.ai"
 AUTH_TOKEN: Final[str] = get_env_var("MASTRA_JS_AUTH_TOKEN", "", mask_in_logs=True)
 AUTH_HEADERS: Final[dict[str, str]] = {
     "Authorization": AUTH_TOKEN,
+    "x-api-key": AUTH_TOKEN,
     "User-Agent": "Traigent-SDK/1.0",
 }
 TUNABLE_ID: Final[str | None] = get_env_var("MASTRA_JS_TUNABLE_ID")
-INPUT_IDS: Final[list[str]] = [
-    "no-filter-single-search-trashcan-blue",
-    "product-search-specific-model",
-    "consultant-fridge",
-]
+_INPUT_IDS_ENV = get_env_var("MASTRA_JS_INPUT_IDS", "")
+INPUT_IDS: Final[list[str]] = (
+    [x.strip() for x in _INPUT_IDS_ENV.split(",") if x.strip()]
+    if _INPUT_IDS_ENV
+    else [f"case_{i:03d}" for i in range(1, 6)]  # local dataset default
+)
 MAX_TRIALS: Final[int] = int(get_env_var("MASTRA_JS_MAX_TRIALS", "10"))
 MAX_COST_USD: Final[float] = float(get_env_var("MASTRA_JS_MAX_COST_USD", "4.0"))
 MAX_REASONING_LEVEL: Final[str] = (
