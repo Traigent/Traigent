@@ -36,16 +36,36 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# A dependency makes a blocking HTTPS call at import time (to
+# raw.githubusercontent.com). Temporarily block outgoing port-443
+# connections so the import finishes instantly instead of hanging.
+import socket as _socket
+
+_orig_connect = _socket.socket.connect
+
+
+def _block_443(self: _socket.socket, addr: object) -> None:
+    if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] == 443:
+        raise ConnectionRefusedError("blocked during import")
+    return _orig_connect(self, addr)
+
+
+_socket.socket.connect = _block_443  # type: ignore[assignment]
+
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
+# Restore normal socket behavior for the actual HTTP calls.
+_socket.socket.connect = _orig_connect  # type: ignore[assignment]
+
 SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
 AUTH_TOKEN: Final[str] = os.getenv("MASTRA_JS_AUTH_TOKEN", "")
 AUTH_HEADERS: Final[dict[str, str]] = {
     "Authorization": AUTH_TOKEN,
+    "x-api-key": AUTH_TOKEN,
     "User-Agent": "Traigent-SDK/1.0",
 }
 TUNABLE_ID: Final[str | None] = os.getenv(
