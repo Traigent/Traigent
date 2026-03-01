@@ -36,26 +36,48 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from traigent.config.types import TraigentConfig
-from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators import HybridAPIEvaluator
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.optimizers.random import RandomSearchOptimizer
+# A dependency makes a blocking HTTPS call at import time (to
+# raw.githubusercontent.com). Temporarily block outgoing port-443
+# connections so the import finishes instantly instead of hanging.
+import socket as _socket
+
+_orig_connect = _socket.socket.connect
+
+
+def _block_443(self: _socket.socket, addr: object) -> None:
+    if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] == 443:
+        raise ConnectionRefusedError("blocked during import")
+    return _orig_connect(self, addr)
+
+
+_socket.socket.connect = _block_443  # type: ignore[assignment]
+
+try:
+    from traigent.config.types import TraigentConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.evaluators import HybridAPIEvaluator
+    from traigent.evaluators.base import Dataset, EvaluationExample
+    from traigent.optimizers.random import RandomSearchOptimizer
+finally:
+    # Restore normal socket behavior for the actual HTTP calls.
+    _socket.socket.connect = _orig_connect  # type: ignore[assignment]
 
 SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
 AUTH_TOKEN: Final[str] = os.getenv("MASTRA_JS_AUTH_TOKEN", "")
 AUTH_HEADERS: Final[dict[str, str]] = {
     "Authorization": AUTH_TOKEN,
+    "x-api-key": AUTH_TOKEN,
     "User-Agent": "Traigent-SDK/1.0",
 }
 TUNABLE_ID: Final[str | None] = os.getenv(
     "MASTRA_JS_TUNABLE_ID"
 )  # None = auto-select first
-INPUT_IDS: Final[list[str]] = [
-    "no-filter-single-search-trashcan-blue",
-    "product-search-specific-model",
-    "consultant-fridge",
-]
+_INPUT_IDS_ENV = os.getenv("MASTRA_JS_INPUT_IDS", "")
+INPUT_IDS: Final[list[str]] = (
+    [x.strip() for x in _INPUT_IDS_ENV.split(",") if x.strip()]
+    if _INPUT_IDS_ENV
+    else [f"case_{i:03d}" for i in range(1, 6)]  # local dataset default
+)
 MAX_TRIALS: Final[int] = int(
     os.getenv("MASTRA_JS_MAX_TRIALS", "10")
 )  # Let Traigent decide which configs to try
