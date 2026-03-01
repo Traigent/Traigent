@@ -98,6 +98,7 @@ class HTTPTransport:
                 }
                 if self._auth_header:
                     headers["Authorization"] = self._auth_header
+                    headers["x-api-key"] = self._auth_header
 
                 # Configure connection pooling
                 limits = httpx.Limits(
