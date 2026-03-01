@@ -533,12 +533,15 @@ class TestOpenAIAgentExecutor:
             completion_tokens = 50
             total_tokens = 150
 
-        with patch(
-            "traigent.utils.cost_calculator.get_cost_calculator",
-            side_effect=RuntimeError("test"),
-        ), patch(
-            "traigent.agents.platforms.is_strict_cost_accounting",
-            return_value=False,
+        with (
+            patch(
+                "traigent.utils.cost_calculator.get_cost_calculator",
+                side_effect=RuntimeError("test"),
+            ),
+            patch(
+                "traigent.agents.platforms.is_strict_cost_accounting",
+                return_value=False,
+            ),
         ):
             cost = executor._calculate_cost("gpt-4o", MockUsage())
             assert cost < 1e-12
@@ -554,12 +557,15 @@ class TestOpenAIAgentExecutor:
             completion_tokens = 50
             total_tokens = 150
 
-        with patch(
-            "traigent.utils.cost_calculator.get_cost_calculator",
-            side_effect=RuntimeError("strict-test"),
-        ), patch(
-            "traigent.agents.platforms.is_strict_cost_accounting",
-            return_value=True,
+        with (
+            patch(
+                "traigent.utils.cost_calculator.get_cost_calculator",
+                side_effect=RuntimeError("strict-test"),
+            ),
+            patch(
+                "traigent.agents.platforms.is_strict_cost_accounting",
+                return_value=True,
+            ),
         ):
             with pytest.raises(RuntimeError, match="strict-test"):
                 executor._calculate_cost("gpt-4o", MockUsage())
@@ -568,12 +574,15 @@ class TestOpenAIAgentExecutor:
     async def test_estimate_cost(self, openai_agent_spec):
         """Test cost estimation."""
         executor = OpenAIAgentExecutor()
-        with patch(
-            "traigent.utils.cost_calculator.calculate_prompt_cost",
-            return_value=0.01,
-        ), patch(
-            "traigent.utils.cost_calculator.calculate_completion_cost",
-            return_value=0.02,
+        with (
+            patch(
+                "traigent.utils.cost_calculator.calculate_prompt_cost",
+                return_value=0.01,
+            ),
+            patch(
+                "traigent.utils.cost_calculator.calculate_completion_cost",
+                return_value=0.02,
+            ),
         ):
             estimate = await executor.estimate_cost(
                 openai_agent_spec, {"query": "Test query"}

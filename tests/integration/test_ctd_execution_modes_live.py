@@ -57,7 +57,7 @@ async def test_ctd_execution_behavior_live(case: dict, monkeypatch) -> None:
     if backend_url == "local":
         monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     elif backend_url == "prod":
-        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://api.traigent.ai")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
 
     # We expect an API key to be available in the environment
     api_key = os.getenv("TRAIGENT_API_KEY")

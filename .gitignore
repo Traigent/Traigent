@@ -434,3 +434,10 @@ tests/optimizer_validation/viewer/bdd_graph_data.json
 
 # Architecture diagrams (generated locally)
 *.mmd
+
+# Local discussion notes and experiments
+discussion_*.txt
+DISCUSSIONS_RECOUNT_*.md
+AutoCoder_orders.txt
+old_discussions_*/
+paper_experiments/
