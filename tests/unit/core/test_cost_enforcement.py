@@ -512,7 +512,9 @@ class TestCostEnforcerAsync:
         assert abs(enforcer.accumulated_cost - expected) < 0.001
 
     @pytest.mark.asyncio
-    async def test_unknown_cost_async_raises_when_strict_accounting_enabled(self) -> None:
+    async def test_unknown_cost_async_raises_when_strict_accounting_enabled(
+        self,
+    ) -> None:
         """Strict accounting mode raises on async unknown cost."""
         with patch.dict(
             os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
@@ -696,9 +698,7 @@ class TestCostEnforcerEnvironmentVariables:
     def test_invalid_divergence_threshold_raises(self) -> None:
         """Non-numeric divergence threshold should fail fast at initialization."""
         with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "abc"}):
-            with pytest.raises(
-                ValueError, match="TRAIGENT_COST_DIVERGENCE_THRESHOLD"
-            ):
+            with pytest.raises(ValueError, match="TRAIGENT_COST_DIVERGENCE_THRESHOLD"):
                 CostEnforcer()
 
 

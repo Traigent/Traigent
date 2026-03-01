@@ -288,7 +288,8 @@ class TestSummaryStatsLogging:
             for msg in caplog.messages
         )
         assert not any(
-            "No summary_stats found for trial trial_abc" in msg for msg in caplog.messages
+            "No summary_stats found for trial trial_abc" in msg
+            for msg in caplog.messages
         )
 
 
