@@ -15,6 +15,10 @@ from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
+#: Single source of truth for the default local backend URL.
+#: Import this constant instead of repeating the literal string.
+DEFAULT_LOCAL_URL = "http://localhost:5000"
+
 
 class BackendConfig:
     """Centralized backend configuration management.
@@ -24,8 +28,8 @@ class BackendConfig:
     """
 
     # Default backend URLs (overridable via environment variables)
-    _FALLBACK_LOCAL_URL = "http://localhost:5000"
-    DEFAULT_PROD_URL = "https://api.traigent.ai"
+    _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
+    DEFAULT_PROD_URL = DEFAULT_LOCAL_URL  # No cloud service yet; default to local
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
