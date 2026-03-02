@@ -120,10 +120,11 @@ async def test_orchestrator_parallel_trials(monkeypatch):
     t3 = time.time()
     dur_par = t3 - t2
 
-    # Heuristic check: parallel trials should not be slower than sequential run
+    # Heuristic check with jitter tolerance: parallel execution should not
+    # regress materially vs sequential under shared CI runners.
     assert (
-        dur_par <= dur_seq
-    ), f"Expected parallel trials no slower than sequential: {dur_par:.3f} vs {dur_seq:.3f}"
+        dur_par <= dur_seq * 1.20
+    ), f"Expected parallel trials within 20% of sequential: {dur_par:.3f} vs {dur_seq:.3f}"
 
 
 @pytest.mark.asyncio

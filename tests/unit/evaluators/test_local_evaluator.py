@@ -373,3 +373,182 @@ class TestLocalEvaluatorIntegration:
                 example_result.metrics["output_tokens"] >= 1
             )  # At least 1 token output
             assert example_result.success
+
+
+class TestPromptTemplateFallbackLength:
+    """Test prompt template-aware fallback token estimation."""
+
+    @staticmethod
+    def _single_example_dataset(input_data: dict[str, str]) -> Dataset:
+        return Dataset(
+            examples=[EvaluationExample(input_data=input_data, expected_output="4")],
+            name="prompt_template_test_dataset",
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_privacy_uses_rendered_prompt_length_for_input_tokens(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        prompt = "You are a math tutor. Think step by step. Question: {question}"
+        rendered_prompt = prompt.format(**input_data)
+        expected_input_tokens = max(1, len(rendered_prompt) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=False,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_privacy_uses_rendered_prompt_length_for_prompt_length_based_tokens(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        prompt = "You are a math tutor. Think step by step. Question: {question}"
+        rendered_prompt = prompt.format(**input_data)
+        expected_input_tokens = max(1, len(rendered_prompt) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=True,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_non_privacy_format_failure_falls_back_to_additive_length(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        prompt = "You are a math tutor. Missing key: {missing_key}"
+        expected_input_tokens = max(1, (len(prompt) + len(str(input_data))) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=False,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_privacy_format_failure_falls_back_to_additive_length(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        prompt = "You are a math tutor. Missing key: {missing_key}"
+        expected_input_tokens = max(1, (len(prompt) + len(str(input_data))) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=True,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_non_privacy_without_prompt_preserves_legacy_input_estimation(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        expected_input_tokens = max(1, len(str(input_data)) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=False,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini"}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_privacy_without_prompt_preserves_legacy_input_estimation(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        input_data = {"question": "2+2?"}
+        expected_input_tokens = max(1, len(str(input_data)) // 4)
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=True,
+            execution_mode="edge_analytics",
+        )
+        dataset = self._single_example_dataset(input_data)
+
+        async def returns_plain_string(question: str) -> str:
+            del question
+            return "4"
+
+        result = await evaluator.evaluate(
+            returns_plain_string, {"model": "gpt-4o-mini"}, dataset
+        )
+
+        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
