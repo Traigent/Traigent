@@ -28,6 +28,8 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.config.backend_config import DEFAULT_LOCAL_URL
+from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ class AuthCredentials:
     client_id: str | None = None
     client_secret: str | None = None
     service_key: str | None = None
-    backend_url: str | None = "https://api.traigent.ai"
+    backend_url: str | None = None  # Resolved from BackendConfig at runtime
     expires_at: float | None = None
     scopes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -148,7 +150,7 @@ class UnifiedAuthConfig:
     backend_base_url: str | None = (
         None  # Will be set from BackendConfig if not provided
     )
-    cloud_base_url: str = "https://api.traigent.ai"
+    cloud_base_url: str = DEFAULT_LOCAL_URL
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True
@@ -382,9 +384,7 @@ class AuthManager:
         self._unified_auth = self
 
         self._provided_credentials: AuthCredentials | None = None
-        initial_api_key = (
-            api_key or os.getenv("TRAIGENT_API_KEY") or os.getenv("OPTIGEN_API_KEY")
-        )
+        initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
         initial_source = (
             "explicit" if api_key else ("environment" if initial_api_key else None)
         )
@@ -882,6 +882,12 @@ class AuthManager:
             auth_result = await self.authenticate()
             if not auth_result.success or self._credentials is None:
                 self._authenticated = False
+                # Fall back to raw API key headers when full auth fails
+                # but an API key is available (e.g., local dev mode).
+                fallback = self._get_api_key_headers()
+                if fallback:
+                    self._add_common_headers(fallback, target)
+                    return fallback
                 return {}
 
         if not self._credentials:
@@ -1426,7 +1432,7 @@ class AuthManager:
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,

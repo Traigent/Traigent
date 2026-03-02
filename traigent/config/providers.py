@@ -909,8 +909,8 @@ _PROVIDERS: dict[str, type[ConfigurationProvider]] = {
     "parameter": ParameterBasedProvider,
 }
 
-# Seamless provider is included in base for now, but will move to traigent-seamless plugin
-# TODO: When extracting to plugin, use:
+# Seamless provider is included in base for now, but may move to a dedicated
+# plugin package in a future release. During that migration, use:
 #   try:
 #       from traigent_seamless import SeamlessParameterProvider
 #       _PROVIDERS["seamless"] = SeamlessParameterProvider

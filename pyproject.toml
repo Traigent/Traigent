@@ -211,13 +211,18 @@ Changelog = "https://github.com/traigent/traigent-sdk/blob/main/CHANGELOG.md"
 [project.scripts]
 traigent = "traigent.cli.main:cli"
 
+[project.entry-points."traigent.validators"]
+python = "traigent_validation.validators:PythonConstraintValidator"
+sat = "traigent_validation.validators:SATConstraintValidator"
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["traigent*"]
+include = ["traigent*", "traigent_validation*"]
 exclude = ["tests*", "demos*", "docs*"]
 
 [tool.setuptools.package-data]
 traigent = ["py.typed"]
+traigent_validation = ["py.typed"]
 
 [tool.black]
 line-length = 88

@@ -9,6 +9,7 @@ This module provides:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Generator
 from pathlib import Path
@@ -795,8 +796,9 @@ def scenario_runner(
             dict(scenario.mock_mode_config) if scenario.mock_mode_config else {}
         )
         if "random_seed" not in mock_config:
-            # Generate deterministic seed from scenario name
-            mock_config["random_seed"] = hash(scenario.name) % (2**31)
+            # Use a stable hash to avoid process-randomized Python hash() output.
+            seed_bytes = hashlib.sha256(scenario.name.encode("utf-8")).digest()
+            mock_config["random_seed"] = int.from_bytes(seed_bytes[:8], "big") % (2**31)
 
         # Apply decorator
         try:

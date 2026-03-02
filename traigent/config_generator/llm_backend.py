@@ -42,7 +42,8 @@ class NoOpLLMBackend:
     def total_cost_usd(self) -> float:
         return 0.0
 
-    def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:  # noqa: ARG002
+    def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:
+        del prompt, max_tokens
         return ""
 
 

@@ -17,11 +17,14 @@ import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.cost_enforcement import (
+    DEFAULT_COST_LIMIT_USD,
+    EMA_COLD_START_WARNING_TRIALS,
     CostEnforcer,
     CostEnforcerConfig,
     CostEstimate,
     CostLimitExceeded,
     CostStatus,
+    CostTrackingRequiredError,
     OptimizationAborted,
     Permit,
 )
@@ -33,13 +36,41 @@ def _create_mock_permit(amount: float = 0.0) -> Permit:
     return Permit(id=0, amount=amount, active=True)
 
 
+UNKNOWN_COST_PAIRWISE_CASES = [
+    pytest.param(
+        False,
+        False,
+        False,
+        id="require-off_strict-off_permit-active",
+    ),
+    pytest.param(
+        False,
+        True,
+        True,
+        id="require-off_strict-on_permit-released",
+    ),
+    pytest.param(
+        True,
+        False,
+        True,
+        id="require-on_strict-off_permit-released",
+    ),
+    pytest.param(
+        True,
+        True,
+        False,
+        id="require-on_strict-on_permit-active",
+    ),
+]
+
+
 class TestCostEnforcerConfig:
     """Tests for CostEnforcerConfig defaults and validation."""
 
     def test_default_values(self) -> None:
         """Default config has sensible values."""
         config = CostEnforcerConfig()
-        assert config.limit == 2.0
+        assert config.limit == DEFAULT_COST_LIMIT_USD
         assert config.approved is False
         assert config.warning_threshold == 0.5
         assert config.fallback_trial_limit == 10
@@ -199,7 +230,14 @@ class TestCostEnforcerUnknownCost:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": "false",
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "false",
+            },
+        ):
             yield
 
     def test_unknown_cost_triggers_fallback(self) -> None:
@@ -237,6 +275,153 @@ class TestCostEnforcerUnknownCost:
         enforcer.track_cost(None, permit=permit)
         permit = enforcer.acquire_permit()
         assert not permit.is_granted, "Third permit should be denied (limit=2)"
+
+    def test_unknown_cost_raises_when_strict_accounting_enabled(self) -> None:
+        """Strict accounting mode raises instead of entering fallback mode."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            config = CostEnforcerConfig(fallback_trial_limit=5)
+            enforcer = CostEnforcer(config=config)
+            with pytest.raises(CostTrackingRequiredError) as exc_info:
+                enforcer.track_cost(None, permit=_create_mock_permit())
+
+        assert "TRAIGENT_STRICT_COST_ACCOUNTING=true" in str(exc_info.value)
+        assert enforcer.get_status().unknown_cost_mode is False
+
+    def test_strict_mode_is_latched_at_init(self) -> None:
+        """Strict mode env changes after init do not affect existing enforcer."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
+        ):
+            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            enforcer.track_cost(None, permit=_create_mock_permit())
+
+        assert enforcer.get_status().unknown_cost_mode is True
+
+    def test_require_cost_tracking_is_latched_at_init(self) -> None:
+        """Require-cost-tracking env changes after init do not affect instance."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "true"}, clear=False
+        ):
+            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "false"}, clear=False
+        ):
+            with pytest.raises(CostTrackingRequiredError):
+                enforcer.track_cost(None, permit=_create_mock_permit())
+
+
+class TestCostEnforcerUnknownCostCTD:
+    """Pairwise coverage of strict-mode unknown-cost behavior."""
+
+    @pytest.mark.parametrize(
+        ("require_tracking", "strict_accounting", "permit_pre_released"),
+        UNKNOWN_COST_PAIRWISE_CASES,
+    )
+    def test_unknown_cost_sync_pairwise(
+        self,
+        require_tracking: bool,
+        strict_accounting: bool,
+        permit_pre_released: bool,
+    ) -> None:
+        """Pairwise matrix: env flags x permit state for sync track_cost."""
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": str(require_tracking).lower(),
+                "TRAIGENT_STRICT_COST_ACCOUNTING": str(strict_accounting).lower(),
+            },
+            clear=False,
+        ):
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=1.0,
+                    estimated_cost_per_trial=0.2,
+                    fallback_trial_limit=5,
+                )
+            )
+            permit = enforcer.acquire_permit()
+            assert permit.is_granted
+            assert enforcer.get_status().in_flight_count == 1
+            if permit_pre_released:
+                assert enforcer.release_permit(permit) is True
+                assert enforcer.get_status().in_flight_count == 0
+            else:
+                assert enforcer.get_status().in_flight_count == 1
+
+            should_raise = require_tracking or strict_accounting
+            if should_raise:
+                with pytest.raises(CostTrackingRequiredError):
+                    enforcer.track_cost(None, permit=permit)
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is False
+            else:
+                enforcer.track_cost(None, permit=permit)
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is True
+
+            assert status.trial_count == 1
+            assert status.in_flight_count == 0
+            assert status.reserved_cost_usd == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("require_tracking", "strict_accounting", "permit_pre_released"),
+        UNKNOWN_COST_PAIRWISE_CASES,
+    )
+    async def test_unknown_cost_async_pairwise(
+        self,
+        require_tracking: bool,
+        strict_accounting: bool,
+        permit_pre_released: bool,
+    ) -> None:
+        """Pairwise matrix: env flags x permit state for async track_cost."""
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": str(require_tracking).lower(),
+                "TRAIGENT_STRICT_COST_ACCOUNTING": str(strict_accounting).lower(),
+            },
+            clear=False,
+        ):
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=1.0,
+                    estimated_cost_per_trial=0.2,
+                    fallback_trial_limit=5,
+                )
+            )
+            permit = await enforcer.acquire_permit_async()
+            assert permit.is_granted
+            assert enforcer.get_status().in_flight_count == 1
+            if permit_pre_released:
+                assert await enforcer.release_permit_async(permit) is True
+                assert enforcer.get_status().in_flight_count == 0
+            else:
+                assert enforcer.get_status().in_flight_count == 1
+
+            should_raise = require_tracking or strict_accounting
+            if should_raise:
+                with pytest.raises(CostTrackingRequiredError):
+                    await enforcer.track_cost_async(None, permit=permit)
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is False
+            else:
+                await enforcer.track_cost_async(None, permit=permit)
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is True
+
+            assert status.trial_count == 1
+            assert status.in_flight_count == 0
+            assert status.reserved_cost_usd == pytest.approx(0.0)
 
 
 class TestCostEnforcerThreadSafety:
@@ -277,7 +462,14 @@ class TestCostEnforcerAsync:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": "false",
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "false",
+            },
+        ):
             yield
 
     @pytest.mark.asyncio
@@ -318,6 +510,21 @@ class TestCostEnforcerAsync:
 
         expected = 10 * 50 * 0.01
         assert abs(enforcer.accumulated_cost - expected) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_unknown_cost_async_raises_when_strict_accounting_enabled(
+        self,
+    ) -> None:
+        """Strict accounting mode raises on async unknown cost."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            enforcer = CostEnforcer(config=CostEnforcerConfig())
+            permit = _create_mock_permit()
+            with pytest.raises(CostTrackingRequiredError) as exc_info:
+                await enforcer.track_cost_async(None, permit=permit)
+
+        assert "TRAIGENT_STRICT_COST_ACCOUNTING=true" in str(exc_info.value)
 
 
 class TestCostEnforcerApproval:
@@ -480,13 +687,19 @@ class TestCostEnforcerEnvironmentVariables:
         """Invalid environment values fall back to defaults."""
         with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "not_a_number"}):
             enforcer = CostEnforcer()
-            assert enforcer.config.limit == 2.0  # Default
+            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
 
     def test_negative_env_uses_default(self) -> None:
         """Negative values fall back to defaults."""
         with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "-5.0"}):
             enforcer = CostEnforcer()
-            assert enforcer.config.limit == 2.0  # Default
+            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+
+    def test_invalid_divergence_threshold_raises(self) -> None:
+        """Non-numeric divergence threshold should fail fast at initialization."""
+        with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "abc"}):
+            with pytest.raises(ValueError, match="TRAIGENT_COST_DIVERGENCE_THRESHOLD"):
+                CostEnforcer()
 
 
 class TestCostEnforcerRepr:
@@ -1068,6 +1281,22 @@ class TestCostEnforcerApprovalToken:
         assert enforcer._sync_used is False
         assert enforcer._async_used is False
 
+    def test_reset_preserves_latched_require_cost_tracking(self) -> None:
+        """Reset should not change latched strict/require tracking mode."""
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "true"}, clear=False
+        ):
+            enforcer = CostEnforcer()
+
+        assert enforcer._require_cost_tracking() is True
+
+        # Changing env after init should not affect this instance, including after reset.
+        with patch.dict(
+            os.environ, {"TRAIGENT_REQUIRE_COST_TRACKING": "false"}, clear=False
+        ):
+            enforcer.reset()
+            assert enforcer._require_cost_tracking() is True
+
 
 # =============================================================================
 # Adaptive Cost Estimation Tests (Issue #66)
@@ -1262,12 +1491,11 @@ class TestCostDivergenceWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Custom divergence threshold from environment variable."""
-        enforcer = CostEnforcer(
-            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
-        )
-
         # Set higher threshold (4.0x)
         with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "4.0"}):
+            enforcer = CostEnforcer(
+                config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+            )
             permit = enforcer.acquire_permit()
             with caplog.at_level("WARNING"):
                 enforcer.track_cost(0.15, permit=permit)  # 3x - now within threshold
@@ -1422,6 +1650,24 @@ class TestCostEnforcerEdgeCases:
             enforcer = CostEnforcer()
             # Should fall back to default
             assert enforcer.config.fallback_trial_limit == 10
+
+    def test_warns_when_ema_stays_at_cold_start_after_unknown_costs(
+        self, caplog
+    ) -> None:
+        """Repeated unknown costs should trigger a one-time cold-start warning."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        with caplog.at_level("WARNING"):
+            for idx in range(EMA_COLD_START_WARNING_TRIALS):
+                permit = enforcer.acquire_permit()
+                enforcer.track_cost(None, permit=permit, trial_id=f"unknown-{idx}")
+
+        cold_start_warnings = [
+            record.message
+            for record in caplog.records
+            if "Cost estimate is still at initial value" in record.message
+        ]
+        assert len(cold_start_warnings) == 1
 
     @pytest.mark.asyncio
     async def test_release_permit_async_double_release(self) -> None:

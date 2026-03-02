@@ -15,9 +15,9 @@ Flow:
   4. Reports best config, metrics, stop reason
 
 Prerequisites:
-  - JS-Mastra demo server running at http://localhost:8080
-    (cd JS-Mastra-APIs-Validation && npm run api:dev)
-  - OPENAI_API_KEY set in the demo server's .env
+  - JS-Mastra demo server running (see .env.example for endpoint config)
+  - Copy ``examples/hybrid_mode_demo/.env.example`` to ``.env`` in the
+    project root and fill in MASTRA_JS_AUTH_TOKEN
 
 Usage:
     .venv/bin/python examples/hybrid_mode_demo/run_mastra_js_optimization.py
@@ -36,27 +36,61 @@ SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from traigent.config.types import TraigentConfig
-from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators import HybridAPIEvaluator
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.optimizers.random import RandomSearchOptimizer
+# A dependency makes a blocking HTTPS call at import time (to
+# raw.githubusercontent.com). Temporarily block outgoing port-443
+# connections so the import finishes instantly instead of hanging.
+import socket as _socket
 
-SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "http://localhost:8080")
-TUNABLE_ID: Final[str | None] = os.getenv(
-    "MASTRA_JS_TUNABLE_ID"
-)  # None = auto-select first
-DATASET_SIZE: Final[int] = int(
-    os.getenv("MASTRA_JS_DATASET_SIZE", "100")
-)  # case_001 through case_100
-MAX_TRIALS: Final[int] = int(
-    os.getenv("MASTRA_JS_MAX_TRIALS", "10")
-)  # Let Traigent decide which configs to try
-MAX_COST_USD: Final[float] = float(
-    os.getenv("MASTRA_JS_MAX_COST_USD", "4.0")
-)  # Stop after spending $4
+_orig_connect = _socket.socket.connect
+
+
+def _block_443(self: _socket.socket, addr: object) -> None:
+    if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] == 443:
+        raise ConnectionRefusedError("blocked during import")
+    return _orig_connect(self, addr)
+
+
+_socket.socket.connect = _block_443  # type: ignore[assignment]
+
+try:
+    # Importing env_config triggers automatic .env loading from the project root.
+    from traigent.api.types import OptimizationResult
+    from traigent.config.types import TraigentConfig, resolve_execution_mode
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.evaluators import HybridAPIEvaluator
+    from traigent.evaluators.base import Dataset, EvaluationExample
+    from traigent.optimizers.random import RandomSearchOptimizer
+    from traigent.utils.env_config import get_env_var
+finally:
+    # Restore normal socket behavior for the actual HTTP calls.
+    _socket.socket.connect = _orig_connect  # type: ignore[assignment]
+
+# Enable SDK logging so per-example results are visible.
+from traigent.utils.logging import setup_logging
+
+setup_logging(level=os.getenv("TRAIGENT_LOG_LEVEL", "INFO"))
+
+# ---------------------------------------------------------------------------
+# Configuration — all values come from environment / .env (no hardcoded secrets)
+# ---------------------------------------------------------------------------
+SERVER_URL: Final[str] = get_env_var("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
+AUTH_TOKEN: Final[str] = get_env_var("MASTRA_JS_AUTH_TOKEN", "", mask_in_logs=True)
+AUTH_HEADERS: Final[dict[str, str]] = {
+    "Authorization": AUTH_TOKEN,
+    "x-api-key": AUTH_TOKEN,
+    "User-Agent": "Traigent-SDK/1.0",
+}
+TUNABLE_ID: Final[str | None] = get_env_var("MASTRA_JS_TUNABLE_ID")
+_INPUT_IDS_ENV = get_env_var("MASTRA_JS_INPUT_IDS", "")
+INPUT_IDS: Final[list[str]] = (
+    [x.strip() for x in _INPUT_IDS_ENV.split(",") if x.strip()]
+    if _INPUT_IDS_ENV
+    else [f"case_{i:03d}" for i in range(1, 6)]  # local dataset default
+)
+MAX_TRIALS: Final[int] = int(get_env_var("MASTRA_JS_MAX_TRIALS", "10"))
+MAX_COST_USD: Final[float] = float(get_env_var("MASTRA_JS_MAX_COST_USD", "4.0"))
 MAX_REASONING_LEVEL: Final[str] = (
-    os.getenv("MASTRA_JS_MAX_REASONING_LEVEL", "medium").strip().lower()
+    get_env_var("MASTRA_JS_MAX_REASONING_LEVEL", "medium").strip().lower()
 )
 
 _REASONING_LEVEL_ORDER: Final[list[str]] = [
@@ -66,34 +100,9 @@ _REASONING_LEVEL_ORDER: Final[list[str]] = [
     "high",
     "highest",
 ]
-
-
-def _resolve_execution_mode(mode: str | None) -> str:
-    """Normalize execution mode for this demo.
-
-    Supported values:
-    - edge_analytics (local)
-    - local (alias for edge_analytics)
-    - hybrid
-    """
-
-    raw = (mode or "edge_analytics").strip().lower()
-    if raw == "local":
-        return "edge_analytics"
-    if raw in {"edge_analytics", "hybrid"}:
-        return raw
-    raise ValueError(
-        "TRAIGENT_EXECUTION_MODE must be one of: edge_analytics, local, hybrid"
-    )
-
-
-def _parse_bool_env(name: str, default: bool = False) -> bool:
-    """Parse common truthy env values."""
-
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+REQUEST_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Traigent-SDK/1.0",
+}
 
 
 def _apply_reasoning_cap(
@@ -104,7 +113,6 @@ def _apply_reasoning_cap(
     Looks for categorical parameters with "reason" in the key and values that
     match known reasoning levels. Values above MAX_REASONING_LEVEL are removed.
     """
-
     if MAX_REASONING_LEVEL not in _REASONING_LEVEL_ORDER:
         return config_space, False
 
@@ -136,7 +144,11 @@ def _apply_reasoning_cap(
 def check_server(url: str) -> bool:
     """Verify demo server is running."""
     try:
-        resp = requests.get(f"{url}/traigent/v1/health", timeout=3)
+        resp = requests.get(
+            f"{url}/traigent/v1/health",
+            timeout=3,
+            headers=REQUEST_HEADERS,
+        )
         return resp.status_code == 200
     except requests.ConnectionError:
         return False
@@ -144,7 +156,11 @@ def check_server(url: str) -> bool:
 
 def discover_tunable_id(url: str) -> str:
     """GET /capabilities and return the selected tunable_id."""
-    resp = requests.get(f"{url}/traigent/v1/capabilities", timeout=5)
+    resp = requests.get(
+        f"{url}/traigent/v1/capabilities",
+        timeout=5,
+        headers=REQUEST_HEADERS,
+    )
     resp.raise_for_status()
     tunable_ids = resp.json().get("tunable_ids", [])
     if not tunable_ids:
@@ -164,13 +180,61 @@ def discover_tunable_id(url: str) -> str:
 
 
 def build_dataset() -> Dataset:
-    """Build the full dataset using the demo server's input_ids."""
+    """Build the dataset from the known input_ids."""
     return Dataset(
-        [
-            EvaluationExample(input_data={"input_id": f"case_{i:03d}"})
-            for i in range(1, DATASET_SIZE + 1)
-        ]
+        [EvaluationExample(input_data={"input_id": iid}) for iid in INPUT_IDS]
     )
+
+
+def _print_results(result: OptimizationResult) -> None:
+    """Print optimization results report."""
+    print("\n" + "=" * 70)
+    print("  OPTIMIZATION RESULTS")
+    print("=" * 70)
+
+    print(f"\n  Algorithm:     {result.algorithm}")
+    print(f"  Stop reason:   {result.stop_reason}")
+    print(f"  Total trials:  {len(result.trials)}")
+    print(f"  Successful:    {len(result.successful_trials)}")
+    print(f"  Success rate:  {result.success_rate:.0%}")
+    print(f"  Duration:      {result.duration:.1f}s")
+    if result.total_cost is not None:
+        print(f"  Total cost:    ${result.total_cost:.6f}")
+
+    print("\n  Best config:")
+    print(f"    {json.dumps(result.best_config, indent=6)}")
+
+    print(f"\n  Best score:    {result.best_score:.4f}")
+    print("\n  Best metrics:")
+    for key, value in result.best_metrics.items():
+        if isinstance(value, float):
+            if "cost" in key:
+                print(f"    {key}: ${value:.6f}")
+            elif "latency" in key:
+                print(f"    {key}: {value:.0f}ms")
+            else:
+                print(f"    {key}: {value:.4f}")
+        else:
+            print(f"    {key}: {value}")
+
+    print("\n  All trials:")
+    print(f"  {'#':>3}  {'Acc':>7}  {'Cost':>9}  Config")
+    print(f"  ---  -------  ---------  {'-'*45}")
+    for i, trial in enumerate(result.trials):
+        status = "ok" if trial.is_successful else "FAIL"
+        acc = trial.metrics.get("accuracy", 0)
+        cost = trial.metrics.get("cost", 0)
+        print(
+            f"  {i+1:>3}  {acc:>7.4f}  ${cost:>8.4f}  "
+            f"{json.dumps(trial.config, separators=(',', ':'))}"
+            f"  [{status}]"
+        )
+
+    print("\n  Convergence info:")
+    for k, v in result.convergence_info.items():
+        print(f"    {k}: {v}")
+
+    print("\n" + "=" * 70)
 
 
 async def run_optimization() -> None:
@@ -189,8 +253,9 @@ async def run_optimization() -> None:
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
         tunable_id=tunable_id,
-        batch_size=50,
+        batch_size=1,
         auto_discover_tvars=True,
+        auth_header=AUTH_TOKEN,
     )
 
     async with evaluator:
@@ -215,9 +280,18 @@ async def run_optimization() -> None:
             random_seed=42,
         )
 
-        execution_mode = _resolve_execution_mode(os.getenv("TRAIGENT_EXECUTION_MODE"))
-        cost_approved = _parse_bool_env("TRAIGENT_COST_APPROVED", default=False)
-        traigent_config = TraigentConfig(execution_mode=execution_mode)
+        # Use Traigent's resolve_execution_mode (handles canonical values).
+        # "local" is accepted as a convenience alias for "edge_analytics".
+        raw_mode = get_env_var("TRAIGENT_EXECUTION_MODE", "edge_analytics")
+        if raw_mode.strip().lower() == "local":
+            raw_mode = "edge_analytics"
+        execution_mode = resolve_execution_mode(raw_mode)
+
+        cost_approved = get_env_var(
+            "TRAIGENT_COST_APPROVED", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+        traigent_config = TraigentConfig(execution_mode=execution_mode.value)
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -232,7 +306,7 @@ async def run_optimization() -> None:
         # --- Step 3: Run optimization ---
         dataset = build_dataset()
         print(f"      Dataset: {len(dataset)} examples")
-        print(f"      Execution mode: {execution_mode}")
+        print(f"      Execution mode: {execution_mode.value}")
         print(f"      Cost limit: ${MAX_COST_USD:.2f} (approved={cost_approved})")
         print("\n[3/3] Running optimization...")
         print("-" * 70)
@@ -246,54 +320,7 @@ async def run_optimization() -> None:
             function_name="hybrid_demo_agent",
         )
 
-        # --- Report ---
-        print("\n" + "=" * 70)
-        print("  OPTIMIZATION RESULTS")
-        print("=" * 70)
-
-        print(f"\n  Algorithm:     {result.algorithm}")
-        print(f"  Stop reason:   {result.stop_reason}")
-        print(f"  Total trials:  {len(result.trials)}")
-        print(f"  Successful:    {len(result.successful_trials)}")
-        print(f"  Success rate:  {result.success_rate:.0%}")
-        print(f"  Duration:      {result.duration:.1f}s")
-        if result.total_cost is not None:
-            print(f"  Total cost:    ${result.total_cost:.6f}")
-
-        print("\n  Best config:")
-        print(f"    {json.dumps(result.best_config, indent=6)}")
-
-        print(f"\n  Best score:    {result.best_score:.4f}")
-        print("\n  Best metrics:")
-        for key, value in result.best_metrics.items():
-            if isinstance(value, float):
-                if "cost" in key:
-                    print(f"    {key}: ${value:.6f}")
-                elif "latency" in key:
-                    print(f"    {key}: {value:.0f}ms")
-                else:
-                    print(f"    {key}: {value:.4f}")
-            else:
-                print(f"    {key}: {value}")
-
-        print("\n  All trials:")
-        print(f"  {'#':>3}  {'Acc':>7}  {'Cost':>9}  Config")
-        print(f"  ---  -------  ---------  {'-'*45}")
-        for i, trial in enumerate(result.trials):
-            status = "ok" if trial.is_successful else "FAIL"
-            acc = trial.metrics.get("accuracy", 0)
-            cost = trial.metrics.get("cost", 0)
-            print(
-                f"  {i+1:>3}  {acc:>7.4f}  ${cost:>8.4f}  "
-                f"{json.dumps(trial.config, separators=(',', ':'))}"
-                f"  [{status}]"
-            )
-
-        print("\n  Convergence info:")
-        for k, v in result.convergence_info.items():
-            print(f"    {k}: {v}")
-
-        print("\n" + "=" * 70)
+        _print_results(result)
 
 
 if __name__ == "__main__":

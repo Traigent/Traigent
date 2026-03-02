@@ -17,6 +17,8 @@ from traigent.agents.executor import (
     CostEstimate,
     PlatformConfigValidationResult,
 )
+from traigent.core.constants import DEFAULT_MODEL
+from traigent.utils.env_config import is_strict_cost_accounting
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -120,7 +122,7 @@ class LangChainAgentExecutor(AgentExecutor):
     def _build_langchain_llm(
         self, chat_openai_cls, modern_lc: bool, config: dict[str, Any]
     ):
-        model_name = config.get("model", "gpt-4o-mini")
+        model_name = config.get("model", DEFAULT_MODEL)
         temperature = config.get("temperature", 0.7)
         max_tokens = int(config.get("max_tokens", 1000))
         llm_kwargs = {
@@ -506,7 +508,7 @@ class OpenAIAgentExecutor(AgentExecutor):
             raise AgentExecutionError("OpenAI SDK not available") from None
 
         # Extract configuration
-        model = str(config.get("model", "gpt-4o-mini"))
+        model = str(config.get("model", DEFAULT_MODEL))
         temperature = float(config.get("temperature", 0.7))
         max_tokens = int(config.get("max_tokens", 1000))
 
@@ -750,6 +752,8 @@ class OpenAIAgentExecutor(AgentExecutor):
                 )
             return total
         except Exception:
+            if is_strict_cost_accounting():
+                raise
             logger.warning(
                 "Cost calculation failed for model %s, returning 0",
                 model_mapped,
@@ -766,7 +770,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         config = self._merge_configurations(
             agent_spec.model_parameters or {}, config_overrides
         )
-        model = config.get("model", "gpt-4o-mini")
+        model = config.get("model", DEFAULT_MODEL)
 
         # Format the actual prompt that will be sent
         prompt = self._format_prompt(agent_spec.prompt_template, input_data)
@@ -797,33 +801,9 @@ class OpenAIAgentExecutor(AgentExecutor):
                 "estimated_output_cost": float(output_cost),
                 "confidence": 0.8,  # Higher confidence with litellm
             }
-
-        except ImportError:
-            # Fallback to old estimation method
-            estimated_prompt_tokens = int(len(prompt.split()) * 1.3)
-            estimated_completion_tokens = int(int(config.get("max_tokens", 1000)) * 0.7)
-
-            class MockUsage:
-                def __init__(self, prompt: int, completion: int) -> None:
-                    self.prompt_tokens = prompt
-                    self.completion_tokens = completion
-                    self.total_tokens = prompt + completion
-
-            usage = MockUsage(estimated_prompt_tokens, estimated_completion_tokens)
-            estimated_cost = float(self._calculate_cost(model, usage))
-
-            return {
-                "estimated_cost": estimated_cost,
-                "estimated_tokens": usage.total_tokens,
-                "confidence": 0.7,  # Medium confidence in estimate
-            }
         except Exception:
-            # If all cost calculation fails, return minimal estimates
-            logger.debug("Cost estimation failed, returning minimal estimates")
-            return {
-                "estimated_cost": 0.001,  # Minimal estimate
-                "confidence": 0.1,  # Low confidence
-            }
+            logger.exception("Cost estimation failed for model %s", model)
+            raise
 
 
 class PlatformRegistry:

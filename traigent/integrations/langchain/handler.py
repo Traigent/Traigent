@@ -272,11 +272,15 @@ class TraigentHandler(BaseCallbackHandler):
             )
 
         super().__init__()
+        from traigent.utils.env_config import is_strict_cost_accounting
+
         self._trace_id = trace_id or (
             trace_id_generator() if trace_id_generator else str(uuid4())
         )
         self._metric_prefix = metric_prefix
         self._include_per_node = include_per_node
+        # Latch strict mode at handler creation for consistent per-run behavior.
+        self._strict_cost_accounting = is_strict_cost_accounting()
 
         # Thread-safe state
         self._lock = threading.Lock()
@@ -654,21 +658,51 @@ class TraigentHandler(BaseCallbackHandler):
     ) -> float:
         """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        Uses strict=False so unknown models return 0.0 with a warning
-        instead of raising.
+        In default mode, unknown models return 0.0 with a warning.
+        When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
+        strict_cost_accounting = self._strict_cost_accounting
+        total_tokens = input_tokens + output_tokens
         try:
-            from traigent.utils.cost_calculator import cost_from_tokens
+            from traigent.utils.cost_calculator import (
+                _estimation_cost_from_tokens,
+                cost_from_tokens,
+            )
 
             input_cost, output_cost = cost_from_tokens(
-                input_tokens, output_tokens, model, strict=False
+                input_tokens,
+                output_tokens,
+                model,
+                strict=strict_cost_accounting,
             )
-            return float(input_cost + output_cost)
+            total_cost = float(input_cost + output_cost)
+
+            # Non-strict mode may return zero for unknown/unmapped aliases.
+            # Preserve backward-compatible estimator behavior by attempting
+            # the local estimation table before returning zero.
+            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
+                est_input_cost, est_output_cost = _estimation_cost_from_tokens(
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    _quiet=True,
+                )
+                est_total = float(est_input_cost + est_output_cost)
+                if est_total > 0.0:
+                    logger.debug(
+                        "Using estimation pricing fallback for model %r in TraigentHandler",
+                        model,
+                    )
+                    return est_total
+
+            return total_cost
         except Exception:
+            if strict_cost_accounting:
+                raise
             logger.warning(
                 "Cost calculation failed for model %r with %d tokens",
                 model,
-                input_tokens + output_tokens,
+                total_tokens,
             )
             return 0.0
 

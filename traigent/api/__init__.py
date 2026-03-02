@@ -7,6 +7,7 @@ from __future__ import annotations
 from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
+    configure_for_budget,
     get_available_strategies,
     get_version_info,
     override_config,
@@ -45,6 +46,7 @@ __all__ = [
     "optimize",
     # Configuration functions
     "configure",
+    "configure_for_budget",
     "override_config",
     "set_strategy",
     "get_available_strategies",

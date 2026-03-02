@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import traigent.config_generator.apply as _apply_mod
 from traigent.config_generator.apply import (
     _collect_needed_imports,
     _find_function,
@@ -15,6 +16,7 @@ from traigent.config_generator.apply import (
     _get_existing_imports,
     _get_leading_whitespace,
     _indent_decorator,
+    _sanitize_source_path,
     apply_config,
 )
 from traigent.config_generator.types import (
@@ -23,6 +25,12 @@ from traigent.config_generator.types import (
     SafetySpec,
     TVarSpec,
 )
+
+
+@pytest.fixture(autouse=True)
+def _allow_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let tests write to tmp_path by setting the safe base dir."""
+    monkeypatch.setattr(_apply_mod, "_SAFE_BASE_DIR", str(tmp_path))
 
 
 @pytest.fixture()
@@ -284,9 +292,11 @@ class TestApplyConfig:
         lines = modified.splitlines()
         # Decorator should appear before the existing @some_other_decorator
         optimize_idx = next(
-            i for i, l in enumerate(lines) if "@traigent.optimize(" in l
+            i for i, line in enumerate(lines) if "@traigent.optimize(" in line
         )
-        other_idx = next(i for i, l in enumerate(lines) if "@some_other_decorator" in l)
+        other_idx = next(
+            i for i, line in enumerate(lines) if "@some_other_decorator" in line
+        )
         assert optimize_idx < other_idx
 
     def test_replaces_fully_qualified_decorator(
@@ -326,6 +336,41 @@ class TestApplyConfig:
         modified = src.read_text()
         assert "@traigent.optimize(" in modified
         assert "async def my_async_func" in modified
+
+
+class TestSanitizeSourcePath:
+    def test_rejects_path_outside_base_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Path traversal outside the safe base directory must be rejected."""
+        safe_dir = tmp_path / "safe"
+        safe_dir.mkdir()
+        monkeypatch.setattr(_apply_mod, "_SAFE_BASE_DIR", str(safe_dir))
+
+        # Create a file outside the safe dir
+        outside = tmp_path / "evil.py"
+        outside.write_text("x = 1\n")
+
+        with pytest.raises(ValueError, match="outside the allowed base directory"):
+            _sanitize_source_path(outside)
+
+    def test_rejects_non_py_file(self, tmp_path: Path) -> None:
+        txt = tmp_path / "data.txt"
+        txt.write_text("hello")
+        with pytest.raises(ValueError, match="Expected a .py file"):
+            _sanitize_source_path(txt)
+
+    def test_rejects_nonexistent_file(self, tmp_path: Path) -> None:
+        missing = tmp_path / "gone.py"
+        with pytest.raises((ValueError, OSError)):
+            _sanitize_source_path(missing)
+
+    def test_accepts_valid_py_file(self, tmp_path: Path) -> None:
+        src = tmp_path / "ok.py"
+        src.write_text("x = 1\n")
+        result = _sanitize_source_path(src)
+        assert result.is_file()
+        assert result.suffix == ".py"
 
 
 class TestHelpers:

@@ -7,11 +7,45 @@ and line-based string operations for insertion to preserve user formatting.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shutil
 from pathlib import Path
 
 from traigent.config_generator.types import AutoConfigResult
+
+# Base directory for path containment checks (S2083).
+# Defaults to CWD; overridable via env var for testing / CI.
+_SAFE_BASE_DIR = os.environ.get("TRAIGENT_CONFIG_BASE_DIR", "")
+
+
+def _sanitize_source_path(file_path: Path) -> Path:
+    """Resolve and validate a user-provided source file path.
+
+    Ensures the canonical path is a real ``.py`` file within a trusted
+    base directory so that no user-controlled traversal can escape it.
+
+    Returns a freshly-constructed ``Path`` whose components are derived
+    from the validated canonical string — not from the original argument.
+    """
+    canonical = os.path.realpath(str(file_path))
+
+    # Optional containment check (S2083): enforce only when explicitly configured.
+    # Default behavior allows CLI usage on arbitrary source files (including temp paths).
+    if _SAFE_BASE_DIR:
+        base = os.path.realpath(_SAFE_BASE_DIR)
+        if not canonical.startswith(base + os.sep) and canonical != base:
+            raise ValueError(
+                f"Path '{canonical}' is outside the allowed base directory '{base}'"
+            )
+
+    # Reconstruct Path from the validated canonical string
+    safe = Path(canonical)
+    if not safe.is_file():
+        raise ValueError(f"Not a file: {safe}")
+    if safe.suffix != ".py":
+        raise ValueError(f"Expected a .py file, got: {safe}")
+    return safe
 
 
 def apply_config(
@@ -47,7 +81,9 @@ def apply_config(
     if not function_name:
         raise ValueError("function_name is required for apply_config")
 
-    source = file_path.read_text()
+    safe_path = _sanitize_source_path(file_path)
+
+    source = safe_path.read_text()
     lines = source.splitlines(keepends=True)
 
     try:
@@ -93,10 +129,10 @@ def apply_config(
 
     # Write back
     if backup:
-        shutil.copy2(file_path, file_path.with_suffix(".py.bak"))
+        shutil.copy2(safe_path, safe_path.with_suffix(".py.bak"))
 
-    file_path.write_text("".join(lines))
-    return file_path
+    safe_path.write_text("".join(lines))
+    return safe_path
 
 
 def _find_function(

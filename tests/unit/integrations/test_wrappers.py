@@ -37,6 +37,22 @@ class TestApplyParameterOverrides:
         assert result["temp"] == 0.7
         assert result["max_tokens"] == 100
 
+    def test_logs_when_overriding_user_provided_kwarg(self, caplog):
+        """Override path should emit a debug log with old/new values."""
+        kwargs = {"temperature": 0.7}
+        config_dict = {"temperature": 0.3}
+        parameter_mapping = {"temperature": "temperature"}
+
+        with caplog.at_level("DEBUG"):
+            result = apply_parameter_overrides(kwargs, config_dict, parameter_mapping)
+
+        assert result["temperature"] == 0.3
+        assert any(
+            "Overriding user-provided temperature=0.7 with config value 0.3"
+            in record.message
+            for record in caplog.records
+        )
+
     def test_no_override_for_missing_config(self):
         """Test that missing config values don't create overrides."""
         kwargs = {"existing": "value"}
@@ -320,6 +336,20 @@ class TestCreateResilientWrapper:
 
         assert result == "original"
 
+    def test_resilient_wrapper_propagates_critical_exception(self):
+        """Critical exceptions should never be swallowed by fallback behavior."""
+        from traigent.core.cost_enforcement import OptimizationAborted
+
+        def original():
+            return "original"
+
+        def wrapper_func():
+            raise OptimizationAborted("abort")
+
+        resilient = create_resilient_wrapper(original, wrapper_func)
+        with pytest.raises(OptimizationAborted, match="abort"):
+            resilient()
+
     def test_resilient_wrapper_no_fallback(self):
         """Test resilient wrapper raises error when fallback disabled."""
 
@@ -365,6 +395,21 @@ class TestCreateResilientWrapper:
         result = await resilient()
 
         assert result == "original"
+
+    @pytest.mark.asyncio
+    async def test_async_resilient_wrapper_propagates_critical_exception(self):
+        """Critical async exceptions should not fall back to original."""
+        from traigent.core.cost_enforcement import CostTrackingRequiredError
+
+        async def original():
+            return "original"
+
+        async def wrapper_func():
+            raise CostTrackingRequiredError("must-track")
+
+        resilient = create_resilient_wrapper(original, wrapper_func)
+        with pytest.raises(CostTrackingRequiredError, match="must-track"):
+            await resilient()
 
 
 class TestOverrideContextProtocol:

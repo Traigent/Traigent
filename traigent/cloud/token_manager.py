@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.core.constants import MAX_RETRIES
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -322,7 +323,7 @@ class TokenManager:
         refresh_url = f"{backend_api_url}/auth/refresh"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,
@@ -485,11 +486,7 @@ class TokenManager:
         Returns:
             AuthCredentials populated with token data
         """
-        from traigent.cloud.auth import (
-            AuthCredentials,
-            AuthMode,
-            TokenExpiredError,
-        )
+        from traigent.cloud.auth import AuthCredentials, AuthMode, TokenExpiredError
 
         expires_in = token_data.get("expires_in")
         expires_at = time.time() + expires_in if expires_in else None

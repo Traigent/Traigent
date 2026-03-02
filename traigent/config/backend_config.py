@@ -15,6 +15,10 @@ from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
+#: Single source of truth for the default local backend URL.
+#: Import this constant instead of repeating the literal string.
+DEFAULT_LOCAL_URL = "http://localhost:5000"
+
 
 class BackendConfig:
     """Centralized backend configuration management.
@@ -24,8 +28,8 @@ class BackendConfig:
     """
 
     # Default backend URLs (overridable via environment variables)
-    _FALLBACK_LOCAL_URL = "http://localhost:5000"
-    DEFAULT_PROD_URL = "https://api.traigent.ai"
+    _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
+    DEFAULT_PROD_URL = DEFAULT_LOCAL_URL  # No cloud service yet; default to local
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
@@ -164,29 +168,23 @@ class BackendConfig:
     def get_api_key(cls) -> str | None:
         """Get API key from environment.
 
-        TRAIGENT_API_KEY is preferred, falling back to OPTIGEN_API_KEY for
-        backwards compatibility.
-
         Returns:
             str | None: API key if configured, None otherwise
         """
-        env_var_preference = (
-            "TRAIGENT_API_KEY",
-            "OPTIGEN_API_KEY",
-        )
-
-        for env_var in env_var_preference:
-            api_key = os.environ.get(env_var)
-            if api_key:
-                logger.info(f"✅ Using API key from {env_var} (length={len(api_key)})")
-                return api_key
+        api_key = os.environ.get("TRAIGENT_API_KEY")
+        if api_key:
+            logger.info(
+                "✅ Using API key from TRAIGENT_API_KEY (length=%d)", len(api_key)
+            )
+            return api_key
 
         # Only warn if not in offline mode - offline mode doesn't need API keys
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
             logger.warning(
-                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
+                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY). "
+                "For cloud tracking, run `traigent auth login` or export TRAIGENT_API_KEY."
             )
         return None
 
@@ -248,10 +246,7 @@ class BackendConfig:
             "api_key_env": next(
                 (
                     env_var
-                    for env_var in (
-                        "TRAIGENT_API_KEY",
-                        "OPTIGEN_API_KEY",
-                    )
+                    for env_var in ("TRAIGENT_API_KEY",)
                     if os.environ.get(env_var)
                 ),
                 None,

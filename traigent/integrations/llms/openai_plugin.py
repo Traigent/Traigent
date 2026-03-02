@@ -7,7 +7,6 @@ parameter mappings and framework overrides.
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
 import logging
-from collections.abc import Mapping
 from typing import Any
 
 from traigent.integrations.base_plugin import (
@@ -105,17 +104,11 @@ class OpenAIPlugin(LLMPlugin):
 
             discovery = get_model_discovery(self.FRAMEWORK)
             if discovery and not discovery.is_valid_model(value):
-                errors.append(
-                    f"Model '{value}' is not recognized as a valid OpenAI model. "
-                    f"If this is a new model or fine-tuned model, it may still work."
-                )
                 # Log as warning but don't block - model might be valid
                 logger.warning(
                     f"Unrecognized OpenAI model: {value}. "
                     f"Proceeding anyway as it may be a new or custom model."
                 )
-                # Clear errors - we warn but don't block
-                errors.clear()
         except ImportError:
             # Discovery module not available, skip validation
             logger.debug("Model discovery not available, skipping model validation")
@@ -181,11 +174,7 @@ class OpenAIPlugin(LLMPlugin):
         overridden = super().apply_overrides(kwargs, config_obj)
 
         # Handle OpenAI-specific message formatting if needed
-        custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
-        if isinstance(custom_params_raw, Mapping):
-            custom_params = dict(custom_params_raw)
-        else:
-            custom_params = {}
+        custom_params = self._extract_custom_params(config_obj)
 
         system_message = custom_params.get("system")
 

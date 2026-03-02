@@ -990,6 +990,42 @@ class TestExtractCostFromResults:
         assert examples is None
         assert abs(cost - 0.10) < 0.001
 
+    def test_aggregated_metrics_cost_key_fallback(self):
+        """Falls back to aggregated_metrics['cost'] when total_cost is absent."""
+
+        class MockResult:
+            def __init__(self):
+                self.example_results = None
+                self.aggregated_metrics = {"cost": 0.07}
+
+        result = MockResult()
+        examples, cost = extract_cost_from_results(result, None, "trial_1")
+        assert examples is None
+        assert abs(cost - 0.07) < 0.001
+
+    def test_hybrid_result_cost_key_extraction(self):
+        """Hybrid-style example metrics with `cost` are summed correctly."""
+
+        class MockHybridExample:
+            def __init__(self, cost):
+                self.metrics = {"cost": cost}
+
+        class MockHybridResult:
+            def __init__(self):
+                self.example_results = [
+                    MockHybridExample(0.011),
+                    MockHybridExample(0.013),
+                    MockHybridExample(0.017),
+                ]
+                self.aggregated_metrics = {"cost": 0.999}  # Must not override examples
+
+        result = MockHybridResult()
+        examples, cost = extract_cost_from_results(
+            result, None, "trial_hybrid_cost_key"
+        )
+        assert examples == 3
+        assert abs(cost - 0.041) < 0.0001
+
     def test_total_examples_override(self):
         """Test that total_examples overrides example_results count."""
 
@@ -1034,13 +1070,17 @@ class TestPreTrialValidateConfig:
         config = {"temperature": 1.5}
         assert pre_trial_validate_config(config, constraints) is False
 
-    def test_constraint_exception_returns_false(self):
-        """Constraint that raises exception returns False (fail-closed)."""
+    def test_constraint_exception_raises_tvl_constraint_error(self):
+        """Constraint exceptions should be surfaced as TVLConstraintError."""
 
         def bad_constraint(c):
             raise ValueError("broken constraint")
 
-        assert pre_trial_validate_config({"x": 1}, [bad_constraint]) is False
+        with pytest.raises(TVLConstraintError) as exc_info:
+            pre_trial_validate_config({"x": 1}, [bad_constraint])
+
+        assert exc_info.value.details.get("constraint") == "bad_constraint"
+        assert exc_info.value.details.get("stage") == "pre_trial_validation"
 
     def test_first_constraint_fails_short_circuits(self):
         """Should stop checking after first failure."""

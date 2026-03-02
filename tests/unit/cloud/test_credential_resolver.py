@@ -328,7 +328,6 @@ class TestLoadFromEnv:
                 with patch.dict(os.environ, {}, clear=True):
                     # Clear relevant env vars
                     os.environ.pop("TRAIGENT_API_KEY", None)
-                    os.environ.pop("OPTIGEN_API_KEY", None)
 
                     result = await resolver.load_from_env(AuthMode.API_KEY)
                     assert result is None

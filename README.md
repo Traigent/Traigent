@@ -777,7 +777,7 @@ Traigent/
 ├── walkthrough/       # Interactive tutorials
 ├── tests/             # Test suite
 ├── docs/              # Documentation
-├── plugins/           # Optional plugins (analytics, UI, etc.)
+├── plugins/           # Optional plugins (analytics, tracing, OPAL, tuned variables, UI)
 ├── tools/             # Architecture analysis utilities
 ├── scripts/           # Development and automation scripts
 ├── configs/           # Configuration, baselines, and runtime

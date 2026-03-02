@@ -7,6 +7,31 @@
 
 ---
 
+## Implemented Hardening (2026-02-21)
+
+The following items from this validation were implemented on
+`fix/cost-accounting-bugs-pr1`:
+
+- Canonical runtime strict mode: `TRAIGENT_STRICT_COST_ACCOUNTING` (default `false`).
+  - When `true`, runtime post-call paths use strict pricing resolution and fail fast on
+    unknown/unpriced models.
+  - This surfaces all cost-path failures (not only `UnknownModelError`) in integration
+    handlers that intentionally catch generic exceptions in non-strict mode.
+  - Strict-mode flags are latched at object construction for runtime consistency:
+    create a new handler/enforcer instance after env changes.
+- `CostEnforcer` fail-fast behavior now treats either flag as strict:
+  - `TRAIGENT_REQUIRE_COST_TRACKING=true` or
+  - `TRAIGENT_STRICT_COST_ACCOUNTING=true`.
+- Claude alias pricing mappings fixed to dated priced models:
+  - `claude-haiku`, `claude-sonnet`, `claude-opus`.
+- Hybrid aggregated metrics now emit both `cost` and `total_cost`, and orchestrator
+  extraction uses `total_cost` with `cost` fallback.
+- CI/pre-commit guardrail added to prevent reintroducing
+  `cost_from_tokens(..., strict=False)` in runtime post-call paths
+  (allowlisted only for query pricing helper usage).
+
+---
+
 ## Problem Statement
 
 The cost calculation subsystem has accumulated organic complexity. A cost query traverses up to **4 fallback tiers**, passes through **11 silent undercount / unknown-cost paths**, and offers **5+ entry points** for the same operation. The result: when cost tracking fails, it fails **invisibly** — the user sees `$0.00` and doesn't know if that's real or broken.

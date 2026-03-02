@@ -135,7 +135,7 @@ def detect_tvars(
     if output_json:
         _output_json(filtered_results)
     else:
-        _output_table(filtered_results, show_suggestions, path)
+        _output_table(filtered_results, show_suggestions)
 
 
 def _output_json(results: list[DetectionResult]) -> None:
@@ -164,9 +164,7 @@ def _output_json(results: list[DetectionResult]) -> None:
     click.echo(json.dumps(output, indent=2))
 
 
-def _output_table(
-    results: list[DetectionResult], show_suggestions: bool, base_path: Path
-) -> None:
+def _output_table(results: list[DetectionResult], show_suggestions: bool) -> None:
     """Print results as a rich table."""
     if not results:
         console.print("[yellow]No tunable variable candidates detected.[/yellow]")

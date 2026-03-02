@@ -94,6 +94,25 @@ class TestLoggerFacadeInitialization:
             execution_mode="edge_analytics",
         )
 
+    def test_initialization_failure_emits_visible_warning(self, caplog):
+        """Initialization failures should produce a user-visible warning once."""
+        with patch(
+            "traigent.core.logger_facade.OptimizationLogger",
+            side_effect=Exception("init failed"),
+        ):
+            with caplog.at_level("WARNING"):
+                facade = LoggerFacade(
+                    experiment_name="test_exp",
+                    session_id="session_123",
+                    execution_mode="backend_only",
+                )
+
+        assert facade.logger is None
+        assert any(
+            "Optimization logging is unavailable" in record.message
+            for record in caplog.records
+        )
+
 
 class TestSessionStartLogging:
     """Tests for log_session_start method."""
@@ -379,3 +398,34 @@ class TestExceptionHandling:
                 trials_history=[],
                 trial_count=0,
             )
+
+    def test_runtime_failures_emit_single_visible_warning(
+        self, mock_dataset, sample_trial_result, caplog
+    ):
+        """Repeated runtime logging failures should emit one warning banner."""
+        with patch("traigent.core.logger_facade.OptimizationLogger") as mock:
+            mock_instance = mock.return_value
+            mock_instance.log_session_start.side_effect = Exception("Error 1")
+            mock_instance.log_trial_result.side_effect = Exception("Error 2")
+
+            facade = LoggerFacade(
+                experiment_name="test",
+                session_id="session",
+                execution_mode="edge_analytics",
+            )
+
+            with caplog.at_level("WARNING"):
+                facade.log_session_start(
+                    config={},
+                    objectives=["accuracy"],
+                    algorithm="TestOptimizer",
+                    dataset=mock_dataset,
+                )
+                facade.log_trial(sample_trial_result)
+
+        warning_hits = [
+            record
+            for record in caplog.records
+            if "Optimization logging failed during" in record.message
+        ]
+        assert len(warning_hits) == 1

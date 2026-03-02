@@ -9,16 +9,17 @@ while allowing provider-specific customization through extension hooks.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from traigent.integrations.base_plugin import (
-    IntegrationPlugin,
-    ValidationRule,
-)
+from traigent.integrations.base_plugin import IntegrationPlugin, ValidationRule
 from traigent.integrations.utils import Framework, get_normalizer
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LLMPlugin(IntegrationPlugin):
@@ -161,6 +162,32 @@ class LLMPlugin(IntegrationPlugin):
         rules = self._get_common_validation_rules()
         rules.update(self._get_provider_specific_rules())
         return rules
+
+    def _extract_custom_params(self, config_obj: Any) -> dict[str, Any]:
+        """Return custom parameters as a plain dict with observable fallback behavior."""
+
+        custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
+        if isinstance(custom_params_raw, Mapping):
+            return dict(custom_params_raw)
+
+        try:
+            coerced = dict(custom_params_raw)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Ignoring invalid custom_params in %s: expected mapping-compatible "
+                "payload, got %s (%s)",
+                self.__class__.__name__,
+                type(custom_params_raw).__name__,
+                exc,
+            )
+            return {}
+
+        logger.debug(
+            "Coerced non-mapping custom_params in %s from %s",
+            self.__class__.__name__,
+            type(custom_params_raw).__name__,
+        )
+        return coerced
 
     def apply_overrides(
         self, kwargs: dict[str, Any], config: TraigentConfig | dict[str, Any]

@@ -959,9 +959,10 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
-    from traigent.utils.env_config import is_mock_llm
+    from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 
     mock_mode = is_mock_llm()
+    strict_cost_accounting = is_strict_cost_accounting()
     generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
 
     if mock_mode or generate_mocks_env == "true":
@@ -977,6 +978,7 @@ def _calculate_cost_for_metrics(
             model_name,
             original_prompt,
             response_text,
+            strict_cost_accounting=strict_cost_accounting,
         )
     except Exception as e:
         logger.error(
@@ -985,7 +987,10 @@ def _calculate_cost_for_metrics(
             e,
             exc_info=True,
         )
-        if os.environ.get("TRAIGENT_DEBUG", "").lower() == "true":
+        if (
+            strict_cost_accounting
+            or os.environ.get("TRAIGENT_DEBUG", "").lower() == "true"
+        ):
             raise
 
 
@@ -1013,6 +1018,8 @@ def _compute_cost(
     model_name: str,
     original_prompt: Any,
     response_text: str | None,
+    *,
+    strict_cost_accounting: bool,
 ) -> None:
     """Compute cost using cost_from_tokens (preferred) or legacy text path."""
     from traigent.utils.cost_calculator import cost_from_tokens
@@ -1029,7 +1036,7 @@ def _compute_cost(
             metrics.tokens.input_tokens,
             metrics.tokens.output_tokens,
             model_name,
-            strict=False,
+            strict=strict_cost_accounting,
         )
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
@@ -1113,7 +1120,16 @@ class CostCalculator:
         prompt_length: int | None = None,
         response_length: int | None = None,
     ) -> None:
-        _compute_cost(metrics, model_name, original_prompt, response_text)
+        del prompt_length, response_length
+        from traigent.utils.env_config import is_strict_cost_accounting
+
+        _compute_cost(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+            strict_cost_accounting=is_strict_cost_accounting(),
+        )
 
 
 class MetricsCalculator:

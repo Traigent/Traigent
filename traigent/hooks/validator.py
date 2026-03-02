@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from traigent.hooks.config import HooksConfig, load_hooks_config
-from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING
+from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING, MODEL_NAME_ALIASES
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,19 +33,9 @@ def _build_model_cost_per_1k() -> dict[str, float]:
         ) / 2
         result[model] = avg_per_token * 1000
 
-    # Compatibility aliases — short names that users may configure.
-    # Maps legacy/short names to their closest canonical equivalent.
-    _aliases = {
-        "gpt-4": "gpt-4-turbo",
-        "gpt-4-32k": "gpt-4-turbo",
-        "claude-3-haiku": "claude-3-haiku-20240307",
-        "claude-3-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
-        "claude-3-opus": "claude-3-opus-20240229",
-        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-    }
-    for alias, canonical in _aliases.items():
+    # Compatibility aliases are sourced from the canonical pricing module
+    # to avoid duplicated alias maps drifting over time.
+    for alias, canonical in MODEL_NAME_ALIASES.items():
         if alias not in result and canonical in result:
             result[alias] = result[canonical]
 

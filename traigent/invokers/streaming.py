@@ -190,15 +190,15 @@ class StreamingInvoker(LocalInvoker):
         """
         # Handle async iterators
         if hasattr(response, "__aiter__"):
-            aiter = response.__aiter__()
+            async_iter = response.__aiter__()
             while True:
                 try:
                     if self.chunk_timeout:
                         chunk = await asyncio.wait_for(
-                            aiter.__anext__(), timeout=self.chunk_timeout
+                            async_iter.__anext__(), timeout=self.chunk_timeout
                         )
                     else:
-                        chunk = await aiter.__anext__()
+                        chunk = await async_iter.__anext__()
                 except StopAsyncIteration:
                     break
                 except TimeoutError as e:
