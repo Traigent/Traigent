@@ -884,6 +884,13 @@ class OptimizationOrchestrator:
         # during parallel trial execution (P1/P2/P3 fixes)
         async with self._state_lock:
             self._trials.append(trial_result)
+            logger.info(
+                "Trial #%d result: status=%s, config=%s, metrics=%s",
+                current_trial_index + 1,
+                trial_result.status,
+                trial_result.config,
+                trial_result.metrics,
+            )
             self._log_trial(trial_result)
 
             # Track cost for cost limit enforcement
