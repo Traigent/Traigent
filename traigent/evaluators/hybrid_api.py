@@ -447,6 +447,15 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Execute
             execute_response = await transport.execute(request)
 
+            # Log raw execute response for observability
+            logger.info(
+                "Hybrid execute response: status=%s, outputs=%d, "
+                "operational_metrics=%s",
+                execute_response.status,
+                len(execute_response.outputs),
+                execute_response.operational_metrics,
+            )
+
             # Update session ID if returned
             if execute_response.session_id:
                 if self._session_id != execute_response.session_id:
@@ -604,6 +613,16 @@ class HybridAPIEvaluator(BaseEvaluator):
         try:
             eval_response = await transport.evaluate(eval_request)
 
+            # Log raw evaluate response for observability
+            logger.info(
+                "Hybrid evaluate response: results=%s, aggregate=%s",
+                [
+                    {"input_id": r.get("input_id"), "metrics": r.get("metrics")}
+                    for r in eval_response.results
+                ],
+                getattr(eval_response, "aggregate_metrics", None),
+            )
+
             # Merge execute and evaluate results
             results: list[HybridExampleResult] = []
             fallback_cost = self._coerce_metric(
@@ -626,11 +645,14 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Find metrics from evaluate
                 per_example_metrics: dict[str, float] = {}
                 eval_error: str | None = None
+                eval_expected: str | None = None
                 for result in eval_response.results:
                     if result.get("input_id") == input_id:
                         per_example_metrics = result.get("metrics", {})
                         if isinstance(result.get("error"), str):
                             eval_error = result.get("error")
+                        if result.get("expected_behavior"):
+                            eval_expected = result["expected_behavior"]
                         break
 
                 # Prefer per-item operational metrics when present.
@@ -639,11 +661,24 @@ class HybridAPIEvaluator(BaseEvaluator):
                     output_item.get("latency_ms"), fallback_latency
                 )
 
+                # Log raw per-example result for observability
+                logger.info(
+                    "Hybrid example result: input_id=%s, "
+                    "output_id=%s, accuracy=%s, cost=%.6f, "
+                    "latency=%.0fms, error=%s",
+                    input_id,
+                    output_item.get("output_id"),
+                    per_example_metrics.get("accuracy"),
+                    cost,
+                    latency,
+                    eval_error or execute_error,
+                )
+
                 results.append(
                     HybridExampleResult(
                         input_id=input_id,
                         actual_output=output_data,
-                        expected_output=expected,
+                        expected_output=expected or eval_expected,
                         metrics=per_example_metrics,
                         cost_usd=cost,
                         latency_ms=latency,
