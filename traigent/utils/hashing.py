@@ -4,7 +4,6 @@
 
 import hashlib
 import json
-import time
 from typing import Any
 
 from traigent.utils.numpy_compat import convert_numpy_value, is_numpy_type
@@ -98,12 +97,12 @@ def generate_experiment_hash(
     objectives: list[str],
     dataset_characteristics: dict[str, Any] | None = None,
 ) -> str:
-    """Generate unique experiment ID from optimization setup.
+    """Generate deterministic experiment ID from optimization setup.
 
-    Creates a unique experiment ID based on the function name,
-    configuration space, objectives, dataset characteristics, and a
-    timestamp. Each invocation produces a new experiment ID so that
-    every optimization run is tracked separately.
+    Creates a unique, reproducible experiment ID based on the function name,
+    configuration space, objectives, and dataset characteristics. This ensures
+    that the same optimization setup always produces the same experiment ID,
+    allowing proper grouping of related experiment runs.
 
     Args:
         function_name: Name of the function being optimized
@@ -113,21 +112,20 @@ def generate_experiment_hash(
                                 size, type, or hash for additional uniqueness
 
     Returns:
-        A unique experiment ID like "exp_a1b2c3d4e5f6g7h8"
+        A deterministic experiment ID like "exp_a1b2c3d4e5f6g7h8"
     """
     # Prepare components for hashing
     components = {
         "function_name": function_name,
         "configuration_space": configuration_space,
         "objectives": sorted(objectives),  # Sort for consistency
-        "timestamp": time.time(),
     }
 
     # Add dataset characteristics if provided
     if dataset_characteristics:
         components["dataset"] = dataset_characteristics
 
-    # Create JSON string (sorted keys for readability, timestamp ensures uniqueness)
+    # Create deterministic JSON string (sorted keys ensure consistency)
     hash_input = json.dumps(_sanitize_json_value(components), sort_keys=True)
 
     # Generate SHA256 hash and take first 16 characters for readability
