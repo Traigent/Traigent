@@ -620,10 +620,10 @@ class SequentialValidator(BehavioralValidator):
                 end = start + timedelta(seconds=duration)
                 windows.append((start, end, duration, trial.trial_id))
 
-        # Skip overlap check in mock mode when durations are very short
-        # Use explicit mock mode detection first, then timing heuristic as secondary check
+        # Skip overlap checks in mock mode. Mock timing is synthetic and can
+        # produce apparent overlap in "sequential" runs due instrumentation.
         is_mock = self._is_mock_mode(scenario)
-        if is_mock and windows and all(d < 0.1 for _, _, d, _ in windows):
+        if is_mock:
             return []
 
         # Tolerance: overlaps smaller than 50ms are ignored (timing granularity)
