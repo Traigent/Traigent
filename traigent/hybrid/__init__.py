@@ -47,6 +47,7 @@ from traigent.hybrid.protocol import (
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
+    InputsResponse,
     ServiceCapabilities,
     TVARDefinition,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "ServiceCapabilities",
     "TVARDefinition",
     "ConfigSpaceResponse",
+    "InputsResponse",
     "HealthCheckResponse",
     # Lifecycle
     "AgentLifecycleManager",

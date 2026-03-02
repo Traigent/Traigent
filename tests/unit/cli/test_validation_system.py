@@ -366,7 +366,8 @@ class TestCLIIntegration:
     def test_check_command_dry_run(self, cli_runner):
         """Test check command dry run mode."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 import traigent
 
 @traigent.optimize(
@@ -376,7 +377,8 @@ import traigent
 )
 def test_func():
     return "test"
-""")
+"""
+            )
             temp_file = f.name
 
         try:

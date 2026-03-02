@@ -131,11 +131,13 @@ class TestASTDetectionStrategy:
     # -- HIGH confidence: direct name match -----------------------------------
 
     def test_detects_temperature_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temperature = 0.7
                 return temperature
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         c = _by_name(candidates, "temperature")
         assert c is not None, "temperature should be detected"
@@ -144,11 +146,13 @@ class TestASTDetectionStrategy:
         assert c.candidate_type == CandidateType.NUMERIC_CONTINUOUS
 
     def test_detects_model_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def call_llm():
                 model = "gpt-4"
                 return model
-        """)
+        """
+        )
         candidates = strategy.detect(src, "call_llm")
         c = _by_name(candidates, "model")
         assert c is not None, "model should be detected"
@@ -157,11 +161,13 @@ class TestASTDetectionStrategy:
         assert c.candidate_type == CandidateType.CATEGORICAL
 
     def test_detects_max_tokens_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def generate():
                 max_tokens = 1024
                 return max_tokens
-        """)
+        """
+        )
         candidates = strategy.detect(src, "generate")
         c = _by_name(candidates, "max_tokens")
         assert c is not None, "max_tokens should be detected"
@@ -170,11 +176,13 @@ class TestASTDetectionStrategy:
         assert c.candidate_type == CandidateType.NUMERIC_INTEGER
 
     def test_detects_annotated_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temperature: float = 0.9
                 return temperature
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         c = _by_name(candidates, "temperature")
         assert c is not None, "annotated assignment should be detected"
@@ -184,11 +192,13 @@ class TestASTDetectionStrategy:
     # -- HIGH confidence: kwargs in API calls ---------------------------------
 
     def test_detects_kwarg_in_call(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 result = client.create(temperature=0.7, model="gpt-4")
                 return result
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         names = _names(candidates)
         assert "temperature" in names, f"temperature kwarg not detected; got {names}"
@@ -197,11 +207,13 @@ class TestASTDetectionStrategy:
         assert c.current_value == pytest.approx(0.7)
 
     def test_detects_model_kwarg_in_call(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def chat():
                 response = openai.ChatCompletion.create(model="gpt-4o", max_tokens=512)
                 return response
-        """)
+        """
+        )
         candidates = strategy.detect(src, "chat")
         names = _names(candidates)
         assert "model" in names, f"model kwarg not detected; got {names}"
@@ -210,11 +222,13 @@ class TestASTDetectionStrategy:
     # -- MEDIUM confidence: dict keys -----------------------------------------
 
     def test_detects_dict_key(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def build_config():
                 config = {"model": "gpt-4", "temperature": 0.5}
                 return config
-        """)
+        """
+        )
         candidates = strategy.detect(src, "build_config")
         names = _names(candidates)
         assert "model" in names, f"model dict key not detected; got {names}"
@@ -224,11 +238,13 @@ class TestASTDetectionStrategy:
     # -- MEDIUM confidence: fuzzy name match ----------------------------------
 
     def test_detects_fuzzy_match_temp(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temp = 0.8
                 return temp
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         # "temp" is a known variant of "temperature" in the universal mapping,
         # so it gets HIGH confidence (direct known-param match), not MEDIUM.
@@ -243,11 +259,13 @@ class TestASTDetectionStrategy:
     # -- MEDIUM confidence: model string heuristic ----------------------------
 
     def test_detects_model_string_heuristic(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def infer():
                 llm_model = "claude-3-opus"
                 return llm_model
-        """)
+        """
+        )
         candidates = strategy.detect(src, "infer")
         # "llm_model" is not an exact match but "claude-3-opus" looks like a model
         assert (
@@ -264,11 +282,13 @@ class TestASTDetectionStrategy:
     # -- Skips ParameterRange assignments ------------------------------------
 
     def test_skips_parameter_range_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temperature = Range(0.0, 2.0)
                 return temperature
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         c = _by_name(candidates, "temperature")
         assert (
@@ -276,11 +296,13 @@ class TestASTDetectionStrategy:
         ), "Variable already using ParameterRange must not be re-detected"
 
     def test_skips_choices_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 model = Choices(["gpt-4", "gpt-3.5-turbo"])
                 return model
-        """)
+        """
+        )
         candidates = strategy.detect(src, "my_func")
         c = _by_name(candidates, "model")
         assert c is None, "Variable already using Choices must not be re-detected"
@@ -288,22 +310,26 @@ class TestASTDetectionStrategy:
     # -- Nested scope isolation -----------------------------------------------
 
     def test_skips_nested_function_assignment(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def outer():
                 def inner():
                     temperature = 0.9
                 return inner
-        """)
+        """
+        )
         candidates = strategy.detect(src, "outer")
         c = _by_name(candidates, "temperature")
         assert c is None, "Assignment inside nested function must be ignored"
 
     def test_skips_existing_tvar_context(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temperature = 0.7
                 return temperature
-        """)
+        """
+        )
         candidates = strategy.detect(
             src, "my_func", context={"existing_tvars": {"temperature"}}
         )
@@ -313,10 +339,12 @@ class TestASTDetectionStrategy:
     # -- Wrong function name returns nothing ----------------------------------
 
     def test_returns_empty_for_unknown_function(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def actual_func():
                 temperature = 0.7
-        """)
+        """
+        )
         candidates = strategy.detect(src, "nonexistent_func")
         assert candidates == [], "Should return empty list for unknown function"
 
@@ -330,10 +358,12 @@ class TestASTDetectionStrategy:
     # -- Suggested ranges are populated ---------------------------------------
 
     def test_suggested_range_populated_for_temperature(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.7
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "temperature")
         assert c is not None
@@ -345,10 +375,12 @@ class TestASTDetectionStrategy:
         assert "Range(" in code
 
     def test_suggested_range_populated_for_model(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 model = "gpt-4"
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "model")
         assert c is not None
@@ -357,11 +389,13 @@ class TestASTDetectionStrategy:
 
     def test_non_literal_assignment_not_detected(self, strategy) -> None:
         """Variables assigned complex expressions (not literals) must be skipped."""
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = compute_temperature()
                 model = os.getenv("MODEL", "gpt-4")
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         # No literal value → cannot extract; should be empty
         assert (
@@ -370,11 +404,13 @@ class TestASTDetectionStrategy:
 
     def test_detects_stop_parameter_with_list_value(self, strategy) -> None:
         """'stop' parameter with a list of strings should be detected as CATEGORICAL."""
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 stop = ["\\n", "END"]
                 return stop
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "stop")
         assert c is not None, "stop parameter should be detected"
@@ -384,11 +420,13 @@ class TestASTDetectionStrategy:
 
     def test_detects_stream_parameter_with_bool_value(self, strategy) -> None:
         """'stream' parameter with a bool value should be detected as BOOLEAN."""
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 stream = True
                 return stream
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "stream")
         assert c is not None, "stream parameter should be detected"
@@ -397,10 +435,12 @@ class TestASTDetectionStrategy:
 
     def test_canonical_name_populated_for_variant(self, strategy) -> None:
         """Variant names (e.g. model_name) should map to canonical (model)."""
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 model_name = "gpt-4"
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "model_name")
         assert c is not None, "model_name should be detected as a known variant"
@@ -411,10 +451,12 @@ class TestASTDetectionStrategy:
     # -- Source location is set -----------------------------------------------
 
     def test_source_location_line_is_positive(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.5
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
         c = _by_name(candidates, "temperature")
         assert c is not None
@@ -423,13 +465,15 @@ class TestASTDetectionStrategy:
     # -- Multiple candidates in same function ---------------------------------
 
     def test_detects_multiple_candidates(self, strategy) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def pipeline():
                 model = "gpt-4"
                 temperature = 0.7
                 max_tokens = 512
                 return model, temperature, max_tokens
-        """)
+        """
+        )
         candidates = strategy.detect(src, "pipeline")
         names = _names(candidates)
         assert "model" in names, f"model not detected; got {names}"
@@ -464,11 +508,13 @@ class TestLLMDetectionStrategy:
             return response
 
         strategy = LLMDetectionStrategy(llm_callable=mock_llm)
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.7
                 model = "gpt-4"
-        """)
+        """
+        )
         candidates = strategy.detect(src, "fn")
 
         assert len(candidates) == 2, f"Expected 2 candidates, got {len(candidates)}"
