@@ -32,7 +32,10 @@ BASE_URL = (
     else os.environ.get("MASTRA_API_URL", "http://localhost:8080")
 )
 _auth_token = os.environ.get("MASTRA_AUTH_TOKEN", "")
-HEADERS = {"Content-Type": "application/json"}
+HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "Traigent-SDK/1.0",
+}
 if _auth_token:
     HEADERS["Authorization"] = f"Bearer {_auth_token}"
 

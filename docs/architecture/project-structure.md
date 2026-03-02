@@ -68,7 +68,7 @@ CI workflow dependency via `.github/workflows/architecture-analysis.yml`.
 Helper scripts (e.g., launchers, verification, utilities).
 
 ### `/plugins/`
-Optional plugin packages: analytics, tracing, tuned-variables, UI.
+Optional plugin packages: analytics, tracing, OPAL, tuned-variables, UI.
 
 ### `/requirements/`
 Dependency sets by feature. See `requirements/README.md` for install guidance.
