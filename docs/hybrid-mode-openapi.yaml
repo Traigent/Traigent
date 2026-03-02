@@ -258,6 +258,12 @@ paths:
       description: |
         Evaluate outputs against expected targets to measure quality.
         This endpoint is optional - only implement if supports_evaluate is true in capabilities.
+
+        **Server implementation (privacy-preserving mode):**
+        1. For each evaluation item, use `output_id` to look up stored output locally
+        2. Use `input_id` (and optional `target_id`) to resolve expected behavior from local data
+        3. Compare output vs expected and compute per-example quality metrics
+        4. Return per-example metrics and aggregate statistics (`mean`, `std`, `n`)
       tags:
         - Evaluation
       parameters:
@@ -274,11 +280,9 @@ paths:
               tunable_id: my_agent
               execution_id: exec_123456
               evaluations:
-                - input_id: ex_001
-                  output:
-                    response: Machine learning is...
-                  target:
-                    expected: Machine learning is a type of AI...
+                - input_id: case_001
+                  output_id: out_001_run_abc
+                  target_id: target_001
               timeout_ms: 30000
       responses:
         '200':
@@ -1223,7 +1227,11 @@ components:
           $ref: '#/components/schemas/OperationalMetrics'
         quality_metrics:
           type: object
-          description: Quality metrics if using combined mode (execute + evaluate in one call). Null or absent when using two-phase mode.
+          description: |
+            Quality metrics from combined mode (execute + evaluate in one call).
+            Controls whether the SDK calls `/traigent/v1/evaluate`:
+            - null, omitted, or empty (`{}`) => SDK calls `/traigent/v1/evaluate` (two-phase, recommended)
+            - non-empty object => SDK uses these metrics directly and skips `/traigent/v1/evaluate`
           additionalProperties:
             type: number
           nullable: true

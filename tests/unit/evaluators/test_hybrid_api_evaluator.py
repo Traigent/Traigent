@@ -17,12 +17,12 @@ Tests cover:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.cloud.dtos import MeasuresDict
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator, HybridExampleResult
 from traigent.hybrid.protocol import (
@@ -738,6 +738,92 @@ class TestComputeAggregatedMetrics:
         # accuracy only has 1 data point
         assert agg["accuracy"] == pytest.approx(1.0)
 
+    def test_infers_accuracy_from_overall_accuracy(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        """Derives canonical accuracy from overall_accuracy when missing."""
+        results = [
+            HybridExampleResult(input_id="1", metrics={"overall_accuracy": 0.8}),
+            HybridExampleResult(input_id="2", metrics={"overall_accuracy": 0.6}),
+        ]
+        agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
+        assert agg["overall_accuracy"] == pytest.approx(0.7)
+        assert agg["accuracy"] == pytest.approx(0.7)
+        assert agg["score"] == pytest.approx(0.7)
+
+    def test_infers_accuracy_from_split_accuracy_metrics(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        """Derives canonical accuracy from split *_accuracy metrics."""
+        results = [
+            HybridExampleResult(
+                input_id="1",
+                metrics={"text_accuracy": 0.6, "tool_accuracy": 1.0},
+                latency_ms=123.0,
+            ),
+        ]
+        agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
+        assert agg["accuracy"] == pytest.approx(0.8)
+        assert agg["score"] == pytest.approx(0.8)
+        assert agg["response_time_ms"] == pytest.approx(123.0)
+
+    def test_preserves_explicit_accuracy_over_fallback(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        """Explicit accuracy remains the source of truth."""
+        results = [
+            HybridExampleResult(
+                input_id="1",
+                metrics={"accuracy": 0.9, "overall_accuracy": 0.1, "text_accuracy": 0.2},
+            ),
+        ]
+        agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
+        assert agg["accuracy"] == pytest.approx(0.9)
+        assert agg["score"] == pytest.approx(0.9)
+
+
+class TestMetricNormalizationHelpers:
+    """Coverage for low-level numeric normalization helpers."""
+
+    def test_compute_describe_stats_single_value(self) -> None:
+        """Single-value input should produce stable percentile values."""
+        stats = HybridAPIEvaluator._compute_describe_stats([0.8])
+        assert stats == {
+            "count": 1.0,
+            "mean": 0.8,
+            "std": 0.0,
+            "min": 0.8,
+            "25%": 0.8,
+            "50%": 0.8,
+            "75%": 0.8,
+            "max": 0.8,
+        }
+
+    def test_compute_describe_stats_two_values_interpolates(self) -> None:
+        """Percentiles should linearly interpolate with two points."""
+        stats = HybridAPIEvaluator._compute_describe_stats([0.0, 1.0])
+        assert stats["count"] == pytest.approx(2.0)
+        assert stats["mean"] == pytest.approx(0.5)
+        assert stats["std"] == pytest.approx(0.70710678)
+        assert stats["25%"] == pytest.approx(0.25)
+        assert stats["50%"] == pytest.approx(0.5)
+        assert stats["75%"] == pytest.approx(0.75)
+
+    def test_derive_accuracy_preserves_explicit_zero(self) -> None:
+        """Explicit accuracy=0.0 must not be treated as missing."""
+        metrics = {"accuracy": 0.0, "overall_accuracy": 0.9, "text_accuracy": 1.0}
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.0)
+
+    def test_derive_accuracy_ignores_bool_accuracy_values(self) -> None:
+        """Bool-valued keys must not be interpreted as numeric accuracy."""
+        metrics = {"text_accuracy": True, "tool_accuracy": False, "f1": 0.8}
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) is None
+
+    def test_derive_accuracy_uses_numeric_split_accuracy(self) -> None:
+        """Derive mean of numeric split accuracy keys only."""
+        metrics = {"text_accuracy": 0.6, "tool_accuracy": 1.0, "aux_accuracy": "n/a"}
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.8)
+
 
 # ---------------------------------------------------------------------------
 # _execute_batch tests
@@ -1057,6 +1143,32 @@ class TestEvaluateOutputs:
         assert len(results) == 1
         assert results[0].actual_output is None
         assert results[0].metrics == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_outputs_passes_timeout_budget(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Evaluate request propagates evaluator timeout via timeout_ms."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+            timeout=12.5,
+        )
+        exec_response = _make_execute_response(
+            outputs=[{"input_id": "ex_0", "output": "result_0"}],
+            operational_metrics={"cost_usd": 0.01, "latency_ms": 100.0},
+        )
+        mock_transport.evaluate = AsyncMock(return_value=_make_evaluate_response())
+
+        dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
+        batch = list(dataset)
+        inputs = [{"input_id": "ex_0", "data": {"q": "?"}}]
+
+        await ev._evaluate_outputs(mock_transport, batch, inputs, exec_response)
+
+        eval_request = mock_transport.evaluate.await_args.args[0]
+        assert eval_request.timeout_ms == 12500
 
 
 # ---------------------------------------------------------------------------
@@ -1452,6 +1564,77 @@ class TestEvaluate:
         result = await evaluator.evaluate(func=lambda: None, config={}, dataset=dataset)
 
         assert result.examples_consumed == 2
+
+    @pytest.mark.asyncio
+    async def test_evaluate_populates_summary_stats_for_hybrid(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Hybrid evaluator should produce describe-style summary_stats."""
+        mock_transport.capabilities = AsyncMock(
+            return_value=_default_capabilities(supports_evaluate=False)
+        )
+        exec_response = _make_execute_response(
+            outputs=[
+                {
+                    "input_id": "ex_0",
+                    "output": "r0",
+                    "metrics": {"text_accuracy": 1.0, "tool_accuracy": 0.5},
+                },
+                {
+                    "input_id": "ex_1",
+                    "output": "r1",
+                    "metrics": {"text_accuracy": 0.5, "tool_accuracy": 1.0},
+                },
+            ],
+            operational_metrics={"cost_usd": 0.04, "latency_ms": 100.0},
+        )
+        mock_transport.execute = AsyncMock(return_value=exec_response)
+
+        dataset = _make_dataset()
+        result = await evaluator.evaluate(func=lambda: None, config={}, dataset=dataset)
+
+        assert result.summary_stats is not None
+        assert "metrics" in result.summary_stats
+        assert "accuracy" in result.summary_stats["metrics"]
+        assert "response_time_ms" in result.summary_stats["metrics"]
+        assert "score" in result.summary_stats["metrics"]
+        assert "success_rate" in result.summary_stats["metrics"]
+
+        accuracy_stats = result.summary_stats["metrics"]["accuracy"]
+        assert accuracy_stats["count"] == pytest.approx(2.0)
+        assert accuracy_stats["mean"] == pytest.approx(0.75)
+
+    @pytest.mark.asyncio
+    async def test_hybrid_aggregates_are_measuresdict_compatible(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Cross-module safeguard: hybrid aggregate metrics fit MeasuresDict."""
+        mock_transport.capabilities = AsyncMock(
+            return_value=_default_capabilities(supports_evaluate=False)
+        )
+        exec_response = _make_execute_response(
+            outputs=[
+                {
+                    "input_id": "ex_0",
+                    "output": "r0",
+                    "metrics": {"text_accuracy": 0.8, "tool_accuracy": 0.9},
+                },
+                {
+                    "input_id": "ex_1",
+                    "output": "r1",
+                    "metrics": {"text_accuracy": 0.6, "tool_accuracy": 1.0},
+                },
+            ],
+            operational_metrics={"cost_usd": 0.02, "latency_ms": 90.0},
+        )
+        mock_transport.execute = AsyncMock(return_value=exec_response)
+
+        dataset = _make_dataset()
+        result = await evaluator.evaluate(func=lambda: None, config={}, dataset=dataset)
+
+        validated = MeasuresDict(result.aggregated_metrics)
+        assert "accuracy" in validated
+        assert len(validated) <= MeasuresDict.MAX_KEYS
 
 
 # ---------------------------------------------------------------------------
