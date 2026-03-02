@@ -882,12 +882,6 @@ class AuthManager:
             auth_result = await self.authenticate()
             if not auth_result.success or self._credentials is None:
                 self._authenticated = False
-                # Fall back to raw API key headers when full auth fails
-                # but an API key is available (e.g., local dev mode).
-                fallback = self._get_api_key_headers()
-                if fallback:
-                    self._add_common_headers(fallback, target)
-                    return fallback
                 return {}
 
         if not self._credentials:

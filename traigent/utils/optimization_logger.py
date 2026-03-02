@@ -170,50 +170,6 @@ def sanitize_for_logging(
     return str(value)
 
 
-def _extract_output_text(output: Any) -> str | None:
-    """Best-effort extraction of the human-readable response text."""
-    if output is None:
-        return None
-    if isinstance(output, str):
-        return output
-    if isinstance(output, dict):
-        # Bazak-style: {"response": "...", "query": "..."}
-        for key in ("response", "text", "content", "answer"):
-            if key in output:
-                return str(output[key])
-    return None
-
-
-def _serialize_example_result(ex: Any) -> dict[str, Any]:
-    """Serialize a per-example result (dataclass or dict) for jsonl logging."""
-    if isinstance(ex, dict):
-        metrics = ex.get("metrics", {})
-        actual = ex.get("actual_output")
-        return {
-            "input_id": ex.get("input_id"),
-            "query": actual.get("query") if isinstance(actual, dict) else None,
-            "response": _extract_output_text(actual),
-            "expected": ex.get("expected_output"),
-            "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-            "cost_usd": ex.get("cost_usd", 0.0),
-            "latency_ms": ex.get("latency_ms", 0.0),
-            "error": ex.get("error"),
-        }
-    # Dataclass (e.g. HybridExampleResult)
-    metrics = getattr(ex, "metrics", {}) or {}
-    actual = getattr(ex, "actual_output", None)
-    return {
-        "input_id": getattr(ex, "input_id", None),
-        "query": actual.get("query") if isinstance(actual, dict) else None,
-        "response": _extract_output_text(actual),
-        "expected": getattr(ex, "expected_output", None),
-        "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-        "cost_usd": getattr(ex, "cost_usd", 0.0),
-        "latency_ms": getattr(ex, "latency_ms", 0.0),
-        "error": getattr(ex, "error", None),
-    }
-
-
 class OptimizationLogger:
     """Thread-safe optimization logger with versioned files and sanitization."""
 
@@ -473,15 +429,8 @@ class OptimizationLogger:
                 "duration": trial.duration,
                 "timestamp": trial.timestamp.isoformat() if trial.timestamp else None,
             }
-            example_results = (
-                trial.metadata.get("example_results") if trial.metadata else None
-            )
-            if example_results:
-                trial_data["example_results"] = [
-                    _serialize_example_result(ex) for ex in example_results
-                ]
             self._append_jsonl(trials_file, trial_data)
-            if example_results:
+            if trial.metadata and trial.metadata.get("example_results"):
                 trial_file = (
                     self.run_path
                     / "trials"
@@ -490,38 +439,7 @@ class OptimizationLogger:
                     )
                 )
                 self._atomic_write(trial_file, trial_data)
-            # Append human-readable summary table
-            self._append_trial_summary(trial, trial_data.get("example_results"))
         self._trial_buffer.clear()
-
-    def _append_trial_summary(
-        self,
-        trial: Any,
-        serialized_examples: list[dict[str, Any]] | None,
-    ) -> None:
-        """Append a human-readable summary table for one trial."""
-        summary_file = self.run_path / "trials" / "trial_summary.txt"
-        lines: list[str] = []
-        acc = trial.metrics.get("accuracy", "?") if trial.metrics else "?"
-        lines.append(
-            f"=== {trial.trial_id}  |  accuracy={acc}  |  " f"config={trial.config} ==="
-        )
-        if serialized_examples:
-            hdr = f"  {'input_id':<14} {'acc':>4}  {'expected':<22} {'response'}"
-            lines.append(hdr)
-            lines.append(f"  {'-'*14} {'-'*4}  {'-'*22} {'-'*50}")
-            for ex in serialized_examples:
-                iid = ex.get("input_id", "?")
-                a = ex.get("accuracy", "?")
-                exp = str(ex.get("expected") or "")[:22]
-                resp = str(ex.get("response") or ex.get("query") or "")[:80]
-                lines.append(f"  {iid:<14} {a!s:>4}  {exp:<22} {resp}")
-        lines.append("")
-        try:
-            with open(summary_file, "a", encoding="utf-8") as fh:
-                fh.write("\n".join(lines) + "\n")
-        except OSError:
-            pass
 
     def log_metrics_update(self, metrics: dict[str, Any]) -> None:
         timestamp = datetime.now(UTC).isoformat()
