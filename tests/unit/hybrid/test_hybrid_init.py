@@ -48,6 +48,7 @@ class TestHybridExportsImportable:
             "TVARDefinition",
             "ConfigSpaceResponse",
             "HealthCheckResponse",
+            "InputsResponse",
         ]
         for dto_class in protocol_classes:
             assert hasattr(hybrid_module, dto_class), f"{dto_class} not found"
@@ -108,6 +109,7 @@ class TestHybridAllList:
             "TVARDefinition",
             "ConfigSpaceResponse",
             "HealthCheckResponse",
+            "InputsResponse",
             # Lifecycle
             "AgentLifecycleManager",
             "SessionInfo",
@@ -244,6 +246,7 @@ class TestDirectImports:
             HybridEvaluateResponse,
             HybridExecuteRequest,
             HybridExecuteResponse,
+            InputsResponse,
             ServiceCapabilities,
             TVARDefinition,
         )

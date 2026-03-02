@@ -440,6 +440,39 @@ class ConfigSpaceResponse:
 
 
 @dataclass(slots=True)
+class InputsResponse:
+    """Response from input IDs discovery endpoint.
+
+    Attributes:
+        tunable_id: The tunable these inputs belong to.
+        input_ids: Input identifiers valid for this tunable, sorted lexicographically.
+        total: Total number of available input IDs (across all pages).
+        limit: The limit applied for this page.
+        offset: The offset applied for this page.
+        has_more: True when more pages exist.
+    """
+
+    tunable_id: str
+    input_ids: list[str]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> InputsResponse:
+        """Create from dictionary (API response)."""
+        return cls(
+            tunable_id=data.get("tunable_id", ""),
+            input_ids=data.get("input_ids", []),
+            total=data.get("total", 0),
+            limit=data.get("limit", 100),
+            offset=data.get("offset", 0),
+            has_more=data.get("has_more", False),
+        )
+
+
+@dataclass(slots=True)
 class HealthCheckResponse:
     """Response from health check endpoint.
 

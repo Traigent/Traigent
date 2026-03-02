@@ -429,6 +429,149 @@ class TestDiscoverConfigSpace:
 
 
 # ---------------------------------------------------------------------------
+# discover_input_ids tests (issue #57)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverInputIds:
+    """Tests for discover_input_ids method."""
+
+    @pytest.mark.asyncio
+    async def test_discover_input_ids_single_page(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Returns all IDs when server responds with has_more=False."""
+        from traigent.hybrid.protocol import InputsResponse
+
+        mock_transport.inputs = AsyncMock(
+            return_value=InputsResponse(
+                tunable_id="test_cap",
+                input_ids=["case_001", "case_002", "case_003"],
+                total=3,
+                limit=10000,
+                offset=0,
+                has_more=False,
+            )
+        )
+
+        ids = await evaluator.discover_input_ids()
+
+        assert ids == ["case_001", "case_002", "case_003"]
+        mock_transport.inputs.assert_called_once_with("test_cap", limit=10000, offset=0)
+
+    @pytest.mark.asyncio
+    async def test_discover_input_ids_multi_page(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Paginates through multiple pages to collect all IDs."""
+        from traigent.hybrid.protocol import InputsResponse
+
+        mock_transport.inputs = AsyncMock(
+            side_effect=[
+                InputsResponse(
+                    tunable_id="test_cap",
+                    input_ids=["a", "b"],
+                    total=5,
+                    limit=2,
+                    offset=0,
+                    has_more=True,
+                ),
+                InputsResponse(
+                    tunable_id="test_cap",
+                    input_ids=["c", "d"],
+                    total=5,
+                    limit=2,
+                    offset=2,
+                    has_more=True,
+                ),
+                InputsResponse(
+                    tunable_id="test_cap",
+                    input_ids=["e"],
+                    total=5,
+                    limit=2,
+                    offset=4,
+                    has_more=False,
+                ),
+            ]
+        )
+
+        ids = await evaluator.discover_input_ids(limit=2)
+
+        assert ids == ["a", "b", "c", "d", "e"]
+        assert mock_transport.inputs.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_discover_input_ids_empty_page_guard(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Stops pagination if server returns has_more=True with empty page."""
+        from traigent.hybrid.protocol import InputsResponse
+
+        mock_transport.inputs = AsyncMock(
+            side_effect=[
+                InputsResponse(
+                    tunable_id="test_cap",
+                    input_ids=["a", "b"],
+                    total=10,
+                    limit=2,
+                    offset=0,
+                    has_more=True,
+                ),
+                InputsResponse(
+                    tunable_id="test_cap",
+                    input_ids=[],
+                    total=10,
+                    limit=2,
+                    offset=2,
+                    has_more=True,  # buggy server
+                ),
+            ]
+        )
+
+        ids = await evaluator.discover_input_ids(limit=2)
+
+        assert ids == ["a", "b"]
+        assert mock_transport.inputs.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_discover_input_ids_explicit_tunable(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Uses explicit tunable_id when provided."""
+        from traigent.hybrid.protocol import InputsResponse
+
+        mock_transport.inputs = AsyncMock(
+            return_value=InputsResponse(
+                tunable_id="other",
+                input_ids=["x"],
+                total=1,
+                limit=10000,
+                offset=0,
+                has_more=False,
+            )
+        )
+
+        ids = await evaluator.discover_input_ids(tunable_id="other")
+
+        assert ids == ["x"]
+        mock_transport.inputs.assert_called_once_with("other", limit=10000, offset=0)
+
+    @pytest.mark.asyncio
+    async def test_discover_input_ids_no_tunable_raises(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Raises ValueError when no tunable_id is available."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id=None,
+            keep_alive=False,
+        )
+
+        with pytest.raises(ValueError, match="tunable_id is required"):
+            await ev.discover_input_ids()
+
+
+# ---------------------------------------------------------------------------
 # _ensure_lifecycle_manager tests
 # ---------------------------------------------------------------------------
 
@@ -774,7 +917,11 @@ class TestComputeAggregatedMetrics:
         results = [
             HybridExampleResult(
                 input_id="1",
-                metrics={"accuracy": 0.9, "overall_accuracy": 0.1, "text_accuracy": 0.2},
+                metrics={
+                    "accuracy": 0.9,
+                    "overall_accuracy": 0.1,
+                    "text_accuracy": 0.2,
+                },
             ),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
@@ -812,7 +959,9 @@ class TestMetricNormalizationHelpers:
     def test_derive_accuracy_preserves_explicit_zero(self) -> None:
         """Explicit accuracy=0.0 must not be treated as missing."""
         metrics = {"accuracy": 0.0, "overall_accuracy": 0.9, "text_accuracy": 1.0}
-        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.0)
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(
+            metrics
+        ) == pytest.approx(0.0)
 
     def test_derive_accuracy_ignores_bool_accuracy_values(self) -> None:
         """Bool-valued keys must not be interpreted as numeric accuracy."""
@@ -822,7 +971,9 @@ class TestMetricNormalizationHelpers:
     def test_derive_accuracy_uses_numeric_split_accuracy(self) -> None:
         """Derive mean of numeric split accuracy keys only."""
         metrics = {"text_accuracy": 0.6, "tool_accuracy": 1.0, "aux_accuracy": "n/a"}
-        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.8)
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(
+            metrics
+        ) == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------

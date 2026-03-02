@@ -17,6 +17,7 @@ from traigent.hybrid.protocol import (
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
+    InputsResponse,
     ServiceCapabilities,
 )
 
@@ -98,6 +99,28 @@ class HybridTransport(Protocol):
         Raises:
             TransportError: If evaluation fails.
             NotImplementedError: If evaluate not supported.
+        """
+        ...
+
+    async def inputs(
+        self,
+        tunable_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> InputsResponse:
+        """Discover available benchmark input IDs for a tunable.
+
+        Args:
+            tunable_id: The tunable to list inputs for.
+            limit: Maximum number of input IDs per page (1-10000).
+            offset: Number of input IDs to skip for pagination.
+
+        Returns:
+            InputsResponse with paginated input IDs and total count.
+
+        Raises:
+            TransportError: If discovery fails or tunable_id is unknown.
         """
         ...
 

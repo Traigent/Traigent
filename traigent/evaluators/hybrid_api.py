@@ -25,6 +25,7 @@ from traigent.hybrid import (
     HybridEvaluateRequest,
     HybridExecuteRequest,
     HybridTransport,
+    InputsResponse,
     ServiceCapabilities,
     TransportError,
     create_transport,
@@ -236,6 +237,62 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._tunable_id = self._discovery.get_tunable_id()
 
         return config_space
+
+    async def discover_input_ids(
+        self,
+        tunable_id: str | None = None,
+        *,
+        limit: int = 10000,
+    ) -> list[str]:
+        """Discover available input IDs from the external service.
+
+        Fetches all input IDs via the /inputs endpoint with pagination.
+
+        Args:
+            tunable_id: Tunable to list inputs for.
+                Falls back to self._tunable_id if not provided.
+            limit: Page size for pagination (max 10000).
+
+        Returns:
+            Complete list of input IDs for the tunable.
+
+        Raises:
+            TransportError: If discovery fails.
+            ValueError: If no tunable_id is available.
+        """
+        tid = tunable_id or self._tunable_id
+        if not tid:
+            raise ValueError(
+                "tunable_id is required for input discovery. "
+                "Set it explicitly or call discover_config_space() first."
+            )
+
+        transport = await self._get_transport()
+        all_ids: list[str] = []
+        offset = 0
+
+        while True:
+            resp: InputsResponse = await transport.inputs(
+                tid, limit=limit, offset=offset
+            )
+            all_ids.extend(resp.input_ids)
+            if not resp.has_more:
+                break
+            if not resp.input_ids:
+                logger.warning(
+                    "Server returned has_more=true with empty page at offset %d; "
+                    "stopping pagination to avoid infinite loop",
+                    offset,
+                )
+                break
+            offset += len(resp.input_ids)
+
+        logger.info(
+            "Discovered %d input IDs for tunable %s",
+            len(all_ids),
+            tid,
+        )
+        return all_ids
 
     async def _ensure_lifecycle_manager(self) -> None:
         """Ensure lifecycle manager is initialized if keep-alive enabled."""

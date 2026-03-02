@@ -82,10 +82,10 @@ AUTH_HEADERS: Final[dict[str, str]] = {
 }
 TUNABLE_ID: Final[str | None] = get_env_var("MASTRA_JS_TUNABLE_ID")
 _INPUT_IDS_ENV = get_env_var("MASTRA_JS_INPUT_IDS", "")
-INPUT_IDS: Final[list[str]] = (
+INPUT_IDS_OVERRIDE: Final[list[str]] = (
     [x.strip() for x in _INPUT_IDS_ENV.split(",") if x.strip()]
     if _INPUT_IDS_ENV
-    else [f"case_{i:03d}" for i in range(1, 6)]  # local dataset default
+    else []  # empty = auto-discover via GET /inputs
 )
 MAX_TRIALS: Final[int] = int(get_env_var("MASTRA_JS_MAX_TRIALS", "10"))
 MAX_COST_USD: Final[float] = float(get_env_var("MASTRA_JS_MAX_COST_USD", "4.0"))
@@ -179,10 +179,10 @@ def discover_tunable_id(url: str) -> str:
     return selected
 
 
-def build_dataset() -> Dataset:
-    """Build the dataset from the known input_ids."""
+def build_dataset(input_ids: list[str]) -> Dataset:
+    """Build the dataset from the given input_ids."""
     return Dataset(
-        [EvaluationExample(input_data={"input_id": iid}) for iid in INPUT_IDS]
+        [EvaluationExample(input_data={"input_id": iid}) for iid in input_ids]
     )
 
 
@@ -259,7 +259,7 @@ async def run_optimization() -> None:
     )
 
     async with evaluator:
-        print("\n[1/3] Discovering config space...")
+        print("\n[1/4] Discovering config space...")
         config_space = await evaluator.discover_config_space()
         config_space, reasoning_capped = _apply_reasoning_cap(config_space)
         print(f"      Found {len(config_space)} tunables:")
@@ -271,8 +271,17 @@ async def run_optimization() -> None:
                 f"(MASTRA_JS_MAX_REASONING_LEVEL)"
             )
 
-        # --- Step 2: Create optimizer + orchestrator ---
-        print(f"\n[2/3] Setting up RandomSearchOptimizer (max_trials={MAX_TRIALS})...")
+        # --- Step 2: Discover input IDs (or use override) ---
+        if INPUT_IDS_OVERRIDE:
+            input_ids = INPUT_IDS_OVERRIDE
+            print(f"\n[2/4] Using {len(input_ids)} input IDs from MASTRA_JS_INPUT_IDS")
+        else:
+            print(f"\n[2/4] Discovering input IDs via GET /inputs...")
+            input_ids = await evaluator.discover_input_ids()
+            print(f"      Discovered {len(input_ids)} input IDs from server")
+
+        # --- Step 3: Create optimizer + orchestrator ---
+        print(f"\n[3/4] Setting up RandomSearchOptimizer (max_trials={MAX_TRIALS})...")
         optimizer = RandomSearchOptimizer(
             config_space=config_space,
             objectives=["accuracy"],
@@ -303,12 +312,12 @@ async def run_optimization() -> None:
             cost_approved=cost_approved,
         )
 
-        # --- Step 3: Run optimization ---
-        dataset = build_dataset()
+        # --- Step 4: Run optimization ---
+        dataset = build_dataset(input_ids)
         print(f"      Dataset: {len(dataset)} examples")
         print(f"      Execution mode: {execution_mode.value}")
         print(f"      Cost limit: ${MAX_COST_USD:.2f} (approved={cost_approved})")
-        print("\n[3/3] Running optimization...")
+        print("\n[4/4] Running optimization...")
         print("-" * 70)
 
         async def hybrid_demo_agent():

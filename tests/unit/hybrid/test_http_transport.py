@@ -839,6 +839,108 @@ class TestHTTPTransportAdditionalMethods:
         assert call_args.kwargs.get("timeout_override") == 45.0
 
 
+class TestHTTPTransportInputs:
+    """Tests for inputs() endpoint (issue #57)."""
+
+    @pytest.fixture
+    def transport(self) -> HTTPTransport:
+        """Create transport for testing."""
+        return HTTPTransport(base_url="http://localhost:8080")
+
+    @pytest.mark.asyncio
+    async def test_inputs_happy_path(self, transport: HTTPTransport) -> None:
+        """Test inputs returns all IDs in a single page."""
+        mock_data = {
+            "tunable_id": "child-age-agent-a",
+            "input_ids": ["case_001", "case_002", "case_003"],
+            "total": 3,
+            "limit": 100,
+            "offset": 0,
+            "has_more": False,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.inputs("child-age-agent-a")
+
+        assert resp.tunable_id == "child-age-agent-a"
+        assert resp.input_ids == ["case_001", "case_002", "case_003"]
+        assert resp.total == 3
+        assert resp.has_more is False
+
+        # Verify correct path and params
+        mock_request.assert_called_once_with(
+            "GET", "/traigent/v1/inputs", params={"tunable_id": "child-age-agent-a"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_inputs_with_pagination_params(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test inputs sends limit/offset when non-default."""
+        mock_data = {
+            "tunable_id": "agent-x",
+            "input_ids": ["q006", "q007"],
+            "total": 100,
+            "limit": 5,
+            "offset": 5,
+            "has_more": True,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.inputs("agent-x", limit=5, offset=5)
+
+        assert resp.has_more is True
+        assert resp.limit == 5
+        assert resp.offset == 5
+
+        # Verify limit and offset are sent as strings
+        mock_request.assert_called_once_with(
+            "GET",
+            "/traigent/v1/inputs",
+            params={"tunable_id": "agent-x", "limit": "5", "offset": "5"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_inputs_default_params_omitted(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test inputs omits limit/offset when they are defaults."""
+        mock_data = {
+            "tunable_id": "t",
+            "input_ids": [],
+            "total": 0,
+            "limit": 100,
+            "offset": 0,
+            "has_more": False,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            await transport.inputs("t", limit=100, offset=0)
+
+        # Only tunable_id should be in params
+        mock_request.assert_called_once_with(
+            "GET", "/traigent/v1/inputs", params={"tunable_id": "t"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_inputs_unknown_tunable_raises(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test inputs propagates 404 as TransportError."""
+        with patch.object(
+            transport,
+            "_request",
+            new_callable=AsyncMock,
+            side_effect=TransportError("Not found", status_code=404),
+        ):
+            with pytest.raises(TransportError) as exc_info:
+                await transport.inputs("bogus")
+            assert exc_info.value.status_code == 404
+
+
 class TestHTTPTransportContextManager:
     """Tests for async context manager."""
 

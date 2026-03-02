@@ -56,146 +56,178 @@ class TestSmellDetector:
     """Test AST-based smell detection."""
 
     def test_assertion_roulette_detected(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert len(result) > 0
             assert result[0] is not None
             assert result[0].config != {}
-        """)
+        """
+        )
         roulette = [s for s in smells if s.smell_type == TestSmell.ASSERTION_ROULETTE]
         assert len(roulette) == 1
         assert "3/3" in roulette[0].description
 
     def test_assertion_roulette_not_triggered_with_messages(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert len(result) > 0, "need results"
             assert result[0] is not None, "first not none"
             assert result[0].config != {}, "config not empty"
-        """)
+        """
+        )
         roulette = [s for s in smells if s.smell_type == TestSmell.ASSERTION_ROULETTE]
         assert len(roulette) == 0
 
     def test_assertion_roulette_not_triggered_under_threshold(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert x > 0
             assert y > 0
-        """)
+        """
+        )
         roulette = [s for s in smells if s.smell_type == TestSmell.ASSERTION_ROULETTE]
         assert len(roulette) == 0
 
     def test_eager_test_by_name(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_trials_and_configs_and_metrics():
             pass
-        """)
+        """
+        )
         eager = [s for s in smells if s.smell_type == TestSmell.EAGER_TEST]
         assert len(eager) >= 1
 
     def test_eager_test_not_triggered_single_and(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_trials_and_configs():
             pass
-        """)
+        """
+        )
         eager = [s for s in smells if s.smell_type == TestSmell.EAGER_TEST]
         assert len(eager) == 0
 
     def test_magic_number_detected(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert result.score > 0.85
-        """)
+        """
+        )
         magic = [s for s in smells if s.smell_type == TestSmell.MAGIC_NUMBER]
         assert len(magic) == 1
         assert "0.85" in str(magic[0].evidence)
 
     def test_magic_number_ignores_common_values(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert len(x) >= 1
             assert score > 0
             assert count == 10
-        """)
+        """
+        )
         magic = [s for s in smells if s.smell_type == TestSmell.MAGIC_NUMBER]
         assert len(magic) == 0
 
     def test_empty_test_detected(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             result = some_function()
-        """)
+        """
+        )
         empty = [s for s in smells if s.smell_type == TestSmell.EMPTY_TEST]
         assert len(empty) == 1
 
     def test_empty_test_not_triggered_with_assert(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             result = some_function()
             assert result is not None
-        """)
+        """
+        )
         empty = [s for s in smells if s.smell_type == TestSmell.EMPTY_TEST]
         assert len(empty) == 0
 
     def test_empty_test_not_triggered_with_pytest_raises(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             with pytest.raises(ValueError):
                 bad_function()
-        """)
+        """
+        )
         empty = [s for s in smells if s.smell_type == TestSmell.EMPTY_TEST]
         assert len(empty) == 0
 
     def test_empty_test_not_triggered_with_mock_assert(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             mock_obj.assert_called_once()
-        """)
+        """
+        )
         empty = [s for s in smells if s.smell_type == TestSmell.EMPTY_TEST]
         assert len(empty) == 0
 
     def test_redundant_assert_true(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert True
-        """)
+        """
+        )
         redundant = [s for s in smells if s.smell_type == TestSmell.REDUNDANT_ASSERTION]
         assert len(redundant) == 1
         assert "assert True" in redundant[0].description
 
     def test_redundant_self_comparison(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert x == x
-        """)
+        """
+        )
         redundant = [s for s in smells if s.smell_type == TestSmell.REDUNDANT_ASSERTION]
         assert len(redundant) == 1
 
     def test_redundant_vacuous_length(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def test_example():
             assert len(items) >= 0
-        """)
+        """
+        )
         redundant = [s for s in smells if s.smell_type == TestSmell.REDUNDANT_ASSERTION]
         assert len(redundant) == 1
         assert "always true" in redundant[0].description
 
     def test_async_tests_detected(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         async def test_example():
             result = await func()
-        """)
+        """
+        )
         empty = [s for s in smells if s.smell_type == TestSmell.EMPTY_TEST]
         assert len(empty) == 1
 
     def test_non_test_functions_ignored(self):
-        smells = _detect("""\
+        smells = _detect(
+            """\
         def helper_function():
             pass
 
         def setup_module():
             pass
-        """)
+        """
+        )
         assert len(smells) == 0
 
 
@@ -208,14 +240,16 @@ class TestOracleStrengthAnalyzer:
     """Test oracle scoring heuristics."""
 
     def test_strong_oracle_high_score(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert len(result.trials) >= 1
             assert result.best_config is not None
             assert result.stop_reason == "max_trials"
             assert result.best_score > 0
             assert result.status == "completed"
-        """)
+        """
+        )
         assert report.oracle_score >= 0.7
         assert report.has_behavior_verification is True
         assert "trials" in report.checked_attributes
@@ -223,49 +257,61 @@ class TestOracleStrengthAnalyzer:
         assert "stop_reason" in report.checked_attributes
 
     def test_no_assertions_zero_score(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             result = some_function()
-        """)
+        """
+        )
         assert report.oracle_score == 0.0
         assert report.assertion_count == 0
 
     def test_isinstance_only_penalised(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert isinstance(result, dict)
             assert isinstance(result["key"], str)
-        """)
+        """
+        )
         assert "only-isinstance-checks" in report.weak_patterns
 
     def test_vacuous_length_penalised(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert len(result.trials) >= 0
-        """)
+        """
+        )
         assert "vacuous-length-checks" in report.weak_patterns
 
     def test_validator_reliance_only_penalised(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert not isinstance(result, Exception)
             validation = result_validator(scenario, result)
             assert validation.passed
-        """)
+        """
+        )
         assert "validator-reliance-only" in report.weak_patterns
 
     def test_exception_guard_only_penalised(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert not isinstance(result, Exception)
-        """)
+        """
+        )
         assert "exception-guard-only" in report.weak_patterns
 
     def test_missing_critical_checks(self):
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert result.trials is not None
-        """)
+        """
+        )
         # Only 'trials' is checked; others should be missing
         assert "best_config" in report.missing_critical_checks
         assert "best_score" in report.missing_critical_checks
@@ -273,15 +319,18 @@ class TestOracleStrengthAnalyzer:
 
     def test_score_clamped_to_zero(self):
         """Many weak patterns shouldn't push score below 0."""
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert not isinstance(result, Exception)
-        """)
+        """
+        )
         assert report.oracle_score >= 0.0
 
     def test_score_clamped_to_one(self):
         """Score shouldn't exceed 1.0 even with many attributes."""
-        report = _oracle("""\
+        report = _oracle(
+            """\
         def test_example():
             assert result.trials is not None
             assert result.best_config is not None
@@ -291,7 +340,8 @@ class TestOracleStrengthAnalyzer:
             assert result.metrics is not None
             assert result.config is not None
             assert result.score > 0
-        """)
+        """
+        )
         assert report.oracle_score <= 1.0
 
 
@@ -393,7 +443,9 @@ class TestLLMTestScanner:
 
     def test_scan_file_produces_all_sections(self, tmp_path: Path):
         test_file = tmp_path / "test_sample.py"
-        test_file.write_text(textwrap.dedent("""\
+        test_file.write_text(
+            textwrap.dedent(
+                """\
         def test_with_assert():
             assert len(result.trials) >= 1
 
@@ -404,7 +456,9 @@ class TestLLMTestScanner:
             assert not isinstance(result, Exception)
             validation = result_validator(scenario, result)
             assert validation.passed
-        """))
+        """
+            )
+        )
 
         scanner = LLMTestScanner(enable_llm=False)
         result = scanner.scan_file(test_file)
