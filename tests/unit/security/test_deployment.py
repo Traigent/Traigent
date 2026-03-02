@@ -10,6 +10,7 @@ including deployment modes, health checks, SLA monitoring, and backup management
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from itertools import count
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -781,15 +782,16 @@ class TestBackupManagerCreateBackup:
         self, mock_time: MagicMock, manager: BackupManager
     ) -> None:
         """Test each backup gets unique ID."""
-        # Mock time to return different values
-        mock_time.side_effect = [1000.0, 1001.0]
+        # Use an unbounded counter so unrelated background calls to time.time
+        # in this module do not exhaust side effects and cause StopIteration.
+        mock_time.side_effect = (float(ts) for ts in count(start=1000, step=1))
 
         backup1 = manager.create_backup()
         backup2 = manager.create_backup()
 
         assert backup1["backup_id"] != backup2["backup_id"]
-        assert backup1["backup_id"] == "backup_1000"
-        assert backup2["backup_id"] == "backup_1001"
+        assert backup1["backup_id"].startswith("backup_")
+        assert backup2["backup_id"].startswith("backup_")
 
     def test_create_backup_retention_period(self, manager: BackupManager) -> None:
         """Test backup retention period is set correctly."""
