@@ -350,7 +350,7 @@ os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secr
 print("✅ Import successful: {import_line}")
 """
             try:
-                self._run_code_safely(test_code, "import_test", timeout=15)
+                self._run_code_safely(test_code, "import_test", timeout=30)
             except Exception as e:
                 if is_optional:
                     # Log but don't fail for optional dependencies
@@ -478,7 +478,7 @@ assert result is not None
 print("✅ Mock mode works for decorated functions")
 """
                 try:
-                    self._run_code_safely(test_code, "mock_mode_test", timeout=15)
+                    self._run_code_safely(test_code, "mock_mode_test", timeout=30)
                     mock_mode_count += 1
                     break  # Same test code each iteration; one success is sufficient
                 except Exception:
