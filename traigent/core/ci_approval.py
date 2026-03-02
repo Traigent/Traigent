@@ -197,7 +197,8 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
     if _check_token_file_approval(token_file, storage_root):
         return
 
-    raise OptimizationError("""
+    raise OptimizationError(
+        """
 CI/CD Approval Required
 
 This optimization was triggered in a CI environment and requires approval.
@@ -213,4 +214,5 @@ To approve, use one of these methods:
 
 3. GitHub Actions with environment protection:
    Use 'environment: production' with required reviewers
-        """)
+        """
+    )

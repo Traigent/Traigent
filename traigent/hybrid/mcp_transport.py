@@ -20,6 +20,7 @@ from traigent.hybrid.protocol import (
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
+    InputsResponse,
     ServiceCapabilities,
 )
 from traigent.hybrid.transport import TransportConnectionError, TransportError
@@ -234,6 +235,25 @@ class MCPTransport:
             uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
         data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
+
+    async def inputs(
+        self,
+        tunable_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> InputsResponse:
+        """Discover available input IDs via MCP.
+
+        Not yet supported over MCP transport.
+
+        Raises:
+            NotImplementedError: Always — MCP input discovery is not yet implemented.
+        """
+        raise NotImplementedError(
+            "Input ID discovery is not yet supported over MCP transport. "
+            "Use HTTP transport or provide input IDs explicitly."
+        )
 
     async def execute(
         self,

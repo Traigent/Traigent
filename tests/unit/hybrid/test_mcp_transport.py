@@ -378,6 +378,21 @@ class TestMCPTransportDiscoverConfigSpace:
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
 
 
+class TestMCPTransportInputs:
+    """Tests for inputs method (issue #57 — not yet supported)."""
+
+    @pytest.fixture
+    def transport(self) -> MCPTransport:
+        mock_client = MagicMock()
+        return MCPTransport(mcp_client=mock_client)
+
+    @pytest.mark.asyncio
+    async def test_inputs_raises_not_implemented(self, transport: MCPTransport) -> None:
+        """MCP transport raises NotImplementedError for inputs()."""
+        with pytest.raises(NotImplementedError, match="not yet supported over MCP"):
+            await transport.inputs("some-tunable")
+
+
 class TestMCPTransportExecute:
     """Tests for execute method."""
 
