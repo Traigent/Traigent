@@ -25,6 +25,7 @@ Usage:
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Final
@@ -63,6 +64,11 @@ try:
 finally:
     # Restore normal socket behavior for the actual HTTP calls.
     _socket.socket.connect = _orig_connect  # type: ignore[assignment]
+
+# Enable SDK logging so per-example results are visible.
+from traigent.utils.logging import setup_logging
+
+setup_logging(level=os.getenv("TRAIGENT_LOG_LEVEL", "INFO"))
 
 # ---------------------------------------------------------------------------
 # Configuration — all values come from environment / .env (no hardcoded secrets)
