@@ -499,8 +499,8 @@ class TraigentService:
         """Handle execute request.
 
         Args:
-            request: Execute request with tunable_id, config, examples
-                (or deprecated 'inputs'), and benchmark_id.
+            request: Execute request with tunable_id, config, examples,
+                and benchmark_id.
 
         Returns:
             Execute response with outputs and metrics.
@@ -525,12 +525,7 @@ class TraigentService:
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
 
-        # Backward compat: accept both "examples" (new) and "inputs" (deprecated)
-        examples = request.get("examples") or request.get("inputs")
-        if "inputs" in request and "examples" not in request:
-            logger.warning(
-                "Deprecated: use 'examples' instead of 'inputs' in execute request"
-            )
+        examples = request.get("examples")
 
         session_id = request.get("session_id")
 
@@ -541,7 +536,7 @@ class TraigentService:
                 "request_id": request_id,
                 "status": "failed",
                 "error": {
-                    "code": "INVALID_REQUEST",
+                    "code": "INVALID_BENCHMARK_ID",
                     "message": "Missing required field 'benchmark_id' in execute request",
                 },
             }
@@ -575,13 +570,7 @@ class TraigentService:
 
         for inp in examples:
             if isinstance(inp, dict):
-                # Backward compat: accept both "example_id" (new) and "input_id" (deprecated)
-                example_id = inp.get("example_id") or inp.get("input_id")
-                if "input_id" in inp and "example_id" not in inp:
-                    logger.warning(
-                        "Deprecated: use 'example_id' instead of 'input_id' "
-                        "in execute example items"
-                    )
+                example_id = inp.get("example_id")
                 example_id = str(example_id) if example_id else str(uuid.uuid4())
                 data = inp.get("data", inp)
             else:
@@ -725,6 +714,18 @@ class TraigentService:
         config = request.get("config", {})
         session_id = request.get("session_id")
 
+        # Validate benchmark_id is present
+        benchmark_id = request.get("benchmark_id")
+        if not benchmark_id:
+            return {
+                "request_id": request_id,
+                "status": "failed",
+                "error": {
+                    "code": "INVALID_BENCHMARK_ID",
+                    "message": "Missing required field 'benchmark_id' in evaluate request",
+                },
+            }
+
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
 
@@ -744,13 +745,7 @@ class TraigentService:
         failed_example_ids: list[str] = []
 
         for evaluation in evaluations:
-            # Backward compat: accept both "example_id" (new) and "input_id" (deprecated)
-            example_id = evaluation.get("example_id") or evaluation.get("input_id")
-            if "input_id" in evaluation and "example_id" not in evaluation:
-                logger.warning(
-                    "Deprecated: use 'example_id' instead of 'input_id' "
-                    "in evaluate items"
-                )
+            example_id = evaluation.get("example_id")
             example_id = str(example_id) if example_id else str(uuid.uuid4())
 
             output = evaluation.get("output")

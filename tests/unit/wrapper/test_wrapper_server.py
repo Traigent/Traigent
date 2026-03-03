@@ -273,6 +273,7 @@ class TestCreateAppRoutes:
         """Test POST evaluate endpoint."""
         request_body = json.dumps(
             {
+                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         ).encode()
@@ -434,7 +435,7 @@ class TestCreateAppErrorHandling:
         """Test that empty request body is treated as empty dict.
 
         An empty body becomes ``{}``, which lacks ``benchmark_id``.
-        The service returns a failed response with INVALID_REQUEST
+        The service returns a failed response with INVALID_BENCHMARK_ID
         (not a raised exception), so the server sends it back as 200.
         """
         svc = TraigentService()
@@ -452,7 +453,7 @@ class TestCreateAppErrorHandling:
         )
         assert send.status == 200
         assert send.body_json["status"] == "failed"
-        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
+        assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +768,7 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
+                "benchmark_id": "bench_001",
                 "timeout_ms": 1000,  # 1 second timeout
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
