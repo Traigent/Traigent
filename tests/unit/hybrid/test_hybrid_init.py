@@ -47,8 +47,9 @@ class TestHybridExportsImportable:
             "ServiceCapabilities",
             "TVARDefinition",
             "ConfigSpaceResponse",
+            "BenchmarkEntry",
+            "BenchmarksResponse",
             "HealthCheckResponse",
-            "InputsResponse",
         ]
         for dto_class in protocol_classes:
             assert hasattr(hybrid_module, dto_class), f"{dto_class} not found"
@@ -108,8 +109,9 @@ class TestHybridAllList:
             "ServiceCapabilities",
             "TVARDefinition",
             "ConfigSpaceResponse",
+            "BenchmarkEntry",
+            "BenchmarksResponse",
             "HealthCheckResponse",
-            "InputsResponse",
             # Lifecycle
             "AgentLifecycleManager",
             "SessionInfo",
@@ -240,13 +242,14 @@ class TestDirectImports:
         """Test direct import of protocol DTOs."""
         from traigent.hybrid import (  # noqa: F401
             BatchOptions,
+            BenchmarkEntry,
+            BenchmarksResponse,
             ConfigSpaceResponse,
             HealthCheckResponse,
             HybridEvaluateRequest,
             HybridEvaluateResponse,
             HybridExecuteRequest,
             HybridExecuteResponse,
-            InputsResponse,
             ServiceCapabilities,
             TVARDefinition,
         )

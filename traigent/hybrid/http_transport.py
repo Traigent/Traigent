@@ -14,13 +14,13 @@ from typing import Any
 import httpx
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
-    InputsResponse,
     ServiceCapabilities,
 )
 from traigent.hybrid.transport import (
@@ -51,7 +51,7 @@ class HTTPTransport:
     # API endpoint paths (relative to base_url)
     CAPABILITIES_PATH = "/traigent/v1/capabilities"
     CONFIG_SPACE_PATH = "/traigent/v1/config-space"
-    INPUTS_PATH = "/traigent/v1/inputs"
+    BENCHMARKS_PATH = "/traigent/v1/benchmarks"
     EXECUTE_PATH = "/traigent/v1/execute"
     EVALUATE_PATH = "/traigent/v1/evaluate"
     HEALTH_PATH = "/traigent/v1/health"
@@ -304,33 +304,26 @@ class HTTPTransport:
         data = await self._request("GET", self.CONFIG_SPACE_PATH, params=params)
         return ConfigSpaceResponse.from_dict(data)
 
-    async def inputs(
+    async def benchmarks(
         self,
-        tunable_id: str,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> InputsResponse:
-        """Discover available benchmark input IDs for a tunable.
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks and their example IDs.
 
         Args:
-            tunable_id: The tunable to list inputs for.
-            limit: Maximum number of input IDs per page (1-10000).
-            offset: Number of input IDs to skip for pagination.
+            tunable_id: Optional filter — only return benchmarks linked to this tunable.
 
         Returns:
-            InputsResponse with paginated input IDs and total count.
+            BenchmarksResponse with benchmark entries and example IDs.
 
         Raises:
             TransportError: If discovery fails or tunable_id is unknown.
         """
-        params: dict[str, str] = {"tunable_id": tunable_id}
-        if limit != 100:
-            params["limit"] = str(limit)
-        if offset != 0:
-            params["offset"] = str(offset)
-        data = await self._request("GET", self.INPUTS_PATH, params=params)
-        return InputsResponse.from_dict(data)
+        params: dict[str, str] | None = None
+        if tunable_id is not None:
+            params = {"tunable_id": tunable_id}
+        data = await self._request("GET", self.BENCHMARKS_PATH, params=params)
+        return BenchmarksResponse.from_dict(data)
 
     async def execute(
         self,

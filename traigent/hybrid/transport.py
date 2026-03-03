@@ -11,13 +11,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
-    InputsResponse,
     ServiceCapabilities,
 )
 
@@ -102,22 +102,17 @@ class HybridTransport(Protocol):
         """
         ...
 
-    async def inputs(
+    async def benchmarks(
         self,
-        tunable_id: str,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> InputsResponse:
-        """Discover available benchmark input IDs for a tunable.
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks and their example IDs.
 
         Args:
-            tunable_id: The tunable to list inputs for.
-            limit: Maximum number of input IDs per page (1-10000).
-            offset: Number of input IDs to skip for pagination.
+            tunable_id: Optional filter — only return benchmarks linked to this tunable.
 
         Returns:
-            InputsResponse with paginated input IDs and total count.
+            BenchmarksResponse with benchmark entries and example IDs.
 
         Raises:
             TransportError: If discovery fails or tunable_id is unknown.

@@ -17,7 +17,7 @@ Example:
         }
 
     @app.execute
-    async def run_agent(input_id: str, data: dict, config: dict) -> dict:
+    async def run_agent(example_id: str, data: dict, config: dict) -> dict:
         # Your agent logic here
         return {"output": result, "cost_usd": 0.002, "latency_ms": 150}
 
@@ -125,7 +125,7 @@ class TraigentService:
             return {"model": {"type": "enum", "values": ["gpt-4"]}}
 
         @app.execute
-        async def run(input_id, data, config):
+        async def run(example_id, data, config):
             return {"output": "result"}
 
         app.run(port=8080)
@@ -256,7 +256,7 @@ class TraigentService:
         """Decorator to register execution handler.
 
         The decorated function receives:
-            - input_id: str - Identifier for this input
+            - example_id: str - Identifier for this example
             - data: dict - Input data
             - config: dict - Configuration parameters
 
@@ -268,7 +268,7 @@ class TraigentService:
 
         Example:
             @app.execute
-            async def run_agent(input_id: str, data: dict, config: dict) -> dict:
+            async def run_agent(example_id: str, data: dict, config: dict) -> dict:
                 result = await my_llm_call(data["query"], **config)
                 return {"output": result, "cost_usd": 0.002}
         """
@@ -499,7 +499,8 @@ class TraigentService:
         """Handle execute request.
 
         Args:
-            request: Execute request with tunable_id, config, inputs.
+            request: Execute request with tunable_id, config, examples
+                (or deprecated 'inputs'), and benchmark_id.
 
         Returns:
             Execute response with outputs and metrics.
@@ -523,11 +524,30 @@ class TraigentService:
 
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
-        inputs = request.get("inputs")
+
+        # Backward compat: accept both "examples" (new) and "inputs" (deprecated)
+        examples = request.get("examples") or request.get("inputs")
+        if "inputs" in request and "examples" not in request:
+            logger.warning(
+                "Deprecated: use 'examples' instead of 'inputs' in execute request"
+            )
+
         session_id = request.get("session_id")
 
-        if not isinstance(inputs, list) or len(inputs) == 0:
-            raise ValueError("inputs must be a non-empty list")
+        # Validate benchmark_id is present
+        benchmark_id = request.get("benchmark_id")
+        if not benchmark_id:
+            return {
+                "request_id": request_id,
+                "status": "failed",
+                "error": {
+                    "code": "INVALID_REQUEST",
+                    "message": "Missing required field 'benchmark_id' in execute request",
+                },
+            }
+
+        if not isinstance(examples, list) or len(examples) == 0:
+            raise ValueError("examples must be a non-empty list")
 
         # Validate tunable_id matches this service
         if tunable_id != self.config.tunable_id:
@@ -538,9 +558,9 @@ class TraigentService:
 
         # Enforce max_batch_size from capabilities
         max_batch = self.config.max_batch_size
-        if max_batch and len(inputs) > max_batch:
+        if max_batch and len(examples) > max_batch:
             raise ValueError(
-                f"Batch size {len(inputs)} exceeds max_batch_size {max_batch}"
+                f"Batch size {len(examples)} exceeds max_batch_size {max_batch}"
             )
 
         # Update session if provided
@@ -551,19 +571,26 @@ class TraigentService:
         outputs: list[dict[str, Any]] = []
         total_cost = 0.0
         all_quality_metrics: list[dict[str, float]] = []
-        failed_input_ids: list[str] = []
+        failed_example_ids: list[str] = []
 
-        for inp in inputs:
+        for inp in examples:
             if isinstance(inp, dict):
-                input_id = str(inp.get("input_id", str(uuid.uuid4())))
+                # Backward compat: accept both "example_id" (new) and "input_id" (deprecated)
+                example_id = inp.get("example_id") or inp.get("input_id")
+                if "input_id" in inp and "example_id" not in inp:
+                    logger.warning(
+                        "Deprecated: use 'example_id' instead of 'input_id' "
+                        "in execute example items"
+                    )
+                example_id = str(example_id) if example_id else str(uuid.uuid4())
                 data = inp.get("data", inp)
             else:
-                input_id = str(uuid.uuid4())
+                example_id = str(uuid.uuid4())
                 data = inp
 
             try:
                 # Call handler
-                result = self._execute_handler(input_id, data, config)
+                result = self._execute_handler(example_id, data, config)
                 if inspect.isawaitable(result):
                     result = await result
 
@@ -588,7 +615,7 @@ class TraigentService:
                     all_quality_metrics.append(metrics)
 
                 output_item: dict[str, Any] = {
-                    "input_id": input_id,
+                    "example_id": example_id,
                     "output": output,
                     "cost_usd": cost,
                 }
@@ -605,20 +632,20 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Execute failed for {input_id}: {e}")
-                failed_input_ids.append(input_id)
+                logger.error(f"Execute failed for {example_id}: {e}")
+                failed_example_ids.append(example_id)
                 outputs.append(
                     {
-                        "input_id": input_id,
+                        "example_id": example_id,
                         "error": str(e),
                     }
                 )
 
         elapsed_ms = (time.time() - start_time) * 1000
-        successful_outputs = len(outputs) - len(failed_input_ids)
+        successful_outputs = len(outputs) - len(failed_example_ids)
         if successful_outputs == 0 and outputs:
             status = "failed"
-        elif failed_input_ids:
+        elif failed_example_ids:
             status = "partial"
         else:
             status = "completed"
@@ -635,15 +662,15 @@ class TraigentService:
             },
         }
 
-        if failed_input_ids:
+        if failed_example_ids:
             response["error"] = {
                 "code": (
                     "EXECUTION_PARTIAL_FAILURE"
                     if status == "partial"
                     else "EXECUTION_FAILED"
                 ),
-                "message": "One or more inputs failed during execution",
-                "failed_inputs": failed_input_ids,
+                "message": "One or more examples failed during execution",
+                "failed_examples": failed_example_ids,
             }
 
         # Include quality metrics if available (combined mode)
@@ -714,10 +741,18 @@ class TraigentService:
 
         results: list[dict[str, Any]] = []
         all_metrics: list[dict[str, float]] = []
-        failed_input_ids: list[str] = []
+        failed_example_ids: list[str] = []
 
         for evaluation in evaluations:
-            input_id = evaluation.get("input_id", str(uuid.uuid4()))
+            # Backward compat: accept both "example_id" (new) and "input_id" (deprecated)
+            example_id = evaluation.get("example_id") or evaluation.get("input_id")
+            if "input_id" in evaluation and "example_id" not in evaluation:
+                logger.warning(
+                    "Deprecated: use 'example_id' instead of 'input_id' "
+                    "in evaluate items"
+                )
+            example_id = str(example_id) if example_id else str(uuid.uuid4())
+
             output = evaluation.get("output")
             if output is None and "output_id" in evaluation:
                 output = {"output_id": evaluation["output_id"]}
@@ -736,7 +771,7 @@ class TraigentService:
 
                 results.append(
                     {
-                        "input_id": input_id,
+                        "example_id": example_id,
                         "metrics": metrics,
                     }
                 )
@@ -747,20 +782,20 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Evaluate failed for {input_id}: {e}")
-                failed_input_ids.append(input_id)
+                logger.error(f"Evaluate failed for {example_id}: {e}")
+                failed_example_ids.append(example_id)
                 results.append(
                     {
-                        "input_id": input_id,
+                        "example_id": example_id,
                         "metrics": {},
                         "error": str(e),
                     }
                 )
 
-        successful_results = len(results) - len(failed_input_ids)
+        successful_results = len(results) - len(failed_example_ids)
         if successful_results == 0 and results:
             status = "failed"
-        elif failed_input_ids:
+        elif failed_example_ids:
             status = "partial"
         else:
             status = "completed"
@@ -772,7 +807,7 @@ class TraigentService:
             "aggregate_metrics": self._compute_aggregate_metrics(all_metrics),
         }
 
-        if failed_input_ids:
+        if failed_example_ids:
             response["error"] = {
                 "code": (
                     "EVALUATION_PARTIAL_FAILURE"
@@ -780,7 +815,7 @@ class TraigentService:
                     else "EVALUATION_FAILED"
                 ),
                 "message": "One or more items failed during evaluation",
-                "failed_inputs": failed_input_ids,
+                "failed_examples": failed_example_ids,
             }
 
         # Cache terminal response for idempotent retries.

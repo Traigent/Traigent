@@ -38,13 +38,15 @@ class TestHybridExecuteRequest:
         """Test creating minimal execute request."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"temperature": 0.7},
-            inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
+            examples=[{"example_id": "ex_1", "data": {"query": "test"}}],
         )
 
         assert request.tunable_id == "test_agent"
+        assert request.benchmark_id == "bench_001"
         assert request.config == {"temperature": 0.7}
-        assert len(request.inputs) == 1
+        assert len(request.examples) == 1
         assert request.request_id  # Auto-generated
         assert request.session_id is None
         assert request.batch_options is None
@@ -54,8 +56,9 @@ class TestHybridExecuteRequest:
         """Test serialization to dictionary."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "gpt-4"},
-            inputs=[{"input_id": "1", "data": {}}],
+            examples=[{"example_id": "1", "data": {}}],
             session_id="sess_123",
             batch_options=BatchOptions(parallelism=3),
             timeout_ms=60000,
@@ -63,8 +66,9 @@ class TestHybridExecuteRequest:
 
         d = request.to_dict()
         assert d["tunable_id"] == "test_agent"
+        assert d["benchmark_id"] == "bench_001"
         assert d["config"] == {"model": "gpt-4"}
-        assert d["inputs"] == [{"input_id": "1", "data": {}}]
+        assert d["examples"] == [{"example_id": "1", "data": {}}]
         assert d["session_id"] == "sess_123"
         assert d["batch_options"]["parallelism"] == 3
         assert d["timeout_ms"] == 60000
@@ -73,8 +77,9 @@ class TestHybridExecuteRequest:
         """Test minimal serialization excludes None fields."""
         request = HybridExecuteRequest(
             tunable_id="test",
+            benchmark_id="bench_001",
             config={},
-            inputs=[],
+            examples=[],
         )
 
         d = request.to_dict()
@@ -91,7 +96,7 @@ class TestHybridExecuteResponse:
             "request_id": "req_123",
             "execution_id": "exec_456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": "result"}],
+            "outputs": [{"example_id": "1", "output": "result"}],
             "operational_metrics": {"cost_usd": 0.002, "latency_ms": 150},
             "session_id": "sess_789",
         }
@@ -135,8 +140,9 @@ class TestHybridEvaluateRequest:
 
     def test_minimal_request(self) -> None:
         """Test creating minimal evaluate request."""
-        request = HybridEvaluateRequest(tunable_id="test")
+        request = HybridEvaluateRequest(tunable_id="test", benchmark_id="bench_001")
         assert request.tunable_id == "test"
+        assert request.benchmark_id == "bench_001"
         assert request.request_id  # Auto-generated
         assert request.execution_id is None
         assert request.evaluations is None
@@ -146,8 +152,9 @@ class TestHybridEvaluateRequest:
         """Test serialization to dictionary."""
         request = HybridEvaluateRequest(
             tunable_id="test",
+            benchmark_id="bench_001",
             execution_id="exec_123",
-            evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+            evaluations=[{"example_id": "1", "output": {}, "target": {}}],
             config={"setting": "value"},
             session_id="sess_456",
             timeout_ms=45000,
@@ -155,6 +162,7 @@ class TestHybridEvaluateRequest:
 
         d = request.to_dict()
         assert d["tunable_id"] == "test"
+        assert d["benchmark_id"] == "bench_001"
         assert d["execution_id"] == "exec_123"
         assert len(d["evaluations"]) == 1
         assert d["config"] == {"setting": "value"}
@@ -170,12 +178,12 @@ class TestHybridEvaluateResponse:
         data = {
             "request_id": "req_123",
             "status": "partial",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95, "std": 0.02, "n": 10}},
             "error": {
                 "code": "EVALUATION_PARTIAL_FAILURE",
                 "message": "One or more items failed during evaluation",
-                "failed_inputs": ["2"],
+                "failed_examples": ["2"],
             },
         }
 
