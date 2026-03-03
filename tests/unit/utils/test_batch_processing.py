@@ -779,7 +779,6 @@ class TestErrorHandling:
             # Expected to timeout
             pass
         # Test completed - TimeoutError means we properly timed out
-        assert True  # Confirms test reached this point
 
     def test_invalid_batch_size(self):
         """Test handling invalid batch size parameters."""
@@ -789,8 +788,8 @@ class TestErrorHandling:
 
         # The batch_size is passed to process_stream, not __init__
         # We can test that it handles edge cases gracefully
-        assert processor.max_memory_mb > 0
-        assert processor.gc_frequency > 0
+        assert processor.max_memory_mb == pytest.approx(1000.0)
+        assert processor.gc_frequency == 10
 
     def test_memory_exhaustion_handling(self):
         """Test handling memory exhaustion scenarios."""

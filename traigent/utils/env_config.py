@@ -213,6 +213,16 @@ def is_mock_llm() -> bool:
     return get_env_var("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
 
+def is_strict_cost_accounting() -> bool:
+    """Check whether runtime cost accounting should fail fast.
+
+    When TRAIGENT_STRICT_COST_ACCOUNTING=true, post-call cost paths should:
+    - Require priced models (no silent 0.0 for unknown models)
+    - Raise on unknown/missing trial cost instead of fallback mode
+    """
+    return get_env_var("TRAIGENT_STRICT_COST_ACCOUNTING", "false").lower() == "true"
+
+
 def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     """Return True when the cloud API key notice should be shown."""
     if is_mock_llm() or is_backend_offline():

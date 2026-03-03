@@ -232,9 +232,7 @@ class TestRandomSearchOptimizer:
         assert all(isinstance(value, float) for value in samples)
 
     @pytest.mark.parametrize("param_type", ["int", "integer"])
-    def test_suggest_next_trial_integer_dict_types_sample_int_values(
-        self, param_type
-    ):
+    def test_suggest_next_trial_integer_dict_types_sample_int_values(self, param_type):
         """Integer dict ranges should emit integer values for both type aliases."""
         optimizer = RandomSearchOptimizer(
             {"x": {"type": param_type, "low": 1, "high": 3}},
@@ -493,3 +491,29 @@ class TestRandomSearchOptimizer:
 
         assert optimizer.best_score == 0.9
         assert optimizer.best_config == config
+
+    def test_sample_integer_range_dict_with_step(self):
+        """Test integer range dict sampling with step parameter."""
+        config_space = {"x": {"low": 0, "high": 10, "type": "int", "step": 3}}
+        optimizer = RandomSearchOptimizer(config_space, ["accuracy"], random_seed=42)
+
+        # Step=3 from 0: range(0, 11, 3) = [0, 3, 6, 9], plus 10 appended
+        config = optimizer.suggest_next_trial([])
+        assert config["x"] in {0, 3, 6, 9, 10}
+
+    def test_sample_integer_range_equal_bounds(self):
+        """Test integer range where low == high produces single value."""
+        config_space = {"x": {"low": 5, "high": 5, "type": "int"}}
+        optimizer = RandomSearchOptimizer(config_space, ["accuracy"])
+
+        config = optimizer.suggest_next_trial([])
+        assert config["x"] == 5
+
+    def test_sample_integer_step_produces_empty_range(self):
+        """Test step larger than range falls back to [low]."""
+        config_space = {"x": {"low": 0, "high": 0, "type": "int", "step": 5}}
+        optimizer = RandomSearchOptimizer(config_space, ["accuracy"])
+
+        config = optimizer.suggest_next_trial([])
+        # range(0, 1, 5) = [0], so values = [0]
+        assert config["x"] == 0

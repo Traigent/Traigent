@@ -60,7 +60,7 @@ class DataClassification(Enum):
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
     RESTRICTED = "restricted"
-    TOP_SECRET = "top_secret"
+    TOP_SECRET = "top_secret"  # pragma: allowlist secret
 
 
 class EncryptionLevel(Enum):
@@ -141,6 +141,21 @@ class EncryptionManager:
         self.key_manager: KeyManager = key_manager or KeyManager()
         self.crypto_available = CRYPTO_AVAILABLE
 
+    @staticmethod
+    def _to_mutable_key_buffer(key_data: bytes | None) -> bytearray | None:
+        """Create a mutable key buffer for best-effort zeroization."""
+        if key_data is None:
+            return None
+        return bytearray(key_data)
+
+    @staticmethod
+    def _zeroize_key_buffer(key_buffer: bytearray | None) -> None:
+        """Best-effort in-place key buffer zeroization."""
+        if key_buffer is None:
+            return
+        for i in range(len(key_buffer)):
+            key_buffer[i] = 0
+
     def encrypt(
         self,
         data: str | bytes,
@@ -171,11 +186,12 @@ class EncryptionManager:
         # Generate a key for this encryption
         key_id: str = self.key_manager.generate_key("AES-256")
         key_data: bytes | None = self.key_manager.get_key(key_id)
+        key_buffer = self._to_mutable_key_buffer(key_data)
 
-        if self.crypto_available and key_data:
+        if self.crypto_available and key_buffer:
             # Real encryption using AES-GCM
             try:
-                aesgcm = AESGCM(key_data)
+                aesgcm = AESGCM(bytes(key_buffer))
                 iv = os.urandom(12)  # 96-bit nonce for AES-GCM
                 ciphertext_with_tag = aesgcm.encrypt(iv, data_bytes, None)
                 # Split ciphertext and tag (last 16 bytes)
@@ -190,14 +206,28 @@ class EncryptionManager:
                 raise RuntimeError(
                     "Encryption operation failed. Cannot proceed without proper encryption."
                 ) from None
+            finally:
+                self._zeroize_key_buffer(key_buffer)
         else:
-            # Mock encryption for testing (only when cryptography library is unavailable)
+            self._zeroize_key_buffer(key_buffer)
+            # Mock encryption: ONLY allowed in test/mock mode
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
+                "true",
+                "1",
+            )
+            if not mock_mode:
+                raise RuntimeError(
+                    "Encryption requires the 'cryptography' package. "
+                    "Install it with: pip install 'traigent[security]'"
+                )
             logger.warning(
                 "Using mock encryption - cryptography library not available. "
-                "Do NOT use in production."
+                "This is only safe in test/mock mode."
             )
             iv = os.urandom(12)
-            ciphertext = b"encrypted_" + data_bytes
+            ciphertext = (
+                b"mock_" + data_bytes
+            )  # NOSONAR — test-only, gated by TRAIGENT_MOCK_LLM
             tag = os.urandom(16)
 
         return {
@@ -253,10 +283,11 @@ class EncryptionManager:
             raise ValueError("Authentication tag must be 16 bytes for AES-GCM")
 
         key_data: bytes | None = self.key_manager.get_key(key_id)
+        key_buffer = self._to_mutable_key_buffer(key_data)
 
-        if self.crypto_available and key_data:
+        if self.crypto_available and key_buffer:
             try:
-                aesgcm = AESGCM(key_data)
+                aesgcm = AESGCM(bytes(key_buffer))
                 data = aesgcm.decrypt(iv, ciphertext + tag, None)
                 return cast(bytes, data)
             except Exception:
@@ -268,13 +299,27 @@ class EncryptionManager:
                 raise RuntimeError(
                     "Decryption operation failed. Data integrity cannot be verified."
                 ) from None
+            finally:
+                self._zeroize_key_buffer(key_buffer)
         else:
-            # Mock decryption for testing (only when cryptography library is unavailable)
+            self._zeroize_key_buffer(key_buffer)
+            # Mock decryption: ONLY allowed in test/mock mode
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
+                "true",
+                "1",
+            )
+            if not mock_mode:
+                raise RuntimeError(
+                    "Decryption requires the 'cryptography' package. "
+                    "Install it with: pip install 'traigent[security]'"
+                )
             logger.warning(
                 "Using mock decryption - cryptography library not available. "
-                "Do NOT use in production."
+                "This is only safe in test/mock mode."
             )
-            if ciphertext.startswith(b"encrypted_"):
+            if ciphertext.startswith(b"mock_"):  # NOSONAR — test-only mock decryption
+                return ciphertext[5:]
+            if ciphertext.startswith(b"encrypted_"):  # NOSONAR — legacy mock compat
                 return ciphertext[10:]
             return ciphertext
 

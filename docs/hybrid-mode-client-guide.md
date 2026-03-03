@@ -11,6 +11,23 @@ Traigent's Hybrid Mode allows you to optimize any external service by implementi
 3. **Evaluate** outputs against targets
 4. **Optimize** to find the best configuration
 
+Current transport behavior:
+- Production target is HTTPS + HTTP/2.
+- Traigent HTTP transport can enforce this with `create_transport(..., require_http2=True)`.
+- Contract v1 is synchronous request/response; async job contracts and gRPC are future-stage options.
+
+## Integration Checklist
+
+Before running optimization, verify:
+
+1. `GET /traigent/v1/capabilities` returns `version`, correct feature flags, and optionally `tunable_ids`.
+2. `GET /traigent/v1/config-space` returns a stable `tunable_id` and valid `tunables`.
+3. `POST /traigent/v1/execute` enforces capability matching and returns `operational_metrics.total_cost_usd`.
+4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
+5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
+6. Auth behavior is consistent across all endpoints if `Authorization` is required.
+7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
+
 ## Privacy-Preserving Mode (Default)
 
 Traigent Hybrid Mode is designed with **privacy as the default**. Only configuration values and metrics are observed during optimization - your actual data content is never transmitted to Traigent.
@@ -49,16 +66,18 @@ def execute():
     return jsonify({...})
 ```
 
-**Evaluate endpoint**: Accept `output_id` and `target_id` instead of content:
+**Evaluate endpoint**: Accept `output_id` and optionally `target_id` instead of content:
 
 ```python
 @app.route("/traigent/v1/evaluate", methods=["POST"])
 def evaluate():
     results = []
     for eval_item in evaluations:
-        # Look up data locally using IDs
+        # Look up output locally using output_id
         output = get_output_locally(eval_item["output_id"])
-        target = get_target_locally(eval_item["target_id"])
+        # For ID-based datasets, target_id may be absent — use input_id to look up target
+        target_key = eval_item.get("target_id") or eval_item["input_id"]
+        target = get_target_locally(target_key)
 
         metrics = compute_metrics(output, target)
         results.append({
@@ -68,6 +87,11 @@ def evaluate():
 
     return jsonify({...})
 ```
+
+### Tunable ID Validation (Important)
+
+Your service should reject requests where `tunable_id` does not match your configured tunable.
+This prevents accidental cross-routing in multi-service environments and aligns with Traigent wrapper behavior.
 
 ### Session and ID Management
 
@@ -114,7 +138,7 @@ The SDK provides a decorator-based wrapper for building services:
 ```python
 from traigent.wrapper import TraigentService
 
-app = TraigentService(capability_id="my_agent")
+app = TraigentService(tunable_id="my_agent")
 
 @app.tunables
 def config_space():
@@ -129,7 +153,7 @@ async def generate_response(input_id: str, data: dict, config: dict) -> dict:
     return {
         "output": result,
         "cost_usd": 0.005,
-        "metrics": {"tokens_used": 150}  # Custom operational metrics
+        "metrics": {"accuracy_hint": 0.92}  # Custom quality metrics (combined mode)
     }
 
 @app.evaluate
@@ -253,16 +277,17 @@ Track costs, latency, and any operational data in the execute response:
 
 **Required metrics:**
 - `total_cost_usd` - Total cost in USD (or `cost_usd` as alias)
-- `latency_ms` - Total latency in milliseconds
 
 **Recommended metrics:**
+- `latency_ms` - Total latency in milliseconds
 - `tokens_input` - Input token count
 - `tokens_output` - Output token count
 - `cache_hit_rate` - Cache hit ratio (0.0-1.0)
 - `retry_count` - Number of retries
 
 **Custom metrics:**
-Add any metrics specific to your service. Traigent can optimize for any numeric metric.
+Add any metrics specific to your service.
+For optimization objectives, use numeric metrics. Non-numeric operational fields are allowed for observability only.
 
 ### Quality Metrics (Evaluate Response)
 
@@ -330,7 +355,7 @@ def capabilities():
 def config_space():
     return jsonify({
         "schema_version": "0.9",
-        "capability_id": "my_agent",
+        "tunable_id": "my_agent",
         "tunables": TUNABLES,
     })
 
@@ -344,14 +369,15 @@ def execute():
     total_cost = 0.0
 
     for inp in inputs:
-        # Your agent logic here
-        result = process_input(inp["data"], config)
+        # Look up input data locally using input_id (ID-based datasets)
+        input_data = get_input_locally(inp["input_id"])
+        result = process_input(input_data, config)
         cost = calculate_cost(config)
         total_cost += cost
 
         outputs.append({
             "input_id": inp["input_id"],
-            "output": result,
+            "output_id": generate_output_id(inp["input_id"], data.get("session_id")),
             "cost_usd": cost,
         })
 
@@ -378,7 +404,7 @@ app = FastAPI()
 
 class ExecuteRequest(BaseModel):
     request_id: str | None = None
-    capability_id: str
+    tunable_id: str
     config: dict
     inputs: list[dict]
 
@@ -393,7 +419,7 @@ async def capabilities():
 async def config_space():
     return {
         "schema_version": "0.9",
-        "capability_id": "my_agent",
+        "tunable_id": "my_agent",
         "tunables": [
             {"name": "model", "type": "enum", "domain": {"values": ["fast", "accurate"]}},
         ],
@@ -403,10 +429,12 @@ async def config_space():
 async def execute(req: ExecuteRequest):
     outputs = []
     for inp in req.inputs:
-        result = await process_input(inp["data"], req.config)
+        # Look up input data locally using input_id (ID-based datasets)
+        input_data = await get_input_locally(inp["input_id"])
+        result = await process_input(input_data, req.config)
         outputs.append({
             "input_id": inp["input_id"],
-            "output": result,
+            "output_id": generate_output_id(inp["input_id"], req.session_id),
             "cost_usd": 0.005,
         })
 
@@ -436,8 +464,8 @@ curl http://localhost:8080/traigent/v1/config-space
 curl -X POST http://localhost:8080/traigent/v1/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "request_id": "test-001",
-    "capability_id": "my_agent",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "tunable_id": "my_agent",
     "config": {"model": "fast", "temperature": 0.5},
     "inputs": [
       {"input_id": "ex_001", "data": {"query": "Hello"}}
@@ -448,8 +476,8 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
 curl -X POST http://localhost:8080/traigent/v1/evaluate \
   -H "Content-Type: application/json" \
   -d '{
-    "request_id": "test-002",
-    "capability_id": "my_agent",
+    "request_id": "660e8400-e29b-41d4-a716-446655440001",
+    "tunable_id": "my_agent",
     "evaluations": [
       {
         "input_id": "ex_001",
@@ -462,7 +490,36 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 ### Using the Test Client
 
-See the [test client](../examples/hybrid_mode_demo/test_client.py) for a complete testing script.
+See the [test client](../examples/hybrid_mode_demo/test_mastra_js_api.py) for a complete testing script.
+
+### CDN/WAF Troubleshooting (403 on Python requests)
+
+If your Hybrid API is behind Cloudflare or a similar WAF/CDN, default Python
+clients may be blocked when using the default `python-requests/*` User-Agent.
+
+Use an explicit User-Agent in ad-hoc scripts:
+
+```python
+import requests
+
+headers = {
+    "User-Agent": "Traigent-SDK/1.0",
+    "Content-Type": "application/json",
+}
+resp = requests.get("https://your-service/traigent/v1/health", headers=headers)
+print(resp.status_code)
+```
+
+Traigent SDK transport already sets `User-Agent: Traigent-SDK/1.0` automatically.
+
+### Contract Validation (Recommended)
+
+Validate your OpenAPI contract before sharing with clients:
+
+```bash
+npx @apidevtools/swagger-cli validate docs/hybrid-mode-openapi.yaml
+npx @redocly/cli lint docs/hybrid-mode-openapi.yaml
+```
 
 ### Using Traigent SDK
 
@@ -487,7 +544,7 @@ async def test_connection():
     # Test execute
     response = await transport.execute(
         HybridExecuteRequest(
-            capability_id="my_agent",
+            tunable_id="my_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "ex_001", "data": {"query": "test"}}],
         )
@@ -509,7 +566,8 @@ import traigent
 @traigent.optimize(
     execution_mode="hybrid_api",
     hybrid_api_endpoint="http://your-service:8080",
-    capability_id="my_agent",
+    tunable_id="my_agent",
+    hybrid_api_auth_header="Bearer <token>",  # Optional
     eval_dataset=my_dataset,
 
     # Provide tunables/configuration space for optimizer search
@@ -534,6 +592,17 @@ result = my_agent.optimize()
 print(f"Best config: {result.best_config}")
 print(f"Best metrics: {result.best_metrics}")
 ```
+
+### Online Mode and Backend Visibility
+
+To ensure runs appear in Traigent backend UI:
+
+1. Set `TRAIGENT_OFFLINE_MODE=false`.
+2. Set a reachable backend (`TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL`).
+3. Set `TRAIGENT_API_KEY` (or `TRAIGENT_ACCESS_TOKEN`).
+4. Ensure network/DNS reachability to the backend from the runtime environment.
+
+If these are missing, optimization may still run locally but backend sync can be skipped.
 
 ### Optimization Objectives
 
@@ -576,6 +645,12 @@ def execute():
     return jsonify(result)
 ```
 
+Required behavior:
+- Same `request_id` + same payload => return cached response, do not execute again.
+- Same `request_id` + different payload => return `400 INVALID_REQUEST`.
+
+If idempotency is not implemented on the server, retries can execute duplicate work and produce double billing/side effects.
+
 ### 2. Error Handling
 
 Return appropriate HTTP status codes and structured errors:
@@ -604,6 +679,39 @@ def execute():
         return jsonify({
             "error": {"code": "INTERNAL_ERROR", "message": str(e)}
         }), 500
+```
+
+Status-code handling matrix (recommended client behavior):
+
+| Status | Meaning | Retry strategy |
+|--------|---------|----------------|
+| `400` | Invalid payload / validation error | No retry until fixed |
+| `401` | Authentication failure | Refresh credentials then retry |
+| `404` | Route/session/capability missing | Re-discover or recreate state before retry |
+| `408` | Request timeout | Retry with backoff and/or increase `timeout_ms` |
+| `409` | State conflict (e.g. stale session/execution state) | Recreate state/session, then retry |
+| `429` | Rate-limited | Retry with backoff; honor `Retry-After` |
+| `500` | Internal server error | Retry with bounded backoff |
+| `503` | Temporary outage | Retry with backoff; honor `Retry-After` |
+
+If you use `TraigentService`, you can raise explicit wrapper errors to map directly:
+
+```python
+from traigent.wrapper import (
+    RateLimitError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
+
+@app.execute
+def run(input_id, data, config):
+    if quota_exceeded():
+        raise RateLimitError("Quota exceeded", retry_after=30)  # HTTP 429
+    if backend_down():
+        raise ServiceUnavailableError("Dependency unavailable", retry_after=10)  # HTTP 503
+    if not valid_token():
+        raise UnauthorizedError("Missing/invalid token")  # HTTP 401
+    return {"output": {"ok": True}, "cost_usd": 0.001}
 ```
 
 ### 3. Partial Results
@@ -651,9 +759,22 @@ async def execute():
     except asyncio.TimeoutError:
         return jsonify({
             "status": "failed",
-            "error": {"code": "TIMEOUT", "message": f"Request timed out after {timeout_ms}ms"}
-        }), 504
+            "error": {"code": "REQUEST_TIMEOUT", "message": f"Request timed out after {timeout_ms}ms"}
+        }), 408
 ```
+
+### 5. Keep Optional Fields Truly Optional
+
+Avoid sending empty optional sections in primary examples (for example, `constraints: {}`) unless they carry intent.
+Omitting optional fields makes client implementations and generated SDKs cleaner.
+
+### 6. Tracing and Correlation
+
+Support W3C trace headers for observability:
+
+- Accept `traceparent` and `tracestate` request headers.
+- Propagate these headers downstream when calling model/providers.
+- Return `x-traigent-request-id` so logs can join API-level and optimizer-level events.
 
 ---
 
@@ -690,6 +811,35 @@ Error: Request timed out after 30000ms
 ```
 
 **Solution**: Increase `timeout_ms` in the request or optimize your service.
+
+### `tunable_id` Mismatch (400)
+
+```
+INVALID_REQUEST: tunable_id mismatch
+```
+
+**Solution**: Send the exact `tunable_id` returned by `GET /traigent/v1/config-space`.
+
+### Upstream Model Quota / 429
+
+```
+statusCode: 429
+code: insufficient_quota
+```
+
+**Solution**: Use a provider key/project with available quota, or switch to deterministic mock generation for local validation.
+
+### Backend Results Not Visible
+
+```
+Backend tracking unavailable ... Results will be saved locally
+```
+
+**Solution**:
+- Confirm `TRAIGENT_OFFLINE_MODE=false`
+- Confirm `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` points to reachable backend
+- Confirm `TRAIGENT_API_KEY` is present and valid
+- Check DNS/network reachability from the runtime host
 
 ---
 

@@ -72,7 +72,7 @@ def extract_label(response: str) -> str:
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
-def classify_text(text: str) -> str:
+def ai_agent_classify_text_sentiment(text: str) -> str:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
 
@@ -116,7 +116,7 @@ async def main() -> None:
     )
 
     print_estimated_time("04_multi_objective.py")
-    results = await classify_text.optimize(
+    results = await ai_agent_classify_text_sentiment.optimize(
         algorithm="random",
         max_trials=10,
         show_progress=True,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from traigent.core.optimization_pipeline import (
+    HybridAPIEvaluatorOptions,
     create_effective_evaluator,
     create_traigent_config,
 )
@@ -43,15 +44,17 @@ def test_create_effective_evaluator_uses_hybrid_api_evaluator() -> None:
     evaluator, js_pool = create_effective_evaluator(
         **_make_common_kwargs(),
         execution_mode="hybrid_api",
-        hybrid_api_endpoint="http://localhost:8080",
-        hybrid_api_capability_id="cap-1",
-        hybrid_api_batch_size=8,
-        hybrid_api_batch_parallelism=2,
+        hybrid_api_options=HybridAPIEvaluatorOptions(
+            endpoint="http://localhost:8080",
+            tunable_id="cap-1",
+            batch_size=8,
+            batch_parallelism=2,
+        ),
     )
 
     assert isinstance(evaluator, HybridAPIEvaluator)
     assert evaluator._api_endpoint == "http://localhost:8080"
-    assert evaluator._capability_id == "cap-1"
+    assert evaluator._tunable_id == "cap-1"
     assert evaluator._batch_size == 8
     assert evaluator._batch_parallelism == 2
     assert js_pool is None

@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -15,6 +15,7 @@ COVERAGE := $(PYTHON) -m coverage
 
 # Directories
 SRC_DIR := traigent
+VALIDATION_SRC_DIR := traigent_validation
 TEST_DIR := tests
 # NOTE: examples, playground, paper_experiments moved to TraigentDemo
 
@@ -81,23 +82,23 @@ test-coverage:  ## Run tests with coverage report
 
 lint:  ## Run all linters (ruff, mypy, bandit)
 	@echo "Running Ruff..."
-	$(RUFF) check $(SRC_DIR) --fix
+	$(RUFF) check $(SRC_DIR) $(VALIDATION_SRC_DIR) --fix
 	@echo "Running MyPy..."
-	$(MYPY) $(SRC_DIR) --install-types --non-interactive
+	$(MYPY) $(SRC_DIR) $(VALIDATION_SRC_DIR) --install-types --non-interactive
 	@echo "Running Bandit..."
-	$(BANDIT) -r $(SRC_DIR) -ll --skip B101,B601
+	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -ll --skip B101,B601
 
 format:  ## Format code with black and isort
 	@echo "Formatting with Black..."
-	$(BLACK) $(SRC_DIR) $(TEST_DIR)
+	$(BLACK) $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	@echo "Sorting imports with isort..."
-	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) --profile black
+	$(PYTHON) -m isort $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR) --profile black
 
 security:  ## Run security checks
 	@echo "Running Bandit security scan..."
-	$(BANDIT) -r $(SRC_DIR) -f json -o security_report.json
+	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -f json -o security_report.json
 	@echo "Checking for hardcoded secrets..."
-	@grep -r "sk-proj\|sk-ant\|api_key\|secret\|password" --include="*.py" $(SRC_DIR) || echo "No hardcoded secrets found"
+	@grep -r "sk-proj\|sk-ant\|api_key\|secret\|password" --include="*.py" $(SRC_DIR) $(VALIDATION_SRC_DIR) || echo "No hardcoded secrets found"
 
 clean:  ## Clean up generated files
 	rm -rf build/
@@ -117,14 +118,14 @@ optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint
-	$(BLACK) --check $(SRC_DIR) $(TEST_DIR)
+	$(BLACK) --check $(SRC_DIR) $(VALIDATION_SRC_DIR) $(TEST_DIR)
 	$(MAKE) test-coverage
 	$(MAKE) security
 
 quick-fix:  ## Quick fix common issues (format, simple lint fixes)
 	@echo "Applying quick fixes..."
 	$(MAKE) format
-	$(RUFF) check $(SRC_DIR) --fix --unsafe-fixes
+	$(RUFF) check $(SRC_DIR) $(VALIDATION_SRC_DIR) --fix --unsafe-fixes
 	@echo "Quick fixes applied!"
 
 pre-commit:  ## Run pre-commit hooks on all files
@@ -206,6 +207,41 @@ sonar-local:  ## Run SonarQube analysis locally (requires sonar-local-start firs
 		-Dsonar.login=$$SONAR_LOCAL_TOKEN
 	@echo ""
 	@echo "View results at: http://localhost:9000/dashboard?id=traigent-local"
+
+# Test quality analysis
+test-quality:  ## Run test quality analysis pipeline (local)
+	@echo "=== Test Quality Pipeline ==="
+	@echo ""
+	@echo "[1/4] Running assertion linter..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_test_assertions 2>&1 || true
+	@echo ""
+	@echo "[2/4] Running pricing consistency linter..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_pricing_consistency 2>&1
+	@echo ""
+	@echo "[3/4] Running test weakness analyzer..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.test_weakness_analyzer --output text 2>&1 || true
+	@echo ""
+	@echo "[4/4] Running LLM test scanner (AST-only)..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner -d $(TEST_DIR)/optimizer_validation -o text
+	@echo ""
+	@echo "Test quality pipeline complete"
+
+test-quality-ci:  ## Run test quality checks for CI (strict mode)
+	@echo "=== CI Test Quality Gates ==="
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_pricing_consistency
+	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner \
+		-d $(TEST_DIR)/optimizer_validation -o json -s /tmp/test_quality_report.json
+	@echo "Test quality report saved to /tmp/test_quality_report.json"
+
+test-quality-llm:  ## Run test quality with LLM suggestions (requires API key)
+	@if [ -z "$$OPENAI_API_KEY" ]; then \
+		echo "Error: OPENAI_API_KEY not set"; \
+		exit 1; \
+	fi
+	$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner \
+		-d $(TEST_DIR)/optimizer_validation --enable-llm -o text \
+		-s $(TEST_DIR)/optimizer_validation/llm_suggestions.json
+	@echo "LLM suggestions saved to $(TEST_DIR)/optimizer_validation/llm_suggestions.json"
 
 sonar-local-issues:  ## Show issues from local SonarQube
 	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \

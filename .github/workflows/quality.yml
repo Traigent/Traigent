@@ -35,40 +35,40 @@ jobs:
 
     - name: Code formatting check with black
       run: |
-        black --check --diff traigent/
+        black --check --diff traigent/ traigent_validation/
 
     - name: Import sorting check with isort
       run: |
-        isort --check-only --diff traigent/
+        isort --check-only --diff traigent/ traigent_validation/
 
     - name: Linting with ruff
       run: |
-        ruff check traigent/ --output-format=github
+        ruff check traigent/ traigent_validation/ --output-format=github
 
     - name: Ruff statistics
       run: |
-        ruff check traigent/ --statistics || true
+        ruff check traigent/ traigent_validation/ --statistics || true
 
     - name: Type checking with mypy
       run: |
-        mypy traigent/ --install-types --non-interactive
+        mypy traigent/ traigent_validation/ --install-types --non-interactive
 
     - name: Docstring quality with pydocstyle
       run: |
         python -m pip install pydocstyle
-        pydocstyle traigent/ --convention=google || true
+        pydocstyle traigent/ traigent_validation/ --convention=google || true
 
     - name: Complexity analysis with radon
       run: |
         python -m pip install radon
-        radon cc traigent/ --min B
-        radon mi traigent/ --min B
+        radon cc traigent/ traigent_validation/ --min B
+        radon mi traigent/ traigent_validation/ --min B
 
     - name: Security check with bandit
       run: |
         python -m pip install bandit[toml]
-        bandit -r traigent/ -f json -o bandit-report.json || true
-        bandit -r traigent/ || true
+        bandit -r traigent/ traigent_validation/ -f json -o bandit-report.json || true
+        bandit -r traigent/ traigent_validation/ || true
 
     - name: Dependency vulnerability check with safety
       run: |
@@ -83,6 +83,10 @@ jobs:
     - name: Test assertion quality lint
       run: |
         python -m tests.optimizer_validation.tools.lint_test_assertions --format github || true
+
+    - name: Pricing consistency lint
+      run: |
+        python -m tests.optimizer_validation.tools.lint_pricing_consistency --format github
 
     - name: Package structure validation
       run: |

@@ -25,6 +25,7 @@ from traigent.cloud.models import (
 )
 from traigent.utils.exceptions import SessionError
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 
 logger = get_logger(__name__)
 
@@ -338,7 +339,8 @@ class SessionState:
         if current_value is None or new_value is None:
             return new_value is not None  # Prefer having a value
 
-        # Assume higher values are better (can be made configurable)
+        if is_minimization_objective(primary_objective):
+            return new_value < current_value
         return new_value > current_value
 
     def _mark_dirty(self) -> None:
@@ -359,8 +361,8 @@ class SessionState:
         return self._version
 
 
-class SessionStateManager:
-    """Manages multiple session states with efficient operations."""
+class _SessionStateRegistry:
+    """Internal registry for session states with bounded in-memory retention."""
 
     def __init__(self, max_sessions: int = 1000) -> None:
         """Initialize session state manager.
@@ -914,8 +916,8 @@ class SessionManager:
             and objectives[0] in best_metrics
         ):
             primary = objectives[0]
-            # Assume higher is better for now
-            # In production, handle minimization objectives
+            if is_minimization_objective(primary):
+                return new_metrics[primary] < best_metrics[primary]
             return new_metrics[primary] > best_metrics[primary]
 
         return False
@@ -925,7 +927,7 @@ class SessionManager:
 # This provides advanced session lifecycle capabilities with backend integration
 
 
-class RefactoredSessionLifecycleManager:
+class SessionLifecycleManager:
     """Enhanced session lifecycle manager with advanced state management.
 
     This class provides more sophisticated session lifecycle management
@@ -952,7 +954,7 @@ class RefactoredSessionLifecycleManager:
             max_events_per_session: Maximum events to keep per session
         """
         # Initialize core session management components
-        self.session_manager = SessionStateManager(max_sessions=max_sessions_cache)
+        self._state_registry = _SessionStateRegistry(max_sessions=max_sessions_cache)
 
         # Configuration
         self.session_ttl = session_ttl
@@ -984,7 +986,7 @@ class RefactoredSessionLifecycleManager:
         logger.info(f"Registering session {session.session_id}")
 
         # Create session state
-        self.session_manager.create_session_state(session, mapping)
+        self._state_registry.create_session_state(session, mapping)
 
         # Record event
         self._record_event(
@@ -1007,7 +1009,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             True if session was started successfully
         """
-        session_state = self.session_manager.get_session_state(session_id)
+        session_state = self._state_registry.get_session_state(session_id)
         if not session_state:
             logger.warning(f"Session {session_id} not found")
             return False
@@ -1032,7 +1034,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             True if session was completed successfully
         """
-        session_state = self.session_manager.get_session_state(session_id)
+        session_state = self._state_registry.get_session_state(session_id)
         if not session_state:
             return False
 
@@ -1066,7 +1068,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             True if session was marked as failed successfully
         """
-        session_state = self.session_manager.get_session_state(session_id)
+        session_state = self._state_registry.get_session_state(session_id)
         if not session_state:
             return False
 
@@ -1089,7 +1091,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             True if session was cancelled successfully
         """
-        session_state = self.session_manager.get_session_state(session_id)
+        session_state = self._state_registry.get_session_state(session_id)
         if not session_state:
             return False
 
@@ -1112,7 +1114,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             Session state or None if not found
         """
-        return self.session_manager.get_session_state(session_id)
+        return self._state_registry.get_session_state(session_id)
 
     def get_session_summary(self, session_id: str) -> dict[str, Any] | None:
         """Get session summary information.
@@ -1123,7 +1125,7 @@ class RefactoredSessionLifecycleManager:
         Returns:
             Session summary or None if not found
         """
-        session_state = self.session_manager.get_session_state(session_id)
+        session_state = self._state_registry.get_session_state(session_id)
         if not session_state:
             return None
 
@@ -1141,8 +1143,8 @@ class RefactoredSessionLifecycleManager:
         """Get list of active session IDs."""
         active_sessions = []
 
-        for session_id in self.session_manager.list_session_ids():
-            session_state = self.session_manager.get_session_state(session_id)
+        for session_id in self._state_registry.list_session_ids():
+            session_state = self._state_registry.get_session_state(session_id)
             if (
                 session_state
                 and session_state.session.status == OptimizationSessionStatus.ACTIVE
@@ -1154,7 +1156,7 @@ class RefactoredSessionLifecycleManager:
     def get_statistics(self) -> dict[str, Any]:
         """Get comprehensive lifecycle manager statistics."""
         return {
-            "session_manager": self.session_manager.get_statistics(),
+            "session_manager": self._state_registry.get_statistics(),
             "total_events": sum(
                 len(events) for events in self._session_events.values()
             ),
@@ -1196,11 +1198,11 @@ class RefactoredSessionLifecycleManager:
         logger.debug("Performing session lifecycle maintenance")
 
         # Clean up completed sessions
-        cleaned = self.session_manager.cleanup_completed_sessions(self.session_ttl)
+        cleaned = self._state_registry.cleanup_completed_sessions(self.session_ttl)
 
         # Clean up old events for completed sessions
         for session_id in list(self._session_events.keys()):
-            session_state = self.session_manager.get_session_state(session_id)
+            session_state = self._state_registry.get_session_state(session_id)
             if not session_state or session_state.session.status in [
                 OptimizationSessionStatus.COMPLETED,
                 OptimizationSessionStatus.FAILED,
@@ -1222,8 +1224,8 @@ class RefactoredSessionLifecycleManager:
         logger.info("Enhanced session lifecycle manager cleaned up")
 
 
-# Backward compatibility aliases
-SessionLifecycleManager = RefactoredSessionLifecycleManager
+# Backward compatibility alias
+RefactoredSessionLifecycleManager = SessionLifecycleManager
 
 # Global lifecycle manager instance (optional - for backward compatibility)
-lifecycle_manager = RefactoredSessionLifecycleManager()
+lifecycle_manager = SessionLifecycleManager()

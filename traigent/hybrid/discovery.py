@@ -40,13 +40,17 @@ class ConfigSpaceDiscovery:
         # config_space = {"temperature": {"low": 0.0, "high": 2.0, "step": 0.1}, ...}
     """
 
-    def __init__(self, transport: HybridTransport) -> None:
+    def __init__(
+        self, transport: HybridTransport, tunable_id: str | None = None
+    ) -> None:
         """Initialize discovery with transport.
 
         Args:
             transport: HybridTransport for fetching config space.
+            tunable_id: Optional tunable ID to scope config space discovery.
         """
         self._transport = transport
+        self._tunable_id = tunable_id
         self._cached_response: ConfigSpaceResponse | None = None
 
     async def fetch(self) -> ConfigSpaceResponse:
@@ -61,10 +65,12 @@ class ConfigSpaceDiscovery:
         if self._cached_response is not None:
             return self._cached_response
 
-        self._cached_response = await self._transport.discover_config_space()
+        self._cached_response = await self._transport.discover_config_space(
+            tunable_id=self._tunable_id,
+        )
         logger.info(
             f"Discovered {len(self._cached_response.tvars)} TVARs "
-            f"for capability '{self._cached_response.capability_id}'"
+            f"for tunable '{self._cached_response.tunable_id}'"
         )
         return self._cached_response
 
@@ -80,13 +86,13 @@ class ConfigSpaceDiscovery:
         response = await self.fetch()
         return response.to_traigent_config_space()
 
-    def get_capability_id(self) -> str | None:
-        """Get the capability ID from cached response.
+    def get_tunable_id(self) -> str | None:
+        """Get the tunable ID from cached response.
 
         Returns:
-            Capability ID if available, None if not fetched yet.
+            Tunable ID if available, None if not fetched yet.
         """
-        return self._cached_response.capability_id if self._cached_response else None
+        return self._cached_response.tunable_id if self._cached_response else None
 
     def get_constraints(self) -> dict[str, Any] | list[Any] | None:
         """Get constraints from cached response.
@@ -236,10 +242,9 @@ class ConfigSpaceDiscovery:
         )
         promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
 
-        pseudo_path = Path(f"hybrid-{response.capability_id or 'unknown'}-config-space")
+        pseudo_path = Path(f"hybrid-{response.tunable_id or 'unknown'}-config-space")
         compiled_constraints, derived_constraints = _compile_constraints_unified(
             constraints_input if constraints_input is not None else [],
-            validate_constraints=True,
             path=pseudo_path,
         )
         constraint_wrappers = [
@@ -263,7 +268,7 @@ class ConfigSpaceDiscovery:
             default_config=dict(response.defaults or {}),
             metadata={
                 "source": "hybrid_api_config_space",
-                "capability_id": response.capability_id,
+                "tunable_id": response.tunable_id,
                 "schema_version": response.schema_version,
             },
             budget=budget,

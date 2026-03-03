@@ -1,31 +1,16 @@
-"""
-Intelligent LLM Cost Calculator with Fuzzy Model Matching
+"""LLM cost calculation utilities.
 
-This module provides comprehensive cost calculation for LLM API calls with:
-- Exact model name mapping for litellm compatibility
-- Fuzzy matching with substring search and semantic validation
-- Intelligent date/version parsing and selection
-- Caching for performance optimization
-- Graceful fallback with informative logging
-
-Usage:
-    from traigent.utils.cost_calculator import CostCalculator
-
-    calculator = CostCalculator()
-    cost = calculator.calculate_cost(
-        prompt="Your prompt here",
-        response="Model response",
-        model_name="claude-3-haiku"
-    )
-
-This module can be copied to other repositories for consistent cost calculation.
+Cost resolution is intentionally fail-fast:
+- Runtime and pre-estimation pricing use litellm first.
+- Unknown models raise with actionable remediation by default.
+- Users can provide explicit custom pricing for private/unsupported models.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
+import json
 import logging
 import os
-import re
 import threading
 import warnings
 from dataclasses import dataclass
@@ -50,13 +35,24 @@ except (ImportError, KeyError):
 # Backward compatibility alias
 TOKENCOST_AVAILABLE = LITELLM_AVAILABLE
 
-# Fallback pricing for models not in litellm's database (per-token costs)
-FALLBACK_MODEL_PRICING = {
+# Canonical model name constants (referenced in ESTIMATION_MODEL_PRICING)
+_GPT35_TURBO = "gpt-3.5-turbo"
+_GPT4O = "gpt-4o"
+
+_CUSTOM_PRICING_FILE_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_FILE"
+_CUSTOM_PRICING_JSON_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_JSON"
+_CUSTOM_PRICING_CACHE: dict[str, tuple[float, float]] | None = None
+_CUSTOM_PRICING_CACHE_KEY: tuple[str, str] | None = None
+_CUSTOM_PRICING_LOCK = threading.Lock()
+
+# Estimation pricing for pre-optimization cost estimation (per-token costs).
+# Post-call cost tracking uses litellm exclusively via cost_from_tokens().
+ESTIMATION_MODEL_PRICING = {
     # OpenAI
-    "gpt-4o": {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 10.0e-6},
+    _GPT4O: {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 10.0e-6},
     "gpt-4o-mini": {"input_cost_per_token": 0.15e-6, "output_cost_per_token": 0.6e-6},
     "gpt-4-turbo": {"input_cost_per_token": 10.0e-6, "output_cost_per_token": 30.0e-6},
-    "gpt-3.5-turbo": {"input_cost_per_token": 0.5e-6, "output_cost_per_token": 1.5e-6},
+    _GPT35_TURBO: {"input_cost_per_token": 0.5e-6, "output_cost_per_token": 1.5e-6},
     # Anthropic
     "claude-3-5-sonnet-20241022": {
         "input_cost_per_token": 3.0e-6,
@@ -93,16 +89,18 @@ FALLBACK_MODEL_PRICING = {
     },
 }
 
-# Model scoring constants for fuzzy matching preference
-# Used in _calculate_model_score to prioritize model selection
-LATEST_MODEL_PRIORITY = (9999, 12, 31, 99)  # "latest" models get highest priority
-VERSION_FALLBACK_DATE = (
-    2024,
-    1,
-    1,
-)  # Base date for version-numbered models (e.g., v1, v2)
-UNVERSIONED_FALLBACK_DATE = (2020, 1, 1)  # Base date for unversioned models
-DATE_MATCH_PRIORITY = 50  # Priority value for date-matched models
+# Canonical model-name aliases used by estimation and validation code paths.
+# This avoids duplicated alias tables drifting across modules.
+MODEL_NAME_ALIASES: dict[str, str] = {
+    "gpt-4": "gpt-4-turbo",
+    "gpt-4-32k": "gpt-4-turbo",
+    "claude-3-haiku": "claude-3-haiku-20240307",
+    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
+    "claude-3-opus": "claude-3-opus-20240229",
+    "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+}
 
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
 _warned_models: set[str] = set()
@@ -131,8 +129,8 @@ def _normalize_model_name(model: str) -> str:
 
     Note:
         Ollama-style "model:tag" identifiers (e.g., "llama3:latest") will have
-        the tag stripped. For Ollama models, use the full model name directly
-        or add to FALLBACK_MODEL_PRICING for pricing lookup.
+        the tag stripped. For tagged models, configure explicit aliasing or
+        custom pricing if needed.
 
     Args:
         model: Raw model name
@@ -197,10 +195,187 @@ def _is_model_known_to_litellm(model: str) -> bool:
     return False
 
 
+def _resolve_litellm_alias(model: str) -> str:
+    """Resolve model aliases through litellm.model_alias_map if present."""
+    normalized = _normalize_model_name(model)
+    if not LITELLM_AVAILABLE:
+        return normalized
+
+    alias_map = getattr(litellm, "model_alias_map", None)
+    if not isinstance(alias_map, dict):
+        return normalized
+
+    candidates = (model, normalized, model.lower(), normalized.lower())
+    for candidate in candidates:
+        mapped = alias_map.get(candidate)
+        if isinstance(mapped, str) and mapped:
+            return mapped
+
+    return normalized
+
+
+def _parse_custom_pricing_entry(
+    model: str, entry: Any, source: str
+) -> tuple[float, float]:
+    """Parse one custom pricing entry into (input_cost_per_token, output_cost_per_token)."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"Invalid pricing entry for model '{model}' in {source}: expected object"
+        )
+
+    input_val = entry.get("input_cost_per_token", entry.get("input"))
+    output_val = entry.get("output_cost_per_token", entry.get("output"))
+
+    if input_val is None or output_val is None:
+        raise ValueError(
+            f"Invalid pricing entry for model '{model}' in {source}: "
+            "expected input_cost_per_token/output_cost_per_token"
+        )
+
+    try:
+        input_cost = float(input_val)
+        output_cost = float(output_val)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid numeric pricing for model '{model}' in {source}"
+        ) from exc
+
+    if input_cost < 0 or output_cost < 0:
+        raise ValueError(f"Invalid negative pricing for model '{model}' in {source}")
+
+    return input_cost, output_cost
+
+
+def _normalize_custom_pricing_map(
+    raw: dict[str, Any], source: str
+) -> dict[str, tuple[float, float]]:
+    """Normalize custom pricing payload into lowercase model index."""
+    normalized: dict[str, tuple[float, float]] = {}
+    for model, entry in raw.items():
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError(
+                f"Invalid model key in {source}: expected non-empty string"
+            )
+        input_cost, output_cost = _parse_custom_pricing_entry(model, entry, source)
+        keys = {model.lower(), _normalize_model_name(model).lower()}
+        for key in keys:
+            normalized[key] = (input_cost, output_cost)
+    return normalized
+
+
+def _load_custom_pricing_from_sources() -> dict[str, tuple[float, float]]:
+    """Load custom model pricing from env-configured file and/or JSON payload."""
+    pricing: dict[str, tuple[float, float]] = {}
+
+    file_path = os.environ.get(_CUSTOM_PRICING_FILE_ENV, "").strip()
+    if file_path:
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                file_payload = json.load(f)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse custom pricing file '{file_path}'."
+            ) from exc
+        if not isinstance(file_payload, dict):
+            raise ValueError(
+                f"Invalid custom pricing file '{file_path}': root must be an object"
+            )
+        pricing.update(_normalize_custom_pricing_map(file_payload, file_path))
+
+    env_json = os.environ.get(_CUSTOM_PRICING_JSON_ENV, "").strip()
+    if env_json:
+        try:
+            env_payload = json.loads(env_json)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse {_CUSTOM_PRICING_JSON_ENV}: invalid JSON"
+            ) from exc
+        if not isinstance(env_payload, dict):
+            raise ValueError(
+                f"Invalid {_CUSTOM_PRICING_JSON_ENV}: root must be an object"
+            )
+        pricing.update(
+            _normalize_custom_pricing_map(env_payload, _CUSTOM_PRICING_JSON_ENV)
+        )
+
+    return pricing
+
+
+def _get_custom_pricing_index() -> dict[str, tuple[float, float]]:
+    """Get cached custom model pricing index keyed by lowercase model names."""
+    file_path = os.environ.get(_CUSTOM_PRICING_FILE_ENV, "").strip()
+    env_json = os.environ.get(_CUSTOM_PRICING_JSON_ENV, "").strip()
+    cache_key = (file_path, env_json)
+
+    global _CUSTOM_PRICING_CACHE, _CUSTOM_PRICING_CACHE_KEY
+    if _CUSTOM_PRICING_CACHE is not None and _CUSTOM_PRICING_CACHE_KEY == cache_key:
+        return _CUSTOM_PRICING_CACHE
+
+    with _CUSTOM_PRICING_LOCK:
+        if _CUSTOM_PRICING_CACHE is not None and _CUSTOM_PRICING_CACHE_KEY == cache_key:
+            return _CUSTOM_PRICING_CACHE
+        _CUSTOM_PRICING_CACHE = _load_custom_pricing_from_sources()
+        _CUSTOM_PRICING_CACHE_KEY = cache_key
+        return _CUSTOM_PRICING_CACHE
+
+
+def _try_custom_model_pricing(model: str) -> tuple[float, float] | None:
+    """Try resolving pricing from explicit user-provided custom pricing."""
+    normalized = _normalize_model_name(model).lower()
+    index = _get_custom_pricing_index()
+    return index.get(model.lower()) or index.get(normalized)
+
+
+def _unknown_model_resolution_message(model: str) -> str:
+    """Build actionable unknown-model remediation instructions."""
+    return (
+        f"Model '{model}' has no known pricing. "
+        "Fix by choosing one of: "
+        "1) use a provider model id that litellm can price, "
+        "2) configure litellm.model_alias_map for your alias, "
+        f"3) provide explicit pricing via {_CUSTOM_PRICING_FILE_ENV} or {_CUSTOM_PRICING_JSON_ENV}. "
+        "Example JSON: "
+        '{"my-model":{"input_cost_per_token":1e-6,"output_cost_per_token":2e-6}}'
+    )
+
+
+def _try_litellm_prompt_cost(
+    model: str, prompt: str | list[dict[str, Any]] | None, tokens: int
+) -> tuple[float | None, int]:
+    """Attempt prompt cost calculation via litellm.
+
+    Args:
+        model: The model name
+        prompt: Input prompt (string, message list, or None)
+        tokens: Current token count (updated if prompt is provided)
+
+    Returns:
+        Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
+        determine pricing and the caller should try custom pricing.
+    """
+    model_known = _is_model_known_to_litellm(model)
+    if prompt is not None:
+        if isinstance(prompt, list):
+            tokens = litellm.token_counter(model=model, messages=prompt)
+        else:
+            tokens = litellm.token_counter(model=model, text=prompt)
+    prompt_cost, _ = litellm.cost_per_token(
+        model=model, prompt_tokens=tokens, completion_tokens=0
+    )
+    if prompt_cost > 0:
+        return float(prompt_cost), tokens
+    if model_known:
+        return 0.0, tokens
+    return None, tokens
+
+
 def calculate_prompt_cost(
     prompt: str | list[dict[str, Any]] | None, model: str
 ) -> float:
     """Calculate INPUT cost only using litellm.
+
+    .. deprecated::
+        Use :func:`cost_from_tokens` with pre-computed token counts instead.
 
     Backward-compatible wrapper for tokencost's calculate_prompt_cost.
 
@@ -213,60 +388,66 @@ def calculate_prompt_cost(
 
     Raises:
         UnknownModelError: If the model's pricing cannot be determined from
-            litellm or the fallback pricing table.
+            litellm or explicit custom pricing configuration.
     """
+    warnings.warn(
+        "calculate_prompt_cost() is deprecated. Use cost_from_tokens() with "
+        "pre-computed token counts instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     tokens = 0
-    model_known = False
 
     if LITELLM_AVAILABLE:
-        model_known = _is_model_known_to_litellm(model)
         try:
-            # Count tokens first (guard against None prompt)
-            if prompt is not None:
-                if isinstance(prompt, list):
-                    tokens = litellm.token_counter(model=model, messages=prompt)
-                else:
-                    tokens = litellm.token_counter(model=model, text=prompt)
-
-            # Get cost for input tokens only (0 completion tokens)
-            prompt_cost, _ = litellm.cost_per_token(
-                model=model, prompt_tokens=tokens, completion_tokens=0
-            )
-            if prompt_cost > 0:
-                return float(prompt_cost)
-            # Zero cost from litellm - if model is known, allow 0.0
-            if model_known:
-                return 0.0
+            result, tokens = _try_litellm_prompt_cost(model, prompt, tokens)
+            if result is not None:
+                return result
         except Exception:
-            # litellm failed - log for diagnostics and fall through to fallback
             logger.debug(
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
-            pass
 
-    # Estimate tokens from prompt if we don't have a count
-    if tokens == 0 and prompt is not None:
-        # ~3 chars per token (conservative for non-English/code)
-        prompt_str = str(prompt) if not isinstance(prompt, str) else prompt
-        tokens = max(1, len(prompt_str) // 3)
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        input_cost_per_token, _ = custom_pricing
+        return float(max(tokens, 0) * input_cost_per_token)
 
-    # Default to 10 tokens if we still don't have an estimate
-    estimated_tokens = tokens if tokens > 0 else 10
+    raise UnknownModelError(_unknown_model_resolution_message(model))
 
-    # Try fallback pricing
-    fallback_cost = _fallback_cost_from_tokens(model, estimated_tokens, 0)[0]
-    if fallback_cost > 0:
-        return fallback_cost
 
-    # Unknown model - raise exception (mimics tokencost behavior)
-    raise UnknownModelError(
-        f"Model '{model}' is not in litellm's pricing database or fallback table. "
-        "Add it to FALLBACK_MODEL_PRICING or use a known model."
+def _try_litellm_completion_cost(
+    model: str, completion: str | None, tokens: int
+) -> tuple[float | None, int]:
+    """Attempt completion cost calculation via litellm.
+
+    Args:
+        model: The model name
+        completion: Completion text (or None)
+        tokens: Current token count (updated if completion is provided)
+
+    Returns:
+        Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
+        determine pricing and the caller should try custom pricing.
+    """
+    model_known = _is_model_known_to_litellm(model)
+    if completion is not None:
+        tokens = litellm.token_counter(model=model, text=completion)
+    _, completion_cost = litellm.cost_per_token(
+        model=model, prompt_tokens=0, completion_tokens=tokens
     )
+    if completion_cost > 0:
+        return float(completion_cost), tokens
+    if model_known:
+        return 0.0, tokens
+    return None, tokens
 
 
 def calculate_completion_cost(completion: str | None, model: str) -> float:
     """Calculate OUTPUT cost only using litellm.
+
+    .. deprecated::
+        Use :func:`cost_from_tokens` with pre-computed token counts instead.
 
     Backward-compatible wrapper for tokencost's calculate_completion_cost.
 
@@ -279,52 +460,32 @@ def calculate_completion_cost(completion: str | None, model: str) -> float:
 
     Raises:
         UnknownModelError: If the model's pricing cannot be determined from
-            litellm or the fallback pricing table.
+            litellm or explicit custom pricing configuration.
     """
+    warnings.warn(
+        "calculate_completion_cost() is deprecated. Use cost_from_tokens() with "
+        "pre-computed token counts instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     tokens = 0
-    model_known = False
 
     if LITELLM_AVAILABLE:
-        model_known = _is_model_known_to_litellm(model)
         try:
-            # Count tokens (guard against None completion)
-            if completion is not None:
-                tokens = litellm.token_counter(model=model, text=completion)
-
-            # Get cost for output tokens only (0 prompt tokens)
-            _, completion_cost = litellm.cost_per_token(
-                model=model, prompt_tokens=0, completion_tokens=tokens
-            )
-            if completion_cost > 0:
-                return float(completion_cost)
-            # Zero cost from litellm - if model is known, allow 0.0
-            if model_known:
-                return 0.0
+            result, tokens = _try_litellm_completion_cost(model, completion, tokens)
+            if result is not None:
+                return result
         except Exception:
-            # litellm failed - log for diagnostics and fall through to fallback
             logger.debug(
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
-            pass
 
-    # Estimate tokens from completion if we don't have a count
-    if tokens == 0 and completion is not None:
-        # ~3 chars per token (conservative for non-English/code)
-        tokens = max(1, len(completion) // 3)
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        _, output_cost_per_token = custom_pricing
+        return float(max(tokens, 0) * output_cost_per_token)
 
-    # Default to 10 tokens if we still don't have an estimate
-    estimated_tokens = tokens if tokens > 0 else 10
-
-    # Try fallback pricing
-    fallback_cost = _fallback_cost_from_tokens(model, 0, estimated_tokens)[1]
-    if fallback_cost > 0:
-        return fallback_cost
-
-    # Unknown model - raise exception (mimics tokencost behavior)
-    raise UnknownModelError(
-        f"Model '{model}' is not in litellm's pricing database or fallback table. "
-        "Add it to FALLBACK_MODEL_PRICING or use a known model."
-    )
+    raise UnknownModelError(_unknown_model_resolution_message(model))
 
 
 def _normalize_model_for_fallback(model: str) -> str:
@@ -342,10 +503,50 @@ def _normalize_model_for_fallback(model: str) -> str:
     return normalized.lower() if normalized else model.lower()
 
 
-def _fallback_cost_from_tokens(
+def _find_fallback_pricing(
+    base_model: str,
+) -> tuple[dict[str, float] | None, str | None]:
+    """Find pricing entry for a normalized model name via exact then prefix match.
+
+    Args:
+        base_model: Lower-cased, normalized model name
+
+    Returns:
+        Tuple of (pricing_dict, matched_key) or (None, None) if not found.
+    """
+    # Exact match (case-insensitive via normalized base_model)
+    for key, value in ESTIMATION_MODEL_PRICING.items():
+        if key.lower() == base_model:
+            return value, key
+
+    # Prefix matching - prefer LONGEST matching key
+    best_match_len = 0
+    pricing = None
+    matched_key = None
+    for model_key, model_pricing in ESTIMATION_MODEL_PRICING.items():
+        key_lower = model_key.lower()
+        # Check if base_model starts with key or key starts with base_model
+        if base_model.startswith(key_lower):
+            if len(key_lower) > best_match_len:
+                best_match_len = len(key_lower)
+                pricing = model_pricing
+                matched_key = model_key
+        elif key_lower.startswith(base_model):
+            if len(base_model) > best_match_len:
+                best_match_len = len(base_model)
+                pricing = model_pricing
+                matched_key = model_key
+
+    return pricing, matched_key
+
+
+def _estimation_cost_from_tokens(
     model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
-    """Calculate costs using fallback pricing dictionary.
+    """Calculate costs using estimation pricing dictionary.
+
+    Used for pre-optimization estimation only. Post-call tracking should use
+    cost_from_tokens() which uses litellm exclusively.
 
     Args:
         model: Model name (may include provider prefix)
@@ -357,31 +558,13 @@ def _fallback_cost_from_tokens(
     """
     base_model = _normalize_model_for_fallback(model)
 
-    # Try exact match first (case-insensitive via normalized base_model)
-    pricing = None
-    matched_key = None
-    for key, value in FALLBACK_MODEL_PRICING.items():
-        if key.lower() == base_model:
-            pricing = value
-            matched_key = key
+    # Resolve canonical aliases before lookup
+    for alias, canonical in MODEL_NAME_ALIASES.items():
+        if base_model == alias.lower():
+            base_model = canonical.lower()
             break
 
-    # Try prefix matching - prefer LONGEST matching key
-    if not pricing:
-        best_match_len = 0
-        for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
-            key_lower = model_key.lower()
-            # Check if base_model starts with key or key starts with base_model
-            if base_model.startswith(key_lower):
-                if len(key_lower) > best_match_len:
-                    best_match_len = len(key_lower)
-                    pricing = model_pricing
-                    matched_key = model_key
-            elif key_lower.startswith(base_model):
-                if len(base_model) > best_match_len:
-                    best_match_len = len(base_model)
-                    pricing = model_pricing
-                    matched_key = model_key
+    pricing, matched_key = _find_fallback_pricing(base_model)
 
     if pricing:
         # Warn-once per model to avoid log spam
@@ -390,76 +573,26 @@ def _fallback_cost_from_tokens(
                 _warned_models.add(model)
                 log_fn = logger.debug if _quiet else logger.warning
                 log_fn(
-                    "Using fallback pricing for model %r (matched %r)",
+                    "Using estimation pricing for model %r (matched %r)",
                     model,
                     matched_key,
                 )
-        input_cost = input_tokens * pricing["input_cost_per_token"]
-        output_cost = output_tokens * pricing["output_cost_per_token"]
-        return input_cost, output_cost
+        return (
+            input_tokens * pricing["input_cost_per_token"],
+            output_tokens * pricing["output_cost_per_token"],
+        )
 
     return 0.0, 0.0
 
 
-# ---------------------------------------------------------------------------
-# Heuristic tier pricing for pre-optimization cost estimation
-# ---------------------------------------------------------------------------
-
-# Per-token costs for each pricing tier (conservative estimates)
-_TIER_EXPENSIVE = {"input": 10.0e-6, "output": 30.0e-6}  # ~GPT-4-turbo class
-_TIER_MID = {"input": 3.0e-6, "output": 15.0e-6}  # ~GPT-4o / Sonnet class
-_TIER_CHEAP = {"input": 0.25e-6, "output": 1.25e-6}  # ~Haiku / Mini class
-
-# Ordered regex rules for model tier classification.
-# Order is critical: most specific patterns first to avoid substring collisions.
-# \b treats `-` as a word boundary, so "gpt-4o-mini" matches r"gpt-4o\b".
-# We rely on ordering (gpt-4o-mini checked BEFORE gpt-4o) to handle this.
-_TIER_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"gpt-4o-mini|gpt-4-mini", re.IGNORECASE), "cheap"),
-    (re.compile(r"gpt-4-turbo", re.IGNORECASE), "expensive"),
-    (re.compile(r"gpt-4o\b", re.IGNORECASE), "mid"),
-    (re.compile(r"gpt-4\b(?!o)", re.IGNORECASE), "expensive"),
-    (re.compile(r"gpt-3\.5", re.IGNORECASE), "cheap"),
-    (re.compile(r"opus", re.IGNORECASE), "expensive"),
-    (re.compile(r"sonnet", re.IGNORECASE), "mid"),
-    (re.compile(r"haiku", re.IGNORECASE), "cheap"),
-    (re.compile(r"\bmini|flash|nano", re.IGNORECASE), "cheap"),
-    (re.compile(r"pro\b", re.IGNORECASE), "mid"),
-]
-
-_TIER_PRICING = {
-    "expensive": _TIER_EXPENSIVE,
-    "mid": _TIER_MID,
-    "cheap": _TIER_CHEAP,
-}
-
-
-def _classify_model_tier(model_name: str) -> str:
-    """Classify a model name into a pricing tier using regex matching.
-
-    Returns one of ``"expensive"``, ``"mid"``, or ``"cheap"``.
-    Falls back to ``"mid"`` (conservative) when no pattern matches.
-    """
-    for pattern, tier in _TIER_RULES:
-        if pattern.search(model_name):
-            return tier
-    return "mid"
-
-
 def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
-    """Get per-token pricing for a model, with graceful fallback.
+    """Get per-token pricing for a model with fail-fast behavior.
 
-    Uses a 3-tier lookup chain for conservative pre-optimization cost estimation:
+    Resolution order:
+    1. litellm pricing database
+    2. explicit custom pricing overrides (env/file)
 
-    1. **litellm**: exact per-token pricing from litellm's database.
-       Models that return ``(0, 0)`` are NOT treated as free — falls through
-       to heuristic tier (EMA will correct after the first trial).
-    2. **Fallback dict**: prefix-matching against ``FALLBACK_MODEL_PRICING``.
-       Does NOT apply ``EXACT_MODEL_MAPPING`` — intentionally skipped so that
-       e.g. ``gpt-4`` stays in the EXPENSIVE tier rather than being downgraded
-       to ``gpt-4o`` (MID tier). The mapping is correct for runtime cost
-       calculation but wrong for conservative pre-estimation.
-    3. **Heuristic tier**: regex-based classification into EXPENSIVE / MID / CHEAP.
+    Unknown models raise ``UnknownModelError`` with remediation instructions.
 
     Args:
         model_name: Model identifier (may include provider prefix).
@@ -467,54 +600,37 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     Returns:
         ``(input_cost_per_token, output_cost_per_token, estimation_method)``
     """
-    # --- Tier 1: litellm ---
-    if LITELLM_AVAILABLE and _is_model_known_to_litellm(model_name):
-        try:
-            input_cost, output_cost = litellm.cost_per_token(
-                model=model_name, prompt_tokens=1, completion_tokens=1
-            )
-            if input_cost > 0 or output_cost > 0:
-                logger.debug(
-                    "Model pricing from litellm for %r: input=%.2e, output=%.2e",
-                    model_name,
-                    input_cost,
-                    output_cost,
+    if not model_name or not model_name.strip():
+        raise UnknownModelError(_unknown_model_resolution_message(model_name))
+
+    normalized = _normalize_model_name(model_name)
+    alias_resolved = _resolve_litellm_alias(normalized)
+    candidates = [
+        candidate for candidate in [model_name, normalized, alias_resolved] if candidate
+    ]
+    candidates = list(dict.fromkeys(candidates))
+
+    if LITELLM_AVAILABLE:
+        for candidate in candidates:
+            try:
+                input_cost, output_cost = litellm.cost_per_token(
+                    model=candidate, prompt_tokens=1, completion_tokens=1
                 )
-                return float(input_cost), float(output_cost), "litellm"
-            # litellm returned (0, 0) — may lack pricing data. Fall through.
-        except Exception:
-            logger.debug(
-                "litellm pricing lookup failed for %r, trying fallback",
-                model_name,
-                exc_info=True,
-            )
+                if input_cost > 0 or output_cost > 0:
+                    return float(input_cost), float(output_cost), "litellm"
+                if _is_model_known_to_litellm(candidate):
+                    return float(input_cost), float(output_cost), "litellm"
+            except Exception:
+                logger.debug(
+                    "litellm pricing lookup failed for %r", candidate, exc_info=True
+                )
 
-    # --- Tier 2: Fallback dict (prefix matching, no EXACT_MODEL_MAPPING) ---
-    normalized = _normalize_model_for_fallback(model_name)
-    # Use _quiet=True to log at DEBUG during estimation (not WARNING)
-    input_cost_fb, output_cost_fb = _fallback_cost_from_tokens(
-        normalized, 1, 1, _quiet=True
-    )
-    if input_cost_fb > 0 or output_cost_fb > 0:
-        logger.debug(
-            "Model pricing from fallback dict for %r: input=%.2e, output=%.2e",
-            model_name,
-            input_cost_fb,
-            output_cost_fb,
-        )
-        return input_cost_fb, output_cost_fb, "fallback_dict"
+    custom_pricing = _try_custom_model_pricing(model_name)
+    if custom_pricing is not None:
+        input_cost, output_cost = custom_pricing
+        return float(input_cost), float(output_cost), "custom_pricing"
 
-    # --- Tier 3: Heuristic tier classification ---
-    tier = _classify_model_tier(model_name)
-    pricing = _TIER_PRICING[tier]
-    logger.debug(
-        "Model pricing from heuristic tier %r for %r: input=%.2e, output=%.2e",
-        tier,
-        model_name,
-        pricing["input"],
-        pricing["output"],
-    )
-    return pricing["input"], pricing["output"], f"heuristic:{tier}"
+    raise UnknownModelError(_unknown_model_resolution_message(model_name))
 
 
 @dataclass
@@ -533,65 +649,30 @@ class CostBreakdown:
 
     def __post_init__(self) -> None:
         """Ensure total cost is sum of input and output costs."""
-        if self.total_cost == 0.0:
+        if not self.total_cost:
             self.total_cost = self.input_cost + self.output_cost
         if self.total_tokens == 0:
             self.total_tokens = self.input_tokens + self.output_tokens
 
 
 class CostCalculator:
-    """Intelligent LLM cost calculator with fuzzy model matching."""
-
-    # Exact model name mappings (high confidence)
-    EXACT_MODEL_MAPPING = {
-        # Claude models - map user-friendly names to litellm expected names
-        "claude-3-haiku": "claude-3-haiku-20240307",
-        "claude-3-sonnet": "claude-3-sonnet-20240229",
-        "claude-3-opus": "claude-3-opus-20240229",
-        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-        "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
-        "claude-4-sonnet": "claude-sonnet-4-20250514",
-        "claude-4-opus": "claude-opus-4-20250514",
-        # Add latest versions for convenience
-        "claude-haiku": "claude-3-haiku-latest",
-        "claude-sonnet": "claude-3-5-sonnet-latest",
-        "claude-opus": "claude-3-opus-latest",
-        # OpenAI models are usually fine as-is but add common aliases
-        "gpt-3.5": "gpt-3.5-turbo",
-        "gpt-4": "gpt-4o",
-        "gpt4": "gpt-4o",
-        "gpt3.5": "gpt-3.5-turbo",
-        "gpt-4o-mini": "gpt-4o-mini",  # GPT-4o mini model for cost-effective usage
-        # Common alternative spellings
-        "claude3-haiku": "claude-3-haiku-20240307",
-        "claude3-sonnet": "claude-3-sonnet-20240229",
-        "claude3-opus": "claude-3-opus-20240229",
-    }
-
-    # Model family defaults for generic names
-    FAMILY_DEFAULTS = {
-        "claude-3": "claude-3-5-sonnet-latest",  # Most capable general model
-        "claude": "claude-3-5-sonnet-latest",
-        "gpt-4": "gpt-4o",  # Latest GPT-4 variant
-        "gpt": "gpt-4o",  # Default to latest
-        "gpt-3.5": "gpt-3.5-turbo",  # Standard 3.5 model
-    }
+    """LLM cost calculator using strict canonical pricing resolution."""
 
     def __init__(self, logger=None, enable_caching: bool = True) -> None:
         """Initialize the cost calculator.
 
         Args:
             logger: Optional logger instance for debug/warning messages
-            enable_caching: Whether to cache fuzzy match results for performance
+            enable_caching: Deprecated and ignored (kept for compatibility)
         """
         self.logger = logger
         self.enable_caching = enable_caching
-        self._fuzzy_match_cache: dict[str, str | None] = {}
 
-        # Validate litellm availability
-        if not LITELLM_AVAILABLE and logger:
-            logger.warning("litellm not available, cost calculations will return 0")
+        if not LITELLM_AVAILABLE:
+            raise RuntimeError(
+                "litellm is required for CostCalculator but is not installed. "
+                "Install it with: pip install litellm"
+            )
 
     def calculate_cost(
         self,
@@ -601,7 +682,7 @@ class CostCalculator:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
     ) -> CostBreakdown:
-        """Calculate cost for an LLM request with multiple fallback methods.
+        """Calculate cost for an LLM request.
 
         Args:
             prompt: The input prompt (string or message list)
@@ -612,61 +693,38 @@ class CostCalculator:
 
         Returns:
             CostBreakdown with detailed cost information
+
+        Raises:
+            UnknownModelError: If model has no pricing — budget-critical,
+                callers must handle this to avoid silent budget overruns.
         """
         if not LITELLM_AVAILABLE:
-            return CostBreakdown(
-                model_used=model_name or "unknown",
-                calculation_method="litellm_unavailable",
+            raise RuntimeError(
+                "litellm is required for cost calculation but is not installed. "
+                "Install it with: pip install litellm"
             )
 
         if not model_name:
             return CostBreakdown(calculation_method="no_model_name")
 
-        # Map model name to litellm-compatible format
-        mapped_model = self._map_model_name(model_name)
-
-        # Even if mapping fails, try using the original model name with litellm
-        # litellm.cost_per_token handles provider prefixes internally
-        effective_model = mapped_model or model_name
+        normalized_model = _normalize_model_name(model_name)
+        effective_model = _resolve_litellm_alias(normalized_model)
 
         result = CostBreakdown(
             model_used=model_name, mapped_model=effective_model or ""
         )
 
         try:
-            # Method 1: Use original prompt and response for most accurate calculation
-            if prompt and response:
-                result.input_cost = self._safe_calculate_prompt_cost(
-                    prompt, effective_model
-                )
-                result.output_cost = self._safe_calculate_completion_cost(
-                    response, effective_model
-                )
-                result.calculation_method = "prompt_and_response"
-
-            # Method 2: Use token counts if available
-            elif (
-                input_tokens
-                and output_tokens
-                and input_tokens > 0
-                and output_tokens > 0
-            ):
-                result.input_cost, result.output_cost = self._calculate_from_tokens(
-                    input_tokens, output_tokens, effective_model
-                )
-                result.input_tokens = input_tokens
-                result.output_tokens = output_tokens
-                result.calculation_method = "token_counts"
-
-            # Method 3: Response only
-            elif response:
-                result.output_cost = self._safe_calculate_completion_cost(
-                    response, effective_model
-                )
-                result.calculation_method = "response_only"
-
-            result.total_cost = result.input_cost + result.output_cost
-
+            self._populate_cost(
+                result,
+                prompt,
+                response,
+                effective_model,
+                input_tokens,
+                output_tokens,
+            )
+        except UnknownModelError:
+            raise
         except Exception as e:
             if self.logger:
                 self.logger.warning(
@@ -676,280 +734,61 @@ class CostCalculator:
 
         return result
 
-    def _normalize_model_name(self, model_name: str) -> str:
-        """Strip provider prefixes like 'openai/gpt-4o' -> 'gpt-4o'."""
-        if "/" in model_name:
-            # Handle nested prefixes like 'openrouter/openai/gpt-4o'
-            return model_name.split("/")[-1]
-        return model_name
-
-    def _map_model_name(self, model_name: str) -> str | None:
-        """Map user-friendly model names to litellm-compatible names with fuzzy matching."""
-        if not model_name:
-            return None
-
-        # Step 1: Try exact mapping
-        exact_match = self.EXACT_MODEL_MAPPING.get(model_name)
-        if exact_match:
-            if self.logger:
-                self.logger.debug(
-                    f"Exact model mapping: '{model_name}' -> '{exact_match}'"
-                )
-            return exact_match
-
-        # Step 2: Try with normalized name (strip provider prefix)
-        normalized = self._normalize_model_name(model_name)
-        if normalized != model_name:
-            exact_match = self.EXACT_MODEL_MAPPING.get(normalized)
-            if exact_match:
-                if self.logger:
-                    self.logger.debug(
-                        f"Exact model mapping (normalized): '{model_name}' -> '{exact_match}'"
-                    )
-                return exact_match
-
-        # Step 3: Try family defaults for generic names
-        family_match = self.FAMILY_DEFAULTS.get(model_name)
-        if family_match:
-            if self.logger:
-                self.logger.debug(
-                    f"Family model mapping: '{model_name}' -> '{family_match}'"
-                )
-            return family_match
-
-        # Step 4: Try fuzzy matching
-        return self._fuzzy_match_model(model_name)
-
-    def _fuzzy_match_model(self, user_model: str) -> str | None:
-        """Find best matching litellm model using fuzzy matching."""
-        # Check cache first
-        if self.enable_caching and user_model in self._fuzzy_match_cache:
-            cached_result = self._fuzzy_match_cache[user_model]
-            if self.logger and cached_result:
-                self.logger.debug(
-                    f"Cached fuzzy match: '{user_model}' -> '{cached_result}'"
-                )
-            return cached_result
-
-        # Normalize model name for checking
-        normalized = self._normalize_model_name(user_model)
-
-        # First check if the model exists as-is in litellm
-        if LITELLM_AVAILABLE and normalized in litellm.model_cost:
-            if self.logger:
-                self.logger.debug(
-                    f"Direct model match: '{user_model}' found in litellm"
-                )
-            if self.enable_caching:
-                self._fuzzy_match_cache[user_model] = normalized
-            return normalized
-
-        result = self._perform_fuzzy_match(user_model)
-
-        # Cache the result
-        if self.enable_caching:
-            self._fuzzy_match_cache[user_model] = result
-
-        return result
-
-    def _perform_fuzzy_match(self, user_model: str) -> str | None:
-        """Perform actual fuzzy matching algorithm."""
-        if not LITELLM_AVAILABLE or len(user_model) < 5:
-            return None
-
-        # Get all available litellm models
-        available_models = list(litellm.model_cost.keys())
-
-        # Normalize the user model
-        normalized_user = self._normalize_model_name(user_model)
-
-        # Find substring matches
-        matches = []
-        user_lower = normalized_user.lower()
-
-        for litellm_model in available_models:
-            # Normalize litellm model name too
-            normalized_litellm = self._normalize_model_name(litellm_model)
-            if self._is_semantic_match(user_lower, normalized_litellm.lower()):
-                matches.append(litellm_model)
-
-        if not matches:
-            if self.logger:
-                self.logger.debug(f"No fuzzy matches found for '{user_model}'")
-            return None
-
-        if len(matches) == 1:
-            result = matches[0]
-            if self.logger:
-                self.logger.info(f"Fuzzy match found: '{user_model}' -> '{result}'")
-            return str(result)
-
-        # Multiple matches - select the latest/best one
-        best_match = self._select_best_model(matches, user_model)
-        if self.logger:
-            self.logger.info(
-                f"Best fuzzy match: '{user_model}' -> '{best_match}' (from {len(matches)} options)"
+    def _populate_cost(
+        self,
+        result: CostBreakdown,
+        prompt: str | list[dict[str, Any]] | None,
+        response: str | None,
+        model: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> None:
+        """Fill cost breakdown using the best available data."""
+        if prompt and response:
+            result.input_cost = self._safe_calculate_prompt_cost(prompt, model)
+            result.output_cost = self._safe_calculate_completion_cost(response, model)
+            result.calculation_method = "prompt_and_response"
+        elif input_tokens is not None or output_tokens is not None:
+            actual_input = max(input_tokens or 0, 0)
+            actual_output = max(output_tokens or 0, 0)
+            result.input_cost, result.output_cost = self._calculate_from_tokens(
+                actual_input, actual_output, model
             )
+            result.input_tokens = actual_input
+            result.output_tokens = actual_output
+            result.calculation_method = "token_counts"
+        elif response:
+            result.output_cost = self._safe_calculate_completion_cost(response, model)
+            result.calculation_method = "response_only"
 
-        return best_match
-
-    def _is_semantic_match(self, user_model: str, litellm_model: str) -> bool:
-        """Check if a litellm model is a meaningful semantic match for user model."""
-        # Basic substring matching
-        if user_model not in litellm_model:
-            return False
-
-        # Avoid over-broad matches
-        if len(user_model) < 5:
-            return False
-
-        # Special case: ensure model family alignment
-        if "gpt" in user_model and "gpt" not in litellm_model:
-            return False
-        if "claude" in user_model and "claude" not in litellm_model:
-            return False
-
-        # Avoid mixing different model generations inappropriately
-        if "gpt-4" in user_model and "gpt-3" in litellm_model:
-            return False
-        if "gpt-3" in user_model and "gpt-4" in litellm_model:
-            return False
-
-        # Check for model version mismatches that don't make sense
-        if "claude-3" in user_model and "claude-2" in litellm_model:
-            return False
-
-        return True
-
-    def _select_best_model(self, matches: list[str], user_model: str) -> str:
-        """Select the best model from multiple matches using date/version sorting."""
-        if not matches:
-            return ""
-
-        if len(matches) == 1:
-            return matches[0]
-
-        # Sort by preference: latest > dated versions > version numbers > plain names
-        scored_matches = []
-        for match in matches:
-            score = self._calculate_model_score(match, user_model)
-            scored_matches.append((score, match))
-
-        # Sort by score (highest first) and return the best match
-        scored_matches.sort(key=lambda x: x[0], reverse=True)
-        return scored_matches[0][1]
-
-    def _calculate_model_score(
-        self, model_name: str, user_model: str
-    ) -> tuple[int, int, int, int]:
-        """Calculate a sortable score for model preference."""
-        suffix = model_name.lower().replace(user_model.lower(), "")
-
-        # "latest" gets highest priority
-        if "latest" in suffix:
-            return LATEST_MODEL_PRIORITY
-
-        # Parse YYYYMMDD format
-        date_match = re.search(r"(\d{4})(\d{2})(\d{2})", suffix)
-        if date_match:
-            year, month, day = map(int, date_match.groups())
-            return (year, month, day, DATE_MATCH_PRIORITY)
-
-        # Parse YYYY-MM-DD format
-        date_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", suffix)
-        if date_match:
-            year, month, day = map(int, date_match.groups())
-            return (year, month, day, DATE_MATCH_PRIORITY)
-
-        # Parse version numbers (v1, v2, etc.)
-        version_match = re.search(r"v(\d+)", suffix)
-        if version_match:
-            version = int(version_match.group(1))
-            return (*VERSION_FALLBACK_DATE, version)
-
-        # Prefer shorter model names (more specific)
-        specificity = 100 - len(model_name)
-        return (*UNVERSIONED_FALLBACK_DATE, specificity)
+        result.total_cost = result.input_cost + result.output_cost
 
     def _safe_calculate_prompt_cost(
         self, prompt: str | list[dict[str, Any]], model: str
     ) -> float:
-        """Safely calculate prompt cost with error handling."""
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                return calculate_prompt_cost(prompt, model)
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"Prompt cost calculation failed: {e}")
-            return 0.0
+        """Calculate prompt cost and propagate pricing failures."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return calculate_prompt_cost(prompt, model)
 
     def _safe_calculate_completion_cost(self, response: str, model: str) -> float:
-        """Safely calculate completion cost with error handling."""
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                return calculate_completion_cost(response, model)
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"Completion cost calculation failed: {e}")
-            return 0.0
+        """Calculate completion cost and propagate pricing failures."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return calculate_completion_cost(response, model)
 
     def _calculate_from_tokens(
         self, input_tokens: int, output_tokens: int, model: str
     ) -> tuple[float, float]:
-        """Calculate costs from token counts using direct pricing information."""
-        try:
-            # First, try litellm.cost_per_token directly (handles provider prefixes)
-            if LITELLM_AVAILABLE:
-                try:
-                    input_cost, output_cost = litellm.cost_per_token(
-                        model=model,
-                        prompt_tokens=input_tokens,
-                        completion_tokens=output_tokens,
-                    )
+        """Calculate costs from token counts via cost_from_tokens().
 
-                    if self.logger:
-                        self.logger.debug(
-                            f"litellm token cost calculation for {model}: "
-                            f"input={input_tokens}=${input_cost:.8f}, "
-                            f"output={output_tokens}=${output_cost:.8f}"
-                        )
+        Delegates to the canonical cost_from_tokens() entry point.
 
-                    return float(input_cost), float(output_cost)
-                except Exception:
-                    # Model not in litellm, try direct lookup or fallback
-                    pass
-
-            # Try direct lookup in litellm.model_cost
-            normalized = self._normalize_model_name(model)
-            if LITELLM_AVAILABLE and normalized in litellm.model_cost:
-                cost_info = litellm.model_cost[normalized]
-
-                # Get cost per token (not per 1000 tokens)
-                input_cost_per_token = cost_info.get("input_cost_per_token", 0.0)
-                output_cost_per_token = cost_info.get("output_cost_per_token", 0.0)
-
-                # Calculate actual costs
-                input_cost = input_tokens * input_cost_per_token
-                output_cost = output_tokens * output_cost_per_token
-
-                if self.logger:
-                    self.logger.debug(
-                        f"Direct token cost calculation for {model}: "
-                        f"input={input_tokens}*{input_cost_per_token:.10f}=${input_cost:.8f}, "
-                        f"output={output_tokens}*{output_cost_per_token:.10f}=${output_cost:.8f}"
-                    )
-
-                return input_cost, output_cost
-
-            # Fallback to FALLBACK_MODEL_PRICING
-            return _fallback_cost_from_tokens(model, input_tokens, output_tokens)
-
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"Token-based cost calculation failed: {e}")
-            return 0.0, 0.0
+        Raises:
+            UnknownModelError: If model has no pricing. Callers MUST handle
+                this — returning 0.0 would silently break budget enforcement.
+        """
+        return cost_from_tokens(input_tokens, output_tokens, model, strict=True)
 
     def get_available_models(self) -> list[str]:
         """Get list of all available litellm models (cached)."""
@@ -958,47 +797,173 @@ class CostCalculator:
         return list(litellm.model_cost.keys())
 
     def clear_cache(self) -> None:
-        """Clear the fuzzy match cache."""
-        self._fuzzy_match_cache.clear()
-        # Note: get_available_models is not cached, so no need to clear
+        """Clear internal pricing caches."""
+        global _CUSTOM_PRICING_CACHE, _CUSTOM_PRICING_CACHE_KEY
+        with _CUSTOM_PRICING_LOCK:
+            _CUSTOM_PRICING_CACHE = None
+            _CUSTOM_PRICING_CACHE_KEY = None
 
     def validate_model_name(self, model_name: str) -> dict[str, Any]:
-        """Validate and provide information about a model name."""
+        """Validate and provide information about a model name.
+
+        This method does not perform fuzzy guessing or implicit family mapping.
+        """
+        normalized = _normalize_model_name(model_name) if model_name else model_name
+        resolved = _resolve_litellm_alias(normalized) if model_name else None
         result = {
             "original": model_name,
+            "normalized": normalized,
             "mapped": None,
+            "resolved": resolved,
             "available": LITELLM_AVAILABLE,
+            "known_to_litellm": False,
+            "custom_pricing": False,
             "exact_match": False,
             "fuzzy_match": False,
             "family_match": False,
             "not_found": False,
         }
 
+        if not model_name:
+            result["not_found"] = True
+            return result
+
         if not LITELLM_AVAILABLE:
             result["error"] = "litellm library not available"
             return result
 
-        # Check exact mapping
-        if model_name in self.EXACT_MODEL_MAPPING:
-            result["mapped"] = self.EXACT_MODEL_MAPPING[model_name]
-            result["exact_match"] = True
+        candidates = [
+            candidate for candidate in [model_name, normalized, resolved] if candidate
+        ]
+        candidates = list(dict.fromkeys(candidates))
+        for candidate in candidates:
+            if _is_model_known_to_litellm(candidate):
+                result["known_to_litellm"] = True
+                result["mapped"] = candidate
+                result["not_found"] = False
+                return result
+
+        try:
+            custom_pricing = _try_custom_model_pricing(model_name)
+        except ValueError as exc:
+            result["error"] = str(exc)
+            result["not_found"] = True
             return result
 
-        # Check family mapping
-        if model_name in self.FAMILY_DEFAULTS:
-            result["mapped"] = self.FAMILY_DEFAULTS[model_name]
-            result["family_match"] = True
-            return result
-
-        # Try fuzzy matching
-        fuzzy_result = self._perform_fuzzy_match(model_name)
-        if fuzzy_result:
-            result["mapped"] = fuzzy_result
-            result["fuzzy_match"] = True
+        if custom_pricing is not None:
+            result["custom_pricing"] = True
+            result["mapped"] = resolved or normalized or model_name
+            result["not_found"] = False
             return result
 
         result["not_found"] = True
         return result
+
+
+# ---------------------------------------------------------------------------
+# Canonical cost-from-tokens entry point
+# ---------------------------------------------------------------------------
+
+
+def cost_from_tokens(
+    input_tokens: int,
+    output_tokens: int,
+    model: str,
+    *,
+    strict: bool = True,
+) -> tuple[float, float]:
+    """Canonical cost calculation from token counts.
+
+    This is the single entry point for post-call cost tracking. It is
+    fail-fast by default and does not guess pricing for unknown models.
+
+    Args:
+        input_tokens: Number of input tokens (0 is valid for output-only).
+        output_tokens: Number of output tokens (0 is valid for input-only).
+        model: Model identifier (with or without provider prefix).
+        strict: If True (default), raise UnknownModelError for unpriced models.
+                If False, log warning and return (0.0, 0.0).
+
+    Returns:
+        Tuple of (input_cost_usd, output_cost_usd).
+
+    Raises:
+        UnknownModelError: When strict=True and model has no pricing.
+        RuntimeError: When strict=True and litellm is not installed.
+        ValueError: When token counts are negative.
+    """
+    if input_tokens < 0 or output_tokens < 0:
+        raise ValueError(
+            f"Token counts must be non-negative, got "
+            f"input={input_tokens}, output={output_tokens}"
+        )
+
+    if not LITELLM_AVAILABLE:
+        if strict:
+            raise RuntimeError(
+                "litellm is required for cost tracking but is not installed. "
+                "Install it with: pip install litellm"
+            )
+        logger.warning("litellm not available — returning zero cost")
+        return 0.0, 0.0
+
+    normalized = _normalize_model_name(model)
+    alias_resolved = _resolve_litellm_alias(normalized)
+    candidates = [
+        candidate for candidate in [model, normalized, alias_resolved] if candidate
+    ]
+    candidates = list(dict.fromkeys(candidates))
+
+    # Step 1: Try litellm.cost_per_token (handles provider prefixes internally)
+    for candidate in candidates:
+        try:
+            input_cost, output_cost = litellm.cost_per_token(
+                model=candidate,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+            if input_cost > 0 or output_cost > 0:
+                return float(input_cost), float(output_cost)
+            # Model is known but returns (0, 0) — legitimate free tier
+            if _is_model_known_to_litellm(candidate):
+                return float(input_cost), float(output_cost)
+        except Exception:
+            continue
+
+    # Step 2: Try direct lookup in litellm.model_cost (case-insensitive)
+    model_cost_lower = {k.lower(): k for k in litellm.model_cost}
+    for candidate in candidates:
+        actual_key = model_cost_lower.get(candidate.lower())
+        if actual_key:
+            cost_info = litellm.model_cost[actual_key]
+            input_cpt = cost_info.get("input_cost_per_token", 0.0)
+            output_cpt = cost_info.get("output_cost_per_token", 0.0)
+            return (
+                float(input_tokens * input_cpt),
+                float(output_tokens * output_cpt),
+            )
+
+    # Step 3: explicit custom pricing (user-provided)
+    custom_pricing = _try_custom_model_pricing(model)
+    if custom_pricing is not None:
+        input_rate, output_rate = custom_pricing
+        return (
+            float(input_tokens * input_rate),
+            float(output_tokens * output_rate),
+        )
+
+    # Model not found in litellm or custom pricing config
+    if strict:
+        raise UnknownModelError(_unknown_model_resolution_message(model))
+
+    logger.warning(
+        "Unknown model %r — returning zero cost (strict=False). "
+        "Configure %s or %s to provide explicit pricing.",
+        model,
+        _CUSTOM_PRICING_FILE_ENV,
+        _CUSTOM_PRICING_JSON_ENV,
+    )
+    return 0.0, 0.0
 
 
 # Convenience functions for simple usage
@@ -1041,3 +1006,18 @@ def get_cost_calculator(logger=None) -> CostCalculator:
             if _global_calculator is None:
                 _global_calculator = CostCalculator(logger=logger)
     return _global_calculator
+
+
+def get_model_pricing_per_1k(model_name: str) -> tuple[float, float]:
+    """Get model pricing rates in USD per 1K tokens.
+
+    Returns a tuple ``(input_per_1k, output_per_1k)`` via the canonical cost
+    pipeline (litellm first, then explicit custom pricing). Unknown models
+    return ``(0.0, 0.0)``.
+
+    This is a query function (not budget-enforcement), so it uses
+    strict=False to avoid raising on unknown models.
+    """
+    input_per_1k, _ = cost_from_tokens(1000, 0, model_name, strict=False)
+    _, output_per_1k = cost_from_tokens(0, 1000, model_name, strict=False)
+    return float(input_per_1k), float(output_per_1k)

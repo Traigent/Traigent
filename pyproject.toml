@@ -96,6 +96,11 @@ dspy = [
     "dspy-ai>=2.5.0",
 ]
 
+# PydanticAI agent framework integration
+pydanticai = [
+    "pydantic-ai>=1,<2",
+]
+
 # Enterprise security features (Sprint 7)
 security = [
     "pyjwt>=2.4.0",
@@ -188,7 +193,7 @@ cloud = [
 
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,hybrid]"
+    "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
@@ -206,13 +211,18 @@ Changelog = "https://github.com/traigent/traigent-sdk/blob/main/CHANGELOG.md"
 [project.scripts]
 traigent = "traigent.cli.main:cli"
 
+[project.entry-points."traigent.validators"]
+python = "traigent_validation.validators:PythonConstraintValidator"
+sat = "traigent_validation.validators:SATConstraintValidator"
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["traigent*"]
+include = ["traigent*", "traigent_validation*"]
 exclude = ["tests*", "demos*", "docs*"]
 
 [tool.setuptools.package-data]
 traigent = ["py.typed"]
+traigent_validation = ["py.typed"]
 
 [tool.black]
 line-length = 88

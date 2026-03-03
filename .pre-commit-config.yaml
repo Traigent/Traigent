@@ -56,12 +56,16 @@ repos:
 
   # Type checking - uses pyproject.toml [tool.mypy] configuration
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+    rev: v1.14.1
     hooks:
       - id: mypy
         args:
           - --config-file=pyproject.toml
         pass_filenames: false
+        additional_dependencies:
+          - types-PyYAML
+          - types-bleach
+          - types-requests
 
   # TVL specification validation (G-2)
   - repo: local
@@ -77,6 +81,12 @@ repos:
   # Prevent committing gitignored files
   - repo: local
     hooks:
+      - id: check-cost-strictness
+        name: Check strict cost accounting guardrails
+        language: script
+        entry: scripts/hooks/check-cost-strictness.sh
+        pass_filenames: false
+        always_run: true
       - id: check-ignored-files
         name: Check for ignored files staged for commit
         language: script

@@ -27,15 +27,9 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.exceptions import (
-    ConfigurationError,
-    EvaluationError,
-)
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import (
-    TrialPrunedError,
-    ValidationError,
-)
+from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -91,7 +85,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RagasConfigurationError,
         compute_ragas_metrics,
     )
-except Exception:  # pragma: no cover - executed only when module missing
+except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
     RAGAS_AVAILABLE = False
 
@@ -1039,10 +1033,7 @@ class BaseEvaluator(ABC):
         Returns:
             Tuple of (output, error_message)
         """
-        from traigent.config.context import (
-            ConfigurationContext,
-            set_trial_context,
-        )
+        from traigent.config.context import ConfigurationContext, set_trial_context
         from traigent.config.context import trial_context as trial_context_var
 
         def call_with_config() -> Any:
@@ -2360,6 +2351,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 )
                 score = metric_func(**kwargs)
                 example_metrics[metric_name] = score
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Metric function {metric_name} failed: {e}")
                 example_metrics[metric_name] = 0.0
@@ -2399,6 +2392,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 example_metrics.update(result)
             else:
                 example_metrics["score"] = float(result)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"Scoring function failed: {e}")
             example_metrics["score"] = 0.0
@@ -2675,6 +2670,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 outputs.append(output)
                 errors.append(None)
 
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)

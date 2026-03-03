@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from traigent.api.functions import _GLOBAL_CONFIG, get_global_parallel_config
@@ -349,6 +350,23 @@ def resolve_effective_workers(
     return effective_workers
 
 
+@dataclass(slots=True)
+class HybridAPIEvaluatorOptions:
+    """Grouped Hybrid API evaluator construction options."""
+
+    endpoint: str | None = None
+    tunable_id: str | None = None
+    transport: Any | None = None
+    transport_type: str = "auto"
+    batch_size: int = 1
+    batch_parallelism: int = 1
+    keep_alive: bool = True
+    heartbeat_interval: float = 30.0
+    timeout: float | None = None
+    auth_header: str | None = None
+    auto_discover_tvars: bool = False
+
+
 def create_effective_evaluator(
     timeout: float | None,
     custom_evaluator: Callable[..., Any] | None,
@@ -363,17 +381,7 @@ def create_effective_evaluator(
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
-    hybrid_api_endpoint: str | None = None,
-    hybrid_api_capability_id: str | None = None,
-    hybrid_api_transport: Any | None = None,
-    hybrid_api_transport_type: str = "auto",
-    hybrid_api_batch_size: int = 1,
-    hybrid_api_batch_parallelism: int = 1,
-    hybrid_api_keep_alive: bool = True,
-    hybrid_api_heartbeat_interval: float = 30.0,
-    hybrid_api_timeout: float | None = None,
-    hybrid_api_auth_header: str | None = None,
-    hybrid_api_auto_discover_tvars: bool = False,
+    hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
 
@@ -417,35 +425,37 @@ def create_effective_evaluator(
     if execution_mode_enum is ExecutionMode.HYBRID_API:
         from traigent.evaluators.hybrid_api import HybridAPIEvaluator
 
-        if hybrid_api_transport is None and not hybrid_api_endpoint:
+        hybrid_options = hybrid_api_options or HybridAPIEvaluatorOptions()
+
+        if hybrid_options.transport is None and not hybrid_options.endpoint:
             raise ValueError(
                 "hybrid_api execution mode requires hybrid_api_endpoint "
                 "or a preconfigured hybrid_api_transport."
             )
 
         request_timeout = (
-            hybrid_api_timeout if hybrid_api_timeout is not None else timeout
+            hybrid_options.timeout if hybrid_options.timeout is not None else timeout
         )
         if request_timeout is None:
             request_timeout = 300.0
 
-        batch_size_value = max(1, int(hybrid_api_batch_size))
-        batch_parallelism_value = max(1, int(hybrid_api_batch_parallelism))
+        batch_size_value = max(1, int(hybrid_options.batch_size))
+        batch_parallelism_value = max(1, int(hybrid_options.batch_parallelism))
 
         evaluator = HybridAPIEvaluator(
-            api_endpoint=hybrid_api_endpoint,
-            transport=hybrid_api_transport,
+            api_endpoint=hybrid_options.endpoint,
+            transport=hybrid_options.transport,
             transport_type=cast(
-                Literal["http", "mcp", "auto"], hybrid_api_transport_type
+                Literal["http", "mcp", "auto"], hybrid_options.transport_type
             ),
-            capability_id=hybrid_api_capability_id,
-            auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            tunable_id=hybrid_options.tunable_id,
+            auto_discover_tvars=hybrid_options.auto_discover_tvars,
             batch_size=batch_size_value,
             batch_parallelism=batch_parallelism_value,
-            keep_alive=hybrid_api_keep_alive,
-            heartbeat_interval=hybrid_api_heartbeat_interval,
+            keep_alive=hybrid_options.keep_alive,
+            heartbeat_interval=hybrid_options.heartbeat_interval,
             timeout=request_timeout,
-            auth_header=hybrid_api_auth_header,
+            auth_header=hybrid_options.auth_header,
             metrics=list(objectives),
         )
         return evaluator, None

@@ -1073,7 +1073,9 @@ class WorkflowTracesTracker:
         self.auto_send = auto_send
         self.batch_size = batch_size
 
-        self.client = WorkflowTracesClient(self.backend_url, self.auth_token)
+        self.client = WorkflowTracesClient(
+            self.backend_url, self.auth_token  # type: ignore[arg-type]
+        )
 
         # Thread-local storage for trial context
         self._local = threading.local()
@@ -1444,7 +1446,7 @@ def setup_workflow_tracing(
         "TRAIGENT_BACKEND_URL", "http://localhost:5000"
     )
     exporter = OptiGenSpanExporter(
-        backend_url=resolved_url,
+        backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
     )
 

@@ -537,7 +537,11 @@ class CTDTestGenerator:
                         # client APIs don't accept them as top-level kwargs:
                         # - Bedrock: extra_params (for stop_sequences, etc.)
                         # - Gemini: generation_config (for temperature, max_output_tokens, etc.)
-                        nested_dicts = ["extra_params", "generation_config"]
+                        nested_dicts = [
+                            "extra_params",
+                            "generation_config",
+                            "model_settings",
+                        ]
                         actual_value = None
                         for nested_key in nested_dicts:
                             nested = overridden_kwargs.get(nested_key, {})
@@ -566,7 +570,11 @@ class CTDTestGenerator:
             # Some plugins (e.g., Bedrock, Gemini) move unknown params to nested dicts
             original_param_preserved = "original_param" in overridden_kwargs
             if not original_param_preserved:
-                for nested_key in ["extra_params", "generation_config"]:
+                for nested_key in [
+                    "extra_params",
+                    "generation_config",
+                    "model_settings",
+                ]:
                     nested = overridden_kwargs.get(nested_key, {})
                     if isinstance(nested, dict) and "original_param" in nested:
                         original_param_preserved = True

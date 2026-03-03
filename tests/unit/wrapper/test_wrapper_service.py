@@ -23,7 +23,7 @@ class TestServiceConfig:
     def test_defaults(self) -> None:
         """Test ServiceConfig default values."""
         cfg = ServiceConfig()
-        assert cfg.capability_id == "default"
+        assert cfg.tunable_id == "default"
         assert cfg.version == "1.0"
         assert cfg.supports_keep_alive is False
         assert cfg.supports_streaming is False
@@ -39,7 +39,7 @@ class TestServiceConfig:
     def test_custom_values(self) -> None:
         """Test ServiceConfig with custom values."""
         cfg = ServiceConfig(
-            capability_id="qa_agent",
+            tunable_id="qa_agent",
             version="2.5",
             supports_keep_alive=True,
             supports_streaming=True,
@@ -52,7 +52,7 @@ class TestServiceConfig:
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
         )
-        assert cfg.capability_id == "qa_agent"
+        assert cfg.tunable_id == "qa_agent"
         assert cfg.version == "2.5"
         assert cfg.supports_keep_alive is True
         assert cfg.supports_streaming is True
@@ -104,7 +104,7 @@ class TestTraigentServiceInit:
     def test_defaults(self) -> None:
         """Test TraigentService default initialization."""
         svc = TraigentService()
-        assert svc.config.capability_id == "default"
+        assert svc.config.tunable_id == "default"
         assert svc.config.version == "1.0"
         assert svc.config.supports_keep_alive is False
         assert svc.config.supports_streaming is False
@@ -118,7 +118,7 @@ class TestTraigentServiceInit:
     def test_custom_init(self) -> None:
         """Test TraigentService with custom parameters."""
         svc = TraigentService(
-            capability_id="my_agent",
+            tunable_id="my_agent",
             version="3.0",
             supports_keep_alive=True,
             supports_streaming=True,
@@ -129,7 +129,7 @@ class TestTraigentServiceInit:
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
         )
-        assert svc.config.capability_id == "my_agent"
+        assert svc.config.tunable_id == "my_agent"
         assert svc.config.version == "3.0"
         assert svc.config.supports_keep_alive is True
         assert svc.config.supports_streaming is True
@@ -269,10 +269,10 @@ class TestGetConfigSpace:
 
     def test_no_handler_returns_empty_tvars(self) -> None:
         """Test that config space with no handler returns empty tvars."""
-        svc = TraigentService(capability_id="test")
+        svc = TraigentService(tunable_id="test")
         result = svc.get_config_space()
         assert result["schema_version"] == "0.9"
-        assert result["capability_id"] == "test"
+        assert result["tunable_id"] == "test"
         assert result["tvars"] == []
         assert result["constraints"] == {}
 
@@ -412,7 +412,7 @@ class TestGetConfigSpace:
     def test_config_space_includes_optional_optimization_sections(self) -> None:
         """Config-space response includes optional declarative optimization sections."""
         svc = TraigentService(
-            capability_id="financial_qa",
+            tunable_id="financial_qa",
             constraints={"structural": [{"expr": "params.temperature <= 1.0"}]},
             objectives=[{"name": "accuracy", "direction": "maximize"}],
             exploration={"strategy": "nsga2"},
@@ -459,7 +459,7 @@ class TestGetCapabilities:
     def test_capabilities_without_evaluate(self) -> None:
         """Test capabilities when no evaluate handler is registered."""
         svc = TraigentService(
-            capability_id="test",
+            tunable_id="test",
             version="2.0",
             supports_keep_alive=True,
             supports_streaming=False,
@@ -493,12 +493,12 @@ class TestGetHealth:
 
     def test_health_no_sessions(self) -> None:
         """Test health status with no active sessions."""
-        svc = TraigentService(capability_id="agent_x", version="1.2")
+        svc = TraigentService(tunable_id="agent_x", version="1.2")
         health = svc.get_health()
         assert health["status"] == "healthy"
         assert health["version"] == "1.2"
         assert isinstance(health["uptime_seconds"], float)
-        assert health["details"]["capability_id"] == "agent_x"
+        assert health["details"]["tunable_id"] == "agent_x"
         assert health["details"]["active_sessions"] == 0
 
     def test_health_with_sessions(self) -> None:
@@ -603,6 +603,118 @@ class TestHandleExecute:
         resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
         assert "request_id" in resp
         assert len(resp["request_id"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_execute_request_id_is_idempotent(self) -> None:
+        """Same request_id and payload should return cached execute response."""
+        svc = TraigentService()
+        call_count = {"n": 0}
+
+        @svc.execute
+        def run(input_id, data, config):
+            call_count["n"] += 1
+            return {"output": f"ok-{call_count['n']}"}
+
+        request = {
+            "request_id": "req-idem-1",
+            "tunable_id": "default",
+            "config": {"temperature": 0.2},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+        first = await svc.handle_execute(request)
+        second = await svc.handle_execute(request)
+
+        assert call_count["n"] == 1
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_execute_request_id_payload_mismatch_raises(self) -> None:
+        """Reusing request_id with changed execute payload should fail fast."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        base_request = {
+            "request_id": "req-idem-2",
+            "tunable_id": "default",
+            "config": {"temperature": 0.2},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+        await svc.handle_execute(base_request)
+
+        with pytest.raises(ValueError, match="request_id reuse"):
+            await svc.handle_execute(
+                {
+                    "request_id": "req-idem-2",
+                    "tunable_id": "default",
+                    "config": {"temperature": 0.7},
+                    "inputs": [{"input_id": "i1", "data": {}}],
+                }
+            )
+
+    @pytest.mark.asyncio
+    async def test_execute_cache_eviction_fifo(self) -> None:
+        """Cache eviction should remove oldest entry when max size is reached."""
+        svc = TraigentService()
+        svc._idempotency_cache_max_size = 3  # Small cache for testing
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": f"result-{input_id}"}
+
+        # Fill cache to capacity
+        for i in range(3):
+            await svc.handle_execute(
+                {
+                    "request_id": f"req-{i}",
+                    "tunable_id": "default",
+                    "inputs": [{"input_id": f"i{i}", "data": {}}],
+                }
+            )
+
+        assert len(svc._execute_idempotency_cache) == 3
+        assert "req-0" in svc._execute_idempotency_cache
+
+        # Adding 4th entry should evict oldest (req-0)
+        await svc.handle_execute(
+            {
+                "request_id": "req-3",
+                "tunable_id": "default",
+                "inputs": [{"input_id": "i3", "data": {}}],
+            }
+        )
+
+        assert len(svc._execute_idempotency_cache) == 3
+        assert "req-0" not in svc._execute_idempotency_cache
+        assert "req-1" in svc._execute_idempotency_cache
+        assert "req-3" in svc._execute_idempotency_cache
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_non_json_serializable_fallback(self) -> None:
+        """Non-JSON-serializable values should fall back to repr()."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        # Create request with non-JSON-serializable object
+        class CustomObj:
+            def __repr__(self):
+                return "CustomObj(id=42)"
+
+        request = {
+            "request_id": "req-custom",
+            "tunable_id": "default",
+            "config": {"custom_param": CustomObj()},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+
+        # Should not raise, should use repr() fallback
+        result = await svc.handle_execute(request)
+        assert result["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_session_touch_on_execute(self) -> None:
@@ -820,6 +932,93 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate({"evaluations": []})
         assert resp["results"] == []
         assert resp["aggregate_metrics"] == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_request_id_is_idempotent(self) -> None:
+        """Same request_id and payload should return cached evaluate response."""
+        svc = TraigentService()
+        call_count = {"n": 0}
+
+        @svc.evaluate
+        def score(output, target, config):
+            call_count["n"] += 1
+            return {"accuracy": 0.9}
+
+        request = {
+            "request_id": "eval-idem-1",
+            "tunable_id": "default",
+            "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+        }
+        first = await svc.handle_evaluate(request)
+        second = await svc.handle_evaluate(request)
+
+        assert call_count["n"] == 1
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_evaluate_request_id_payload_mismatch_raises(self) -> None:
+        """Reusing request_id with changed evaluate payload should fail fast."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "request_id": "eval-idem-2",
+                "tunable_id": "default",
+                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+            }
+        )
+
+        with pytest.raises(ValueError, match="request_id reuse"):
+            await svc.handle_evaluate(
+                {
+                    "request_id": "eval-idem-2",
+                    "tunable_id": "default",
+                    "evaluations": [{"input_id": "e1", "output": "a", "target": "b"}],
+                }
+            )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_cache_eviction_fifo(self) -> None:
+        """Evaluate cache eviction should remove oldest entry when max size is reached."""
+        svc = TraigentService()
+        svc._idempotency_cache_max_size = 3  # Small cache for testing
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        # Fill cache to capacity
+        for i in range(3):
+            await svc.handle_evaluate(
+                {
+                    "request_id": f"eval-{i}",
+                    "tunable_id": "default",
+                    "evaluations": [
+                        {"input_id": f"e{i}", "output": "a", "target": "a"}
+                    ],
+                }
+            )
+
+        assert len(svc._evaluate_idempotency_cache) == 3
+        assert "eval-0" in svc._evaluate_idempotency_cache
+
+        # Adding 4th entry should evict oldest (eval-0)
+        await svc.handle_evaluate(
+            {
+                "request_id": "eval-3",
+                "tunable_id": "default",
+                "evaluations": [{"input_id": "e3", "output": "a", "target": "a"}],
+            }
+        )
+
+        assert len(svc._evaluate_idempotency_cache) == 3
+        assert "eval-0" not in svc._evaluate_idempotency_cache
+        assert "eval-1" in svc._evaluate_idempotency_cache
+        assert "eval-3" in svc._evaluate_idempotency_cache
 
 
 # ---------------------------------------------------------------------------
@@ -1042,8 +1241,6 @@ class TestGetConfigSpaceValidation:
 
     def test_sync_handler_returning_awaitable_raises(self) -> None:
         """Sync handler that returns an awaitable should fail with coroutine cleanup."""
-        import asyncio
-
         svc = TraigentService()
 
         @svc.objectives
@@ -1051,6 +1248,7 @@ class TestGetConfigSpaceValidation:
             # Return a coroutine without awaiting — simulates accidental async usage
             async def inner():
                 return [{"name": "accuracy", "direction": "maximize"}]
+
             return inner()
 
         with pytest.raises(

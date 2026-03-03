@@ -32,7 +32,7 @@ except ModuleNotFoundError:
 logger = logging.getLogger(__name__)
 
 # Default analytics endpoint (deprecated - will use backend client instead)
-DEFAULT_ANALYTICS_ENDPOINT = "https://analytics.traigent.ai/v1/local-usage"
+DEFAULT_ANALYTICS_ENDPOINT = "http://localhost:5000/v1/local-usage"
 
 
 class LocalAnalytics:

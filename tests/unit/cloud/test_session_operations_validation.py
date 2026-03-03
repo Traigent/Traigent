@@ -102,4 +102,4 @@ async def test_finalize_session_uses_lock(monkeypatch):
     monkeypatch.setattr(ops, "_finalize_session_via_api", AsyncMock(return_value=False))
 
     await ops.finalize_session("session-1")
-    assert lock.enter_count >= 1
+    assert lock.enter_count == 1  # Lock entered exactly once for finalization

@@ -38,6 +38,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 
 SERVER_URL = "http://localhost:8080"
 STARTUP_TIMEOUT = 10
+REQUEST_HEADERS = {"User-Agent": "Traigent-SDK/1.0"}
 
 
 def wait_for_server(url: str, timeout: int = STARTUP_TIMEOUT) -> bool:
@@ -45,7 +46,11 @@ def wait_for_server(url: str, timeout: int = STARTUP_TIMEOUT) -> bool:
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            response = requests.get(f"{url}/traigent/v1/health", timeout=1)
+            response = requests.get(
+                f"{url}/traigent/v1/health",
+                timeout=1,
+                headers=REQUEST_HEADERS,
+            )
             if response.status_code == 200:
                 return True
         except requests.ConnectionError:
@@ -132,7 +137,7 @@ async def run_optimization() -> None:
     # Create evaluator pointing to Flask server
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
-        capability_id="demo_agent",
+        tunable_id="demo_agent",
         batch_size=5,
         auto_discover_tvars=True,
     )

@@ -50,6 +50,7 @@ from traigent.core.objectives import (
     schema_to_objective_names,
 )
 from traigent.core.optimization_pipeline import (
+    HybridAPIEvaluatorOptions,
     collect_orchestrator_kwargs,
     create_effective_evaluator,
     create_traigent_config,
@@ -119,7 +120,8 @@ def _emit_cost_warning_once() -> None:
             f"Cost estimates are approximations based on {CYAN}litellm{RESET} library pricing.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
-            f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
+            f"  - Custom pricing file:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_FILE{RESET}\n"
+            f"  - Custom pricing JSON:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_JSON{RESET}\n"
             f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
@@ -130,7 +132,8 @@ def _emit_cost_warning_once() -> None:
             "Cost estimates are approximations based on litellm library pricing.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
-            "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
+            "  - Custom pricing file:   TRAIGENT_CUSTOM_MODEL_PRICING_FILE\n"
+            "  - Custom pricing JSON:   TRAIGENT_CUSTOM_MODEL_PRICING_JSON\n"
             "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
             "  - Full details:          DISCLAIMER.md\n"
         )
@@ -155,6 +158,8 @@ class OptimizedFunction:
     This class provides the optimization interface for decorated functions,
     including methods to run optimization, get results, and analyze performance.
     """
+
+    _csm: ConfigStateManager
 
     def __init__(
         self,
@@ -429,7 +434,7 @@ class OptimizedFunction:
 
         # Hybrid API evaluator configuration (execution_mode="hybrid_api")
         self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
-        self.hybrid_api_capability_id = kwargs.pop("capability_id", None)
+        self.hybrid_api_tunable_id = kwargs.pop("tunable_id", None)
         self.hybrid_api_transport = kwargs.pop("hybrid_api_transport", None)
         self.hybrid_api_transport_type = kwargs.pop("hybrid_api_transport_type", "auto")
         self.hybrid_api_batch_size = kwargs.pop("hybrid_api_batch_size", 1)
@@ -591,11 +596,11 @@ class OptimizedFunction:
 
     @property
     def _state_lock(self) -> threading.RLock:
-        return self._csm._state_lock
+        return self._csm._state_lock  # type: ignore[no-any-return]
 
     @property  # noqa: F811
     def _optimization_results(self) -> OptimizationResult | None:  # type: ignore[override]
-        return self._csm._optimization_results
+        return self._csm._optimization_results  # type: ignore[no-any-return]
 
     @_optimization_results.setter
     def _optimization_results(self, value: OptimizationResult | None) -> None:
@@ -603,7 +608,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _optimization_history(self) -> list[OptimizationResult]:  # type: ignore[override]
-        return self._csm._optimization_history
+        return self._csm._optimization_history  # type: ignore[no-any-return]
 
     @_optimization_history.setter
     def _optimization_history(self, value: list[OptimizationResult]) -> None:
@@ -611,7 +616,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _current_config(self) -> dict[str, Any]:  # type: ignore[override]
-        return self._csm._current_config
+        return self._csm._current_config  # type: ignore[no-any-return]
 
     @_current_config.setter
     def _current_config(self, value: dict[str, Any]) -> None:
@@ -619,7 +624,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _best_config(self) -> dict[str, Any] | None:  # type: ignore[override]
-        return self._csm._best_config
+        return self._csm._best_config  # type: ignore[no-any-return]
 
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
@@ -866,7 +871,7 @@ class OptimizedFunction:
         *,
         algorithm: str | None,
         max_trials: int | None,
-        timeout: float | None,
+        evaluation_timeout: float | None,
         effective_config_space: dict[str, Any],
         algorithm_kwargs: dict[str, Any],
     ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
@@ -878,7 +883,13 @@ class OptimizedFunction:
 
         discover = getattr(evaluator, "discover_config_space", None)
         if not callable(discover):
-            return algorithm, max_trials, timeout, effective_config_space, state
+            return (
+                algorithm,
+                max_trials,
+                evaluation_timeout,
+                effective_config_space,
+                state,
+            )
 
         discovered_config_space = await discover()
         if not discovered_config_space:
@@ -894,7 +905,13 @@ class OptimizedFunction:
 
         discovered_spec = getattr(evaluator, "optimization_spec", None) or {}
         if not isinstance(discovered_spec, dict):
-            return algorithm, max_trials, timeout, effective_config_space, state
+            return (
+                algorithm,
+                max_trials,
+                evaluation_timeout,
+                effective_config_space,
+                state,
+            )
 
         discovered_schema = discovered_spec.get("objective_schema")
         if discovered_schema is not None:
@@ -913,10 +930,14 @@ class OptimizedFunction:
 
         runtime_overrides = discovered_spec.get("runtime_overrides")
         if isinstance(runtime_overrides, dict) and runtime_overrides:
-            algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+            (
                 algorithm,
                 max_trials,
-                timeout,
+                evaluation_timeout,
+            ) = self._apply_tvl_runtime_overrides(
+                algorithm,
+                max_trials,
+                evaluation_timeout,
                 algorithm_kwargs,
                 runtime_overrides,
             )
@@ -943,7 +964,13 @@ class OptimizedFunction:
             if merged_metrics:
                 evaluator.metrics = merged_metrics
 
-        return algorithm, max_trials, timeout, effective_config_space, state
+        return (
+            algorithm,
+            max_trials,
+            evaluation_timeout,
+            effective_config_space,
+            state,
+        )
 
     def _restore_hybrid_discovery_state(
         self,
@@ -1250,17 +1277,19 @@ class OptimizedFunction:
             else self.hybrid_api_auto_discover_tvars
         )
         return {
-            "hybrid_api_endpoint": self.hybrid_api_endpoint,
-            "hybrid_api_capability_id": self.hybrid_api_capability_id,
-            "hybrid_api_transport": self.hybrid_api_transport,
-            "hybrid_api_transport_type": self.hybrid_api_transport_type,
-            "hybrid_api_batch_size": self.hybrid_api_batch_size,
-            "hybrid_api_batch_parallelism": self.hybrid_api_batch_parallelism,
-            "hybrid_api_keep_alive": self.hybrid_api_keep_alive,
-            "hybrid_api_heartbeat_interval": self.hybrid_api_heartbeat_interval,
-            "hybrid_api_timeout": self.hybrid_api_timeout,
-            "hybrid_api_auth_header": self.hybrid_api_auth_header,
-            "hybrid_api_auto_discover_tvars": auto_discover,
+            "hybrid_api_options": HybridAPIEvaluatorOptions(
+                endpoint=self.hybrid_api_endpoint,
+                tunable_id=self.hybrid_api_tunable_id,
+                transport=self.hybrid_api_transport,
+                transport_type=self.hybrid_api_transport_type,
+                batch_size=self.hybrid_api_batch_size,
+                batch_parallelism=self.hybrid_api_batch_parallelism,
+                keep_alive=self.hybrid_api_keep_alive,
+                heartbeat_interval=self.hybrid_api_heartbeat_interval,
+                timeout=self.hybrid_api_timeout,
+                auth_header=self.hybrid_api_auth_header,
+                auto_discover_tvars=auto_discover,
+            ),
         }
 
     def _create_effective_evaluator(
@@ -1307,7 +1336,6 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
-        invocations_per_example: int = 1,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1408,7 +1436,7 @@ class OptimizedFunction:
         )
 
         # Show upgrade hints after optimization completion (Edge Analytics mode only)
-        if self.traigent_config.is_edge_analytics_mode():
+        if self.traigent_config.is_edge_analytics_mode():  # type: ignore[has-type]
             try:
                 show_upgrade_hint(
                     "session_complete",
@@ -1418,7 +1446,7 @@ class OptimizedFunction:
             except Exception as e:
                 logger.debug(f"Failed to show upgrade hint: {e}")
 
-        return result
+        return result  # type: ignore[no-any-return]
 
     async def _try_cloud_execution(
         self,
@@ -1533,7 +1561,7 @@ class OptimizedFunction:
                     evaluator=precreated_evaluator,
                     algorithm=algorithm,
                     max_trials=max_trials,
-                    timeout=timeout,
+                    evaluation_timeout=timeout,
                     effective_config_space=pre_discovery_space or {},
                     algorithm_kwargs=algorithm_kwargs,
                 )
@@ -1595,22 +1623,9 @@ class OptimizedFunction:
             )
         )
 
-        # Phase 5.5: Pop cost-estimation params before optimizer creation
-        raw_invocations = algorithm_kwargs.pop("invocations_per_example", 1)
-        try:
-            invocations_per_example = max(1, int(raw_invocations))
-            if invocations_per_example != raw_invocations:
-                logger.debug(
-                    "invocations_per_example coerced: %r -> %d",
-                    raw_invocations,
-                    invocations_per_example,
-                )
-        except (TypeError, ValueError):
-            invocations_per_example = 1
-            logger.warning(
-                "Invalid invocations_per_example=%r, defaulting to 1",
-                raw_invocations,
-            )
+        # Phase 5.5: Pop legacy cost-estimation param before optimizer creation.
+        # It is not consumed by orchestrator and should not leak into optimizer kwargs.
+        algorithm_kwargs.pop("invocations_per_example", None)
 
         # Phase 6: Determine privacy and create evaluator
         if precreated_evaluator is not None:
@@ -1651,7 +1666,6 @@ class OptimizedFunction:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
-            invocations_per_example=invocations_per_example,
         )
 
         # Phase 9: Run optimization and finalize
@@ -1843,19 +1857,19 @@ class OptimizedFunction:
 
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization."""
-        return self._csm.get_best_config()
+        return self._csm.get_best_config()  # type: ignore[no-any-return]
 
     def get_optimization_results(self) -> OptimizationResult | None:
         """Get the latest optimization results."""
-        return self._csm.get_optimization_results()
+        return self._csm.get_optimization_results()  # type: ignore[no-any-return]
 
     def get_optimization_history(self) -> list[OptimizationResult]:
         """Get history of all optimization runs."""
-        return self._csm.get_optimization_history()
+        return self._csm.get_optimization_history()  # type: ignore[no-any-return]
 
     def is_optimization_complete(self) -> bool:
         """Check if optimization has been completed."""
-        return self._csm.is_optimization_complete()
+        return self._csm.is_optimization_complete()  # type: ignore[no-any-return]
 
     def reset_optimization(self) -> None:
         """Reset optimization state and restore default configuration."""
@@ -1877,12 +1891,12 @@ class OptimizedFunction:
     @property
     def best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization."""
-        return self._csm.best_config
+        return self._csm.best_config  # type: ignore[no-any-return]
 
     @property
     def current_config(self) -> dict[str, Any]:
         """Get the configuration this function uses when called."""
-        return self._csm.current_config
+        return self._csm.current_config  # type: ignore[no-any-return]
 
     def _maybe_auto_load_config(self) -> None:
         """Auto-load configuration if requested. Delegates to ConfigStateManager."""
@@ -1894,7 +1908,7 @@ class OptimizedFunction:
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results."""
-        return self._csm.apply_best_config(
+        return self._csm.apply_best_config(  # type: ignore[no-any-return]
             results,
             get_wrapped_func=lambda: self._wrapped_func,
             set_wrapped_func=lambda f: setattr(self, "_wrapped_func", f),
@@ -1908,17 +1922,17 @@ class OptimizedFunction:
         include_metadata: bool = True,
     ) -> Path:
         """Export the best configuration to a file."""
-        return self._csm.export_config(
+        return self._csm.export_config(  # type: ignore[no-any-return]
             path, format=format, include_metadata=include_metadata
         )
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""
-        return self._csm._load_config_from_path(path)
+        return self._csm._load_config_from_path(path)  # type: ignore[no-any-return]
 
     def _find_latest_config_path(self) -> str | None:
         """Find the latest saved config path. Delegates to ConfigStateManager."""
-        return self._csm._find_latest_config_path()
+        return self._csm._find_latest_config_path()  # type: ignore[no-any-return]
 
     def cleanup(self, *, preserve_config: bool = True) -> None:
         """Clean up optimization artifacts to free memory.

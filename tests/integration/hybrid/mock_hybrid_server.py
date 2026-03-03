@@ -133,7 +133,7 @@ class MockHybridServer:
         ]
         return {
             "schema_version": "0.9",
-            "capability_id": "mock_test_agent",
+            "tunable_id": "mock_test_agent",
             "tunables": tunables,
             "tvars": tunables,
         }
@@ -427,7 +427,9 @@ class MockHTTPTransport:
         data = self._server.get_capabilities()
         return ServiceCapabilities.from_dict(data)
 
-    async def discover_config_space(self) -> dict[str, Any]:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> dict[str, Any]:
         """Fetch config space from mock server."""
         from traigent.hybrid.protocol import ConfigSpaceResponse
 

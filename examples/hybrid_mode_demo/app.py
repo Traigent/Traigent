@@ -81,6 +81,7 @@ def capabilities():
             "supports_keep_alive": False,  # Set True for stateful agents
             "supports_streaming": False,
             "max_batch_size": 100,
+            "tunable_ids": ["demo_agent"],
         }
     )
 
@@ -101,7 +102,7 @@ def config_space():
     return jsonify(
         {
             "schema_version": "0.9",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "tunables": TUNABLES,
             "constraints": {},
         }
@@ -124,7 +125,7 @@ def execute():
     Request format:
         {
             "request_id": "uuid",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "config": {"model": "fast", "temperature": 0.5, ...},
             "inputs": [{"input_id": "ex_001", "data": {"query": "..."}}]
         }
@@ -139,11 +140,58 @@ def execute():
         }
     """
     data = request.get_json()
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload"}), 400
+
+    missing_fields = [field for field in ("config", "inputs") if field not in data]
+    if missing_fields:
+        return (
+            jsonify(
+                {
+                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+
+    config = data.get("config")
+    inputs = data.get("inputs")
+    if not isinstance(config, dict):
+        return (
+            jsonify(
+                {
+                    "error": "Field 'config' must be an object",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+    if not isinstance(inputs, list) or len(inputs) == 0:
+        return (
+            jsonify(
+                {
+                    "error": "Field 'inputs' must be a non-empty array",
+                    "message": "Request body failed validation",
+                }
+            ),
+            400,
+        )
+
+    for idx, inp in enumerate(inputs):
+        if not isinstance(inp, dict) or not inp.get("input_id"):
+            return (
+                jsonify(
+                    {
+                        "error": f"Input at index {idx} must include non-empty 'input_id'",
+                        "message": "Request body failed validation",
+                    }
+                ),
+                400,
+            )
 
     request_id = data.get("request_id", str(uuid.uuid4()))
     execution_id = str(uuid.uuid4())
-    config = data.get("config", {})
-    inputs = data.get("inputs", [])
 
     # --------------------------------------------------------
     # YOUR AGENT LOGIC HERE
@@ -158,22 +206,12 @@ def execute():
 
     for inp in inputs:
         input_id = inp.get("input_id")
-        input_data = inp.get("data", {})
 
         # Extract config values
         model = config.get("model", "balanced")
-        temperature = config.get("temperature", 0.5)
-        use_cache = config.get("use_cache", True)
 
-        # Simulate processing based on config
         # In production, this would call your actual LLM/agent
-        query = input_data.get("query", "")
-        output = {
-            "response": f"Response for '{query}' "
-            f"using model={model}, temp={temperature}",
-            "model_used": model,
-            "cached": use_cache and len(query) < 10,  # Mock cache logic
-        }
+        query = inp.get("data", {}).get("query", "")
 
         # Calculate cost based on model tier
         cost_per_query = {
@@ -192,7 +230,7 @@ def execute():
         outputs.append(
             {
                 "input_id": input_id,
-                "output": output,
+                "output_id": f"out_{input_id}_{execution_id}",
                 "cost_usd": cost_per_query,
                 "latency_ms": 50 + (100 if model == "accurate" else 0),
             }
@@ -248,7 +286,7 @@ def evaluate():
     Request format:
         {
             "request_id": "uuid",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "evaluations": [
                 {"input_id": "ex_001", "output": {...}, "target": {...}}
             ]
@@ -285,9 +323,16 @@ def evaluate():
         output = eval_item.get("output", {})
         target = eval_item.get("target", {})
 
-        # Extract text for comparison
-        output_text = str(output.get("response", ""))
-        target_text = str(target.get("expected", ""))
+        # Extract text for comparison - handle both dict and string formats
+        if isinstance(output, dict):
+            output_text = str(output.get("response", ""))
+        else:
+            output_text = str(output or "")
+
+        if isinstance(target, dict):
+            target_text = str(target.get("expected", target.get("answer", "")))
+        else:
+            target_text = str(target or "")
 
         # --------------------------------------------------------
         # Calculate quality metrics
@@ -354,6 +399,7 @@ def evaluate():
     return jsonify(
         {
             "request_id": request_id,
+            "execution_id": data.get("execution_id"),
             "status": "completed",
             "results": results,
             "aggregate_metrics": aggregate_metrics,
@@ -374,7 +420,7 @@ def health():
         {
             "status": "healthy",
             "version": "1.0.0",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
         }
     )
 
@@ -394,6 +440,6 @@ if __name__ == "__main__":
     print(f"  POST http://localhost:{port}/traigent/v1/evaluate")
     print(f"  GET  http://localhost:{port}/traigent/v1/health")
     print()
-    print("Test with: python test_client.py")
+    print("Test with: python test_mastra_js_api.py")
     print()
     app.run(host="0.0.0.0", port=port, debug=True)

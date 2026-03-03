@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
 from traigent._version import get_version
-from traigent.utils.cost_calculator import calculate_llm_cost
 from traigent.utils.logging import get_logger
 
 # Initialize logger first
@@ -273,7 +272,7 @@ class MetricsTracker:
                     return cast(
                         float | None, d.get(key, {}).get(subkey, actual_default)
                     )
-                return d.get(key, actual_default)
+                return cast(float | None, d.get(key, actual_default))
             except (AttributeError, TypeError):
                 return actual_default
 
@@ -681,11 +680,21 @@ class AnthropicResponseHandler(ResponseHandler):
         # 2. Check for usage pattern specific to Anthropic
         if hasattr(response, "usage"):
             usage = response.usage
-            # Anthropic uses input_tokens/output_tokens instead of prompt_tokens/completion_tokens
-            has_anthropic_tokens = hasattr(usage, "input_tokens") and hasattr(
-                usage, "output_tokens"
+
+            # Anthropic uses input/output token keys; Bedrock may use camelCase.
+            def _has(u: Any, name: str) -> bool:
+                if isinstance(u, dict):
+                    return name in u
+                return hasattr(u, name)
+
+            has_anthropic_tokens = (
+                (_has(usage, "input_tokens") and _has(usage, "output_tokens"))
+                or (
+                    _has(usage, "num_input_tokens") and _has(usage, "num_output_tokens")
+                )
+                or (_has(usage, "inputTokens") and _has(usage, "outputTokens"))
             )
-            has_openai_tokens = hasattr(usage, "prompt_tokens") and hasattr(
+            has_openai_tokens = _has(usage, "prompt_tokens") and _has(
                 usage, "completion_tokens"
             )
             # Only return True if it has Anthropic tokens and NOT OpenAI tokens
@@ -719,11 +728,13 @@ class AnthropicResponseHandler(ResponseHandler):
             input_val = (
                 _get(usage, "input_tokens")
                 or _get(usage, "num_input_tokens")
+                or _get(usage, "inputTokens")
                 or _get(usage, "prompt_tokens")
             )
             output_val = (
                 _get(usage, "output_tokens")
                 or _get(usage, "num_output_tokens")
+                or _get(usage, "outputTokens")
                 or _get(usage, "completion_tokens")
             )
             total_val = _get(usage, "total_tokens")
@@ -935,8 +946,149 @@ class ResponseHandlerFactory:
         return openai
 
 
+def _calculate_cost_for_metrics(
+    metrics: ExampleMetrics,
+    model_name: str | None,
+    original_prompt: Any,
+    response_text: str | None,
+    prompt_length: int | None = None,
+    response_length: int | None = None,
+) -> None:
+    """Calculate and update cost metrics.
+
+    Uses cost_from_tokens() as the canonical cost path when token counts are
+    available, falling back to deprecated text-based functions otherwise.
+    """
+    from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
+
+    mock_mode = is_mock_llm()
+    strict_cost_accounting = is_strict_cost_accounting()
+    generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
+
+    if mock_mode or generate_mocks_env == "true":
+        _handle_mock_mode(metrics, prompt_length, response_length)
+        return
+
+    if not model_name or metrics.cost.total_cost > 0.0:
+        return
+
+    try:
+        _compute_cost(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+            strict_cost_accounting=strict_cost_accounting,
+        )
+    except Exception as e:
+        logger.error(
+            "Cost calculation failed for model %s: %s",
+            model_name,
+            e,
+            exc_info=True,
+        )
+        if (
+            strict_cost_accounting
+            or os.environ.get("TRAIGENT_DEBUG", "").lower() == "true"
+        ):
+            raise
+
+
+def _handle_mock_mode(
+    metrics: ExampleMetrics,
+    prompt_length: int | None,
+    response_length: int | None,
+) -> None:
+    """Set zero costs in mock mode, estimating tokens from text length."""
+    if prompt_length is not None and metrics.tokens.input_tokens == 0:
+        metrics.tokens.input_tokens = max(1, prompt_length // 4)
+    if response_length is not None and metrics.tokens.output_tokens == 0:
+        metrics.tokens.output_tokens = max(1, response_length // 4)
+    if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
+        metrics.tokens.total_tokens = (
+            metrics.tokens.input_tokens + metrics.tokens.output_tokens
+        )
+    metrics.cost.input_cost = 0.0
+    metrics.cost.output_cost = 0.0
+    metrics.cost.total_cost = 0.0
+
+
+def _compute_cost(
+    metrics: ExampleMetrics,
+    model_name: str,
+    original_prompt: Any,
+    response_text: str | None,
+    *,
+    strict_cost_accounting: bool,
+) -> None:
+    """Compute cost using cost_from_tokens (preferred) or legacy text path."""
+    from traigent.utils.cost_calculator import cost_from_tokens
+
+    # Ensure total tokens computed
+    if metrics.tokens.total_tokens == 0:
+        metrics.tokens.total_tokens = (
+            metrics.tokens.input_tokens + metrics.tokens.output_tokens
+        )
+
+    if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
+        # Preferred path: use canonical cost_from_tokens directly
+        input_cost, output_cost = cost_from_tokens(
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
+            model_name,
+            strict=strict_cost_accounting,
+        )
+        metrics.cost.input_cost = input_cost
+        metrics.cost.output_cost = output_cost
+        metrics.cost.total_cost = input_cost + output_cost
+        if metrics.cost.total_cost > 0:
+            logger.debug(
+                "Cost calculated for %s: $%.6f via cost_from_tokens",
+                model_name,
+                metrics.cost.total_cost,
+            )
+    else:
+        logger.warning(
+            "No token usage extracted for model %s; "
+            "falling back to deprecated text-based cost calculation",
+            model_name,
+        )
+        # Legacy fallback: text-based cost (deprecated)
+        _try_legacy_cost_calculation(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+        )
+
+
+def _try_legacy_cost_calculation(
+    metrics: ExampleMetrics,
+    model_name: str,
+    original_prompt: Any,
+    response_text: str | None,
+) -> None:
+    """Legacy cost calculation using deprecated text-based functions."""
+    backward_compatible = False
+
+    if calculate_prompt_cost is not None and original_prompt is not None:
+        metrics.cost.input_cost = calculate_prompt_cost(original_prompt, model_name)
+        backward_compatible = True
+
+    if calculate_completion_cost is not None and response_text is not None:
+        metrics.cost.output_cost = calculate_completion_cost(response_text, model_name)
+        backward_compatible = True
+
+    if backward_compatible:
+        metrics.cost.total_cost = metrics.cost.input_cost + metrics.cost.output_cost
+
+
 class CostCalculator:
-    """Separate class for handling cost calculations."""
+    """Backward-compat shim — delegates to module-level functions.
+
+    .. deprecated::
+        Use ``_calculate_cost_for_metrics()`` or ``cost_from_tokens()`` directly.
+    """
 
     def __init__(self) -> None:
         self.logger = logger
@@ -950,105 +1102,14 @@ class CostCalculator:
         prompt_length: int | None = None,
         response_length: int | None = None,
     ) -> None:
-        """Calculate and update cost metrics.
-
-        Args:
-            metrics: ExampleMetrics to update with cost information
-            model_name: Model name for cost lookup
-            original_prompt: Original prompt (if not in privacy mode)
-            response_text: Response text (if not in privacy mode)
-            prompt_length: Length of prompt in privacy mode
-            response_length: Length of response in privacy mode
-        """
-        # Check if we're in mock LLM mode
-        import os
-
-        from traigent.utils.env_config import is_mock_llm
-
-        mock_mode = is_mock_llm()
-        generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
-
-        # DEBUG: Log environment variables
-        self.logger.debug(
-            f"COST DEBUG: Checking mock mode - is_mock_llm={mock_mode}, "
-            f"TRAIGENT_GENERATE_MOCKS='{generate_mocks_env}', model_name='{model_name}'"
+        _calculate_cost_for_metrics(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+            prompt_length=prompt_length,
+            response_length=response_length,
         )
-
-        if mock_mode or generate_mocks_env == "true":
-            # In mock mode, set costs to 0 but estimate tokens if in privacy mode
-            if prompt_length is not None and metrics.tokens.input_tokens == 0:
-                # Estimate tokens from length (roughly 1 token per 4 characters)
-                metrics.tokens.input_tokens = max(1, prompt_length // 4)
-            if response_length is not None and metrics.tokens.output_tokens == 0:
-                metrics.tokens.output_tokens = max(1, response_length // 4)
-            if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
-                metrics.tokens.total_tokens = (
-                    metrics.tokens.input_tokens + metrics.tokens.output_tokens
-                )
-
-            metrics.cost.input_cost = 0.0
-            metrics.cost.output_cost = 0.0
-            metrics.cost.total_cost = 0.0
-            self.logger.debug("COST DEBUG: Mock mode enabled - setting costs to 0")
-            return
-
-        if not model_name or metrics.cost.total_cost > 0.0:
-            self.logger.debug(
-                f"Cost calculation skipped - model_name: '{model_name}', current_total_cost: {metrics.cost.total_cost}"
-            )
-            return
-
-        try:
-            # Always use unified cost calculation which handles token counts properly
-            self.logger.info(
-                f"💰 COST DEBUG: Calling _try_unified_cost_calculation with model='{model_name}', "
-                f"tokens: input={metrics.tokens.input_tokens}, output={metrics.tokens.output_tokens}"
-            )
-            self._try_unified_cost_calculation(
-                metrics,
-                model_name,
-                original_prompt,
-                response_text,
-                prompt_length=prompt_length,
-                response_length=response_length,
-            )
-        except Exception as e:
-            # Make error more visible
-            self.logger.error(
-                f"Cost calculation failed for model {model_name}: {e}", exc_info=True
-            )
-            # Re-raise to make failures more visible during development
-            if os.environ.get("TRAIGENT_DEBUG", "").lower() == "true":
-                raise
-
-    def _try_legacy_cost_calculation(
-        self,
-        metrics: ExampleMetrics,
-        model_name: str,
-        original_prompt: Any,
-        response_text: str | None,
-    ) -> bool:
-        """Try backward compatible cost calculation."""
-        backward_compatible = False
-
-        if calculate_prompt_cost is not None and original_prompt is not None:
-            metrics.cost.input_cost = calculate_prompt_cost(original_prompt, model_name)
-            backward_compatible = True
-
-        if calculate_completion_cost is not None and response_text is not None:
-            metrics.cost.output_cost = calculate_completion_cost(
-                response_text, model_name
-            )
-            backward_compatible = True
-
-        if backward_compatible:
-            metrics.cost.total_cost = metrics.cost.input_cost + metrics.cost.output_cost
-            self.logger.debug(
-                f"Cost calculated using legacy litellm functions for {model_name}: ${metrics.cost.total_cost:.6f}"
-            )
-            return True
-
-        return False
 
     def _try_unified_cost_calculation(
         self,
@@ -1059,81 +1120,16 @@ class CostCalculator:
         prompt_length: int | None = None,
         response_length: int | None = None,
     ) -> None:
-        """Try unified cost calculation.
+        del prompt_length, response_length
+        from traigent.utils.env_config import is_strict_cost_accounting
 
-        Args:
-            metrics: ExampleMetrics to update
-            model_name: Model name for cost lookup
-            original_prompt: Original prompt (if available)
-            response_text: Response text (if available)
-            prompt_length: Length of prompt in privacy mode
-            response_length: Length of response in privacy mode
-        """
-        # If we have lengths but no tokens, estimate tokens first
-        if prompt_length is not None and metrics.tokens.input_tokens == 0:
-            # Estimate token count based on average token/character ratio.
-            metrics.tokens.input_tokens = max(1, int(prompt_length * 0.25))
-
-        if response_length is not None and metrics.tokens.output_tokens == 0:
-            metrics.tokens.output_tokens = max(1, int(response_length * 0.25))
-
-        # Update total tokens if we estimated
-        if (
-            prompt_length is not None or response_length is not None
-        ) and metrics.tokens.total_tokens == 0:
-            metrics.tokens.total_tokens = (
-                metrics.tokens.input_tokens + metrics.tokens.output_tokens
-            )
-
-        # Use token counts if available, otherwise try to use prompt/response
-        cost_breakdown = calculate_llm_cost(
-            prompt=original_prompt if metrics.tokens.input_tokens == 0 else None,
-            response=response_text if metrics.tokens.output_tokens == 0 else None,
-            model_name=model_name,
-            input_tokens=(
-                metrics.tokens.input_tokens if metrics.tokens.input_tokens > 0 else None
-            ),
-            output_tokens=(
-                metrics.tokens.output_tokens
-                if metrics.tokens.output_tokens > 0
-                else None
-            ),
-            logger=self.logger,
+        _compute_cost(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+            strict_cost_accounting=is_strict_cost_accounting(),
         )
-
-        # Update metrics with cost calculation results
-        self.logger.info(
-            f"💰 COST DEBUG: cost_breakdown returned - input_cost=${cost_breakdown.input_cost:.8f}, "
-            f"output_cost=${cost_breakdown.output_cost:.8f}, total=${cost_breakdown.total_cost:.8f}, "
-            f"method={cost_breakdown.calculation_method}"
-        )
-        metrics.cost.input_cost = cost_breakdown.input_cost
-        metrics.cost.output_cost = cost_breakdown.output_cost
-        metrics.cost.total_cost = cost_breakdown.total_cost
-
-        # Update token counts if they weren't available before
-        if cost_breakdown.input_tokens > 0 and metrics.tokens.input_tokens == 0:
-            metrics.tokens.input_tokens = cost_breakdown.input_tokens
-        if cost_breakdown.output_tokens > 0 and metrics.tokens.output_tokens == 0:
-            metrics.tokens.output_tokens = cost_breakdown.output_tokens
-        if cost_breakdown.total_tokens > 0 and metrics.tokens.total_tokens == 0:
-            metrics.tokens.total_tokens = cost_breakdown.total_tokens
-
-        # Log successful cost calculation
-        if cost_breakdown.total_cost > 0:
-            self.logger.debug(
-                f"Cost calculated for {model_name}: ${cost_breakdown.total_cost:.6f} "
-                f"(method: {cost_breakdown.calculation_method})"
-            )
-            if cost_breakdown.mapped_model != model_name:
-                self.logger.debug(
-                    f"Model mapped: {model_name} -> {cost_breakdown.mapped_model}"
-                )
-        elif metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
-            self.logger.debug(
-                f"No cost calculated for {model_name} despite having tokens: "
-                f"input={metrics.tokens.input_tokens}, output={metrics.tokens.output_tokens}"
-            )
 
 
 class MetricsCalculator:
@@ -1192,9 +1188,8 @@ def extract_llm_metrics(
         metrics = ExampleMetrics()
         logger.warning("No handler could process the response, using empty metrics")
 
-    # Calculate cost using separate cost calculator
-    cost_calculator = CostCalculator()
-    cost_calculator.calculate_cost(
+    # Calculate cost using canonical cost_from_tokens path
+    _calculate_cost_for_metrics(
         metrics,
         model_name,
         original_prompt,

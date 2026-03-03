@@ -7,7 +7,7 @@ their configuration space, execute logic, and evaluation logic.
 Example:
     from traigent.wrapper import TraigentService
 
-    app = TraigentService(capability_id="my_agent")
+    app = TraigentService(tunable_id="my_agent")
 
     @app.tvars
     def config_space():
@@ -33,7 +33,12 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import inspect
+import json
+import math
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -41,10 +46,14 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
 from traigent.utils.logging import get_logger
+from traigent.wrapper.errors import HybridAPIError
 
 logger = get_logger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+# OpenAPI contract: tunable and objective names must be valid Python identifiers.
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
 
 
 @dataclass
@@ -52,7 +61,7 @@ class ServiceConfig:
     """Configuration for TraigentService.
 
     Attributes:
-        capability_id: Unique identifier for this capability.
+        tunable_id: Unique identifier for this tunable.
         version: API version string.
         supports_keep_alive: Whether to enable keep-alive support.
         supports_streaming: Whether to enable streaming support.
@@ -66,7 +75,7 @@ class ServiceConfig:
         measures: Optional declared measure names.
     """
 
-    capability_id: str = "default"
+    tunable_id: str = "default"
     version: str = "1.0"
     supports_keep_alive: bool = False
     supports_streaming: bool = False
@@ -109,7 +118,7 @@ class TraigentService:
     directly as a library.
 
     Example:
-        app = TraigentService(capability_id="qa_agent")
+        app = TraigentService(tunable_id="qa_agent")
 
         @app.tvars
         def config_space():
@@ -124,7 +133,7 @@ class TraigentService:
 
     def __init__(
         self,
-        capability_id: str = "default",
+        tunable_id: str = "default",
         version: str = "1.0",
         supports_keep_alive: bool = False,
         supports_streaming: bool = False,
@@ -139,7 +148,7 @@ class TraigentService:
         """Initialize TraigentService.
 
         Args:
-            capability_id: Unique identifier for this capability.
+            tunable_id: Unique identifier for this tunable.
             version: API version string.
             supports_keep_alive: Whether to enable keep-alive support.
             supports_streaming: Whether to enable streaming support.
@@ -152,7 +161,7 @@ class TraigentService:
             measures: Optional declared measure names.
         """
         self.config = ServiceConfig(
-            capability_id=capability_id,
+            tunable_id=tunable_id,
             version=version,
             supports_keep_alive=supports_keep_alive,
             supports_streaming=supports_streaming,
@@ -182,8 +191,32 @@ class TraigentService:
         self._sessions: dict[str, Session] = {}
         self._started_at: float = time.time()
 
+        # In-process idempotency caches keyed by request_id.
+        # Value is (payload fingerprint excluding request_id, response payload).
+        # Bounded to prevent unbounded memory growth in long-lived servers.
+        self._idempotency_cache_max_size = 1000
+        self._execute_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._evaluate_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+
         # Cached config space
         self._cached_tvars: dict[str, Any] | None = None
+
+    def _fingerprint_request(self, request: dict[str, Any]) -> str:
+        """Build stable request fingerprint for idempotency checks.
+
+        Excludes request_id because request_id is used as the dedupe key itself.
+        """
+        payload = {k: v for k, v in request.items() if k != "request_id"}
+        try:
+            return json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        except TypeError:
+            # Fallback for non-JSON-native values in custom wrappers.
+            return repr(payload)
 
     def tvars(self, func: F) -> F:
         """Decorator to register TVAR configuration function.
@@ -314,7 +347,7 @@ class TraigentService:
         """Get TVAR definitions.
 
         Returns:
-            Dictionary with schema_version, capability_id, and tunables.
+            Dictionary with schema_version, tunable_id, and tunables.
         """
         if self._cached_tvars is None and self._tvars_handler is not None:
             tvars_dict = self._tvars_handler()
@@ -368,7 +401,7 @@ class TraigentService:
 
         response: dict[str, Any] = {
             "schema_version": self.config.schema_version,
-            "capability_id": self.config.capability_id,
+            "tunable_id": self.config.tunable_id,
             "tunables": tunables,
             "tvars": tunables,  # Backward compatibility alias
             "constraints": constraints or {},
@@ -389,6 +422,11 @@ class TraigentService:
         """Normalize TVAR definitions to TVL format."""
         normalized: dict[str, dict[str, Any]] = {}
         for name, spec in tvars.items():
+            if not _IDENTIFIER_RE.match(name):
+                raise ValueError(
+                    f"Invalid TVAR name '{name}': must be a valid Python identifier "
+                    f"(pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$)"
+                )
             if isinstance(spec, dict):
                 normalized_spec = dict(spec)
                 domain = normalized_spec.get("domain", {})
@@ -433,6 +471,8 @@ class TraigentService:
             "supports_streaming": self.config.supports_streaming,
             "max_batch_size": self.config.max_batch_size,
             "max_payload_bytes": None,
+            # Explicitly advertise supported capability IDs for multi-capability clients.
+            "tunable_ids": [self.config.tunable_id],
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -447,7 +487,7 @@ class TraigentService:
             "version": self.config.version,
             "uptime_seconds": uptime_seconds,
             "details": {
-                "capability_id": self.config.capability_id,
+                "tunable_id": self.config.tunable_id,
                 "active_sessions": len(self._sessions),
             },
         }
@@ -459,7 +499,7 @@ class TraigentService:
         """Handle execute request.
 
         Args:
-            request: Execute request with capability_id, config, inputs.
+            request: Execute request with tunable_id, config, inputs.
 
         Returns:
             Execute response with outputs and metrics.
@@ -470,15 +510,38 @@ class TraigentService:
         if self._execute_handler is None:
             raise ValueError("No execute handler registered")
 
-        request_id = request.get("request_id", str(uuid.uuid4()))
-        # capability_id from request (default to self.config.capability_id)
-        _ = request.get("capability_id", self.config.capability_id)
+        request_id = str(request.get("request_id", str(uuid.uuid4())))
+        request_fingerprint = self._fingerprint_request(request)
+        cached_execute = self._execute_idempotency_cache.get(request_id)
+        if cached_execute is not None:
+            cached_fingerprint, cached_response = cached_execute
+            if cached_fingerprint != request_fingerprint:
+                raise ValueError(
+                    "request_id reuse with different payload in execute request"
+                )
+            return copy.deepcopy(cached_response)
+
+        tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
         inputs = request.get("inputs")
         session_id = request.get("session_id")
 
         if not isinstance(inputs, list) or len(inputs) == 0:
             raise ValueError("inputs must be a non-empty list")
+
+        # Validate tunable_id matches this service
+        if tunable_id != self.config.tunable_id:
+            raise ValueError(
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
+            )
+
+        # Enforce max_batch_size from capabilities
+        max_batch = self.config.max_batch_size
+        if max_batch and len(inputs) > max_batch:
+            raise ValueError(
+                f"Batch size {len(inputs)} exceeds max_batch_size {max_batch}"
+            )
 
         # Update session if provided
         if session_id:
@@ -536,6 +599,11 @@ class TraigentService:
 
                 outputs.append(output_item)
 
+            except HybridAPIError:
+                # Bubble up explicit transport-level errors (401/429/503/etc.)
+                raise
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Execute failed for {input_id}: {e}")
                 failed_input_ids.append(input_id)
@@ -585,6 +653,15 @@ class TraigentService:
         if session_id:
             response["session_id"] = session_id
 
+        # Cache terminal response for idempotent retries.
+        # Evict oldest entry if cache is full.
+        if len(self._execute_idempotency_cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(self._execute_idempotency_cache))
+            del self._execute_idempotency_cache[oldest_key]
+        self._execute_idempotency_cache[request_id] = (
+            request_fingerprint,
+            copy.deepcopy(response),
+        )
         return response
 
     async def handle_evaluate(
@@ -605,13 +682,31 @@ class TraigentService:
         if self._evaluate_handler is None:
             raise ValueError("No evaluate handler registered")
 
-        request_id = request.get("request_id", str(uuid.uuid4()))
+        request_id = str(request.get("request_id", str(uuid.uuid4())))
+        request_fingerprint = self._fingerprint_request(request)
+        cached_evaluate = self._evaluate_idempotency_cache.get(request_id)
+        if cached_evaluate is not None:
+            cached_fingerprint, cached_response = cached_evaluate
+            if cached_fingerprint != request_fingerprint:
+                raise ValueError(
+                    "request_id reuse with different payload in evaluate request"
+                )
+            return copy.deepcopy(cached_response)
+
+        tunable_id = request.get("tunable_id", self.config.tunable_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
         session_id = request.get("session_id")
 
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
+
+        # Validate tunable_id matches this service
+        if tunable_id != self.config.tunable_id:
+            raise ValueError(
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
+            )
 
         # Update session if provided
         if session_id:
@@ -646,6 +741,11 @@ class TraigentService:
                     }
                 )
 
+            except HybridAPIError:
+                # Bubble up explicit transport-level errors (401/429/503/etc.)
+                raise
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Evaluate failed for {input_id}: {e}")
                 failed_input_ids.append(input_id)
@@ -683,6 +783,15 @@ class TraigentService:
                 "failed_inputs": failed_input_ids,
             }
 
+        # Cache terminal response for idempotent retries.
+        # Evict oldest entry if cache is full.
+        if len(self._evaluate_idempotency_cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(self._evaluate_idempotency_cache))
+            del self._evaluate_idempotency_cache[oldest_key]
+        self._evaluate_idempotency_cache[request_id] = (
+            request_fingerprint,
+            copy.deepcopy(response),
+        )
         return response
 
     def _aggregate_metrics(
@@ -697,6 +806,10 @@ class TraigentService:
 
         for metrics in metrics_list:
             for name, value in metrics.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isnan(value) or math.isinf(value):
+                    continue
                 if name not in aggregated:
                     aggregated[name] = 0.0
                     counts[name] = 0
@@ -723,6 +836,8 @@ class TraigentService:
         for metrics in metrics_list:
             for name, value in metrics.items():
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isnan(value) or math.isinf(value):
                     continue
                 if name not in values_by_metric:
                     values_by_metric[name] = []

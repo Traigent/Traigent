@@ -12,6 +12,7 @@ Classes:
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 import uuid
@@ -126,7 +127,7 @@ class TrialLifecycle:
         cache_policy = orchestrator.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            filtered_configs = orchestrator.cache_policy_handler.apply_policy(
+            filtered_configs = orchestrator.cache_policy_handler.apply_policy(  # type: ignore[has-type]
                 [config],
                 cache_policy,
                 function_name or "unknown_function",
@@ -148,7 +149,7 @@ class TrialLifecycle:
                 config.get("_optuna_trial_id") if isinstance(config, dict) else None
             )
 
-        config_for_run = prepare_evaluation_config(config)
+        config_for_run = prepare_evaluation_config(config)  # type: ignore[arg-type]
 
         # Phase 2: Enforce pre-evaluation constraints
         try:
@@ -166,6 +167,11 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
+            # Give back the trial slot the optimizer consumed in suggest_next_trial
+            if hasattr(orchestrator.optimizer, "_trial_count"):
+                orchestrator.optimizer._trial_count = max(
+                    0, orchestrator.optimizer._trial_count - 1
+                )
             if hasattr(orchestrator, "_abandon_optuna_trial"):
                 orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                     optuna_trial_id,
@@ -419,6 +425,10 @@ class TrialLifecycle:
         except APIKeyError:
             # Fail fast on API key errors - don't continue running trials
             # Re-raise to stop the entire optimization loop
+            raise
+
+        except asyncio.CancelledError:
+            # SonarQube S7497: CancelledError must always be re-raised
             raise
 
         except Exception as exc:

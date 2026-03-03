@@ -18,6 +18,9 @@ from traigent.wrapper.server import (
     EXECUTE_PATH,
     HEALTH_PATH,
     KEEP_ALIVE_PATH,
+    _extract_trace_headers,
+    _get_timeout_ms,
+    _response_headers_with_request_id,
     create_app,
     read_body,
     run_server,
@@ -188,7 +191,7 @@ class TestCreateAppRoutes:
     def service(self) -> TraigentService:
         """Create a TraigentService with handlers registered."""
         svc = TraigentService(
-            capability_id="test_svc",
+            tunable_id="test_svc",
             version="1.0",
             supports_keep_alive=True,
         )
@@ -239,7 +242,7 @@ class TestCreateAppRoutes:
         )
         assert send.status == 200
         body = send.body_json
-        assert body["capability_id"] == "test_svc"
+        assert body["tunable_id"] == "test_svc"
         assert len(body["tvars"]) == 1
 
     # --- POST /traigent/v1/execute ---
@@ -533,7 +536,9 @@ class TestMakeErrorResponse:
         from traigent.wrapper.server import _make_error_response
 
         result = _make_error_response("ERR_CODE", "Something went wrong")
-        assert result == {"error": {"code": "ERR_CODE", "message": "Something went wrong"}}
+        assert result == {
+            "error": {"code": "ERR_CODE", "message": "Something went wrong"}
+        }
 
     def test_with_details(self) -> None:
         """Test error response with details included."""
@@ -558,7 +563,7 @@ class TestKeepAlive404:
     async def test_keep_alive_returns_404_when_session_not_found(self) -> None:
         """Keep-alive for unknown session with keep_alive disabled returns 404."""
         svc = TraigentService(
-            capability_id="test_svc",
+            tunable_id="test_svc",
             supports_keep_alive=False,
         )
         app = create_app(svc)
@@ -571,3 +576,228 @@ class TestKeepAlive404:
         )
         assert send.status == 404
         assert send.body_json["error"]["code"] == "SESSION_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Tests for server helper functions
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTraceHeaders:
+    def test_extracts_traceparent_and_tracestate(self) -> None:
+        scope = {
+            "headers": [
+                (b"traceparent", b"00-abc-def-01"),
+                (b"tracestate", b"vendor=val"),
+                (b"content-type", b"application/json"),
+            ]
+        }
+        result = _extract_trace_headers(scope)
+        assert result == {
+            "traceparent": "00-abc-def-01",
+            "tracestate": "vendor=val",
+        }
+
+    def test_empty_headers(self) -> None:
+        assert _extract_trace_headers({"headers": []}) == {}
+
+    def test_no_headers_key(self) -> None:
+        assert _extract_trace_headers({}) == {}
+
+
+class TestResponseHeadersWithRequestId:
+    def test_adds_request_id(self) -> None:
+        result = _response_headers_with_request_id(
+            {"content-type": "application/json"}, "req-123"
+        )
+        assert result["x-traigent-request-id"] == "req-123"
+        assert result["content-type"] == "application/json"
+
+    def test_none_request_id_omits_header(self) -> None:
+        result = _response_headers_with_request_id({}, None)
+        assert "x-traigent-request-id" not in result
+
+
+class TestGetTimeoutMs:
+    def test_missing_key_returns_default(self) -> None:
+        assert _get_timeout_ms({}, default_ms=5000) == 5000
+
+    def test_null_value_returns_default(self) -> None:
+        assert _get_timeout_ms({"timeout_ms": None}, default_ms=5000) == 5000
+
+    def test_valid_value(self) -> None:
+        assert _get_timeout_ms({"timeout_ms": 3000}, default_ms=None) == 3000
+
+    def test_bool_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be an integer"):
+            _get_timeout_ms({"timeout_ms": True}, default_ms=None)
+
+    def test_below_minimum_raises(self) -> None:
+        with pytest.raises(ValueError, match=">= 1000"):
+            _get_timeout_ms({"timeout_ms": 500}, default_ms=None)
+
+
+# ---------------------------------------------------------------------------
+# Error handling tests
+# ---------------------------------------------------------------------------
+class TestErrorHandling:
+    """Tests for HybridAPIError and timeout handling in ASGI app."""
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_caught_and_returned(self) -> None:
+        """HybridAPIError from handler should be caught and returned as JSON."""
+        from traigent.wrapper.errors import BadRequestError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise BadRequestError(
+                "Invalid input format",
+                error_code="VALIDATION_ERROR",
+                details={"field": "temperature"},
+            )
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "tunable_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "VALIDATION_ERROR"
+        assert "Invalid input format" in send.body_json["error"]["message"]
+        assert send.body_json["error"]["details"]["field"] == "temperature"
+
+    @pytest.mark.asyncio
+    async def test_execute_timeout_raises_request_timeout_error(self) -> None:
+        """Execute handler exceeding timeout should raise RequestTimeoutError."""
+        import asyncio
+
+        from traigent.wrapper.errors import RequestTimeoutError
+
+        svc = TraigentService()
+
+        @svc.execute
+        async def run(input_id, data, config):
+            await asyncio.sleep(2)  # Longer than timeout
+            return {"output": "done"}
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "tunable_id": "default",
+                "timeout_ms": 1000,  # 1 second timeout
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 408
+        assert "timed out" in send.body_json["error"]["message"].lower()
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_with_custom_headers(self) -> None:
+        """HybridAPIError with custom headers should include them in response."""
+        from traigent.wrapper.errors import RateLimitError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RateLimitError(retry_after=60)
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "tunable_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 429
+        assert send.body_json["error"]["code"] == "RATE_LIMITED"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_timeout_raises_request_timeout_error(self) -> None:
+        """Evaluate handler exceeding timeout should raise RequestTimeoutError."""
+        import asyncio
+
+        svc = TraigentService()
+
+        @svc.evaluate
+        async def score(output, target, config):
+            await asyncio.sleep(2)  # Longer than timeout
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "tunable_id": "default",
+                "timeout_ms": 1000,  # 1 second timeout
+                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+            }
+        ).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 408
+        assert "timed out" in send.body_json["error"]["message"].lower()
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_with_custom_headers(self) -> None:
+        """HybridAPIError with custom headers should include them in response."""
+        from traigent.wrapper.errors import RateLimitError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RateLimitError(retry_after=60)
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "tunable_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 429
+        assert send.body_json["error"]["code"] == "RATE_LIMITED"

@@ -8,6 +8,7 @@ following the Traigent hybrid API protocol.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -60,6 +61,7 @@ class HTTPTransport:
         timeout: float = 300.0,
         max_connections: int = 10,
         auth_header: str | None = None,
+        require_http2: bool = False,
     ) -> None:
         """Initialize HTTP transport.
 
@@ -68,49 +70,59 @@ class HTTPTransport:
             timeout: Request timeout in seconds (default 300)
             max_connections: Maximum concurrent HTTP connections (default 10)
             auth_header: Optional Authorization header value
+            require_http2: Enforce HTTPS + HTTP/2 responses (strict mode)
         """
         self.base_url = base_url.rstrip("/")
+        if require_http2 and not self.base_url.startswith("https://"):
+            raise ValueError("require_http2=True requires an https:// base_url")
         self.timeout = timeout
         self.max_connections = max_connections
         self._auth_header = auth_header
+        self.require_http2 = require_http2
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client with connection pooling."""
-        if self._client is None or self._closed:
-            headers: dict[str, str] = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Traigent-SDK/1.0",
-            }
-            if self._auth_header:
-                headers["Authorization"] = self._auth_header
+        if self._client is not None and not self._closed:
+            return self._client
 
-            # Configure connection pooling
-            limits = httpx.Limits(
-                max_connections=self.max_connections,
-                max_keepalive_connections=self.max_connections,
-            )
+        async with self._client_lock:
+            if self._client is None or self._closed:
+                headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "Traigent-SDK/1.0",
+                }
+                if self._auth_header:
+                    headers["Authorization"] = self._auth_header
+                    headers["x-api-key"] = self._auth_header
 
-            # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
-            try:
-                import h2  # noqa: F401
+                # Configure connection pooling
+                limits = httpx.Limits(
+                    max_connections=self.max_connections,
+                    max_keepalive_connections=self.max_connections,
+                )
 
-                use_http2 = True
-            except ImportError:
-                use_http2 = False
-                logger.debug("h2 package not installed, using HTTP/1.1")
+                # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
+                try:
+                    import h2  # noqa: F401
 
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=headers,
-                timeout=httpx.Timeout(self.timeout),
-                limits=limits,
-                http2=use_http2,
-            )
-            self._closed = False
+                    use_http2 = True
+                except ImportError:
+                    use_http2 = False
+                    logger.debug("h2 package not installed, using HTTP/1.1")
+
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers=headers,
+                    timeout=httpx.Timeout(self.timeout),
+                    limits=limits,
+                    http2=use_http2,
+                )
+                self._closed = False
 
         return self._client
 
@@ -120,6 +132,7 @@ class HTTPTransport:
         path: str,
         json_data: dict[str, Any] | None = None,
         timeout_override: float | None = None,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request with error handling.
 
@@ -128,6 +141,7 @@ class HTTPTransport:
             path: URL path (relative to base_url)
             json_data: Optional JSON body
             timeout_override: Optional timeout override for this request
+            params: Optional query parameters
 
         Returns:
             Parsed JSON response.
@@ -151,8 +165,19 @@ class HTTPTransport:
                 method,
                 path,
                 json=json_data,
+                params=params,
                 timeout=timeout,
             )
+
+            if self.require_http2 and response.http_version != "HTTP/2":
+                raise TransportError(
+                    (
+                        "HTTP/2 is required, but upstream responded with "
+                        f"{response.http_version}"
+                    ),
+                    status_code=426,
+                    response_body=response.text,
+                )
 
             # Handle HTTP errors
             if response.status_code == 401:
@@ -179,6 +204,12 @@ class HTTPTransport:
                 raise TransportRateLimitError(
                     "Rate limit exceeded",
                     retry_after=retry_after,
+                    response_body=response.text,
+                )
+            elif response.status_code in (408, 504):
+                raise TransportTimeoutError(
+                    f"Request timed out: HTTP {response.status_code}",
+                    status_code=response.status_code,
                     response_body=response.text,
                 )
             elif response.status_code >= 500:
@@ -251,8 +282,13 @@ class HTTPTransport:
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions from external service.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -260,7 +296,10 @@ class HTTPTransport:
         Raises:
             TransportError: If discovery fails.
         """
-        data = await self._request("GET", self.CONFIG_SPACE_PATH)
+        params: dict[str, str] | None = None
+        if tunable_id is not None:
+            params = {"tunable_id": tunable_id}
+        data = await self._request("GET", self.CONFIG_SPACE_PATH, params=params)
         return ConfigSpaceResponse.from_dict(data)
 
     async def execute(
@@ -312,10 +351,16 @@ class HTTPTransport:
                 "External service does not support separate evaluate endpoint"
             )
 
+        timeout_s = (
+            request.timeout_ms / 1000.0
+            if request.timeout_ms is not None and request.timeout_ms > 0
+            else None
+        )
         data = await self._request(
             "POST",
             self.EVALUATE_PATH,
             json_data=request.to_dict(),
+            timeout_override=timeout_s,
         )
         return HybridEvaluateResponse.from_dict(data)
 

@@ -9,17 +9,17 @@ Usage:
     >>> from traigent.analytics import ExampleInsightsClient
     >>>
     >>> # Initialize client (requires backend authentication)
-    >>> client = ExampleInsightsClient(backend_url="https://api.traigent.ai")
+    >>> client = ExampleInsightsClient(backend_url="http://localhost:5000")
     >>>
     >>> # Trigger scoring computation (async job)
     >>> job_result = await client.compute_scores(experiment_run_id="run_123")
     >>> print(f"Job ID: {job_result['job_id']}")
     >>>
-    >>> # Poll for completion
-    >>> scores = await client.get_example_scores(
-    ...     experiment_run_id="run_123",
-    ...     timeout=60,  # Wait up to 60s for job to complete
-    ... )
+    >>> # Poll for completion (use asyncio.timeout for custom deadline)
+    >>> async with asyncio.timeout(60):
+    ...     scores = await client.get_example_scores(
+    ...         experiment_run_id="run_123",
+    ...     )
     >>>
     >>> # Retrieve dataset quality metrics
     >>> quality = await client.get_dataset_quality(experiment_run_id="run_123")
@@ -32,6 +32,7 @@ import asyncio
 import time
 from typing import Any, cast
 
+from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class ExampleInsightsClient:
 
     def __init__(
         self,
-        backend_url: str = "https://api.traigent.ai",
+        backend_url: str = DEFAULT_LOCAL_URL,
         api_key: str | None = None,
         timeout: float = 30.0,
     ):
@@ -88,7 +89,7 @@ class ExampleInsightsClient:
 
         self._client: httpx.AsyncClient | None = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client.
 
         Returns:
@@ -121,6 +122,55 @@ class ExampleInsightsClient:
         """Async context manager exit."""
         await self.close()
 
+    async def _poll_endpoint(
+        self,
+        path: str,
+        error_label: str,
+        poll_interval: float,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Poll a GET endpoint until it returns 200 or timeout is reached.
+
+        Args:
+            path: API path to poll
+            error_label: Human-readable label for timeout error messages
+            poll_interval: Seconds between attempts
+            params: Optional query parameters
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            httpx.HTTPStatusError: For non-404 HTTP errors
+            TimeoutError: If endpoint still returns 404 after ``self.timeout``
+        """
+        client = self._get_client()
+        timeout = self.timeout
+        start_time = time.monotonic()
+
+        while True:
+            try:
+                response = await client.get(path, params=params or {})
+                response.raise_for_status()
+                return cast(dict[str, Any], response.json())
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 404:
+                    raise
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout:
+                    raise TimeoutError(
+                        f"{error_label} not ready after {timeout}s. "
+                        f"Check job status or increase timeout."
+                    ) from e
+                logger.debug(
+                    "%s not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
+                    error_label,
+                    poll_interval,
+                    elapsed,
+                    timeout,
+                )
+                await asyncio.sleep(poll_interval)
+
     async def compute_scores(
         self,
         experiment_run_id: str,
@@ -142,7 +192,7 @@ class ExampleInsightsClient:
         Raises:
             httpx.HTTPError: If request fails
         """
-        client = await self._get_client()
+        client = self._get_client()
 
         response = await client.post(
             f"/analytics/example-scoring/{experiment_run_id}/compute"
@@ -155,18 +205,17 @@ class ExampleInsightsClient:
         self,
         experiment_run_id: str,
         example_ids: list[str] | None = None,
-        timeout: float | None = None,
         poll_interval: float = 2.0,
     ) -> dict[str, dict[str, Any]]:
         """Retrieve computed example scores.
 
         If scores are not yet computed, this will wait (polling) until they are
-        ready or timeout is reached.
+        ready or ``self.timeout`` is reached.  Callers needing a custom timeout
+        should use ``asyncio.timeout()`` around the call.
 
         Args:
             experiment_run_id: Experiment run ID to get scores for
             example_ids: Optional list of example IDs to filter (None = all)
-            timeout: Max time to wait for scores in seconds (None = use default)
             poll_interval: Time between polling attempts in seconds
 
         Returns:
@@ -189,60 +238,33 @@ class ExampleInsightsClient:
             httpx.HTTPError: If request fails
             TimeoutError: If scores not ready within timeout
         """
-        client = await self._get_client()
-        timeout = timeout or self.timeout
-
-        # Build query parameters
         params: dict[str, Any] = {}
         if example_ids:
             params["example_ids"] = example_ids
 
-        start_time = time.time()
-
-        while True:
-            try:
-                response = await client.get(
-                    f"/analytics/example-scoring/{experiment_run_id}/scores",
-                    params=params,
-                )
-                response.raise_for_status()
-
-                return cast(dict[str, dict[str, Any]], response.json())
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    # Scores not yet computed - poll
-                    elapsed = time.time() - start_time
-                    if elapsed >= timeout:
-                        raise TimeoutError(
-                            f"Scores not ready after {timeout}s. "
-                            f"Check job status or increase timeout."
-                        ) from e
-
-                    logger.debug(
-                        "Scores not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
-                        poll_interval,
-                        elapsed,
-                        timeout,
-                    )
-                    await asyncio.sleep(poll_interval)
-                else:
-                    raise
+        return cast(
+            dict[str, dict[str, Any]],
+            await self._poll_endpoint(
+                f"/analytics/example-scoring/{experiment_run_id}/scores",
+                "Scores",
+                poll_interval,
+                params=params,
+            ),
+        )
 
     async def get_dataset_quality(
         self,
         experiment_run_id: str,
-        timeout: float | None = None,
         poll_interval: float = 2.0,
     ) -> dict[str, Any]:
         """Retrieve dataset-level quality metrics.
 
         If quality metrics are not yet computed, this will wait (polling) until
-        they are ready or timeout is reached.
+        they are ready or ``self.timeout`` is reached.  Callers needing a custom
+        timeout should use ``asyncio.timeout()`` around the call.
 
         Args:
             experiment_run_id: Experiment run ID to get quality for
-            timeout: Max time to wait for metrics in seconds (None = use default)
             poll_interval: Time between polling attempts in seconds
 
         Returns:
@@ -262,39 +284,11 @@ class ExampleInsightsClient:
             httpx.HTTPError: If request fails
             TimeoutError: If metrics not ready within timeout
         """
-        client = await self._get_client()
-        timeout = timeout or self.timeout
-
-        start_time = time.time()
-
-        while True:
-            try:
-                response = await client.get(
-                    f"/analytics/example-scoring/{experiment_run_id}/dataset-quality"
-                )
-                response.raise_for_status()
-
-                return cast(dict[str, Any], response.json())
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    # Quality not yet computed - poll
-                    elapsed = time.time() - start_time
-                    if elapsed >= timeout:
-                        raise TimeoutError(
-                            f"Quality metrics not ready after {timeout}s. "
-                            f"Check job status or increase timeout."
-                        ) from e
-
-                    logger.debug(
-                        "Quality metrics not ready, polling again in %.1fs (elapsed: %.1fs/%ds)",
-                        poll_interval,
-                        elapsed,
-                        timeout,
-                    )
-                    await asyncio.sleep(poll_interval)
-                else:
-                    raise
+        return await self._poll_endpoint(
+            f"/analytics/example-scoring/{experiment_run_id}/dataset-quality",
+            "Quality metrics",
+            poll_interval,
+        )
 
     async def get_job_status(self, job_id: str) -> dict[str, Any]:
         """Get status of a scoring computation job.
@@ -311,7 +305,7 @@ class ExampleInsightsClient:
         Raises:
             httpx.HTTPError: If request fails
         """
-        client = await self._get_client()
+        client = self._get_client()
 
         response = await client.get(f"/jobs/{job_id}")
         response.raise_for_status()

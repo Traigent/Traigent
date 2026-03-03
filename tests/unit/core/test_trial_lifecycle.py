@@ -940,3 +940,85 @@ class TestRunSequentialTrial:
         call_kwargs = orchestrator._abandon_optuna_trial.call_args[1]
         assert "trial_rejected_by_constraint" in call_kwargs.get("reason", "")
         assert call_kwargs.get("status") == TrialStatus.PRUNED
+
+    @pytest.mark.asyncio
+    async def test_constraint_rejection_decrements_optimizer_trial_count(self):
+        """Regression: constraint-rejected configs must give back the optimizer's _trial_count slot.
+
+        Bug: suggest_next_trial increments optimizer._trial_count before the constraint
+        check in trial_lifecycle. If the constraint rejects, the optimizer still thinks
+        it used a trial slot, eventually hitting max_trials before finding valid configs.
+        """
+        orchestrator = MockOrchestrator()
+        orchestrator.max_trials = 10
+        # Give the mock optimizer a _trial_count like the real RandomSearchOptimizer
+        orchestrator.optimizer._trial_count = 3
+
+        # Real suggest_next_trial increments _trial_count; simulate that
+        original_suggest = orchestrator.optimizer.suggest_next_trial
+
+        def suggest_with_increment(completed_trials):
+            orchestrator.optimizer._trial_count += 1
+            return original_suggest(completed_trials)
+
+        orchestrator.optimizer.suggest_next_trial = suggest_with_increment
+
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {
+            "id": "test",
+            "message": "Always fails",
+        }
+        orchestrator._constraints_pre_eval = [failing_constraint]
+        orchestrator._abandon_optuna_trial = MagicMock()
+
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        async def mock_func(input_data):
+            return "result"
+
+        trial_count, action = await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=dataset,
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+
+        assert action == "continue"
+        assert trial_count == 5
+        # Key regression assertion: optimizer's _trial_count must be decremented
+        # back to its pre-call value so rejected configs don't consume trial budget
+        assert orchestrator.optimizer._trial_count == 3
+
+
+# =============================================================================
+# CancelledError Propagation Tests
+# =============================================================================
+
+
+class TestCancelledErrorPropagation:
+    """Verify that asyncio.CancelledError is re-raised (SonarQube S7497)."""
+
+    @pytest.mark.asyncio
+    async def test_execute_trial_with_tracing_propagates_cancelled_error(self):
+        """CancelledError during evaluation must propagate through _execute_trial_with_tracing."""
+        import asyncio
+
+        orchestrator = MockOrchestrator()
+        # Make the evaluator raise CancelledError
+        orchestrator.evaluator = MagicMock()
+        orchestrator.evaluator.evaluate = AsyncMock(side_effect=asyncio.CancelledError)
+
+        lifecycle = TrialLifecycle(orchestrator)
+
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run_trial(
+                func=lambda x: "result",
+                config={"temperature": 0.5},
+                dataset=create_mock_dataset(),
+                trial_number=0,
+                session_id=None,
+            )

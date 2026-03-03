@@ -198,10 +198,10 @@ class TestExampleInsightsClient:
     async def test_client_initialization(self):
         """Client should initialize with proper configuration."""
         client = ExampleInsightsClient(
-            backend_url="https://api.traigent.ai", api_key="test_key"
+            backend_url="http://localhost:5000", api_key="test_key"
         )
 
-        assert client.backend_url == "https://api.traigent.ai"
+        assert client.backend_url == "http://localhost:5000"
         assert client.api_key == "test_key"
         assert client.timeout == 30.0
 
@@ -377,10 +377,9 @@ class TestExampleInsightsClient:
             client = ExampleInsightsClient(api_key="test_key")
 
             # Should timeout after 1 second
+            client.timeout = 1.0
             with pytest.raises(TimeoutError, match="Scores not ready after"):
-                await client.get_example_scores(
-                    "run_123", timeout=1.0, poll_interval=0.1
-                )
+                await client.get_example_scores("run_123", poll_interval=0.1)
 
             await client.close()
 

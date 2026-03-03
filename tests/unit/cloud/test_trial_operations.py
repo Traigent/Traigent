@@ -21,7 +21,9 @@ class TestRedactSensitiveFields:
 
     def test_redact_string_api_key(self):
         """Test that string API keys are redacted."""
-        data = {"api_key": "sk-1234567890abcdef"}  # noqa: S105  # pragma: allowlist secret
+        data = {
+            "api_key": "sk-1234567890abcdef"  # pragma: allowlist secret
+        }  # noqa: S105
         result = TrialOperations._redact_sensitive_fields(data)
         assert "[REDACTED:" in result["api_key"]
         assert "chars]" in result["api_key"]
@@ -113,7 +115,9 @@ class TestMeasuresDictValidationInSubmission:
         """Invalid metric keys trigger MeasuresDict warning but submission continues."""
         mock_client = Mock()
         mock_client.backend_config = Mock()
-        mock_client.backend_config.backend_base_url = "https://api.example.com"  # pragma: allowlist secret
+        mock_client.backend_config.backend_base_url = (
+            "https://api.example.com"  # pragma: allowlist secret
+        )
         mock_client.backend_config.api_base_url = "https://api.example.com"
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
@@ -161,7 +165,9 @@ class TestMeasuresDictValidationInSubmission:
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
             mock_aiohttp.ClientTimeout = Mock()
 
-            with caplog.at_level(logging.WARNING, logger="traigent.cloud.trial_operations"):
+            with caplog.at_level(
+                logging.WARNING, logger="traigent.cloud.trial_operations"
+            ):
                 result = await ops.submit_trial_result_via_session(
                     session_id="test-session",
                     trial_id="test-trial",
@@ -174,3 +180,139 @@ class TestMeasuresDictValidationInSubmission:
             assert any("Metrics validation warning" in msg for msg in caplog.messages)
             # Submission should still proceed (True = success)
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_transport_fields_do_not_trigger_measuresdict_warnings(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """summary_stats/measures should be extracted before MeasuresDict validation."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = (
+            "https://api.example.com"  # pragma: allowlist secret
+        )
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._sanitize_error_message = Mock(return_value="")
+
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        metrics = {
+            "accuracy": 0.95,
+            "summary_stats": {"metrics": {"accuracy": 0.95}},
+            "measures": [
+                {
+                    "example_id": "ex_123",
+                    "metrics": {"accuracy": 0.95},
+                }
+            ],
+        }
+
+        mock_response = Mock()
+        mock_response.status = 200
+
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch(
+                "traigent.cloud.trial_operations.AIOHTTP_AVAILABLE",
+                True,
+            ),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            with caplog.at_level(logging.WARNING):
+                result = await ops.submit_trial_result_via_session(
+                    session_id="test-session",
+                    trial_id="test-trial",
+                    config={"model": "gpt-4"},
+                    metrics=metrics,
+                    status="completed",
+                )
+
+            assert result is True
+            assert not any(
+                "Measure 'summary_stats' has non-numeric value type dict" in msg
+                for msg in caplog.messages
+            )
+            assert not any(
+                "Measure 'measures' has non-numeric value type list" in msg
+                for msg in caplog.messages
+            )
+
+            call_args = ops._handle_trial_success_response.call_args
+            assert call_args is not None
+            assert call_args.args[5] == {"accuracy": 0.95}
+
+
+class TestSummaryStatsLogging:
+    """Test logging behavior for optional summary_stats metadata."""
+
+    def test_missing_summary_stats_is_debug_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Missing summary_stats should not emit a warning-level user log."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.auth_manager = Mock()
+        ops = TrialOperations(mock_client)
+
+        with caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"):
+            ops._log_summary_stats_debug("trial_abc", None)
+
+        assert any(
+            "No summary_stats provided for trial trial_abc (optional)" in msg
+            for msg in caplog.messages
+        )
+        assert not any(
+            "No summary_stats found for trial trial_abc" in msg
+            for msg in caplog.messages
+        )
+
+
+class TestMeasuresLogging:
+    """Test logging behavior for optional measures metadata."""
+
+    def test_missing_measures_is_debug_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Missing measures should not emit a warning-level user log."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.auth_manager = Mock()
+        ops = TrialOperations(mock_client)
+
+        with caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"):
+            ops._log_measures_debug("trial_xyz", None)
+
+        assert any(
+            "No measures provided for trial trial_xyz (optional)" in msg
+            for msg in caplog.messages
+        )
+        assert not any(
+            "No measures found for trial trial_xyz" in msg for msg in caplog.messages
+        )

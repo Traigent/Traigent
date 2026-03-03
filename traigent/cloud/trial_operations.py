@@ -429,7 +429,8 @@ class TrialOperations:
                 measure_json = json.dumps(measures[0], indent=2)[:500]
                 logger.debug(f"  Full first measure: {measure_json}")
         else:
-            logger.warning(f"⚠️ No measures found for trial {trial_id}")
+            # measures are optional metadata; don't surface as a warning to users.
+            logger.debug("No measures provided for trial %s (optional)", trial_id)
 
     def _log_summary_stats_debug(self, trial_id: str, summary_stats: Any) -> None:
         """Log debug information for summary_stats."""
@@ -449,7 +450,8 @@ class TrialOperations:
                         else:
                             logger.debug(f"    - {cost_key}: MISSING")
         else:
-            logger.warning(f"⚠️ No summary_stats found for trial {trial_id}")
+            # summary_stats is optional metadata; don't surface as a warning to users.
+            logger.debug("No summary_stats provided for trial %s (optional)", trial_id)
 
     def _create_localhost_connector(self) -> Any:
         """Create connector for localhost connections."""
@@ -553,27 +555,27 @@ class TrialOperations:
             backend_status = self.client._map_to_backend_status(status)
             mode = self.client._normalize_execution_mode(execution_mode)
 
-            # Validate key naming and cardinality for metrics while preserving
-            # backward compatibility with existing payload shapes.
-            validated_metrics: dict[str, Any] = metrics
+            # Extract transport-only fields before validating trial metrics.
+            measures, summary_stats, clean_metrics = (
+                self._extract_measures_from_metrics(metrics)
+            )
+
+            # Validate key naming and cardinality for numeric metrics while
+            # preserving backward compatibility with existing payload shapes.
+            validated_metrics: dict[str, Any] = clean_metrics
             try:
-                validated_metrics = dict(MeasuresDict(metrics))
+                validated_metrics = dict(MeasuresDict(clean_metrics))
             except (TypeError, ValueError) as validation_error:
                 logger.warning(
                     "Metrics validation warning for trial %s: %s. "
-                    "Submitting unvalidated metrics for backward compatibility.",
+                    "Submitting unvalidated numeric metrics for backward compatibility.",
                     trial_id,
                     validation_error,
                 )
 
-            # Extract measures and summary_stats from metrics
-            measures, summary_stats, clean_metrics = (
-                self._extract_measures_from_metrics(validated_metrics)
-            )
-
             # Build result data
             result_data = self._build_trial_result_data(
-                trial_id, config, clean_metrics, backend_status, mode
+                trial_id, config, validated_metrics, backend_status, mode
             )
 
             # Add measures and summary_stats at the top level if present

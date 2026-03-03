@@ -7,7 +7,7 @@ to define their configuration space, execution logic, and evaluation logic.
 Example:
     from traigent.wrapper import TraigentService
 
-    app = TraigentService(capability_id="my_agent")
+    app = TraigentService(tunable_id="my_agent")
 
     @app.tvars
     def config_space():
@@ -39,10 +39,24 @@ The service automatically exposes endpoints at:
 
 # Traceability: HYBRID-MODE-OPTIMIZATION CLIENT-WRAPPER-SDK
 
+from traigent.wrapper.errors import (
+    BadRequestError,
+    HybridAPIError,
+    RateLimitError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 __all__ = [
     "TraigentService",
     "ServiceConfig",
     "Session",
+    "HybridAPIError",
+    "BadRequestError",
+    "UnauthorizedError",
+    "RequestTimeoutError",
+    "RateLimitError",
+    "ServiceUnavailableError",
 ]

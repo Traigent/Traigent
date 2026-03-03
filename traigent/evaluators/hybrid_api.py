@@ -9,11 +9,14 @@ hybrid API protocol.
 
 from __future__ import annotations
 
+import asyncio
+import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from traigent._version import get_version
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.hybrid import (
     AgentLifecycleManager,
@@ -82,7 +85,7 @@ class HybridAPIEvaluator(BaseEvaluator):
     Example:
         evaluator = HybridAPIEvaluator(
             api_endpoint="http://agent-service:8080",
-            capability_id="financial_qa",
+            tunable_id="financial_qa",
             batch_size=10,
         )
 
@@ -93,6 +96,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
     """
 
+    # NOSONAR - public constructor intentionally exposes transport/runtime knobs.
     def __init__(
         self,
         # Transport options (one required)
@@ -102,8 +106,8 @@ class HybridAPIEvaluator(BaseEvaluator):
         # MCP options
         mcp_client: ProductionMCPClient | None = None,
         mcp_config: MCPServerConfig | None = None,
-        # Capability options
-        capability_id: str | None = None,
+        # Tunable options
+        tunable_id: str | None = None,
         auto_discover_tvars: bool = True,
         # Execution options
         batch_size: int = 1,
@@ -126,7 +130,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             mcp_client: Existing MCP client for MCP transport.
             mcp_config: MCP server config for MCP transport.
 
-            capability_id: Identifier for the agent capability.
+            tunable_id: Identifier for the tunable.
                 Auto-discovered if not provided.
             auto_discover_tvars: Whether to auto-discover config space.
 
@@ -150,7 +154,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._auth_header = auth_header
         self._timeout = timeout
 
-        self._capability_id = capability_id
+        self._tunable_id = tunable_id
         self._auto_discover = auto_discover_tvars
         self._batch_size = max(1, batch_size)
         self._batch_parallelism = max(1, batch_parallelism)
@@ -160,6 +164,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         # Initialize transport (may be provided or created on demand)
         self._transport: HybridTransport | None = transport
         self._owns_transport = transport is None
+        self._transport_lock = asyncio.Lock()
 
         # Lazy-initialized components
         self._lifecycle_manager: AgentLifecycleManager | None = None
@@ -174,9 +179,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         return self._lifecycle_manager
 
     @property
-    def capability_id(self) -> str | None:
-        """Get the capability ID (may be auto-discovered)."""
-        return self._capability_id
+    def tunable_id(self) -> str | None:
+        """Get the tunable ID (may be auto-discovered)."""
+        return self._tunable_id
 
     @property
     def optimization_spec(self) -> dict[str, Any] | None:
@@ -185,16 +190,20 @@ class HybridAPIEvaluator(BaseEvaluator):
 
     async def _get_transport(self) -> HybridTransport:
         """Get or create the transport."""
-        if self._transport is None:
-            self._transport = create_transport(
-                transport_type=self._transport_type,
-                base_url=self._api_endpoint,
-                auth_header=self._auth_header,
-                timeout=self._timeout,
-                mcp_client=self._mcp_client,
-                mcp_config=self._mcp_config,
-            )
-            self._owns_transport = True
+        if self._transport is not None:
+            return self._transport
+
+        async with self._transport_lock:
+            if self._transport is None:
+                self._transport = create_transport(
+                    transport_type=self._transport_type,
+                    base_url=self._api_endpoint,
+                    auth_header=self._auth_header,
+                    timeout=self._timeout,
+                    mcp_client=self._mcp_client,
+                    mcp_config=self._mcp_config,
+                )
+                self._owns_transport = True
 
         return self._transport
 
@@ -222,9 +231,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         config_space = await self._discovery.fetch_and_normalize()
         self._optimization_spec = await self._discovery.build_optimization_spec()
 
-        # Update capability_id if not set
-        if self._capability_id is None:
-            self._capability_id = self._discovery.get_capability_id()
+        # Update tunable_id if not set
+        if self._tunable_id is None:
+            self._tunable_id = self._discovery.get_tunable_id()
 
         return config_space
 
@@ -282,6 +291,161 @@ class HybridAPIEvaluator(BaseEvaluator):
         ):
             return "target_id", expected["target_id"]
         return "target", expected
+
+    @staticmethod
+    def _compute_describe_stats(values: list[float]) -> dict[str, float]:
+        """Compute pandas.describe()-style statistics for numeric values."""
+        if not values:
+            return {
+                "count": 0.0,
+                "mean": 0.0,
+                "std": 0.0,
+                "min": 0.0,
+                "25%": 0.0,
+                "50%": 0.0,
+                "75%": 0.0,
+                "max": 0.0,
+            }
+
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+
+        def percentile(p: float) -> float:
+            k = (n - 1) * p
+            low = int(k)
+            frac = k - low
+            if low + 1 < n:
+                return float(
+                    sorted_values[low] * (1 - frac) + sorted_values[low + 1] * frac
+                )
+            return float(sorted_values[low])
+
+        return {
+            "count": float(n),
+            "mean": float(statistics.mean(sorted_values)),
+            "std": float(statistics.stdev(sorted_values)) if n > 1 else 0.0,
+            "min": float(sorted_values[0]),
+            "25%": percentile(0.25),
+            "50%": percentile(0.50),
+            "75%": percentile(0.75),
+            "max": float(sorted_values[-1]),
+        }
+
+    @classmethod
+    def _derive_accuracy_from_metrics(cls, metrics: dict[str, Any]) -> float | None:
+        """Derive canonical accuracy from a metric dictionary.
+
+        Preference order:
+        1. explicit `accuracy`
+        2. `overall_accuracy`
+        3. mean of numeric `*_accuracy` metrics
+        """
+        explicit = cls._coerce_metric(metrics.get("accuracy"), default=-1.0)
+        if explicit >= 0.0:
+            return explicit
+
+        overall = cls._coerce_metric(metrics.get("overall_accuracy"), default=-1.0)
+        if overall >= 0.0:
+            return overall
+
+        split_accuracies = [
+            float(v)
+            for k, v in metrics.items()
+            if k.endswith("_accuracy")
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+        ]
+        if split_accuracies:
+            return float(sum(split_accuracies) / len(split_accuracies))
+        return None
+
+    @classmethod
+    def _normalize_example_metrics(cls, metrics: Any) -> dict[str, float]:
+        """Normalize per-example metrics to numeric values and derive accuracy."""
+        if not isinstance(metrics, dict):
+            return {}
+
+        normalized: dict[str, float] = {}
+        for key, value in metrics.items():
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                normalized[key] = float(value)
+
+        if "accuracy" not in normalized:
+            derived_accuracy = cls._derive_accuracy_from_metrics(normalized)
+            if derived_accuracy is not None:
+                normalized["accuracy"] = derived_accuracy
+
+        return normalized
+
+    def _build_summary_stats(
+        self,
+        results: list[HybridExampleResult],
+        duration: float,
+    ) -> dict[str, Any] | None:
+        """Build summary_stats from per-example hybrid results."""
+        if not results:
+            return None
+
+        metric_values: dict[str, list[float]] = {}
+        accuracy_values: list[float] = []
+        cost_values: list[float] = []
+        latency_values: list[float] = []
+        success_values: list[float] = []
+
+        for result in results:
+            success_values.append(1.0 if result.success else 0.0)
+
+            if result.cost_usd > 0:
+                cost_values.append(float(result.cost_usd))
+
+            if result.latency_ms > 0:
+                latency_values.append(float(result.latency_ms))
+
+            per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
+            if per_example_accuracy is not None:
+                accuracy_values.append(float(per_example_accuracy))
+
+            for metric_name, value in result.metrics.items():
+                if isinstance(value, bool):
+                    continue
+                if not isinstance(value, (int, float)):
+                    continue
+                metric_values.setdefault(metric_name, []).append(float(value))
+
+        if accuracy_values and "accuracy" not in metric_values:
+            metric_values["accuracy"] = accuracy_values
+        if cost_values:
+            metric_values.setdefault("cost", cost_values)
+            metric_values.setdefault("total_cost", cost_values)
+        if latency_values:
+            metric_values.setdefault("latency", latency_values)
+            metric_values.setdefault("response_time_ms", latency_values)
+        if success_values:
+            metric_values.setdefault("success_rate", success_values)
+        if "score" not in metric_values and "accuracy" in metric_values:
+            metric_values["score"] = list(metric_values["accuracy"])
+
+        summary_metrics = {
+            metric_name: self._compute_describe_stats(values)
+            for metric_name, values in metric_values.items()
+            if values
+        }
+        if not summary_metrics:
+            return None
+
+        return {
+            "metrics": summary_metrics,
+            "execution_time": float(duration),
+            "total_examples": len(results),
+            "metadata": {
+                "sdk_version": get_version(),
+                "aggregation_method": "pandas.describe",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "source": "hybrid_api",
+            },
+        }
 
     async def evaluate(
         self,
@@ -372,6 +536,8 @@ class HybridAPIEvaluator(BaseEvaluator):
                             "successful": sum(1 for r in example_results if r.success),
                         },
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.warning(f"Progress callback error: {e}")
 
@@ -380,6 +546,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         aggregated_metrics = self._compute_aggregated_metrics(
             example_results, total_cost
         )
+        summary_stats = self._build_summary_stats(example_results, duration)
 
         return EvaluationResult(
             config=config,
@@ -388,6 +555,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=sum(1 for r in example_results if r.success),
             duration=duration,
+            summary_stats=summary_stats,
             sample_budget_exhausted=sample_lease is not None and sample_lease.exhausted,
             examples_consumed=len(example_results),
         )
@@ -424,7 +592,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Build execute request
         request = HybridExecuteRequest(
-            capability_id=self._capability_id or "default",
+            tunable_id=self._tunable_id or "default",
             config=config,
             inputs=inputs,
             session_id=self._session_id,
@@ -437,6 +605,15 @@ class HybridAPIEvaluator(BaseEvaluator):
         try:
             # Execute
             execute_response = await transport.execute(request)
+
+            # Log raw execute response for observability
+            logger.info(
+                "Hybrid execute response: status=%s, outputs=%d, "
+                "operational_metrics=%s",
+                execute_response.status,
+                len(execute_response.outputs),
+                execute_response.operational_metrics,
+            )
 
             # Update session ID if returned
             if execute_response.session_id:
@@ -529,7 +706,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
             per_example_metrics = (
-                output_item.get("metrics", {})
+                self._normalize_example_metrics(output_item.get("metrics", {}))
                 if isinstance(output_item.get("metrics"), dict)
                 else {}
             )
@@ -586,14 +763,25 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Call evaluate
         eval_request = HybridEvaluateRequest(
-            capability_id=self._capability_id or "default",
+            tunable_id=self._tunable_id or "default",
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
             session_id=self._session_id,
+            timeout_ms=int(self._timeout * 1000),
         )
 
         try:
             eval_response = await transport.evaluate(eval_request)
+
+            # Log raw evaluate response for observability
+            logger.info(
+                "Hybrid evaluate response: results=%s, aggregate=%s",
+                [
+                    {"input_id": r.get("input_id"), "metrics": r.get("metrics")}
+                    for r in eval_response.results
+                ],
+                getattr(eval_response, "aggregate_metrics", None),
+            )
 
             # Merge execute and evaluate results
             results: list[HybridExampleResult] = []
@@ -617,11 +805,16 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Find metrics from evaluate
                 per_example_metrics: dict[str, float] = {}
                 eval_error: str | None = None
+                eval_expected: str | None = None
                 for result in eval_response.results:
                     if result.get("input_id") == input_id:
-                        per_example_metrics = result.get("metrics", {})
+                        per_example_metrics = self._normalize_example_metrics(
+                            result.get("metrics", {})
+                        )
                         if isinstance(result.get("error"), str):
                             eval_error = result.get("error")
+                        if result.get("expected_behavior"):
+                            eval_expected = result["expected_behavior"]
                         break
 
                 # Prefer per-item operational metrics when present.
@@ -630,11 +823,24 @@ class HybridAPIEvaluator(BaseEvaluator):
                     output_item.get("latency_ms"), fallback_latency
                 )
 
+                # Log raw per-example result for observability
+                logger.info(
+                    "Hybrid example result: input_id=%s, "
+                    "output_id=%s, accuracy=%s, cost=%.6f, "
+                    "latency=%.0fms, error=%s",
+                    input_id,
+                    output_item.get("output_id"),
+                    per_example_metrics.get("accuracy"),
+                    cost,
+                    latency,
+                    eval_error or execute_error,
+                )
+
                 results.append(
                     HybridExampleResult(
                         input_id=input_id,
                         actual_output=output_data,
-                        expected_output=expected,
+                        expected_output=expected or eval_expected,
                         metrics=per_example_metrics,
                         cost_usd=cost,
                         latency_ms=latency,
@@ -645,6 +851,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             return results
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"Evaluate call failed, using execute-only: {e}")
             return self._process_execute_only_response(batch, inputs, execute_response)
@@ -674,6 +882,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
             error = output_item.get("error")
+            per_example_metrics = self._normalize_example_metrics(
+                output_item.get("metrics", {})
+            )
             cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
             latency = self._coerce_metric(
                 output_item.get("latency_ms"), fallback_latency
@@ -684,7 +895,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     input_id=input_id,
                     actual_output=output_data,
                     expected_output=expected,
-                    metrics={},  # No quality metrics
+                    metrics=per_example_metrics,
                     cost_usd=cost,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
@@ -704,6 +915,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         aggregated: dict[str, float] = {
             "cost": total_cost,
+            # Keep canonical trial-level key for downstream extractors.
+            "total_cost": total_cost,
             "success_rate": sum(1 for r in results if r.success) / len(results),
         }
 
@@ -729,6 +942,16 @@ class HybridAPIEvaluator(BaseEvaluator):
         latencies = [r.latency_ms for r in results if r.latency_ms > 0]
         if latencies:
             aggregated["latency"] = sum(latencies) / len(latencies)
+
+        if "accuracy" not in aggregated:
+            derived_accuracy = self._derive_accuracy_from_metrics(aggregated)
+            if derived_accuracy is not None:
+                aggregated["accuracy"] = derived_accuracy
+
+        if "score" not in aggregated and "accuracy" in aggregated:
+            aggregated["score"] = aggregated["accuracy"]
+        if "response_time_ms" not in aggregated and "latency" in aggregated:
+            aggregated["response_time_ms"] = aggregated["latency"]
 
         return aggregated
 
