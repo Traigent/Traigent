@@ -877,6 +877,7 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate(
             {
                 "request_id": "eval-1",
+                "benchmark_id": "bench_001",
                 "config": {},
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
@@ -904,7 +905,10 @@ class TestHandleEvaluate:
             return {"f1": 0.9}
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"example_id": "a1", "output": "x", "target": "y"}]}
+            {
+                "benchmark_id": "bench_001",
+                "evaluations": [{"example_id": "a1", "output": "x", "target": "y"}],
+            }
         )
         assert resp["results"][0]["metrics"]["f1"] == 0.9
 
@@ -918,7 +922,10 @@ class TestHandleEvaluate:
             return 0.75
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"example_id": "a1", "output": "x", "target": "y"}]}
+            {
+                "benchmark_id": "bench_001",
+                "evaluations": [{"example_id": "a1", "output": "x", "target": "y"}],
+            }
         )
         assert resp["results"][0]["metrics"] == {"score": 0.75}
 
@@ -932,7 +939,10 @@ class TestHandleEvaluate:
             raise ValueError("scoring failed")
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"example_id": "e1", "output": "x", "target": "y"}]}
+            {
+                "benchmark_id": "bench_001",
+                "evaluations": [{"example_id": "e1", "output": "x", "target": "y"}],
+            }
         )
         assert resp["status"] == "failed"
         assert resp["results"][0]["metrics"] == {}
@@ -953,6 +963,7 @@ class TestHandleEvaluate:
         await svc.handle_evaluate(
             {
                 "session_id": sid,
+                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
@@ -967,7 +978,9 @@ class TestHandleEvaluate:
         def score(output, target, config):
             return {"accuracy": 1.0}
 
-        resp = await svc.handle_evaluate({"evaluations": []})
+        resp = await svc.handle_evaluate(
+            {"benchmark_id": "bench_001", "evaluations": []}
+        )
         assert resp["results"] == []
         assert resp["aggregate_metrics"] == {}
 
@@ -985,6 +998,7 @@ class TestHandleEvaluate:
         request = {
             "request_id": "eval-idem-1",
             "tunable_id": "default",
+            "benchmark_id": "bench_001",
             "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
         }
         first = await svc.handle_evaluate(request)
@@ -1006,6 +1020,7 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-idem-2",
                 "tunable_id": "default",
+                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
@@ -1015,6 +1030,7 @@ class TestHandleEvaluate:
                 {
                     "request_id": "eval-idem-2",
                     "tunable_id": "default",
+                    "benchmark_id": "bench_001",
                     "evaluations": [{"example_id": "e1", "output": "a", "target": "b"}],
                 }
             )
@@ -1035,6 +1051,7 @@ class TestHandleEvaluate:
                 {
                     "request_id": f"eval-{i}",
                     "tunable_id": "default",
+                    "benchmark_id": "bench_001",
                     "evaluations": [
                         {"example_id": f"e{i}", "output": "a", "target": "a"}
                     ],
@@ -1049,6 +1066,7 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-3",
                 "tunable_id": "default",
+                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e3", "output": "a", "target": "a"}],
             }
         )
@@ -1393,7 +1411,9 @@ class TestHandleEvaluateEdgeCases:
             return {"accuracy": 1.0}
 
         with pytest.raises(ValueError, match="evaluations must be a list"):
-            await svc.handle_evaluate({"evaluations": "not_a_list"})
+            await svc.handle_evaluate(
+                {"benchmark_id": "bench_001", "evaluations": "not_a_list"}
+            )
 
     @pytest.mark.asyncio
     async def test_evaluation_with_output_id(self) -> None:
@@ -1408,13 +1428,14 @@ class TestHandleEvaluateEdgeCases:
 
         await svc.handle_evaluate(
             {
+                "benchmark_id": "bench_001",
                 "evaluations": [
                     {
                         "example_id": "e1",
                         "output_id": "out-123",
                         "target": "expected",
                     }
-                ]
+                ],
             }
         )
         assert received_output["output"] == {"output_id": "out-123"}
@@ -1430,9 +1451,10 @@ class TestHandleEvaluateEdgeCases:
 
         resp = await svc.handle_evaluate(
             {
+                "benchmark_id": "bench_001",
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
-                ]
+                ],
             }
         )
         agg = resp["aggregate_metrics"]

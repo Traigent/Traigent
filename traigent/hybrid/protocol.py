@@ -163,7 +163,7 @@ class HybridEvaluateRequest:
     """
 
     tunable_id: str
-    benchmark_id: str = ""
+    benchmark_id: str
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     execution_id: str | None = None
     evaluations: list[dict[str, Any]] | None = None
