@@ -10,9 +10,10 @@ and memory efficiency, following the CallableInfo pattern from discovery.py.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 
 class DetectionConfidence(StrEnum):
@@ -67,6 +68,31 @@ class SuggestedRange:
         """
         parts = [f"{k}={v!r}" for k, v in self.kwargs.items()]
         return f"{self.range_type}({', '.join(parts)})"
+
+    def to_parameter_range(self) -> Any:
+        """Construct a ParameterRange object from this suggestion.
+
+        Returns:
+            A ``Range``, ``IntRange``, ``Choices``, or ``LogRange`` instance.
+
+        Raises:
+            ValueError: If ``range_type`` is unsupported.
+        """
+        from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
+
+        mapping = {
+            "Range": Range,
+            "IntRange": IntRange,
+            "Choices": Choices,
+            "LogRange": LogRange,
+        }
+        cls = mapping.get(self.range_type)
+        if cls is None:
+            raise ValueError(
+                f"Unsupported range_type {self.range_type!r}. "
+                f"Expected one of: {sorted(mapping)}"
+            )
+        return cls(**self.kwargs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,15 +156,51 @@ class DetectionResult:
             c for c in self.candidates if c.confidence == DetectionConfidence.HIGH
         )
 
-    def to_configuration_space(self) -> dict[str, Any]:
-        """Convert high/medium confidence candidates to a config space dict.
+    def to_configuration_space(
+        self,
+        *,
+        format: Literal["normalized", "ranges"] = "normalized",
+        min_confidence: DetectionConfidence | str = DetectionConfidence.MEDIUM,
+        include: Collection[str] | None = None,
+        exclude: Collection[str] | None = None,
+    ) -> dict[str, Any]:
+        """Convert selected candidates to a config space dict.
 
         Returns:
             Dictionary suitable for passing to ``@traigent.optimize(
             configuration_space=...)``.
         """
+        confidence_order = {
+            DetectionConfidence.HIGH: 2,
+            DetectionConfidence.MEDIUM: 1,
+            DetectionConfidence.LOW: 0,
+        }
+        threshold = (
+            DetectionConfidence(min_confidence)
+            if isinstance(min_confidence, str)
+            else min_confidence
+        )
+        min_order = confidence_order[threshold]
+        include_set = set(include) if include is not None else None
+        exclude_set = set(exclude) if exclude is not None else set()
+
         config: dict[str, Any] = {}
         for c in self.candidates:
-            if c.confidence != DetectionConfidence.LOW and c.suggested_range:
+            if c.suggested_range is None:
+                continue
+            if confidence_order[c.confidence] < min_order:
+                continue
+            if include_set is not None and c.name not in include_set:
+                continue
+            if c.name in exclude_set:
+                continue
+
+            if format == "normalized":
                 config[c.name] = c.suggested_range.kwargs
+            elif format == "ranges":
+                config[c.name] = c.suggested_range.to_parameter_range()
+            else:
+                raise ValueError(
+                    "format must be 'normalized' or 'ranges', " f"got {format!r}"
+                )
         return config
