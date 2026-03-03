@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from traigent.api.parameter_ranges import Choices, IntRange, Range
 from traigent.tuned_variables.detection_types import (
     CandidateType,
     DetectionConfidence,
@@ -112,6 +113,32 @@ class TestSuggestedRange:
         code = sr.to_parameter_range_code()
         assert code == "Range()"
 
+    def test_to_parameter_range_object_range(self) -> None:
+        sr = SuggestedRange(range_type="Range", kwargs={"low": 0.0, "high": 1.0})
+        obj = sr.to_parameter_range()
+        assert isinstance(obj, Range)
+        assert obj.low == 0.0
+        assert obj.high == 1.0
+
+    def test_to_parameter_range_object_int_range(self) -> None:
+        sr = SuggestedRange(range_type="IntRange", kwargs={"low": 128, "high": 1024})
+        obj = sr.to_parameter_range()
+        assert isinstance(obj, IntRange)
+        assert obj.low == 128
+        assert obj.high == 1024
+
+    def test_to_parameter_range_object_choices(self) -> None:
+        sr = SuggestedRange(range_type="Choices", kwargs={"values": ["gpt-4", "gpt-4o"]})
+        obj = sr.to_parameter_range()
+        assert isinstance(obj, Choices)
+        assert "gpt-4" in obj
+        assert "gpt-4o" in obj
+
+    def test_to_parameter_range_unknown_type_raises(self) -> None:
+        sr = SuggestedRange(range_type="UnknownRange", kwargs={"x": 1})
+        with pytest.raises(ValueError, match="Unsupported range_type"):
+            sr.to_parameter_range()
+
     def test_is_frozen(self) -> None:
         sr = SuggestedRange(range_type="Range", kwargs={"low": 0.0, "high": 1.0})
         with pytest.raises(AttributeError):
@@ -125,12 +152,12 @@ class TestSuggestedRange:
 
 class TestTunedVariableCandidate:
     def _make(self, **kwargs) -> TunedVariableCandidate:
-        defaults = dict(
-            name="temperature",
-            candidate_type=CandidateType.NUMERIC_CONTINUOUS,
-            confidence=DetectionConfidence.HIGH,
-            location=SourceLocation(line=5, col_offset=4),
-        )
+        defaults = {
+            "name": "temperature",
+            "candidate_type": CandidateType.NUMERIC_CONTINUOUS,
+            "confidence": DetectionConfidence.HIGH,
+            "location": SourceLocation(line=5, col_offset=4),
+        }
         defaults.update(kwargs)
         return TunedVariableCandidate(**defaults)
 
@@ -228,6 +255,41 @@ class TestDetectionResult:
         r = DetectionResult(function_name="fn", candidates=(c,))
         cs = r.to_configuration_space()
         assert cs == {}, "No range means nothing to put in config space"
+
+    def test_to_configuration_space_ranges_format(self) -> None:
+        high = _make_candidate("temperature", DetectionConfidence.HIGH)
+        r = DetectionResult(function_name="fn", candidates=(high,))
+        cs = r.to_configuration_space(format="ranges")
+        assert isinstance(cs["temperature"], Range)
+
+    def test_to_configuration_space_min_confidence(self) -> None:
+        high = _make_candidate("temperature", DetectionConfidence.HIGH)
+        medium = _make_candidate("top_p", DetectionConfidence.MEDIUM)
+        r = DetectionResult(function_name="fn", candidates=(high, medium))
+
+        cs = r.to_configuration_space(min_confidence="high")
+        assert "temperature" in cs
+        assert "top_p" not in cs
+
+    def test_to_configuration_space_include_exclude(self) -> None:
+        high = _make_candidate("temperature", DetectionConfidence.HIGH)
+        medium = _make_candidate("top_p", DetectionConfidence.MEDIUM)
+        r = DetectionResult(function_name="fn", candidates=(high, medium))
+
+        included = r.to_configuration_space(include={"top_p"})
+        assert set(included.keys()) == {"top_p"}
+
+        excluded = r.to_configuration_space(exclude={"temperature"})
+        assert "temperature" not in excluded
+        assert "top_p" in excluded
+
+    def test_to_configuration_space_invalid_format_raises(self) -> None:
+        r = DetectionResult(
+            function_name="fn",
+            candidates=(_make_candidate("temperature", DetectionConfidence.HIGH),),
+        )
+        with pytest.raises(ValueError, match="format must be"):
+            r.to_configuration_space(format="bad")  # type: ignore[arg-type]
 
     def test_warnings_tuple(self) -> None:
         r = DetectionResult(function_name="fn", warnings=("something went wrong",))

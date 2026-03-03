@@ -8,6 +8,7 @@ Automatically find tunable parameters in your Python functions using static anal
 - **Data-flow slicing**: Traces variables that flow into LLM invocations, retrieval queries, or embedding calls — even when they have non-standard names like `t` or `n`.
 - **Constructor tracing**: Follows parameters through `ChatOpenAI(temperature=t)` constructors.
 - **Configuration space generation**: Converts detected candidates into a ready-to-use `@traigent.optimize` config space.
+- **Seamless decorator setup**: Demonstrates `@traigent.optimize(auto_detect_tvars_mode="apply")` auto-creating `configuration_space`.
 
 ## Running the Example
 
@@ -26,6 +27,9 @@ traigent detect-tvars examples/core/detect-tvars/sample_agent.py --min-confidenc
 ```
 
 No API keys or environment variables needed — detection is purely static analysis.
+
+The demo script now includes an `auto_detect_tvars_mode="apply"` example and prints
+the decorator-generated `configuration_space`.
 
 ## Key Code Patterns
 
