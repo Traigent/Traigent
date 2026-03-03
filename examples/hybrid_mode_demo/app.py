@@ -127,7 +127,7 @@ def execute():
             "request_id": "uuid",
             "tunable_id": "demo_agent",
             "config": {"model": "fast", "temperature": 0.5, ...},
-            "inputs": [{"input_id": "ex_001", "data": {"query": "..."}}]
+            "examples": [{"example_id": "ex_001", "data": {"query": "..."}}]
         }
 
     Response format:
@@ -143,7 +143,7 @@ def execute():
     if not isinstance(data, dict):
         return jsonify({"error": "Invalid JSON payload"}), 400
 
-    missing_fields = [field for field in ("config", "inputs") if field not in data]
+    missing_fields = [field for field in ("config", "examples") if field not in data]
     if missing_fields:
         return (
             jsonify(
@@ -156,7 +156,7 @@ def execute():
         )
 
     config = data.get("config")
-    inputs = data.get("inputs")
+    inputs = data.get("examples")
     if not isinstance(config, dict):
         return (
             jsonify(
@@ -171,7 +171,7 @@ def execute():
         return (
             jsonify(
                 {
-                    "error": "Field 'inputs' must be a non-empty array",
+                    "error": "Field 'examples' must be a non-empty array",
                     "message": "Request body failed validation",
                 }
             ),
@@ -179,11 +179,11 @@ def execute():
         )
 
     for idx, inp in enumerate(inputs):
-        if not isinstance(inp, dict) or not inp.get("input_id"):
+        if not isinstance(inp, dict) or not inp.get("example_id"):
             return (
                 jsonify(
                     {
-                        "error": f"Input at index {idx} must include non-empty 'input_id'",
+                        "error": f"Input at index {idx} must include non-empty 'example_id'",
                         "message": "Request body failed validation",
                     }
                 ),
@@ -205,7 +205,7 @@ def execute():
     start_time = time.time()
 
     for inp in inputs:
-        input_id = inp.get("input_id")
+        example_id = inp.get("example_id")
 
         # Extract config values
         model = config.get("model", "balanced")
@@ -229,8 +229,8 @@ def execute():
         # Build per-input output
         outputs.append(
             {
-                "input_id": input_id,
-                "output_id": f"out_{input_id}_{execution_id}",
+                "example_id": example_id,
+                "output_id": f"out_{example_id}_{execution_id}",
                 "cost_usd": cost_per_query,
                 "latency_ms": 50 + (100 if model == "accurate" else 0),
             }
@@ -288,7 +288,7 @@ def evaluate():
             "request_id": "uuid",
             "tunable_id": "demo_agent",
             "evaluations": [
-                {"input_id": "ex_001", "output": {...}, "target": {...}}
+                {"example_id": "ex_001", "output": {...}, "target": {...}}
             ]
         }
 
@@ -296,7 +296,7 @@ def evaluate():
         {
             "request_id": "uuid",
             "status": "completed",
-            "results": [{"input_id": "ex_001", "metrics": {"accuracy": 0.9}}],
+            "results": [{"example_id": "ex_001", "metrics": {"accuracy": 0.9}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.9, "std": 0.05, "n": 10}}
         }
     """
@@ -319,7 +319,7 @@ def evaluate():
     }
 
     for eval_item in evaluations:
-        input_id = eval_item.get("input_id")
+        example_id = eval_item.get("example_id")
         output = eval_item.get("output", {})
         target = eval_item.get("target", {})
 
@@ -366,7 +366,7 @@ def evaluate():
 
         results.append(
             {
-                "input_id": input_id,
+                "example_id": example_id,
                 "metrics": metrics,
             }
         )

@@ -195,13 +195,16 @@ class TestHybridTransportProtocol:
             async def capabilities(self):
                 pass
 
-            async def discover_config_space(self):
+            async def discover_config_space(self, *, tunable_id=None):
                 pass
 
             async def execute(self, request):
                 pass
 
             async def evaluate(self, request):
+                pass
+
+            async def benchmarks(self, tunable_id=None):
                 pass
 
             async def health_check(self):

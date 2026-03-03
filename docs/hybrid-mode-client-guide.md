@@ -40,7 +40,7 @@ Traigent Hybrid Mode is designed with **privacy as the default**. Only configura
 | Configuration values | Yes | Tunable values per trial |
 | Operational metrics | Yes | Cost, latency, tokens, etc. |
 | Quality metrics | Yes | Accuracy, relevance, etc. |
-| Input data content | **No** | Only input IDs |
+| Input data content | **No** | Only example IDs |
 | Output data content | **No** | Only output IDs |
 | Target data content | **No** | Only target IDs |
 
@@ -52,13 +52,14 @@ Traigent Hybrid Mode is designed with **privacy as the default**. Only configura
 @app.route("/traigent/v1/execute", methods=["POST"])
 def execute():
     outputs = []
-    for inp in inputs:
-        result = process_input(inp["input_id"])  # Look up by ID locally
-        output_id = generate_output_id(inp["input_id"], session_id)
+    for inp in examples:
+        result = process_input(inp["example_id"])  # Look up by ID locally
+        output_id = generate_output_id(inp["example_id"], session_id)
+
         store_output_locally(output_id, result)  # Store locally
 
         outputs.append({
-            "input_id": inp["input_id"],
+            "example_id": inp["example_id"],
             "output_id": output_id,  # Only transmit ID, not content
             "cost_usd": 0.005,
         })
@@ -75,13 +76,13 @@ def evaluate():
     for eval_item in evaluations:
         # Look up output locally using output_id
         output = get_output_locally(eval_item["output_id"])
-        # For ID-based datasets, target_id may be absent — use input_id to look up target
-        target_key = eval_item.get("target_id") or eval_item["input_id"]
+        # For ID-based datasets, target_id may be absent — use example_id to look up target
+        target_key = eval_item.get("target_id") or eval_item["example_id"]
         target = get_target_locally(target_key)
 
         metrics = compute_metrics(output, target)
         results.append({
-            "input_id": eval_item["input_id"],
+            "example_id": eval_item["example_id"],
             "metrics": metrics,
         })
 
@@ -97,13 +98,13 @@ This prevents accidental cross-routing in multi-service environments and aligns 
 
 For privacy-preserving mode, your service must:
 
-1. **Generate stable input IDs**: These should be consistent across optimization runs
+1. **Generate stable example IDs**: These should be consistent across optimization runs
 2. **Scope output IDs to sessions**: Include session_id to prevent collisions between runs
 3. **Store data locally**: Maintain a mapping of IDs to actual content
 
 ```python
-def generate_output_id(input_id: str, session_id: str) -> str:
-    return f"out_{input_id}_{session_id}"
+def generate_output_id(example_id: str, session_id: str) -> str:
+    return f"out_{example_id}_{session_id}"
 
 # Storage example
 output_storage: dict[str, dict] = {}
@@ -148,7 +149,7 @@ def config_space():
     }
 
 @app.execute
-async def generate_response(input_id: str, data: dict, config: dict) -> dict:
+async def generate_response(example_id: str, data: dict, config: dict) -> dict:
     result = await my_agent_logic(data["query"], **config)
     return {
         "output": result,
@@ -297,7 +298,7 @@ Measure output quality with any metrics you need:
 {
   "results": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "metrics": {
         "accuracy": 0.92,
         "semantic_similarity": 0.87,
@@ -363,21 +364,21 @@ def config_space():
 def execute():
     data = request.get_json()
     config = data.get("config", {})
-    inputs = data.get("inputs", [])
+    examples = data.get("examples", [])
 
     outputs = []
     total_cost = 0.0
 
-    for inp in inputs:
-        # Look up input data locally using input_id (ID-based datasets)
-        input_data = get_input_locally(inp["input_id"])
+    for inp in examples:
+        # Look up input data locally using example_id (ID-based datasets)
+        input_data = get_input_locally(inp["example_id"])
         result = process_input(input_data, config)
         cost = calculate_cost(config)
         total_cost += cost
 
         outputs.append({
-            "input_id": inp["input_id"],
-            "output_id": generate_output_id(inp["input_id"], data.get("session_id")),
+            "example_id": inp["example_id"],
+            "output_id": generate_output_id(inp["example_id"], data.get("session_id")),
             "cost_usd": cost,
         })
 
@@ -406,7 +407,7 @@ class ExecuteRequest(BaseModel):
     request_id: str | None = None
     tunable_id: str
     config: dict
-    inputs: list[dict]
+    examples: list[dict]
 
 @app.get("/traigent/v1/capabilities")
 async def capabilities():
@@ -428,13 +429,13 @@ async def config_space():
 @app.post("/traigent/v1/execute")
 async def execute(req: ExecuteRequest):
     outputs = []
-    for inp in req.inputs:
-        # Look up input data locally using input_id (ID-based datasets)
-        input_data = await get_input_locally(inp["input_id"])
+    for inp in req.examples:
+        # Look up input data locally using example_id (ID-based datasets)
+        input_data = await get_input_locally(inp["example_id"])
         result = await process_input(input_data, req.config)
         outputs.append({
-            "input_id": inp["input_id"],
-            "output_id": generate_output_id(inp["input_id"], req.session_id),
+            "example_id": inp["example_id"],
+            "output_id": generate_output_id(inp["example_id"], req.session_id),
             "cost_usd": 0.005,
         })
 
@@ -467,8 +468,8 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
     "tunable_id": "my_agent",
     "config": {"model": "fast", "temperature": 0.5},
-    "inputs": [
-      {"input_id": "ex_001", "data": {"query": "Hello"}}
+    "examples": [
+      {"example_id": "ex_001", "data": {"query": "Hello"}}
     ]
   }'
 
@@ -480,7 +481,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
     "tunable_id": "my_agent",
     "evaluations": [
       {
-        "input_id": "ex_001",
+        "example_id": "ex_001",
         "output": {"response": "Hi there!"},
         "target": {"expected": "Hello!"}
       }
@@ -546,7 +547,7 @@ async def test_connection():
         HybridExecuteRequest(
             tunable_id="my_agent",
             config={"model": "fast"},
-            inputs=[{"input_id": "ex_001", "data": {"query": "test"}}],
+            examples=[{"example_id": "ex_001", "data": {"query": "test"}}],
         )
     )
     print(f"Status: {response.status}")
@@ -660,11 +661,11 @@ Return appropriate HTTP status codes and structured errors:
 def execute():
     try:
         data = request.get_json()
-        if not data.get("inputs"):
+        if not data.get("examples"):
             return jsonify({
                 "error": {
                     "code": "INVALID_REQUEST",
-                    "message": "inputs field is required"
+                    "message": "examples field is required"
                 }
             }), 400
 
@@ -704,7 +705,7 @@ from traigent.wrapper import (
 )
 
 @app.execute
-def run(input_id, data, config):
+def run(example_id, data, config):
     if quota_exceeded():
         raise RateLimitError("Quota exceeded", retry_after=30)  # HTTP 429
     if backend_down():
@@ -723,17 +724,17 @@ def execute():
     outputs = []
     errors = []
 
-    for inp in inputs:
+    for inp in examples:
         try:
             result = process_input(inp)
-            outputs.append({"input_id": inp["input_id"], "output": result})
+            outputs.append({"example_id": inp["example_id"], "output": result})
         except Exception as e:
-            errors.append({"input_id": inp["input_id"], "error": str(e)})
+            errors.append({"example_id": inp["example_id"], "error": str(e)})
 
     return jsonify({
         "status": "partial" if errors else "completed",
         "outputs": outputs,
-        "error": {"failed_inputs": errors} if errors else None,
+        "error": {"failed_examples": errors} if errors else None,
     })
 ```
 

@@ -25,7 +25,7 @@ Usage:
         HybridExecuteRequest(
             tunable_id="my_agent",
             config={"temperature": 0.7},
-            inputs=[{"input_id": "1", "data": {...}}],
+            examples=[{"example_id": "1", "data": {...}}],
         )
     )
 """
@@ -41,13 +41,14 @@ from traigent.hybrid.discovery import (
 from traigent.hybrid.lifecycle import AgentLifecycleManager, SessionInfo
 from traigent.hybrid.protocol import (
     BatchOptions,
+    BenchmarkEntry,
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
     HybridExecuteRequest,
     HybridExecuteResponse,
-    InputsResponse,
     ServiceCapabilities,
     TVARDefinition,
 )
@@ -82,7 +83,8 @@ __all__ = [
     "ServiceCapabilities",
     "TVARDefinition",
     "ConfigSpaceResponse",
-    "InputsResponse",
+    "BenchmarkEntry",
+    "BenchmarksResponse",
     "HealthCheckResponse",
     # Lifecycle
     "AgentLifecycleManager",

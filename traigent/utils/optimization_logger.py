@@ -190,7 +190,7 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
         metrics = ex.get("metrics", {})
         actual = ex.get("actual_output")
         return {
-            "input_id": ex.get("input_id"),
+            "example_id": ex.get("example_id", ex.get("input_id")),
             "query": actual.get("query") if isinstance(actual, dict) else None,
             "response": _extract_output_text(actual),
             "expected": ex.get("expected_output"),
@@ -203,7 +203,7 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
     metrics = getattr(ex, "metrics", {}) or {}
     actual = getattr(ex, "actual_output", None)
     return {
-        "input_id": getattr(ex, "input_id", None),
+        "example_id": getattr(ex, "example_id", getattr(ex, "input_id", None)),
         "query": actual.get("query") if isinstance(actual, dict) else None,
         "response": _extract_output_text(actual),
         "expected": getattr(ex, "expected_output", None),
@@ -507,11 +507,11 @@ class OptimizationLogger:
             f"=== {trial.trial_id}  |  accuracy={acc}  |  " f"config={trial.config} ==="
         )
         if serialized_examples:
-            hdr = f"  {'input_id':<14} {'acc':>4}  {'expected':<22} {'response'}"
+            hdr = f"  {'example_id':<14} {'acc':>4}  {'expected':<22} {'response'}"
             lines.append(hdr)
             lines.append(f"  {'-'*14} {'-'*4}  {'-'*22} {'-'*50}")
             for ex in serialized_examples:
-                iid = ex.get("input_id", "?")
+                iid = ex.get("example_id", "?")
                 a = ex.get("accuracy", "?")
                 exp = str(ex.get("expected") or "")[:22]
                 resp = str(ex.get("response") or ex.get("query") or "")[:80]

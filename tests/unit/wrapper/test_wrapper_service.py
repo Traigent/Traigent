@@ -185,7 +185,7 @@ class TestDecorators:
         svc = TraigentService()
 
         @svc.execute
-        async def run(input_id, data, config):
+        async def run(example_id, data, config):
             return {"output": "ok"}
 
         assert svc._execute_handler is run
@@ -195,7 +195,7 @@ class TestDecorators:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "result"}
 
         assert run("id1", {}, {}) == {"output": "result"}
@@ -529,22 +529,23 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
-            return {"output": f"processed-{input_id}", "cost_usd": 0.01}
+        def run(example_id, data, config):
+            return {"output": f"processed-{example_id}", "cost_usd": 0.01}
 
         request = {
             "request_id": "req-1",
+            "benchmark_id": "bench_001",
             "config": {"temperature": 0.5},
-            "inputs": [
-                {"input_id": "i1", "data": {"query": "hello"}},
-                {"input_id": "i2", "data": {"query": "world"}},
+            "examples": [
+                {"example_id": "i1", "data": {"query": "hello"}},
+                {"example_id": "i2", "data": {"query": "world"}},
             ],
         }
         resp = await svc.handle_execute(request)
         assert resp["request_id"] == "req-1"
         assert resp["status"] == "completed"
         assert len(resp["outputs"]) == 2
-        assert resp["outputs"][0]["input_id"] == "i1"
+        assert resp["outputs"][0]["example_id"] == "i1"
         assert resp["outputs"][0]["output"] == "processed-i1"
         assert resp["outputs"][0]["cost_usd"] == 0.01
         assert resp["operational_metrics"]["total_cost_usd"] == pytest.approx(0.02)
@@ -555,10 +556,15 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        async def run(input_id, data, config):
+        async def run(example_id, data, config):
             return {"output": "async_result", "cost_usd": 0.05}
 
-        resp = await svc.handle_execute({"inputs": [{"input_id": "a1", "data": {}}]})
+        resp = await svc.handle_execute(
+            {
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "a1", "data": {}}],
+            }
+        )
         assert resp["status"] == "completed"
         assert resp["outputs"][0]["output"] == "async_result"
         assert resp["outputs"][0]["cost_usd"] == 0.05
@@ -569,10 +575,15 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return "plain_string_result"
 
-        resp = await svc.handle_execute({"inputs": [{"input_id": "x1", "data": {}}]})
+        resp = await svc.handle_execute(
+            {
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "x1", "data": {}}],
+            }
+        )
         assert resp["outputs"][0]["output"] == "plain_string_result"
         assert resp["outputs"][0]["cost_usd"] == 0.0
         assert "metrics" not in resp["outputs"][0]
@@ -583,12 +594,17 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             raise RuntimeError("boom")
 
-        resp = await svc.handle_execute({"inputs": [{"input_id": "e1", "data": {}}]})
+        resp = await svc.handle_execute(
+            {
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "e1", "data": {}}],
+            }
+        )
         assert resp["status"] == "failed"
-        assert resp["outputs"][0]["input_id"] == "e1"
+        assert resp["outputs"][0]["example_id"] == "e1"
         assert "boom" in resp["outputs"][0]["error"]
 
     @pytest.mark.asyncio
@@ -597,10 +613,15 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
-        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        resp = await svc.handle_execute(
+            {
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
+            }
+        )
         assert "request_id" in resp
         assert len(resp["request_id"]) > 0
 
@@ -611,15 +632,16 @@ class TestHandleExecute:
         call_count = {"n": 0}
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             call_count["n"] += 1
             return {"output": f"ok-{call_count['n']}"}
 
         request = {
             "request_id": "req-idem-1",
             "tunable_id": "default",
+            "benchmark_id": "bench_001",
             "config": {"temperature": 0.2},
-            "inputs": [{"input_id": "i1", "data": {}}],
+            "examples": [{"example_id": "i1", "data": {}}],
         }
         first = await svc.handle_execute(request)
         second = await svc.handle_execute(request)
@@ -633,14 +655,15 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         base_request = {
             "request_id": "req-idem-2",
             "tunable_id": "default",
+            "benchmark_id": "bench_001",
             "config": {"temperature": 0.2},
-            "inputs": [{"input_id": "i1", "data": {}}],
+            "examples": [{"example_id": "i1", "data": {}}],
         }
         await svc.handle_execute(base_request)
 
@@ -649,8 +672,9 @@ class TestHandleExecute:
                 {
                     "request_id": "req-idem-2",
                     "tunable_id": "default",
+                    "benchmark_id": "bench_001",
                     "config": {"temperature": 0.7},
-                    "inputs": [{"input_id": "i1", "data": {}}],
+                    "examples": [{"example_id": "i1", "data": {}}],
                 }
             )
 
@@ -661,8 +685,8 @@ class TestHandleExecute:
         svc._idempotency_cache_max_size = 3  # Small cache for testing
 
         @svc.execute
-        def run(input_id, data, config):
-            return {"output": f"result-{input_id}"}
+        def run(example_id, data, config):
+            return {"output": f"result-{example_id}"}
 
         # Fill cache to capacity
         for i in range(3):
@@ -670,7 +694,8 @@ class TestHandleExecute:
                 {
                     "request_id": f"req-{i}",
                     "tunable_id": "default",
-                    "inputs": [{"input_id": f"i{i}", "data": {}}],
+                    "benchmark_id": "bench_001",
+                    "examples": [{"example_id": f"i{i}", "data": {}}],
                 }
             )
 
@@ -682,7 +707,8 @@ class TestHandleExecute:
             {
                 "request_id": "req-3",
                 "tunable_id": "default",
-                "inputs": [{"input_id": "i3", "data": {}}],
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i3", "data": {}}],
             }
         )
 
@@ -697,7 +723,7 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         # Create request with non-JSON-serializable object
@@ -708,8 +734,9 @@ class TestHandleExecute:
         request = {
             "request_id": "req-custom",
             "tunable_id": "default",
+            "benchmark_id": "bench_001",
             "config": {"custom_param": CustomObj()},
-            "inputs": [{"input_id": "i1", "data": {}}],
+            "examples": [{"example_id": "i1", "data": {}}],
         }
 
         # Should not raise, should use repr() fallback
@@ -724,12 +751,16 @@ class TestHandleExecute:
         old_activity = svc._sessions[sid].last_activity
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         time.sleep(0.01)
         resp = await svc.handle_execute(
-            {"session_id": sid, "inputs": [{"input_id": "i1", "data": {}}]}
+            {
+                "session_id": sid,
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
+            }
         )
         assert resp["session_id"] == sid
         assert svc._sessions[sid].last_activity > old_activity
@@ -740,11 +771,15 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         resp = await svc.handle_execute(
-            {"session_id": "nonexistent", "inputs": [{"input_id": "i1", "data": {}}]}
+            {
+                "session_id": "nonexistent",
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
+            }
         )
         assert resp["status"] == "completed"
         assert resp["session_id"] == "nonexistent"
@@ -755,7 +790,7 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {
                 "output": "ok",
                 "cost_usd": 0.0,
@@ -764,10 +799,11 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "inputs": [
-                    {"input_id": "i1", "data": {}},
-                    {"input_id": "i2", "data": {}},
-                ]
+                "benchmark_id": "bench_001",
+                "examples": [
+                    {"example_id": "i1", "data": {}},
+                    {"example_id": "i2", "data": {}},
+                ],
             }
         )
         assert "quality_metrics" in resp
@@ -779,23 +815,25 @@ class TestHandleExecute:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
-        with pytest.raises(ValueError, match="inputs must be a non-empty list"):
-            await svc.handle_execute({"inputs": []})
+        with pytest.raises(ValueError, match="examples must be a non-empty list"):
+            await svc.handle_execute({"benchmark_id": "bench_001", "examples": []})
 
     @pytest.mark.asyncio
-    async def test_input_without_input_id_gets_uuid(self) -> None:
-        """Test that inputs without input_id get a generated UUID."""
+    async def test_example_without_example_id_gets_uuid(self) -> None:
+        """Test that examples without example_id get a generated UUID."""
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
-            return {"output": input_id}
+        def run(example_id, data, config):
+            return {"output": example_id}
 
-        resp = await svc.handle_execute({"inputs": [{"data": {"q": "test"}}]})
-        assert len(resp["outputs"][0]["input_id"]) > 0  # UUID generated
+        resp = await svc.handle_execute(
+            {"benchmark_id": "bench_001", "examples": [{"data": {"q": "test"}}]}
+        )
+        assert len(resp["outputs"][0]["example_id"]) > 0  # UUID generated
 
     @pytest.mark.asyncio
     async def test_input_data_defaults_to_input_dict(self) -> None:
@@ -804,12 +842,12 @@ class TestHandleExecute:
         received_data = {}
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             received_data["data"] = data
             return {"output": "ok"}
 
-        inp = {"input_id": "i1", "query": "hello"}
-        await svc.handle_execute({"inputs": [inp]})
+        inp = {"example_id": "i1", "query": "hello"}
+        await svc.handle_execute({"benchmark_id": "bench_001", "examples": [inp]})
         # When 'data' key is missing, the entire input dict is passed
         assert received_data["data"] == inp
 
@@ -841,8 +879,8 @@ class TestHandleEvaluate:
                 "request_id": "eval-1",
                 "config": {},
                 "evaluations": [
-                    {"input_id": "e1", "output": "a", "target": "a"},
-                    {"input_id": "e2", "output": "a", "target": "b"},
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                    {"example_id": "e2", "output": "a", "target": "b"},
                 ],
             }
         )
@@ -866,7 +904,7 @@ class TestHandleEvaluate:
             return {"f1": 0.9}
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"input_id": "a1", "output": "x", "target": "y"}]}
+            {"evaluations": [{"example_id": "a1", "output": "x", "target": "y"}]}
         )
         assert resp["results"][0]["metrics"]["f1"] == 0.9
 
@@ -880,7 +918,7 @@ class TestHandleEvaluate:
             return 0.75
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"input_id": "a1", "output": "x", "target": "y"}]}
+            {"evaluations": [{"example_id": "a1", "output": "x", "target": "y"}]}
         )
         assert resp["results"][0]["metrics"] == {"score": 0.75}
 
@@ -894,7 +932,7 @@ class TestHandleEvaluate:
             raise ValueError("scoring failed")
 
         resp = await svc.handle_evaluate(
-            {"evaluations": [{"input_id": "e1", "output": "x", "target": "y"}]}
+            {"evaluations": [{"example_id": "e1", "output": "x", "target": "y"}]}
         )
         assert resp["status"] == "failed"
         assert resp["results"][0]["metrics"] == {}
@@ -915,7 +953,7 @@ class TestHandleEvaluate:
         await svc.handle_evaluate(
             {
                 "session_id": sid,
-                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+                "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
         assert svc._sessions[sid].last_activity > old_activity
@@ -947,7 +985,7 @@ class TestHandleEvaluate:
         request = {
             "request_id": "eval-idem-1",
             "tunable_id": "default",
-            "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+            "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
         }
         first = await svc.handle_evaluate(request)
         second = await svc.handle_evaluate(request)
@@ -968,7 +1006,7 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-idem-2",
                 "tunable_id": "default",
-                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+                "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
 
@@ -977,7 +1015,7 @@ class TestHandleEvaluate:
                 {
                     "request_id": "eval-idem-2",
                     "tunable_id": "default",
-                    "evaluations": [{"input_id": "e1", "output": "a", "target": "b"}],
+                    "evaluations": [{"example_id": "e1", "output": "a", "target": "b"}],
                 }
             )
 
@@ -998,7 +1036,7 @@ class TestHandleEvaluate:
                     "request_id": f"eval-{i}",
                     "tunable_id": "default",
                     "evaluations": [
-                        {"input_id": f"e{i}", "output": "a", "target": "a"}
+                        {"example_id": f"e{i}", "output": "a", "target": "a"}
                     ],
                 }
             )
@@ -1011,7 +1049,7 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-3",
                 "tunable_id": "default",
-                "evaluations": [{"input_id": "e3", "output": "a", "target": "a"}],
+                "evaluations": [{"example_id": "e3", "output": "a", "target": "a"}],
             }
         )
 
@@ -1301,14 +1339,16 @@ class TestHandleExecuteEdgeCases:
         received = {}
 
         @svc.execute
-        def run(input_id, data, config):
-            received["input_id"] = input_id
+        def run(example_id, data, config):
+            received["example_id"] = example_id
             received["data"] = data
             return {"output": "ok"}
 
-        resp = await svc.handle_execute({"inputs": ["raw_string"]})
+        resp = await svc.handle_execute(
+            {"benchmark_id": "bench_001", "examples": ["raw_string"]}
+        )
         assert resp["status"] == "completed"
-        assert len(received["input_id"]) > 0  # UUID generated
+        assert len(received["example_id"]) > 0  # UUID generated
 
     @pytest.mark.asyncio
     async def test_partial_status_on_mixed_success_and_failure(self) -> None:
@@ -1317,20 +1357,21 @@ class TestHandleExecuteEdgeCases:
         call_count = 0
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
                 raise RuntimeError("fail on second")
-            return {"output": f"ok-{input_id}"}
+            return {"output": f"ok-{example_id}"}
 
         resp = await svc.handle_execute(
             {
-                "inputs": [
-                    {"input_id": "i1", "data": {}},
-                    {"input_id": "i2", "data": {}},
-                    {"input_id": "i3", "data": {}},
-                ]
+                "benchmark_id": "bench_001",
+                "examples": [
+                    {"example_id": "i1", "data": {}},
+                    {"example_id": "i2", "data": {}},
+                    {"example_id": "i3", "data": {}},
+                ],
             }
         )
         assert resp["status"] == "partial"
@@ -1369,7 +1410,7 @@ class TestHandleEvaluateEdgeCases:
             {
                 "evaluations": [
                     {
-                        "input_id": "e1",
+                        "example_id": "e1",
                         "output_id": "out-123",
                         "target": "expected",
                     }
@@ -1390,7 +1431,7 @@ class TestHandleEvaluateEdgeCases:
         resp = await svc.handle_evaluate(
             {
                 "evaluations": [
-                    {"input_id": "e1", "output": "a", "target": "a"},
+                    {"example_id": "e1", "output": "a", "target": "a"},
                 ]
             }
         )
