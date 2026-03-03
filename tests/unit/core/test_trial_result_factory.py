@@ -469,8 +469,8 @@ class TestBuildFailedResult:
             optuna_trial_id=None,
         )
 
-        # Metadata should be empty dict when no optuna_trial_id
-        assert result.metadata == {}
+        assert "optuna_trial_id" not in result.metadata
+        assert "comparability" in result.metadata
 
     def test_failed_invalid_cost(self, eval_config):
         """Test failed result with invalid cost value."""

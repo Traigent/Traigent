@@ -684,18 +684,20 @@ class OptimizationOrchestrator:
 
         primary_objective = self.optimizer.objectives[0]
         new_score = (
-            trial_result.get_metric(primary_objective, 0.0)
+            trial_result.get_metric(primary_objective)
             if hasattr(trial_result, "get_metric")
-            else ((trial_result.metrics or {}).get(primary_objective, 0.0))
+            else ((trial_result.metrics or {}).get(primary_objective))
         )
-        new_score = new_score or 0.0
+        if new_score is None:
+            return False
 
         current_score = (
-            self._best_trial_cached.get_metric(primary_objective, 0.0)
+            self._best_trial_cached.get_metric(primary_objective)
             if hasattr(self._best_trial_cached, "get_metric")
-            else (self._best_trial_cached.metrics or {}).get(primary_objective, 0.0)
+            else (self._best_trial_cached.metrics or {}).get(primary_objective)
         )
-        current_score = current_score or 0.0
+        if current_score is None:
+            return True
 
         minimization = is_minimization_objective(primary_objective)
         if minimization:
@@ -1840,7 +1842,8 @@ class OptimizationOrchestrator:
         cost_status = self.cost_enforcer.get_status()
         logger.info(
             f"Optimization {self._optimization_id} completed: "
-            f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
+            f"{len(self._trials)} trials, best score: "
+            f"{'N/A' if result.best_score is None else f'{result.best_score:.4f}'}, "
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
 
@@ -2101,11 +2104,11 @@ class OptimizationOrchestrator:
         total_trials = len(self._trials)
         success_count = self._successful_trials
 
-        best_score = 0.0
+        best_score: float | None = None
         best_trial = self.best_result
         if best_trial and self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
-            best_score = best_trial.get_metric(primary_objective, 0.0) or 0.0
+            best_score = best_trial.get_metric(primary_objective)
 
         success_rate = (success_count / total_trials) if total_trials else 0.0
 
@@ -2113,7 +2116,7 @@ class OptimizationOrchestrator:
 
         logger.info(
             f"Progress: {trial_count} trials, "
-            f"best score: {best_score:.4f}, "
+            f"best score: {'N/A' if best_score is None else f'{best_score:.4f}'}, "
             f"success rate: {success_rate:.2%}, "
             f"elapsed: {elapsed:.1f}s"
         )
@@ -2189,6 +2192,7 @@ class OptimizationOrchestrator:
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
+            comparability_mode=self.traigent_config.get_comparability_mode(),
         )
         best_config = selection.best_config
         best_score = selection.best_score

@@ -20,6 +20,7 @@ from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
+from ..utils.objectives import is_minimization_objective
 from ..utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
@@ -31,7 +32,7 @@ class TrialResult:
 
     trial_id: int
     config: dict[str, Any]
-    score: float
+    score: float | None
     timestamp: str
     metadata: dict[str, Any | None] | None = None
     error: str | None = None
@@ -282,7 +283,7 @@ class LocalStorageManager:
         self,
         session_id: str,
         config: dict[str, Any],
-        score: float,
+        score: float | None,
         metadata: dict[str, Any | None] | None = None,
         error: str | None = None,
     ) -> None:
@@ -292,7 +293,7 @@ class LocalStorageManager:
         Args:
             session_id: Session identifier
             config: Configuration that was tested
-            score: Score achieved with this configuration
+            score: Score achieved with this configuration (may be None when unavailable)
             metadata: Additional trial metadata
             error: Error message if trial failed
         """
@@ -317,12 +318,57 @@ class LocalStorageManager:
         session.updated_at = datetime.now(UTC).isoformat()
 
         # Update best score if this is better
-        if session.best_score is None or score > session.best_score:
-            session.best_score = score
-            session.best_config = config.copy()
+        if score is not None:
+            primary_objective = self._resolve_primary_objective_name(
+                session.optimization_config
+            )
+            is_minimize = is_minimization_objective(primary_objective)
+            if session.best_score is None:
+                is_better = True
+            elif is_minimize:
+                is_better = score < session.best_score
+            else:
+                is_better = score > session.best_score
+            if is_better:
+                session.best_score = score
+                session.best_config = config.copy()
 
         self._save_session(session)
         logger.debug(f"Added trial result to session {session_id}: score={score}")
+
+    @staticmethod
+    def _resolve_primary_objective_name(
+        optimization_config: dict[str, Any | None] | None,
+    ) -> str:
+        """Resolve primary objective name from stored optimization config."""
+        if not isinstance(optimization_config, dict):
+            return "score"
+
+        def _extract_name(candidate: Any) -> str | None:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            if isinstance(candidate, dict):
+                name = candidate.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+            return None
+
+        for key in ("objectives",):
+            value = optimization_config.get(key)
+            if isinstance(value, list) and value:
+                name = _extract_name(value[0])
+                if name:
+                    return name
+
+        objective_schema = optimization_config.get("objective_schema")
+        if isinstance(objective_schema, dict):
+            schema_objectives = objective_schema.get("objectives")
+            if isinstance(schema_objectives, list) and schema_objectives:
+                name = _extract_name(schema_objectives[0])
+                if name:
+                    return name
+
+        return "score"
 
     def finalize_session(
         self, session_id: str, status: str | None = None
@@ -502,7 +548,11 @@ class LocalStorageManager:
                 "improvement": None,
             }
 
-        scores = [trial.score for trial in session.trials if trial.error is None]
+        scores = [
+            trial.score
+            for trial in session.trials
+            if trial.error is None and trial.score is not None
+        ]
         successful_trials = len(
             [trial for trial in session.trials if trial.error is None]
         )

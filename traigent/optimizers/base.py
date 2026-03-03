@@ -10,6 +10,7 @@ from typing import Any
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.validation import validate_objectives
 
 logger = get_logger(__name__)
@@ -223,8 +224,19 @@ class BaseOptimizer(ABC):
         # Get primary objective score
         primary_objective = self.objectives[0]
         score = trial.get_metric(primary_objective)
+        if score is None:
+            return
 
-        if score is not None and (self._best_score is None or score > self._best_score):
+        if self._best_score is None:
+            self._best_score = score
+            self._best_config = trial.config.copy()
+            return
+
+        minimization = is_minimization_objective(primary_objective)
+        is_better = (
+            score < self._best_score if minimization else score > self._best_score
+        )
+        if is_better:
             self._best_score = score
             self._best_config = trial.config.copy()
 

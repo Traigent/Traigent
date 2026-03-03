@@ -608,7 +608,7 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) == 0
         assert result.best_config == {}
         assert result.best_metrics == {}
-        assert result.best_score == 0.0
+        assert result.best_score is None
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
