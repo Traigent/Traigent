@@ -682,9 +682,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             )
 
         # Build execute request
+        if not self._benchmark_id:
+            raise ValueError(
+                "benchmark_id is required but not set. "
+                "Ensure the service exposes a /benchmarks endpoint."
+            )
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
-            benchmark_id=self._benchmark_id or "",
+            benchmark_id=self._benchmark_id,
             config=config,
             examples=inputs,
             session_id=self._session_id,
@@ -856,7 +861,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         # Call evaluate
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
-            benchmark_id=self._benchmark_id or "",
+            benchmark_id=self._benchmark_id,
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
             session_id=self._session_id,
