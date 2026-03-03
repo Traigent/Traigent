@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import traigent
 from traigent.tuned_variables import TunedVariableDetector
 
 
@@ -69,6 +70,19 @@ def main() -> None:
             for name, range_obj in config_space.items():
                 print(f"    {name!r}: {range_obj!r},")
             print("}")
+
+    print("\n" + "=" * 60)
+    print("Seamless @optimize auto-setup (auto_detect_tvars_mode='apply'):")
+    print("=" * 60)
+
+    @traigent.optimize(auto_detect_tvars_mode="apply", objectives=["accuracy"])
+    def auto_configured_agent(query: str) -> str:
+        temperature = 0.6  # noqa: F841
+        model = "gpt-4o-mini"  # noqa: F841
+        return f"answer to {query}"
+
+    print("Auto-generated configuration_space:")
+    print(auto_configured_agent.configuration_space)
 
 
 if __name__ == "__main__":
