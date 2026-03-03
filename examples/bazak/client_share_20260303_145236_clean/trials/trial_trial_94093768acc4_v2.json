@@ -1,0 +1,54 @@
+{
+  "trial_id": "trial_94093768acc4",
+  "config": {
+    "model": "gemini-2.5-flash"
+  },
+  "metrics": {
+    "cost": 0.0246747,
+    "total_cost": 0.0246747,
+    "success_rate": 1.0,
+    "tool_accuracy": 0.6666666666666666,
+    "param_accuracy": 1.0,
+    "accuracy": 0.8333333333333334,
+    "text_accuracy": 1.0,
+    "latency": 11286.0,
+    "score": 0.8333333333333334,
+    "response_time_ms": 11286.0,
+    "examples_attempted": 3
+  },
+  "status": "completed",
+  "duration": 35.04753398895264,
+  "timestamp": "2026...0:00",
+  "example_results": [
+    {
+      "input_id": "no-filter-single-search-trashcan-blue",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 1.0,
+      "cost_usd": 0.0082249,
+      "latency_ms": 15531.0,
+      "error": null
+    },
+    {
+      "input_id": "product-search-specific-model",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 1.0,
+      "cost_usd": 0.0082249,
+      "latency_ms": 14605.0,
+      "error": null
+    },
+    {
+      "input_id": "consultant-fridge",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 0.5,
+      "cost_usd": 0.0082249,
+      "latency_ms": 3722.0,
+      "error": null
+    }
+  ]
+}

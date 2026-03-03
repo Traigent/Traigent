@@ -1,0 +1,54 @@
+{
+  "trial_id": "trial_4ce3058b9394",
+  "config": {
+    "model": "gpt-5-nano-2025-08-07"
+  },
+  "metrics": {
+    "cost": 0.0047572000000000005,
+    "total_cost": 0.0047572000000000005,
+    "success_rate": 1.0,
+    "tool_accuracy": 0.3333333333333333,
+    "param_accuracy": 0.0,
+    "accuracy": 0.3333333333333333,
+    "text_accuracy": 1.0,
+    "latency": 32653.0,
+    "score": 0.3333333333333333,
+    "response_time_ms": 32653.0,
+    "examples_attempted": 3
+  },
+  "status": "completed",
+  "duration": 99.31514763832092,
+  "timestamp": "2026...0:00",
+  "example_results": [
+    {
+      "input_id": "no-filter-single-search-trashcan-blue",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 0.0,
+      "cost_usd": 0.0015857333333333336,
+      "latency_ms": 30000.0,
+      "error": null
+    },
+    {
+      "input_id": "product-search-specific-model",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 0.0,
+      "cost_usd": 0.0015857333333333336,
+      "latency_ms": 25895.0,
+      "error": null
+    },
+    {
+      "input_id": "consultant-fridge",
+      "query": null,
+      "response": null,
+      "expected": null,
+      "accuracy": 1.0,
+      "cost_usd": 0.0015857333333333336,
+      "latency_ms": 42064.0,
+      "error": null
+    }
+  ]
+}
