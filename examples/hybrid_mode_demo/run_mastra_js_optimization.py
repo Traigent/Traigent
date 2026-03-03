@@ -278,7 +278,7 @@ async def run_optimization() -> None:
                 f"\n[2/4] Using {len(example_ids)} example IDs from MASTRA_JS_EXAMPLE_IDS"
             )
         else:
-            print(f"\n[2/4] Discovering example IDs via GET /benchmarks...")
+            print("\n[2/4] Discovering example IDs via GET /benchmarks...")
             example_ids = await evaluator.discover_example_ids()
             print(f"      Discovered {len(example_ids)} example IDs from server")
 
