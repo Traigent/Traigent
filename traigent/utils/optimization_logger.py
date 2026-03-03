@@ -473,13 +473,15 @@ class OptimizationLogger:
                 "duration": trial.duration,
                 "timestamp": trial.timestamp.isoformat() if trial.timestamp else None,
             }
+            serialized_examples: list[dict[str, Any]] | None = None
             example_results = (
                 trial.metadata.get("example_results") if trial.metadata else None
             )
             if example_results:
-                trial_data["example_results"] = [
+                serialized_examples = [
                     _serialize_example_result(ex) for ex in example_results
                 ]
+                trial_data["example_results"] = serialized_examples
             self._append_jsonl(trials_file, trial_data)
             if example_results:
                 trial_file = (
@@ -491,7 +493,7 @@ class OptimizationLogger:
                 )
                 self._atomic_write(trial_file, trial_data)
             # Append human-readable summary table
-            self._append_trial_summary(trial, trial_data.get("example_results"))
+            self._append_trial_summary(trial, serialized_examples)
         self._trial_buffer.clear()
 
     def _append_trial_summary(
@@ -511,7 +513,7 @@ class OptimizationLogger:
             lines.append(hdr)
             lines.append(f"  {'-'*14} {'-'*4}  {'-'*22} {'-'*50}")
             for ex in serialized_examples:
-                iid = ex.get("example_id", "?")
+                iid = str(ex.get("example_id") or "?")
                 a = ex.get("accuracy", "?")
                 exp = str(ex.get("expected") or "")[:22]
                 resp = str(ex.get("response") or ex.get("query") or "")[:80]
