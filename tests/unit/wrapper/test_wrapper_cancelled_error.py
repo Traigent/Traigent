@@ -42,15 +42,16 @@ async def test_handle_execute_propagates_cancelled_error():
 
     @svc.execute
     async def run_agent(
-        input_id: str, data: Any, config: dict[str, Any]
+        example_id: str, data: Any, config: dict[str, Any]
     ) -> dict[str, Any]:
         raise asyncio.CancelledError
 
     request = {
         "request_id": "req_1",
         "tunable_id": "test_agent",
+        "benchmark_id": "bench_001",
         "config": {},
-        "inputs": [{"input_id": "ex_0", "data": {"question": "hi"}}],
+        "examples": [{"example_id": "ex_0", "data": {"question": "hi"}}],
     }
 
     with pytest.raises(asyncio.CancelledError):
@@ -79,7 +80,7 @@ async def test_handle_evaluate_propagates_cancelled_error():
         "config": {},
         "evaluations": [
             {
-                "input_id": "ex_0",
+                "example_id": "ex_0",
                 "output": "some output",
                 "target": "expected",
             }

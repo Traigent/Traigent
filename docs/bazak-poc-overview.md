@@ -75,7 +75,7 @@ Create 50-100 test cases for the child-age-prompting scenario:
 
 ```json
 {
-  "input_id": "case_001",
+  "example_id": "case_001",
   "query": "I need a flight to Paris for me and my two kids",
   "expected_behavior": "should_ask_ages",
   "context": {"has_children": true, "child_count": 2}

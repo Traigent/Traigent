@@ -378,8 +378,8 @@ class TestMCPTransportDiscoverConfigSpace:
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
 
 
-class TestMCPTransportInputs:
-    """Tests for inputs method (issue #57 — not yet supported)."""
+class TestMCPTransportBenchmarks:
+    """Tests for benchmarks method (not yet supported over MCP)."""
 
     @pytest.fixture
     def transport(self) -> MCPTransport:
@@ -387,10 +387,12 @@ class TestMCPTransportInputs:
         return MCPTransport(mcp_client=mock_client)
 
     @pytest.mark.asyncio
-    async def test_inputs_raises_not_implemented(self, transport: MCPTransport) -> None:
-        """MCP transport raises NotImplementedError for inputs()."""
+    async def test_benchmarks_raises_not_implemented(
+        self, transport: MCPTransport
+    ) -> None:
+        """MCP transport raises NotImplementedError for benchmarks()."""
         with pytest.raises(NotImplementedError, match="not yet supported over MCP"):
-            await transport.inputs("some-tunable")
+            await transport.benchmarks("some-tunable")
 
 
 class TestMCPTransportExecute:
@@ -409,7 +411,7 @@ class TestMCPTransportExecute:
             "request_id": "req-123",
             "execution_id": "exec-456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": {"result": "test"}}],
+            "outputs": [{"example_id": "1", "output": {"result": "test"}}],
             "operational_metrics": {"total_cost_usd": 0.001},
         }
         mock_response = MockMCPResponse(
@@ -420,8 +422,9 @@ class TestMCPTransportExecute:
 
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "fast"},
-            inputs=[{"input_id": "1", "data": {}}],
+            examples=[{"example_id": "1", "data": {}}],
         )
         response = await transport.execute(request)
 
@@ -454,7 +457,7 @@ class TestMCPTransportEvaluate:
         evaluate_response = {
             "request_id": "req-123",
             "status": "completed",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95}},
         }
         eval_response = MockMCPResponse(
@@ -467,7 +470,8 @@ class TestMCPTransportEvaluate:
 
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+            benchmark_id="bench_001",
+            evaluations=[{"example_id": "1", "output": {}, "target": {}}],
         )
         response = await transport.evaluate(request)
 
@@ -486,6 +490,7 @@ class TestMCPTransportEvaluate:
 
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[],
         )
 

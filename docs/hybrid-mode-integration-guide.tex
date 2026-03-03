@@ -247,7 +247,7 @@ Target / expected output content               & \textcolor{privacygreen}{\textb
 \end{center}
 
 Your service stores data locally and uses opaque identifiers
-(\field{input\_id}, \field{output\_id}, \field{target\_id}) in API exchanges.
+(\field{example\_id}, \field{output\_id}, \field{target\_id}) in API exchanges.
 If privacy is not a concern, you may include full content in \field{data},
 \field{output}, and \field{target} fields. Both modes can be mixed.
 
@@ -427,9 +427,9 @@ Execute the agent with a specific configuration on a batch of inputs.
     "temperature": 0.5,
     "max_tokens": 1024
   },
-  "inputs": [
-    {"input_id": "ex_001", "data": {"query": "What is machine learning?"}},
-    {"input_id": "ex_002", "data": {"query": "Explain neural networks"}}
+  "examples": [
+    {"example_id": "ex_001", "data": {"query": "What is machine learning?"}},
+    {"example_id": "ex_002", "data": {"query": "Explain neural networks"}}
   ],
   "timeout_ms": 30000
 }
@@ -443,7 +443,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 \field{request\_id}    & string (UUID) & \optional & Idempotency key (auto-generated if omitted) \\
 \field{capability\_id} & string        & \required & Capability to invoke \\
 \field{config}         & object        & \required & Configuration parameters (tunable values) \\
-\field{inputs}         & array         & \required & Input examples to process \\
+\field{examples}       & array         & \required & Examples to process \\
 \field{session\_id}    & string        & \optional & Session ID for stateful agents \\
 \field{batch\_options} & object        & \optional & Parallelism, fail-fast, per-item timeout \\
 \field{timeout\_ms}    & integer       & \optional & Request timeout in ms (default: 30\,000) \\
@@ -456,7 +456,7 @@ Each \textbf{Input Item} contains:
 \begin{center}\small
 \begin{tabularx}{\textwidth}{@{}llcX@{}}
 \toprule
-\field{input\_id} & string & \required & Unique identifier for this input \\
+\field{example\_id} & string & \required & Unique identifier for this input \\
 \field{data}      & object & \optional & Input data (omit in privacy-preserving mode) \\
 \bottomrule
 \end{tabularx}
@@ -471,7 +471,7 @@ Each \textbf{Input Item} contains:
   "status": "completed",
   "outputs": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output": {"response": "Machine learning is a subset of AI..."},
       "cost_usd": 0.002,
       "latency_ms": 150
@@ -507,7 +507,7 @@ Each \textbf{Output Item} contains:
 \begin{center}\small
 \begin{tabularx}{\textwidth}{@{}llcX@{}}
 \toprule
-\field{input\_id}   & string & \required & Matching input identifier \\
+\field{example\_id}   & string & \required & Matching input identifier \\
 \field{output}      & object & \optional & Agent output (omit in privacy-preserving mode) \\
 \field{output\_id}  & string & \optional & Output identifier (privacy-preserving mode) \\
 \field{cost\_usd}   & number & \optional & Cost for this input \\
@@ -554,7 +554,7 @@ Evaluate outputs against expected targets. Only required when
   "execution_id": "exec_123456",
   "evaluations": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output": {"response": "Machine learning is a subset of AI..."},
       "target": {"expected": "Machine learning is a branch of AI..."}
     }
@@ -586,7 +586,7 @@ Each \textbf{Evaluation Item} contains:
 \begin{center}\small
 \begin{tabularx}{\textwidth}{@{}llcX@{}}
 \toprule
-\field{input\_id}   & string & \required & Matching input identifier \\
+\field{example\_id}   & string & \required & Matching input identifier \\
 \field{output}      & object & \optional & Agent output (or use \field{output\_id}) \\
 \field{output\_id}  & string & \optional & Output reference (privacy-preserving mode) \\
 \field{target}      & object & \optional & Expected output (or use \field{target\_id}) \\
@@ -603,7 +603,7 @@ Each \textbf{Evaluation Item} contains:
   "status": "completed",
   "results": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "metrics": {"accuracy": 0.92, "relevance": 0.88, "fluency": 0.95}
     }
   ],
@@ -628,7 +628,7 @@ Each \textbf{Evaluation Item} contains:
 \end{tabularx}
 \end{center}
 
-Each \textbf{Result Item}: \field{input\_id}~(required), \field{metrics}~(required object of numeric quality scores), \field{error}~(optional string).
+Each \textbf{Result Item}: \field{example\_id}~(required), \field{metrics}~(required object of numeric quality scores), \field{error}~(optional string).
 
 Each \textbf{Aggregate Metric}: \field{mean}~(number), \field{std}~(number), \field{n}~(integer).
 

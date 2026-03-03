@@ -149,7 +149,7 @@ paths:
         This is the main endpoint where your agent processes inputs using the provided configuration.
 
         **Server implementation (privacy-preserving mode):**
-        1. For each input, use `input_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
+        1. For each input, use `example_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
         2. Run your agent with the provided `config` parameters
         3. Store the response locally, keyed by a generated `output_id`
         4. Return `output_id` + cost/latency per input (do NOT return response text)
@@ -174,8 +174,8 @@ paths:
               config:
                 model: gpt-4o
                 temperature: 0.5
-              inputs:
-                - input_id: case_001
+              examples:
+                - example_id: case_001
               timeout_ms: 30000
       responses:
         '200':
@@ -189,7 +189,7 @@ paths:
                 execution_id: exec_20240115_001
                 status: completed
                 outputs:
-                  - input_id: case_001
+                  - example_id: case_001
                     output_id: out_001_run_abc
                     cost_usd: 0.0012
                     latency_ms: 245.5
@@ -261,7 +261,7 @@ paths:
 
         **Server implementation (privacy-preserving mode):**
         1. For each evaluation item, use `output_id` to look up stored output locally
-        2. Use `input_id` (and optional `target_id`) to resolve expected behavior from local data
+        2. Use `example_id` (and optional `target_id`) to resolve expected behavior from local data
         3. Compare output vs expected and compute per-example quality metrics
         4. Return per-example metrics and aggregate statistics (`mean`, `std`, `n`)
       tags:
@@ -280,7 +280,7 @@ paths:
               tunable_id: my_agent
               execution_id: exec_123456
               evaluations:
-                - input_id: case_001
+                - example_id: case_001
                   output_id: out_001_run_abc
                   target_id: target_001
               timeout_ms: 30000
@@ -299,7 +299,7 @@ paths:
                     execution_id: exec_20240115_001
                     status: completed
                     results:
-                      - input_id: case_001
+                      - example_id: case_001
                         metrics:
                           accuracy: 0.92
                           relevance: 0.88
@@ -320,7 +320,7 @@ paths:
                     execution_id: null
                     status: completed
                     results:
-                      - input_id: case_002
+                      - example_id: case_002
                         metrics:
                           accuracy: 0.89
                           relevance: 0.91
@@ -962,20 +962,20 @@ components:
           items:
             type: string
             maxLength: 128
-    InputItem:
+    ExampleItem:
       type: object
       description: |
         Single input item for execution.
 
-        **Privacy-preserving mode**: Only `input_id` is required. Your service uses
+        **Privacy-preserving mode**: Only `example_id` is required. Your service uses
         the ID to look up the actual input data locally. The input data is never
         transmitted to Traigent.
 
         **Full-content datasets**: Include `data` with the actual input content.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: |
             Unique identifier for this input. In privacy-preserving mode, your
@@ -985,7 +985,7 @@ components:
         data:
           type: object
           description: |
-            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by input_id.
+            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by example_id.
           additionalProperties: true
           example:
             query: What is machine learning?
@@ -1014,12 +1014,12 @@ components:
           example: 5000
     ExecuteRequest:
       type: object
-      description: Request to execute agent with configuration on inputs
+      description: Request to execute agent with configuration on examples
       required:
         - request_id
         - tunable_id
         - config
-        - inputs
+        - examples
       properties:
         request_id:
           type: string
@@ -1035,11 +1035,11 @@ components:
           type: object
           description: Configuration parameters (tunable values matching config-space definitions)
           additionalProperties: true
-        inputs:
+        examples:
           type: array
-          description: List of input examples to process
+          description: List of examples to process
           items:
-            $ref: '#/components/schemas/InputItem'
+            $ref: '#/components/schemas/ExampleItem'
           minItems: 1
           maxItems: 10000
         session_id:
@@ -1067,9 +1067,9 @@ components:
 
         **Full-content datasets**: Include `output` with the actual output content.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256
@@ -1180,9 +1180,9 @@ components:
           description: Error message
           maxLength: 2048
           example: 2 of 5 inputs failed due to upstream timeout
-        failed_inputs:
+        failed_examples:
           type: array
-          description: List of failed input IDs
+          description: List of failed example IDs
           maxItems: 10000
           items:
             type: string
@@ -1257,9 +1257,9 @@ components:
 
         Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256
@@ -1338,10 +1338,10 @@ components:
       type: object
       description: Evaluation result for a single example
       required:
-        - input_id
+        - example_id
         - metrics
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256

@@ -451,13 +451,13 @@
       },
       "additionalProperties": false
     },
-    "InputItem": {
+    "ExampleItem": {
       "type": "object",
-      "title": "InputItem",
-      "description": "Single input item for execution. For privacy-preserving mode, only input_id is required - the service retrieves data locally using the ID.",
-      "required": ["input_id"],
+      "title": "ExampleItem",
+      "description": "Single example item for execution. For privacy-preserving mode, only example_id is required - the service retrieves data locally using the ID.",
+      "required": ["example_id"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
           "description": "Unique identifier for this input. In privacy-preserving mode, the service uses this to retrieve locally-stored input data."
         },
@@ -472,8 +472,8 @@
     "ExecuteRequest": {
       "type": "object",
       "title": "ExecuteRequest",
-      "description": "Request to execute agent with configuration on inputs",
-      "required": ["tunable_id", "config", "inputs"],
+      "description": "Request to execute agent with configuration on examples",
+      "required": ["tunable_id", "config", "examples"],
       "properties": {
         "request_id": {
           "type": "string",
@@ -489,11 +489,11 @@
           "description": "Configuration parameters (tunable values)",
           "additionalProperties": true
         },
-        "inputs": {
+        "examples": {
           "type": "array",
-          "description": "List of input examples to process",
+          "description": "List of examples to process",
           "items": {
-            "$ref": "#/definitions/InputItem"
+            "$ref": "#/definitions/ExampleItem"
           },
           "minItems": 1
         },
@@ -517,12 +517,12 @@
       "type": "object",
       "title": "OutputItem",
       "description": "Output for a single input. For privacy-preserving mode, output_id can be returned instead of output content - the service stores output data locally.",
-      "required": ["input_id"],
+      "required": ["example_id"],
       "additionalProperties": true,
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "output": {
           "type": "object",
@@ -621,9 +621,9 @@
           "type": "string",
           "description": "Error message"
         },
-        "failed_inputs": {
+        "failed_examples": {
           "type": "array",
-          "description": "List of failed input IDs",
+          "description": "List of failed example IDs",
           "items": {
             "type": "string"
           }
@@ -680,11 +680,11 @@
       "type": "object",
       "title": "EvaluationItem",
       "description": "Single evaluation item with output and target. For privacy-preserving mode, use output_id and target_id instead of content - the service retrieves data locally using session context.",
-      "required": ["input_id"],
+      "required": ["example_id"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "output": {
           "type": "object",
@@ -775,11 +775,11 @@
       "type": "object",
       "title": "EvaluationResult",
       "description": "Evaluation result for a single example",
-      "required": ["input_id", "metrics"],
+      "required": ["example_id", "metrics"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "metrics": {
           "type": "object",

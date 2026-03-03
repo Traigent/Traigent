@@ -54,7 +54,7 @@ class MockHybridServer:
     active_sessions: set[str] = field(default_factory=set)
 
     # Privacy-preserving mode: local data storage
-    # Maps input_id -> input data
+    # Maps example_id -> input data
     _input_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Maps output_id -> output data
     _output_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -72,17 +72,17 @@ class MockHybridServer:
         self._output_storage = {}
         self._target_storage = {}
 
-    def store_input(self, input_id: str, data: dict[str, Any]) -> None:
+    def store_input(self, example_id: str, data: dict[str, Any]) -> None:
         """Store input data locally (for privacy-preserving mode)."""
-        self._input_storage[input_id] = data
+        self._input_storage[example_id] = data
 
     def store_target(self, target_id: str, data: dict[str, Any]) -> None:
         """Store target data locally (for privacy-preserving mode)."""
         self._target_storage[target_id] = data
 
-    def get_input(self, input_id: str) -> dict[str, Any]:
+    def get_input(self, example_id: str) -> dict[str, Any]:
         """Retrieve locally-stored input data by ID."""
-        return self._input_storage.get(input_id, {})
+        return self._input_storage.get(example_id, {})
 
     def get_output(self, output_id: str) -> dict[str, Any]:
         """Retrieve locally-stored output data by ID."""
@@ -139,7 +139,7 @@ class MockHybridServer:
         }
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Execute agent with given config on inputs.
+        """Execute agent with given config on examples.
 
         Simulates agent execution by computing mock outputs based on
         the configuration and tracking costs.
@@ -183,7 +183,7 @@ class MockHybridServer:
                 },
             }
 
-        inputs = request.get("inputs", [])
+        inputs = request.get("examples", [])
         session_id = request.get("session_id")
 
         if session_id:
@@ -195,15 +195,15 @@ class MockHybridServer:
         total_latency = 0.0
 
         for inp in inputs:
-            input_id = inp.get("input_id", str(uuid.uuid4()))
+            example_id = inp.get("example_id", str(uuid.uuid4()))
 
-            # Privacy-preserving mode: look up data locally by input_id
+            # Privacy-preserving mode: look up data locally by example_id
             # Standard mode: use data from request
             if "data" in inp:
                 data = inp["data"]
             else:
                 # Privacy-preserving: look up locally-stored input
-                data = self.get_input(input_id)
+                data = self.get_input(example_id)
 
             # Simulate output based on config
             output = self._simulate_output(config, data)
@@ -226,14 +226,14 @@ class MockHybridServer:
 
             # Build output item
             output_item: dict[str, Any] = {
-                "input_id": input_id,
+                "example_id": example_id,
                 "cost_usd": cost,
                 "latency_ms": latency,
             }
 
             if self.config.privacy_preserving:
                 # Privacy-preserving mode: store output locally and return only ID
-                output_id = f"out_{input_id}_{session_id or 'default'}"
+                output_id = f"out_{example_id}_{session_id or 'default'}"
                 self._output_storage[output_id] = output
                 output_item["output_id"] = output_id
             else:
@@ -323,7 +323,7 @@ class MockHybridServer:
         accuracy_sum = 0.0
 
         for eval_item in evaluations:
-            input_id = eval_item.get("input_id", str(uuid.uuid4()))
+            example_id = eval_item.get("example_id", str(uuid.uuid4()))
 
             # Privacy-preserving mode: look up output and target by ID
             # Standard mode: use data from request
@@ -355,7 +355,7 @@ class MockHybridServer:
 
             results.append(
                 {
-                    "input_id": input_id,
+                    "example_id": example_id,
                     "metrics": {
                         "accuracy": accuracy,
                         "relevance": quality * 0.95,
