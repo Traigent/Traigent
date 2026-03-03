@@ -171,6 +171,7 @@ paths:
             example:
               request_id: 550e8400-e29b-41d4-a716-446655440000
               tunable_id: my_agent
+              benchmark_id: spider_dev_v1
               config:
                 model: gpt-4o
                 temperature: 0.5
@@ -278,6 +279,7 @@ paths:
             example:
               request_id: 660e8400-e29b-41d4-a716-446655440001
               tunable_id: my_agent
+              benchmark_id: spider_dev_v1
               execution_id: exec_123456
               evaluations:
                 - example_id: case_001
@@ -380,6 +382,57 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Service unavailable (temporary upstream/dependency outage)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /traigent/v1/benchmarks:
+    get:
+      operationId: getBenchmarks
+      summary: List available benchmarks
+      description: |
+        Returns the benchmarks available for optimization. Each benchmark contains
+        a set of example IDs and is linked to one or more tunable IDs.
+        Traigent calls this to discover which benchmarks are available for a tunable.
+      tags:
+        - Discovery
+      parameters:
+        - name: tunable_id
+          in: query
+          required: false
+          description: |
+            Filter benchmarks by tunable ID. If omitted, returns all benchmarks.
+          schema:
+            type: string
+            maxLength: 256
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
+      responses:
+        '200':
+          description: List of benchmarks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BenchmarksResponse'
+              example:
+                benchmarks:
+                  - benchmark_id: spider_dev_v1
+                    tunable_ids:
+                      - my_agent
+                    example_ids:
+                      - case_001
+                      - case_002
+                      - case_003
+                    name: Spider Dev Set v1
+                benchmarks_revision: rev_20240115_001
+        '401':
+          description: Unauthorized (missing or invalid bearer token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -1018,6 +1071,7 @@ components:
       required:
         - request_id
         - tunable_id
+        - benchmark_id
         - config
         - examples
       properties:
@@ -1031,17 +1085,22 @@ components:
           description: Identifier for the agent tunable to invoke
           maxLength: 256
           example: my_agent
+        benchmark_id:
+          type: string
+          description: Benchmark containing the examples to run. Must match a benchmark_id from the /benchmarks endpoint.
+          maxLength: 256
+          example: spider_dev_v1
         config:
           type: object
           description: Configuration parameters (tunable values matching config-space definitions)
           additionalProperties: true
         examples:
           type: array
-          description: List of examples to process
+          description: List of examples to process. Actual limit is max_batch_size from capabilities (default 100).
           items:
             $ref: '#/components/schemas/ExampleItem'
           minItems: 1
-          maxItems: 10000
+          maxItems: 100000
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1058,6 +1117,11 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
+        benchmarks_revision:
+          type: string
+          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
+          maxLength: 256
+          nullable: true
     OutputItem:
       type: object
       description: |
@@ -1292,6 +1356,7 @@ components:
       required:
         - request_id
         - tunable_id
+        - benchmark_id
         - evaluations
       properties:
         request_id:
@@ -1304,6 +1369,11 @@ components:
           description: Identifier for the evaluation tunable
           maxLength: 256
           example: my_agent
+        benchmark_id:
+          type: string
+          description: Benchmark containing the examples being evaluated. Must match a benchmark_id from the /benchmarks endpoint.
+          maxLength: 256
+          example: spider_dev_v1
         execution_id:
           type: string
           description: Reference to previous execute (for caching/correlation)
@@ -1334,6 +1404,11 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
+        benchmarks_revision:
+          type: string
+          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
+          maxLength: 256
+          nullable: true
     EvaluationResult:
       type: object
       description: Evaluation result for a single example
@@ -1432,6 +1507,65 @@ components:
         error:
           description: Error details when status is partial or failed
           $ref: '#/components/schemas/ExecutionError'
+    BenchmarkEntry:
+      type: object
+      description: A single benchmark with its associated example IDs
+      required:
+        - benchmark_id
+        - tunable_ids
+        - example_ids
+      properties:
+        benchmark_id:
+          type: string
+          description: Unique identifier for this benchmark
+          maxLength: 256
+          example: spider_dev_v1
+        tunable_ids:
+          type: array
+          description: Agents linked to this benchmark (sorted ASCII)
+          items:
+            type: string
+            maxLength: 256
+          minItems: 1
+          maxItems: 100
+          example:
+            - my_agent
+        example_ids:
+          type: array
+          description: Datapoint identifiers within this benchmark (sorted ASCII)
+          items:
+            type: string
+            maxLength: 256
+          minItems: 1
+          maxItems: 100000
+          example:
+            - case_001
+            - case_002
+            - case_003
+        name:
+          type: string
+          description: Optional display name for the benchmark
+          maxLength: 512
+          nullable: true
+          example: Spider Dev Set v1
+    BenchmarksResponse:
+      type: object
+      description: Response from benchmarks discovery endpoint
+      required:
+        - benchmarks
+      properties:
+        benchmarks:
+          type: array
+          description: List of benchmark entries (sorted by benchmark_id, ASCII)
+          items:
+            $ref: '#/components/schemas/BenchmarkEntry'
+          maxItems: 1000
+        benchmarks_revision:
+          type: string
+          description: Opaque revision token for stale-detection. Pass this value in execute/evaluate requests to detect benchmark changes.
+          maxLength: 256
+          nullable: true
+          example: rev_20240115_001
     HealthCheckResponse:
       type: object
       description: Response from health check endpoint
