@@ -190,7 +190,7 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
         metrics = ex.get("metrics", {})
         actual = ex.get("actual_output")
         return {
-            "example_id": ex.get("example_id", ex.get("input_id")),
+            "example_id": ex.get("example_id"),
             "query": actual.get("query") if isinstance(actual, dict) else None,
             "response": _extract_output_text(actual),
             "expected": ex.get("expected_output"),
@@ -203,7 +203,7 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
     metrics = getattr(ex, "metrics", {}) or {}
     actual = getattr(ex, "actual_output", None)
     return {
-        "example_id": getattr(ex, "example_id", getattr(ex, "input_id", None)),
+        "example_id": getattr(ex, "example_id", None),
         "query": actual.get("query") if isinstance(actual, dict) else None,
         "response": _extract_output_text(actual),
         "expected": getattr(ex, "expected_output", None),
