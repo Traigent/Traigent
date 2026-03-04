@@ -8,10 +8,10 @@ This example demonstrates 5 error scenarios:
 3. Optimization timeout (stop_reason == "timeout")
 4. Preflight validation (environment checks)
 5. Graceful fallback (try/except with default config)
-"""
-
 import asyncio
 import os
+import sys
+from pathlib import Path
 import sys
 from pathlib import Path
 
