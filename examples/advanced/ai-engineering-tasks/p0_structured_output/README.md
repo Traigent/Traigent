@@ -188,7 +188,6 @@ This example demonstrates patterns for:
 
 ## References
 
-- [Use Case Specification](../../../use-case.md#p0-1-modern-structured-output-engineering)
 - [Traigent Documentation](../../../../README.md)
 - [Pydantic Documentation](https://pydantic-docs.helpmanual.io/)
 
