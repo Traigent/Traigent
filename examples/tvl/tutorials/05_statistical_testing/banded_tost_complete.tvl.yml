@@ -6,7 +6,7 @@ spec:
   version: 0.1.0
 
 metadata:
-  owner: "tutorials@traigent.ai"
+  owner: "team@example.com"
   description: "Complete example of banded objectives with TOST"
 
 # TVL 0.9 typed variables

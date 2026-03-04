@@ -790,6 +790,6 @@ traigent detect-tvars my_agent.py --function answer_question
 ## See Also
 
 - [Data-Flow Detection (technical deep dive)](../features/dataflow-detection.md) - Algorithm details, sink catalog, plugin packaging
-- [DSPy Integration Guide](../../examples/docs/DSPY_INTEGRATION.md) - Prompt optimization with DSPy
+
 - [Configuration Spaces](./configuration-spaces.md) - Parameter ranges and constraints
 - [Evaluation Guide](./evaluation_guide.md) - Metrics and evaluation

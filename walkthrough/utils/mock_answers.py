@@ -297,7 +297,7 @@ RAG_ANSWERS = {
     "what does traigent do?": "Traigent optimizes AI applications without code changes",
     "what is seamless mode?": "Seamless mode intercepts and overrides hardcoded LLM parameters",
     "what is parameter mode?": "Parameter mode provides explicit configuration control via function parameters",
-    "what execution modes does traigent support?": "Local, cloud, and hybrid execution modes",
+    "what execution modes does traigent support?": "Edge analytics mode (local execution with anonymized metrics). Cloud and hybrid modes are planned for a future release",
     "how does local mode work?": "Local mode keeps all data on your machine for complete privacy",
     "what is edge_analytics mode?": "Edge analytics mode runs optimization locally while sending analytics",
     "what optimization algorithms does traigent support?": "Grid search, random search, and Bayesian optimization",
@@ -306,7 +306,7 @@ RAG_ANSWERS = {
     "what is a configuration space?": "A dictionary defining the hyperparameters and their possible values to optimize",
     # --- Complex (10): Synthesis required ---
     "how does traigent balance multiple objectives?": "Through weighted objective definitions using ObjectiveSchema with maximize/minimize orientations",
-    "explain hybrid mode with privacy": "Hybrid mode runs LLM calls locally but uses cloud for optimization intelligence with privacy enabled",
+    "explain hybrid mode with privacy": "Hybrid mode is planned for a future release. It will run LLM calls locally but use cloud for optimization intelligence with privacy enabled",
     "how does traigent handle rag optimization?": "It can optimize both retrieval parameters like k and method, plus generation parameters like model and temperature",
     "what is the difference between seamless and context injection?": "Seamless mode auto-overrides LLM calls; context mode adds config to prompts",
     "how do custom evaluators work?": "Custom evaluators let you define your own scoring logic for specialized use cases",
