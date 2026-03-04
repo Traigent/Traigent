@@ -151,7 +151,8 @@ async def demo_budget_exceeded():
     print_scenario(2, "Sample-Budget Exceeded")
 
     try:
-        # Use budget_limit with budget_metric="examples_attempted" to cap samples
+        # Use budget_limit with budget_metric="examples_attempted" to cap samples.
+        # The orchestrator maps "budget" → "cost_limit" internally (orchestrator.py:2034).
         result = await explain_concept.optimize(
             max_trials=20,
             budget_limit=2,
@@ -159,8 +160,9 @@ async def demo_budget_exceeded():
         )
         print(f"  Optimization stopped: stop_reason={result.stop_reason}")
         print(f"  Trials completed: {len(result.trials)}")
-        if result.stop_reason == "budget":
-            print("  Budget limit reached as expected.")
+        # Budget stop is mapped to "cost_limit" by the orchestrator.
+        if result.stop_reason in ("budget", "cost_limit"):
+            print("  Budget/cost limit reached — optimization capped as expected.")
         else:
             print(f"  Stopped for other reason: {result.stop_reason}")
         print("  Resolution: Increase budget_limit or reduce dataset size.")
