@@ -105,7 +105,7 @@ Define parameters Traigent can optimize:
 Implement the 4 Traigent API endpoints:
 - Flask, FastAPI, Express, or any HTTP framework
 - Follow the [API contract](./hybrid-mode-api-contract.md)
-- See [Flask demo](../examples/hybrid_mode_demo/) for reference
+- See [Flask demo](../examples/experimental/hybrid_api_demo/) for reference
 
 ### 4. Evaluation Logic
 Implement scoring in the `/evaluate` endpoint:
@@ -145,7 +145,7 @@ def evaluate(output, expected):
 
 ```bash
 # 1. Clone the reference implementation
-cd examples/hybrid_mode_demo
+cd examples/experimental/hybrid_api_demo
 
 # 2. Start the demo server (reference)
 python app.py
@@ -171,4 +171,4 @@ python run_optimization.py
 - [API Contract](./hybrid-mode-api-contract.md) - Full endpoint specifications
 - [Client Guide](./hybrid-mode-client-guide.md) - Implementation patterns
 - [OpenAPI Spec](./hybrid-mode-openapi.yaml) - Machine-readable API definition
-- [Flask Demo](../examples/hybrid_mode_demo/) - Working example
+- [Flask Demo](../examples/experimental/hybrid_api_demo/) - Working example

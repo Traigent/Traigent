@@ -10,7 +10,7 @@ This script demonstrates:
 Usage:
     # From the project root, load env and run:
     source walkthrough/examples/real/.env
-    python examples/hybrid_mode_demo/run_optimization.py
+    python examples/experimental/hybrid_api_demo/run_optimization.py
 
 Environment variables:
     TRAIGENT_API_KEY - API key for Traigent backend (required for FE visibility)
