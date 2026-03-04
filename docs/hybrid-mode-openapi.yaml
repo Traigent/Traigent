@@ -149,7 +149,7 @@ paths:
         This is the main endpoint where your agent processes inputs using the provided configuration.
 
         **Server implementation (privacy-preserving mode):**
-        1. For each input, use `input_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
+        1. For each input, use `example_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
         2. Run your agent with the provided `config` parameters
         3. Store the response locally, keyed by a generated `output_id`
         4. Return `output_id` + cost/latency per input (do NOT return response text)
@@ -171,11 +171,12 @@ paths:
             example:
               request_id: 550e8400-e29b-41d4-a716-446655440000
               tunable_id: my_agent
+              benchmark_id: spider_dev_v1
               config:
                 model: gpt-4o
                 temperature: 0.5
-              inputs:
-                - input_id: case_001
+              examples:
+                - example_id: case_001
               timeout_ms: 30000
       responses:
         '200':
@@ -189,7 +190,7 @@ paths:
                 execution_id: exec_20240115_001
                 status: completed
                 outputs:
-                  - input_id: case_001
+                  - example_id: case_001
                     output_id: out_001_run_abc
                     cost_usd: 0.0012
                     latency_ms: 245.5
@@ -261,7 +262,7 @@ paths:
 
         **Server implementation (privacy-preserving mode):**
         1. For each evaluation item, use `output_id` to look up stored output locally
-        2. Use `input_id` (and optional `target_id`) to resolve expected behavior from local data
+        2. Use `example_id` (and optional `target_id`) to resolve expected behavior from local data
         3. Compare output vs expected and compute per-example quality metrics
         4. Return per-example metrics and aggregate statistics (`mean`, `std`, `n`)
       tags:
@@ -278,9 +279,10 @@ paths:
             example:
               request_id: 660e8400-e29b-41d4-a716-446655440001
               tunable_id: my_agent
+              benchmark_id: spider_dev_v1
               execution_id: exec_123456
               evaluations:
-                - input_id: case_001
+                - example_id: case_001
                   output_id: out_001_run_abc
                   target_id: target_001
               timeout_ms: 30000
@@ -299,7 +301,7 @@ paths:
                     execution_id: exec_20240115_001
                     status: completed
                     results:
-                      - input_id: case_001
+                      - example_id: case_001
                         metrics:
                           accuracy: 0.92
                           relevance: 0.88
@@ -320,7 +322,7 @@ paths:
                     execution_id: null
                     status: completed
                     results:
-                      - input_id: case_002
+                      - example_id: case_002
                         metrics:
                           accuracy: 0.89
                           relevance: 0.91
@@ -380,6 +382,57 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Service unavailable (temporary upstream/dependency outage)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /traigent/v1/benchmarks:
+    get:
+      operationId: getBenchmarks
+      summary: List available benchmarks
+      description: |
+        Returns the benchmarks available for optimization. Each benchmark contains
+        a set of example IDs and is linked to one or more tunable IDs.
+        Traigent calls this to discover which benchmarks are available for a tunable.
+      tags:
+        - Discovery
+      parameters:
+        - name: tunable_id
+          in: query
+          required: false
+          description: |
+            Filter benchmarks by tunable ID. If omitted, returns all benchmarks.
+          schema:
+            type: string
+            maxLength: 256
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
+      responses:
+        '200':
+          description: List of benchmarks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BenchmarksResponse'
+              example:
+                benchmarks:
+                  - benchmark_id: spider_dev_v1
+                    tunable_ids:
+                      - my_agent
+                    example_ids:
+                      - case_001
+                      - case_002
+                      - case_003
+                    name: Spider Dev Set v1
+                benchmarks_revision: rev_20240115_001
+        '401':
+          description: Unauthorized (missing or invalid bearer token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -962,20 +1015,20 @@ components:
           items:
             type: string
             maxLength: 128
-    InputItem:
+    ExampleItem:
       type: object
       description: |
         Single input item for execution.
 
-        **Privacy-preserving mode**: Only `input_id` is required. Your service uses
+        **Privacy-preserving mode**: Only `example_id` is required. Your service uses
         the ID to look up the actual input data locally. The input data is never
         transmitted to Traigent.
 
         **Full-content datasets**: Include `data` with the actual input content.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: |
             Unique identifier for this input. In privacy-preserving mode, your
@@ -985,7 +1038,7 @@ components:
         data:
           type: object
           description: |
-            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by input_id.
+            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by example_id.
           additionalProperties: true
           example:
             query: What is machine learning?
@@ -1014,12 +1067,13 @@ components:
           example: 5000
     ExecuteRequest:
       type: object
-      description: Request to execute agent with configuration on inputs
+      description: Request to execute agent with configuration on examples
       required:
         - request_id
         - tunable_id
+        - benchmark_id
         - config
-        - inputs
+        - examples
       properties:
         request_id:
           type: string
@@ -1031,17 +1085,22 @@ components:
           description: Identifier for the agent tunable to invoke
           maxLength: 256
           example: my_agent
+        benchmark_id:
+          type: string
+          description: Benchmark containing the examples to run. Must match a benchmark_id from the /benchmarks endpoint.
+          maxLength: 256
+          example: spider_dev_v1
         config:
           type: object
           description: Configuration parameters (tunable values matching config-space definitions)
           additionalProperties: true
-        inputs:
+        examples:
           type: array
-          description: List of input examples to process
+          description: List of examples to process. Actual limit is max_batch_size from capabilities (default 100).
           items:
-            $ref: '#/components/schemas/InputItem'
+            $ref: '#/components/schemas/ExampleItem'
           minItems: 1
-          maxItems: 10000
+          maxItems: 100000
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1058,6 +1117,11 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
+        benchmarks_revision:
+          type: string
+          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
+          maxLength: 256
+          nullable: true
     OutputItem:
       type: object
       description: |
@@ -1067,9 +1131,9 @@ components:
 
         **Full-content datasets**: Include `output` with the actual output content.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256
@@ -1180,9 +1244,9 @@ components:
           description: Error message
           maxLength: 2048
           example: 2 of 5 inputs failed due to upstream timeout
-        failed_inputs:
+        failed_examples:
           type: array
-          description: List of failed input IDs
+          description: List of failed example IDs
           maxItems: 10000
           items:
             type: string
@@ -1257,9 +1321,9 @@ components:
 
         Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
       required:
-        - input_id
+        - example_id
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256
@@ -1292,6 +1356,7 @@ components:
       required:
         - request_id
         - tunable_id
+        - benchmark_id
         - evaluations
       properties:
         request_id:
@@ -1304,6 +1369,11 @@ components:
           description: Identifier for the evaluation tunable
           maxLength: 256
           example: my_agent
+        benchmark_id:
+          type: string
+          description: Benchmark containing the examples being evaluated. Must match a benchmark_id from the /benchmarks endpoint.
+          maxLength: 256
+          example: spider_dev_v1
         execution_id:
           type: string
           description: Reference to previous execute (for caching/correlation)
@@ -1334,14 +1404,19 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
+        benchmarks_revision:
+          type: string
+          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
+          maxLength: 256
+          nullable: true
     EvaluationResult:
       type: object
       description: Evaluation result for a single example
       required:
-        - input_id
+        - example_id
         - metrics
       properties:
-        input_id:
+        example_id:
           type: string
           description: Matching input identifier
           maxLength: 256
@@ -1432,6 +1507,65 @@ components:
         error:
           description: Error details when status is partial or failed
           $ref: '#/components/schemas/ExecutionError'
+    BenchmarkEntry:
+      type: object
+      description: A single benchmark with its associated example IDs
+      required:
+        - benchmark_id
+        - tunable_ids
+        - example_ids
+      properties:
+        benchmark_id:
+          type: string
+          description: Unique identifier for this benchmark
+          maxLength: 256
+          example: spider_dev_v1
+        tunable_ids:
+          type: array
+          description: Agents linked to this benchmark (sorted ASCII)
+          items:
+            type: string
+            maxLength: 256
+          minItems: 1
+          maxItems: 100
+          example:
+            - my_agent
+        example_ids:
+          type: array
+          description: Datapoint identifiers within this benchmark (sorted ASCII)
+          items:
+            type: string
+            maxLength: 256
+          minItems: 1
+          maxItems: 100000
+          example:
+            - case_001
+            - case_002
+            - case_003
+        name:
+          type: string
+          description: Optional display name for the benchmark
+          maxLength: 512
+          nullable: true
+          example: Spider Dev Set v1
+    BenchmarksResponse:
+      type: object
+      description: Response from benchmarks discovery endpoint
+      required:
+        - benchmarks
+      properties:
+        benchmarks:
+          type: array
+          description: List of benchmark entries (sorted by benchmark_id, ASCII)
+          items:
+            $ref: '#/components/schemas/BenchmarkEntry'
+          maxItems: 1000
+        benchmarks_revision:
+          type: string
+          description: Opaque revision token for stale-detection. Pass this value in execute/evaluate requests to detect benchmark changes.
+          maxLength: 256
+          nullable: true
+          example: rev_20240115_001
     HealthCheckResponse:
       type: object
       description: Response from health check endpoint

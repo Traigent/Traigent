@@ -18,9 +18,9 @@ Minimum behavior contract:
 
 1. `capabilities` advertises whether `/evaluate` is supported.
 2. `config-space` returns at least one tunable parameter with a valid domain.
-3. `execute` accepts `tunable_id`, `config`, `inputs`, and returns:
+3. `execute` accepts `tunable_id`, `config`, `examples`, and returns:
    - `status`
-   - `outputs` (with `input_id` and either `output` or `output_id`)
+   - `outputs` (with `example_id` and either `output` or `output_id`)
    - `operational_metrics` (cost/latency fields)
 4. If combined mode is used, return non-empty `quality_metrics`.
 5. If two-phase mode is used, return `quality_metrics: null` (or omit it) and implement `/evaluate`.

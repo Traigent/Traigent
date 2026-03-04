@@ -39,7 +39,7 @@ async def test_evaluate_progress_callback_propagates_cancelled_error():
     # Mock execute response
     mock_execute_response = MagicMock()
     mock_execute_response.outputs = [
-        {"input_id": "ex_0", "output": "result", "cost_usd": 0.01}
+        {"example_id": "ex_0", "output": "result", "cost_usd": 0.01}
     ]
     mock_execute_response.operational_metrics = {"latency_ms": 100}
     mock_execute_response.get_total_cost.return_value = 0.01
@@ -95,12 +95,12 @@ async def test_evaluate_outputs_propagates_cancelled_error():
     from traigent.evaluators.base import EvaluationExample
 
     batch = [EvaluationExample(input_data={"question": "q0"}, expected_output="a0")]
-    inputs = [{"input_id": "ex_0", "data": {"question": "q0"}}]
+    inputs = [{"example_id": "ex_0", "data": {"question": "q0"}}]
 
     # Mock execute response
     mock_execute_response = MagicMock()
     mock_execute_response.outputs = [
-        {"input_id": "ex_0", "output": "result", "cost_usd": 0.01}
+        {"example_id": "ex_0", "output": "result", "cost_usd": 0.01}
     ]
     mock_execute_response.execution_id = "exec_1"
     mock_execute_response.operational_metrics = {"latency_ms": 100}
