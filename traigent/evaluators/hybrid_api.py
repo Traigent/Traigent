@@ -175,6 +175,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._session_id: str | None = None
         self._optimization_spec: dict[str, Any] | None = None
         self._benchmark_id: str | None = None
+        self._benchmark_lock = asyncio.Lock()
 
     @property
     def lifecycle_manager(self) -> AgentLifecycleManager | None:
@@ -327,6 +328,19 @@ class HybridAPIEvaluator(BaseEvaluator):
             tid,
         )
         return selected.example_ids
+
+    async def _ensure_benchmark_id(self) -> None:
+        """Ensure ``_benchmark_id`` is populated, discovering it if needed.
+
+        Uses a lock with double-check to avoid duplicate discovery calls
+        when parallel trials start simultaneously.
+        """
+        if self._benchmark_id:
+            return
+        async with self._benchmark_lock:
+            if self._benchmark_id:
+                return  # another coroutine resolved it while we waited
+            await self.discover_example_ids()
 
     async def _ensure_lifecycle_manager(self) -> None:
         """Ensure lifecycle manager is initialized if keep-alive enabled."""
@@ -566,6 +580,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         transport = await self._get_transport()
         caps = await self._get_capabilities()
 
+        # Ensure benchmark_id is resolved before any batch execution
+        await self._ensure_benchmark_id()
+
         # Initialize lifecycle manager if needed
         await self._ensure_lifecycle_manager()
 
@@ -681,7 +698,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 }
             )
 
-        # Build execute request
+        # Safety guard: benchmark_id should have been resolved by evaluate()
         if not self._benchmark_id:
             raise ValueError(
                 "benchmark_id is required but not set. "
