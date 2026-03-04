@@ -414,7 +414,4 @@ print(f"Accuracy: {result.best_metrics['accuracy']:.2%}")
 
 ## Learn More
 
-- [Getting Started Guide](../getting_started.md)
-- [TVL Specification Reference](../tvl_reference.md)
-- [API Documentation](../api/index.md)
 - [Examples](../../examples/)

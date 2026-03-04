@@ -248,13 +248,12 @@ We welcome contributions! Areas where we'd love help:
 
 ## 📚 References
 
-- [Traigent Documentation](../../README.md)
-- [Use Case Specifications](../../use-case.md)
+- [Traigent Documentation](../../../README.md)
 - [Original Research](https://github.com/traigent/research)
 
 ## 📄 License
 
-MIT License - See [LICENSE](../../LICENSE) for details.
+MIT License - See [LICENSE](../../../LICENSE) for details.
 
 ---
 
