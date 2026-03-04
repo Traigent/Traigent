@@ -533,7 +533,7 @@ suggestions = kg.suggest_new_tests(max_suggestions=10)
 ### Documentation
 
 - [Knowledge Graph Design](viewer/knowledge_graph_design.md) - Full ontology specification
-- [Coverage Analysis](viewer/coverage_analysis.html) - Interactive visualization
+- Coverage Analysis (`viewer/coverage_analysis.html`) - Interactive visualization (generated at runtime)
 
 ---
 

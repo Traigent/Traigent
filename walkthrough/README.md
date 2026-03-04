@@ -231,4 +231,4 @@ After completing the walkthrough:
 
 - Explore [examples/](../examples/) for more advanced patterns
 - Read the [SDK Documentation](../docs/README.md)
-- Try the [Playground](../playground/) for interactive optimization
+- Try the Playground for interactive optimization (see repo root `playground/`)

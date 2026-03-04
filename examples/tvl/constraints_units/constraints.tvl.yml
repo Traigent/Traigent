@@ -6,7 +6,7 @@ spec:
   version: 0.1.0
 
 metadata:
-  owner: "mlops@traigent.ai"
+  owner: "team@example.com"
   description: "Example demonstrating constraints and units"
 
 units:

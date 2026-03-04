@@ -102,7 +102,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
-| **`execution-modes/`** | 6 examples | Local patterns plus roadmap-only cloud/hybrid stubs |
+| **`execution-modes/`** | 2 examples | Local execution patterns with edge_analytics mode |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
 | **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
 | **`ragas/`** | 3 examples | Specialized RAG metrics and evaluation |
@@ -110,7 +110,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 ### Advanced Category Details
 
-- **execution-modes/**: Learn different execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Useful for understanding privacy-performance tradeoffs.
+- **execution-modes/**: Learn execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Cloud and hybrid modes coming in a future release.
 
 - **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
 
@@ -129,7 +129,6 @@ Production-ready integrations with popular platforms and workflows:
 
 - **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline). Run Traigent optimizations as part of your CI/CD workflow.
 - **`bedrock/`** - AWS Bedrock integration patterns. Use Traigent with Amazon's managed LLM service.
-- **More coming soon:** LangChain, OpenAI SDK, Azure OpenAI, Google Vertex AI
 
 ## 📊 Working With Datasets
 
@@ -355,14 +354,13 @@ We welcome contributions! To add new examples:
 4. Test thoroughly before submitting
 5. Update this README and relevant docs
 
-See our [Contributing Guide](../docs/guides/CONTRIBUTING.md) for more details.
+See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ## 📝 Additional Resources
 
 - **Main README:** [../README.md](../README.md)
 - **Documentation:** [../docs/](../docs/)
-- **Website:** <https://traigent.ai> (coming soon)
-- **Discord:** Join our community for support
+- **Website:** <https://traigent.ai>
 - **GitHub Issues:** Report bugs and request features
 
 ---
