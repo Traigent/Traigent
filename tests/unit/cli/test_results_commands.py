@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
-from traigent.cli.main import cli
+from traigent.cli.main import _build_comparison_summary_table, _format_best_score, cli
 
 
 @pytest.fixture
@@ -252,6 +252,30 @@ class TestExportCommand:
             )
 
             assert "not found" in result.output.lower()
+
+
+class TestResultsHelpers:
+    """Tests for helper formatting functions in results commands."""
+
+    def test_format_best_score_returns_na_for_non_numeric(self):
+        assert _format_best_score(None) == "N/A"
+        assert _format_best_score("missing") == "N/A"
+
+    def test_comparison_summary_uses_na_when_best_score_missing(self):
+        run1 = Mock()
+        run1.best_score = None
+        run1.trials = []
+        run1.successful_trials = []
+
+        run2 = Mock()
+        run2.best_score = 0.91
+        run2.trials = []
+        run2.successful_trials = []
+
+        table = _build_comparison_summary_table(run1, run2, "run1", "run2")
+        delta_column_cells = table.columns[-1]._cells  # rich stores rendered cell data on columns
+        assert delta_column_cells
+        assert delta_column_cells[0] == "N/A"
 
 
 class TestDecoratorParameters:
