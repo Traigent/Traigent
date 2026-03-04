@@ -876,6 +876,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             evaluations.append(evaluation)
 
         # Call evaluate
+        assert self._benchmark_id is not None  # guaranteed by _ensure_benchmark_id
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
             benchmark_id=self._benchmark_id,
