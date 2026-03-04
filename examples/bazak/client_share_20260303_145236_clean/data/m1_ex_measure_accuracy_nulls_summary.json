@@ -1,0 +1,46 @@
+{
+  "metric_name": "M1-Ex-Measure",
+  "metric_definition": "1 if per-example accuracy is null or missing, else 0",
+  "source": "trials/trial_trial_*_v2.json",
+  "generated_at": "2026-03-03T19:13:15Z",
+  "totals": {
+    "models": 4,
+    "examples": 12,
+    "null_or_missing_accuracy_values": 0,
+    "null_or_missing_rate": 0
+  },
+  "per_model": [
+    {
+      "model": "gpt-5-mini-2025-08-07",
+      "model_id": "M3",
+      "trial_id": "trial_444582cb961a",
+      "total_examples": 3,
+      "null_or_missing_accuracy_values": 0,
+      "null_or_missing_rate": 0
+    },
+    {
+      "model": "gpt-5-nano-2025-08-07",
+      "model_id": "M4",
+      "trial_id": "trial_4ce3058b9394",
+      "total_examples": 3,
+      "null_or_missing_accuracy_values": 0,
+      "null_or_missing_rate": 0
+    },
+    {
+      "model": "gemini-3-flash-preview",
+      "model_id": "M2",
+      "trial_id": "trial_5822ccd7098e",
+      "total_examples": 3,
+      "null_or_missing_accuracy_values": 0,
+      "null_or_missing_rate": 0
+    },
+    {
+      "model": "gemini-2.5-flash",
+      "model_id": "M1",
+      "trial_id": "trial_94093768acc4",
+      "total_examples": 3,
+      "null_or_missing_accuracy_values": 0,
+      "null_or_missing_rate": 0
+    }
+  ]
+}
