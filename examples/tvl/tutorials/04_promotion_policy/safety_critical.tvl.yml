@@ -13,7 +13,7 @@ spec:
   version: "1.0"
 
 metadata:
-  owner: tutorials@traigent.ai
+  owner: team@example.com
   description: Production LLM with strict promotion policy
   tags:
     - tutorial

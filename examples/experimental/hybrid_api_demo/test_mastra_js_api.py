@@ -8,10 +8,10 @@ Usage:
     cd JS-Mastra-APIs-Validation && npm run api:dev
 
     # Then run this test:
-    .venv/bin/python examples/hybrid_mode_demo/test_mastra_js_api.py
+    .venv/bin/python examples/experimental/hybrid_api_demo/test_mastra_js_api.py
 
     # Or specify a different URL:
-    .venv/bin/python examples/hybrid_mode_demo/test_mastra_js_api.py http://localhost:3000
+    .venv/bin/python examples/experimental/hybrid_api_demo/test_mastra_js_api.py http://localhost:3000
 
 Environment variables:
     MASTRA_API_URL       - Server URL (default: http://localhost:8080)
@@ -123,7 +123,6 @@ def test_execute(tunable_id: str, config: dict):
     print("\n>>> Testing POST /traigent/v1/execute")
 
     # example_ids are server-specific; these match the zap_agent benchmark dataset.
-    # TODO: replace with dynamic discovery once traigent-api#43 is resolved.
     sent_request_id = f"test-{uuid.uuid4().hex[:8]}"
     request_data = {
         "request_id": sent_request_id,
