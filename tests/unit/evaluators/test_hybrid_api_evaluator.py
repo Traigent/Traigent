@@ -26,6 +26,8 @@ from traigent.cloud.dtos import MeasuresDict
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator, HybridExampleResult
 from traigent.hybrid.protocol import (
+    BenchmarkEntry,
+    BenchmarksResponse,
     HybridEvaluateResponse,
     HybridExecuteResponse,
     ServiceCapabilities,
@@ -119,6 +121,17 @@ def mock_transport() -> MagicMock:
         )
     )
     transport.capabilities = AsyncMock(return_value=_default_capabilities())
+    transport.benchmarks = AsyncMock(
+        return_value=BenchmarksResponse(
+            benchmarks=[
+                BenchmarkEntry(
+                    benchmark_id="test-bench",
+                    tunable_ids=["test_cap"],
+                    example_ids=["ex_0", "ex_1"],
+                )
+            ]
+        )
+    )
     transport.close = AsyncMock()
     transport.keep_alive = AsyncMock(return_value=True)
     return transport
@@ -1003,6 +1016,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
             outputs=[
                 {"example_id": "ex_0", "output": "out0", "metrics": {"accuracy": 0.9}},
@@ -1034,6 +1048,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
             outputs=[{"example_id": "ex_0", "output": "out0"}],
             quality_metrics=None,
@@ -1065,6 +1080,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
             outputs=[{"example_id": "ex_0", "output": "out0"}],
             quality_metrics=None,
@@ -1095,6 +1111,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         mock_transport.execute = AsyncMock(
             side_effect=TransportError("connection lost", status_code=500)
         )
@@ -1127,6 +1144,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         ev._session_id = "old_session"
         exec_response = _make_execute_response(
             outputs=[{"example_id": "ex_0", "output": "out"}],
@@ -1151,6 +1169,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         ev._session_id = "old"
         mock_lm = MagicMock()
         mock_lm.register = AsyncMock()
@@ -1179,6 +1198,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
             outputs=[{"example_id": "custom_id", "output": "out"}],
             quality_metrics=None,
@@ -1683,6 +1703,7 @@ class TestEvaluate:
             batch_size=1,  # one example per batch
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         mock_transport.capabilities = AsyncMock(
             return_value=_default_capabilities(supports_evaluate=False)
         )
