@@ -69,14 +69,32 @@ def _mock_answer(text: str) -> str:
     mapping = [
         (["machine learning"], "A subset of AI that learns from data."),
         (["cloud computing"], "On-demand delivery of IT resources via the internet."),
-        (["neural network"], "A computing system inspired by biological neural networks."),
-        (["devops"], "A set of practices combining software development and IT operations."),
-        (["containerization"], "Packaging software with its dependencies into isolated containers."),
-        (["microservices"], "An architecture where applications are collections of small services."),
-        (["ci/cd"], "Continuous integration and continuous delivery for software releases."),
+        (
+            ["neural network"],
+            "A computing system inspired by biological neural networks.",
+        ),
+        (
+            ["devops"],
+            "A set of practices combining software development and IT operations.",
+        ),
+        (
+            ["containerization"],
+            "Packaging software with its dependencies into isolated containers.",
+        ),
+        (
+            ["microservices"],
+            "An architecture where applications are collections of small services.",
+        ),
+        (
+            ["ci/cd"],
+            "Continuous integration and continuous delivery for software releases.",
+        ),
         (["api"], "An interface that allows software applications to communicate."),
         (["version control"], "A system for tracking changes to files over time."),
-        (["encryption"], "Converting data into a coded format to prevent unauthorized access."),
+        (
+            ["encryption"],
+            "Converting data into a coded format to prevent unauthorized access.",
+        ),
     ]
     for keywords, answer in mapping:
         if any(kw in t for kw in keywords):
@@ -120,6 +138,7 @@ async def demo_invalid_config():
     print_scenario(1, "Invalid Configuration Space")
 
     try:
+
         @traigent.optimize(
             eval_dataset=DATASET,
             objectives=["accuracy"],
@@ -216,7 +235,9 @@ async def demo_preflight_validation():
             missing.append(var)
 
     if missing and not MOCK:
-        print(f"\n  Would fail in production: {len(missing)} required variable(s) missing.")
+        print(
+            f"\n  Would fail in production: {len(missing)} required variable(s) missing."
+        )
         print("  Resolution: Set environment variables or use TRAIGENT_MOCK_LLM=true.")
     elif missing and MOCK:
         print(f"\n  {len(missing)} variable(s) missing (OK in mock mode).")
