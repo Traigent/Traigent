@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Error Handling — Graceful failure modes and fallback patterns.
+Error Handling - Graceful failure modes and fallback patterns.
 
 This example demonstrates 5 error scenarios:
 1. Invalid configuration space (bad types)
@@ -134,7 +134,7 @@ def print_scenario(number: int, title: str):
 
 
 async def demo_invalid_config():
-    """Scenario 1: Invalid configuration space — bad types raise ValueError."""
+    """Scenario 1: Invalid configuration space - bad types raise ValueError."""
     print_scenario(1, "Invalid Configuration Space")
 
     try:
@@ -143,7 +143,7 @@ async def demo_invalid_config():
             eval_dataset=DATASET,
             objectives=["accuracy"],
             configuration_space={
-                "model": "not-a-list",  # Must be a list — this triggers ValueError
+                "model": "not-a-list",  # Must be a list - this triggers ValueError
             },
             injection_mode="seamless",
             execution_mode="edge_analytics",
@@ -170,7 +170,7 @@ async def demo_budget_exceeded():
 
     try:
         # Use budget_limit with budget_metric="examples_attempted" to cap samples.
-        # The orchestrator maps "budget" → "cost_limit" internally (orchestrator.py:2034).
+        # The orchestrator maps "budget" -> "cost_limit" internally (orchestrator.py:2034).
         result = await explain_concept.optimize(
             max_trials=20,
             budget_limit=2,
@@ -180,7 +180,7 @@ async def demo_budget_exceeded():
         print(f"  Trials completed: {len(result.trials)}")
         # Budget stop is mapped to "cost_limit" by the orchestrator.
         if result.stop_reason in ("budget", "cost_limit"):
-            print("  Budget/cost limit reached — optimization capped as expected.")
+            print("  Budget/cost limit reached - optimization capped as expected.")
         else:
             print(f"  Stopped for other reason: {result.stop_reason}")
         print("  Resolution: Increase budget_limit or reduce dataset size.")
@@ -192,7 +192,7 @@ async def demo_budget_exceeded():
 
 
 async def demo_timeout():
-    """Scenario 3: Optimization timeout — result.stop_reason == 'timeout'."""
+    """Scenario 3: Optimization timeout - result.stop_reason == 'timeout'."""
     print_scenario(3, "Optimization Timeout")
 
     try:
@@ -204,7 +204,7 @@ async def demo_timeout():
         print(f"  Optimization completed: stop_reason={result.stop_reason}")
         print(f"  Trials completed: {len(result.trials)}")
         if result.stop_reason == "timeout":
-            print("  Timeout reached as expected — optimization stopped gracefully.")
+            print("  Timeout reached as expected - optimization stopped gracefully.")
         else:
             print(f"  Stopped for other reason: {result.stop_reason}")
         print("  Resolution: Increase timeout or reduce max_trials/dataset size.")
@@ -216,7 +216,7 @@ async def demo_timeout():
 
 
 async def demo_preflight_validation():
-    """Scenario 4: Preflight validation — check environment before running."""
+    """Scenario 4: Preflight validation - check environment before running."""
     print_scenario(4, "Preflight Validation")
 
     # Check for required environment variables
@@ -231,7 +231,7 @@ async def demo_preflight_validation():
         if value:
             print(f"  {var}: SET")
         else:
-            print(f"  {var}: MISSING — {description}")
+            print(f"  {var}: MISSING - {description}")
             missing.append(var)
 
     if missing and not MOCK:
@@ -250,7 +250,7 @@ async def demo_preflight_validation():
 
 
 async def demo_graceful_fallback():
-    """Scenario 5: Graceful fallback — use default config on any failure."""
+    """Scenario 5: Graceful fallback - use default config on any failure."""
     print_scenario(5, "Graceful Fallback to Default Config")
 
     default_config = {"model": "gpt-4o-mini", "temperature": 0.0}
@@ -282,7 +282,7 @@ async def demo_graceful_fallback():
 async def run_all_demos():
     """Run all error handling scenarios."""
     print("=" * 60)
-    print("Error Handling Example — 5 Scenarios")
+    print("Error Handling Example - 5 Scenarios")
     print("=" * 60)
 
     await demo_invalid_config()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Production Deployment — Loading and applying optimized configurations.
+Production Deployment - Loading and applying optimized configurations.
 
 This example demonstrates the production deployment workflow:
 1. Run optimization to find the best configuration
