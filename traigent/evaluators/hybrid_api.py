@@ -875,8 +875,12 @@ class HybridAPIEvaluator(BaseEvaluator):
             evaluation[target_key] = target_value
             evaluations.append(evaluation)
 
-        # Call evaluate
-        assert self._benchmark_id is not None  # guaranteed by _ensure_benchmark_id
+        # Call evaluate — _benchmark_id guaranteed by _ensure_benchmark_id
+        if not self._benchmark_id:
+            raise ValueError(
+                "benchmark_id is required but not set. "
+                "Ensure the service exposes a /benchmarks endpoint."
+            )
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
             benchmark_id=self._benchmark_id,
