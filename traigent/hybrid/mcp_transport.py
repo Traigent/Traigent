@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
@@ -234,6 +235,22 @@ class MCPTransport:
             uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
         data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
+
+    async def benchmarks(
+        self,
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks via MCP.
+
+        Not yet supported over MCP transport.
+
+        Raises:
+            NotImplementedError: Always — MCP benchmark discovery is not yet implemented.
+        """
+        raise NotImplementedError(
+            "Benchmark discovery is not yet supported over MCP transport. "
+            "Use HTTP transport or provide example IDs explicitly."
+        )
 
     async def execute(
         self,

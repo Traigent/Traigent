@@ -63,34 +63,34 @@ def create_evaluation_dataset() -> list[EvaluationExample]:
     """Create evaluation dataset."""
     examples = [
         {
-            "input_id": "ex_001",
+            "example_id": "ex_001",
             "query": "What is artificial intelligence?",
             "expected": "AI is the simulation of human intelligence by machines.",
         },
         {
-            "input_id": "ex_002",
+            "example_id": "ex_002",
             "query": "Explain machine learning in simple terms.",
             "expected": "Machine learning is a type of AI that learns from data.",
         },
         {
-            "input_id": "ex_003",
+            "example_id": "ex_003",
             "query": "What is deep learning?",
             "expected": "Deep learning uses neural networks with many layers.",
         },
         {
-            "input_id": "ex_004",
+            "example_id": "ex_004",
             "query": "How does natural language processing work?",
             "expected": "NLP helps computers understand human language.",
         },
         {
-            "input_id": "ex_005",
+            "example_id": "ex_005",
             "query": "What is a neural network?",
             "expected": "A neural network is a computing system inspired by the brain.",
         },
     ]
     return [
         EvaluationExample(
-            input_data={"query": ex["query"], "input_id": ex["input_id"]},
+            input_data={"query": ex["query"], "example_id": ex["example_id"]},
             expected_output=ex["expected"],
         )
         for ex in examples

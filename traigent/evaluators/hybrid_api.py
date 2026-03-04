@@ -21,6 +21,8 @@ from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.hybrid import (
     AgentLifecycleManager,
     BatchOptions,
+    BenchmarkEntry,
+    BenchmarksResponse,
     ConfigSpaceDiscovery,
     HybridEvaluateRequest,
     HybridExecuteRequest,
@@ -46,7 +48,7 @@ class HybridExampleResult:
     """Result for a single example in hybrid evaluation.
 
     Attributes:
-        input_id: Identifier for the input example
+        example_id: Identifier for the example
         actual_output: Output produced by the agent
         expected_output: Expected output (from dataset)
         metrics: Per-example quality metrics
@@ -55,7 +57,7 @@ class HybridExampleResult:
         error: Error message if failed
     """
 
-    input_id: str
+    example_id: str
     actual_output: Any = None
     expected_output: Any = None
     metrics: dict[str, float] = field(default_factory=dict)
@@ -172,6 +174,8 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._capabilities: ServiceCapabilities | None = None
         self._session_id: str | None = None
         self._optimization_spec: dict[str, Any] | None = None
+        self._benchmark_id: str | None = None
+        self._benchmark_lock = asyncio.Lock()
 
     @property
     def lifecycle_manager(self) -> AgentLifecycleManager | None:
@@ -237,6 +241,108 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         return config_space
 
+    async def discover_example_ids(
+        self,
+        tunable_id: str | None = None,
+        *,
+        benchmark_id: str | None = None,
+    ) -> list[str]:
+        """Discover available example IDs from the external service.
+
+        Fetches benchmarks via the /benchmarks endpoint and selects the
+        appropriate benchmark for the given tunable.
+
+        Args:
+            tunable_id: Tunable to list examples for.
+                Falls back to self._tunable_id if not provided.
+            benchmark_id: Explicit benchmark to use. Required when
+                multiple benchmarks match the tunable.
+
+        Returns:
+            List of example IDs from the selected benchmark.
+
+        Raises:
+            TransportError: If discovery fails.
+            ValueError: If no tunable_id is available, no benchmarks match,
+                or multiple benchmarks match without an explicit benchmark_id.
+        """
+        tid = tunable_id or self._tunable_id
+        if not tid:
+            raise ValueError(
+                "tunable_id is required for example discovery. "
+                "Set it explicitly or call discover_config_space() first."
+            )
+
+        transport = await self._get_transport()
+        resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
+
+        # Filter benchmarks where this tunable is linked
+        matching: list[BenchmarkEntry] = [
+            entry for entry in resp.benchmarks if tid in entry.tunable_ids
+        ]
+
+        # Large payload guard — check only benchmarks matched to this tunable
+        total_example_ids = sum(len(e.example_ids) for e in matching)
+        if total_example_ids > 10000:
+            logger.warning(
+                "Matched benchmarks contain %d total example_ids across %d "
+                "benchmarks for tunable %r; consider limiting dataset size",
+                total_example_ids,
+                len(matching),
+                tid,
+            )
+
+        # Benchmark selection logic
+        if len(matching) == 0:
+            available = [e.benchmark_id for e in resp.benchmarks]
+            raise ValueError(
+                f"No benchmarks found for tunable_id={tid!r}. "
+                f"Available benchmarks: {available}"
+            )
+        elif len(matching) == 1:
+            selected = matching[0]
+        else:
+            # Multiple matches
+            if benchmark_id is not None:
+                candidates = [e for e in matching if e.benchmark_id == benchmark_id]
+                if not candidates:
+                    available = [e.benchmark_id for e in matching]
+                    raise ValueError(
+                        f"benchmark_id={benchmark_id!r} not found among "
+                        f"benchmarks for tunable_id={tid!r}. "
+                        f"Available: {available}"
+                    )
+                selected = candidates[0]
+            else:
+                available = [e.benchmark_id for e in matching]
+                raise ValueError(
+                    f"Multiple benchmarks match tunable_id={tid!r}: {available}. "
+                    f"Pass benchmark_id= to select one."
+                )
+
+        self._benchmark_id = selected.benchmark_id
+
+        logger.info(
+            "Selected benchmark %s with %d example IDs for tunable %s",
+            selected.benchmark_id,
+            len(selected.example_ids),
+            tid,
+        )
+        return selected.example_ids
+
+    async def _ensure_benchmark_id(self) -> None:
+        """Ensure ``_benchmark_id`` is populated, discovering it if needed.
+
+        Uses a lock with double-check to avoid duplicate discovery calls
+        when parallel trials start simultaneously.
+        """
+        if self._benchmark_id:
+            return
+        async with self._benchmark_lock:
+            if self._benchmark_id:
+                return  # another coroutine resolved it while we waited
+            await self.discover_example_ids()
+
     async def _ensure_lifecycle_manager(self) -> None:
         """Ensure lifecycle manager is initialized if keep-alive enabled."""
         if not self._keep_alive_enabled:
@@ -273,11 +379,11 @@ class HybridAPIEvaluator(BaseEvaluator):
     @staticmethod
     def _find_output_item(
         outputs: list[dict[str, Any]],
-        input_id: str,
+        example_id: str,
     ) -> dict[str, Any]:
-        """Find output item for an input_id."""
+        """Find output item for an example_id."""
         for out in outputs:
-            if out.get("input_id") == input_id:
+            if out.get("example_id") == example_id:
                 return out
         return {}
 
@@ -475,6 +581,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         transport = await self._get_transport()
         caps = await self._get_capabilities()
 
+        # Ensure benchmark_id is resolved before any batch execution
+        await self._ensure_benchmark_id()
+
         # Initialize lifecycle manager if needed
         await self._ensure_lifecycle_manager()
 
@@ -578,23 +687,29 @@ class HybridAPIEvaluator(BaseEvaluator):
         Returns:
             List of results for each example.
         """
-        # Prepare inputs
+        # Prepare examples list
         inputs = []
         for i, example in enumerate(batch):
             input_data = self._extract_input(example)
-            input_id = input_data.get("input_id", f"ex_{i}")
+            example_id = input_data.get("example_id", f"ex_{i}")
             inputs.append(
                 {
-                    "input_id": input_id,
+                    "example_id": example_id,
                     "data": input_data,
                 }
             )
 
-        # Build execute request
+        # Safety guard: benchmark_id should have been resolved by evaluate()
+        if not self._benchmark_id:
+            raise ValueError(
+                "benchmark_id is required but not set. "
+                "Ensure the service exposes a /benchmarks endpoint."
+            )
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
+            benchmark_id=self._benchmark_id,
             config=config,
-            inputs=inputs,
+            examples=inputs,
             session_id=self._session_id,
             batch_options=BatchOptions(
                 parallelism=self._batch_parallelism,
@@ -642,7 +757,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Return error results for all examples
             return [
                 HybridExampleResult(
-                    input_id=inp["input_id"],
+                    example_id=inp["example_id"],
                     expected_output=self._extract_expected(batch[i]),
                     error=str(e),
                 )
@@ -697,11 +812,11 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
 
         for i, inp in enumerate(inputs):
-            input_id = inp["input_id"]
+            example_id = inp["example_id"]
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_item = self._find_output_item(response.outputs, input_id)
+            output_item = self._find_output_item(response.outputs, example_id)
             output_data = output_item.get("output")
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
@@ -720,7 +835,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             results.append(
                 HybridExampleResult(
-                    input_id=input_id,
+                    example_id=example_id,
                     actual_output=output_data,
                     expected_output=expected,
                     metrics=per_example_metrics,
@@ -743,13 +858,13 @@ class HybridAPIEvaluator(BaseEvaluator):
         # Build evaluations with output + target pairs
         evaluations = []
         for i, inp in enumerate(inputs):
-            input_id = inp["input_id"]
+            example_id = inp["example_id"]
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_item = self._find_output_item(execute_response.outputs, input_id)
+            output_item = self._find_output_item(execute_response.outputs, example_id)
 
-            evaluation: dict[str, Any] = {"input_id": input_id}
+            evaluation: dict[str, Any] = {"example_id": example_id}
             if "output" in output_item:
                 evaluation["output"] = output_item.get("output")
             elif "output_id" in output_item:
@@ -761,9 +876,15 @@ class HybridAPIEvaluator(BaseEvaluator):
             evaluation[target_key] = target_value
             evaluations.append(evaluation)
 
-        # Call evaluate
+        # Call evaluate — _benchmark_id guaranteed by _ensure_benchmark_id
+        if not self._benchmark_id:
+            raise ValueError(
+                "benchmark_id is required but not set. "
+                "Ensure the service exposes a /benchmarks endpoint."
+            )
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
+            benchmark_id=self._benchmark_id,
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
             session_id=self._session_id,
@@ -777,7 +898,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             logger.info(
                 "Hybrid evaluate response: results=%s, aggregate=%s",
                 [
-                    {"input_id": r.get("input_id"), "metrics": r.get("metrics")}
+                    {"example_id": r.get("example_id"), "metrics": r.get("metrics")}
                     for r in eval_response.results
                 ],
                 getattr(eval_response, "aggregate_metrics", None),
@@ -792,11 +913,13 @@ class HybridAPIEvaluator(BaseEvaluator):
                 execute_response.operational_metrics.get("latency_ms", 0.0)
             )
             for i, inp in enumerate(inputs):
-                input_id = inp["input_id"]
+                example_id = inp["example_id"]
                 expected = self._extract_expected(batch[i])
 
                 # Find output from execute
-                output_item = self._find_output_item(execute_response.outputs, input_id)
+                output_item = self._find_output_item(
+                    execute_response.outputs, example_id
+                )
                 output_data = output_item.get("output")
                 if output_data is None and "output_id" in output_item:
                     output_data = {"output_id": output_item["output_id"]}
@@ -807,7 +930,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 eval_error: str | None = None
                 eval_expected: str | None = None
                 for result in eval_response.results:
-                    if result.get("input_id") == input_id:
+                    if result.get("example_id") == example_id:
                         per_example_metrics = self._normalize_example_metrics(
                             result.get("metrics", {})
                         )
@@ -825,10 +948,10 @@ class HybridAPIEvaluator(BaseEvaluator):
 
                 # Log raw per-example result for observability
                 logger.info(
-                    "Hybrid example result: input_id=%s, "
+                    "Hybrid example result: example_id=%s, "
                     "output_id=%s, accuracy=%s, cost=%.6f, "
                     "latency=%.0fms, error=%s",
-                    input_id,
+                    example_id,
                     output_item.get("output_id"),
                     per_example_metrics.get("accuracy"),
                     cost,
@@ -838,7 +961,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
                 results.append(
                     HybridExampleResult(
-                        input_id=input_id,
+                        example_id=example_id,
                         actual_output=output_data,
                         expected_output=expected or eval_expected,
                         metrics=per_example_metrics,
@@ -873,11 +996,11 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
 
         for i, inp in enumerate(inputs):
-            input_id = inp["input_id"]
+            example_id = inp["example_id"]
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_item = self._find_output_item(response.outputs, input_id)
+            output_item = self._find_output_item(response.outputs, example_id)
             output_data = output_item.get("output")
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
@@ -892,7 +1015,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             results.append(
                 HybridExampleResult(
-                    input_id=input_id,
+                    example_id=example_id,
                     actual_output=output_data,
                     expected_output=expected,
                     metrics=per_example_metrics,

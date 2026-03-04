@@ -1379,7 +1379,8 @@ def print_optimization_cost_summary(
         model_costs = None
 
     # Print summary table
-    print(f"""
+    print(
+        f"""
   {Colors.BOLD}┌─────────────────────────────────────────────────────────────────┐{Colors.END}
   {Colors.BOLD}│                    OPTIMIZATION STATISTICS                      │{Colors.END}
   {Colors.BOLD}├─────────────────────────────────────────────────────────────────┤{Colors.END}
@@ -1411,7 +1412,8 @@ def print_optimization_cost_summary(
   │                                                                 │
   │     • Q&A Agent:      ${qa_cost:.4f}                                  │
   │     • Support Agent:  ${support_cost:.4f}                                  │
-  │                                                                 │""")
+  │                                                                 │"""
+    )
 
     # Print model breakdown if pandas available
     if HAS_PANDAS and model_costs is not None:
@@ -1707,7 +1709,8 @@ def main() -> None:
     # Demonstrate inheritance
     print_section("Policy Inheritance")
 
-    print(f"""
+    print(
+        f"""
   {Colors.BOLD}Enterprise Policy:{Colors.END} base_safety.tvl.yml
     └── Hallucination Rate: ≤ 10%
     └── Toxicity Score: ≤ 5%
@@ -1723,7 +1726,8 @@ def main() -> None:
   - Accuracy: 3x                    - Latency: 2x
   - Latency: 1x                     - Cost: 2x
                                     - Resolution: 1x
-""")
+"""
+    )
 
     print_info("Both agents inherit the SAME safety constraints from base spec")
     print_info(
@@ -1806,7 +1810,8 @@ def main() -> None:
     qa_model = str(qa_result.best_config["model"])
     support_model = str(support_result.best_config["model"])
 
-    print(f"""
+    print(
+        f"""
   ┌─────────────────────────────────────┬─────────────────────────────────────┐
   │ {Colors.BLUE}Q&A Agent{Colors.END}                           │ {Colors.GREEN}Support Agent{Colors.END}                       │
   ├─────────────────────────────────────┼─────────────────────────────────────┤
@@ -1819,7 +1824,8 @@ def main() -> None:
   │ {Colors.GREEN}✓ Passed Safety: {qa_result.passed_trials}/{qa_result.total_trials}{Colors.END}               │ {Colors.GREEN}✓ Passed Safety: {support_result.passed_trials}/{support_result.total_trials}{Colors.END}               │
   │ {Colors.RED}✗ Rejected: {qa_result.rejected_trials}{Colors.END}                       │ {Colors.RED}✗ Rejected: {support_result.rejected_trials}{Colors.END}                       │
   └─────────────────────────────────────┴─────────────────────────────────────┘
-""")
+"""
+    )
 
     print_success(
         "Both agents enforced the SAME safety constraints from base_safety.tvl.yml"
@@ -1860,7 +1866,8 @@ def main() -> None:
     print_header("KEY TAKEAWAYS")
 
     total_rejected = qa_result.rejected_trials + support_result.rejected_trials
-    print(f"""
+    print(
+        f"""
   {Colors.GREEN}✓{Colors.END} {Colors.BOLD}Define Once, Enforce Everywhere{Colors.END}
     Update base_safety.tvl.yml → all agents inherit automatically
 
@@ -1872,7 +1879,8 @@ def main() -> None:
 
   {Colors.GREEN}✓{Colors.END} {Colors.BOLD}Full Audit Trail{Colors.END}
     Every configuration, every metric, every decision tracked
-""")
+"""
+    )
 
     print(f"\n{Colors.BOLD}Ready for a 3-week design sprint?{Colors.END}\n")
 

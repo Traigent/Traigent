@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
@@ -98,6 +99,23 @@ class HybridTransport(Protocol):
         Raises:
             TransportError: If evaluation fails.
             NotImplementedError: If evaluate not supported.
+        """
+        ...
+
+    async def benchmarks(
+        self,
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks and their example IDs.
+
+        Args:
+            tunable_id: Optional filter — only return benchmarks linked to this tunable.
+
+        Returns:
+            BenchmarksResponse with benchmark entries and example IDs.
+
+        Raises:
+            TransportError: If discovery fails or tunable_id is unknown.
         """
         ...
 

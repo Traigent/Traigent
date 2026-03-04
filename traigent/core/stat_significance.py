@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from traigent.tvl.statistics import paired_comparison_test
 
@@ -96,7 +97,7 @@ def find_equivalence_group(
     )
 
     # Direction for paired t-test
-    direction = "greater" if higher_is_better else "less"
+    direction: Literal["greater", "less"] = "greater" if higher_is_better else "less"
 
     # Build top group greedily
     top_group = [sorted_trials[0]]

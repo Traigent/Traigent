@@ -55,16 +55,16 @@ sequenceDiagram
         Orch->>Eval: evaluate(config, dataset)
 
         loop Batch 1..M (dataset / batch_size)
-            Note over Eval: Prepares batch of input_ids:<br/>[{input_id: "case_001"}, {input_id: "case_002"}, ...]
+            Note over Eval: Prepares batch of example_ids:<br/>[{example_id: "case_001"}, {example_id: "case_002"}, ...]
 
             Eval->>HTTP: execute(HybridExecuteRequest)
             HTTP->>Server: POST /traigent/v1/execute
-            Note right of HTTP: {tunable_id: "child-age-agent",<br/>config: {model, temperature, ...},<br/>inputs: [{input_id: "case_001"}, ...],<br/>timeout_ms: 60000}
+            Note right of HTTP: {tunable_id: "child-age-agent",<br/>config: {model, temperature, ...},<br/>examples: [{example_id: "case_001"}, ...],<br/>timeout_ms: 60000}
 
             Server->>Cap: execute(body)
 
             loop For each input in batch
-                Cap->>DS: Lookup query by input_id
+                Cap->>DS: Lookup query by example_id
                 DS-->>Cap: {query: "Cruise to Bahamas for me and my son?", expected_behavior: "should_ask_ages"}
 
                 Cap->>Agent: agent.generate(query, {instructions, modelSettings: {temperature}})
@@ -77,7 +77,7 @@ sequenceDiagram
                 Cap->>Store: Store output by output_id<br/>key: "out_case_001_exec_uuid"<br/>val: {response, cost_usd, latency_ms, ...}
             end
 
-            Cap-->>Server: {request_id, execution_id: "exec_...",<br/>status: "completed",<br/>outputs: [{input_id, output_id, cost_usd, latency_ms, tokens_used}, ...],<br/>operational_metrics: {total_cost_usd, latency_ms, ...},<br/>quality_metrics: null}
+            Cap-->>Server: {request_id, execution_id: "exec_...",<br/>status: "completed",<br/>outputs: [{example_id, output_id, cost_usd, latency_ms, tokens_used}, ...],<br/>operational_metrics: {total_cost_usd, latency_ms, ...},<br/>quality_metrics: null}
             Server-->>HTTP: 200 ExecuteResponse
             HTTP-->>Eval: HybridExecuteResponse
 
@@ -85,21 +85,21 @@ sequenceDiagram
 
             Eval->>HTTP: evaluate(HybridEvaluateRequest)
             HTTP->>Server: POST /traigent/v1/evaluate
-            Note right of HTTP: {tunable_id: "child-age-agent",<br/>execution_id: "exec_...",<br/>evaluations: [{input_id: "case_001",<br/>output_id: "out_case_001_exec_..."}, ...]}
+            Note right of HTTP: {tunable_id: "child-age-agent",<br/>execution_id: "exec_...",<br/>evaluations: [{example_id: "case_001",<br/>output_id: "out_case_001_exec_..."}, ...]}
 
             Server->>Cap: evaluate(body)
 
             loop For each evaluation item
                 Cap->>Store: Lookup response by output_id
                 Store-->>Cap: {response: "How old is your son?"}
-                Cap->>DS: Lookup expected_behavior by input_id
+                Cap->>DS: Lookup expected_behavior by example_id
                 DS-->>Cap: expected_behavior: "should_ask_ages"
                 Note right of Cap: detectAgeQuestion(response)<br/>→ true → accuracy = 1<br/><br/>If "should_ask_ages" &<br/>askedAges → accuracy=1<br/>If "should_not_ask_ages" &<br/>!askedAges → accuracy=1
             end
 
             Note right of Cap: aggregate: mean(accuracyValues),<br/>std(accuracyValues), n
 
-            Cap-->>Server: {request_id, status: "completed",<br/>results: [{input_id, metrics: {accuracy: 0 or 1}}, ...],<br/>aggregate_metrics: {accuracy: {mean, std, n}}}
+            Cap-->>Server: {request_id, status: "completed",<br/>results: [{example_id, metrics: {accuracy: 0 or 1}}, ...],<br/>aggregate_metrics: {accuracy: {mean, std, n}}}
             Server-->>HTTP: 200 EvaluateResponse
             HTTP-->>Eval: HybridEvaluateResponse
         end
@@ -119,7 +119,7 @@ sequenceDiagram
 ## Single Trial Detail (Privacy Mode — Bazak Default)
 
 Zoomed-in view of one execute+evaluate cycle in privacy mode,
-where only `input_id` and `output_id` cross the wire (no actual query/response text).
+where only `example_id` and `output_id` cross the wire (no actual query/response text).
 
 ```mermaid
 sequenceDiagram
@@ -132,7 +132,7 @@ sequenceDiagram
     Note over SDK,LLM: Execute Phase
 
     SDK->>Bazak: POST /traigent/v1/execute
-    Note right of SDK: Only IDs sent (privacy mode):<br/>{tunable_id: "child-age-agent",<br/>config: {model: "gpt-4o", temp: 0.2, ...},<br/>inputs: [{input_id: "case_042"}]}
+    Note right of SDK: Only IDs sent (privacy mode):<br/>{tunable_id: "child-age-agent",<br/>config: {model: "gpt-4o", temp: 0.2, ...},<br/>examples: [{example_id: "case_042"}]}
 
     Bazak->>Dataset: Lookup case_042
     Dataset-->>Bazak: query: "Trip for me and my 2 kids aged 5 and 8"
@@ -142,14 +142,14 @@ sequenceDiagram
 
     Bazak->>Store: Store: out_case_042_exec_abc → {response, cost, latency}
 
-    Bazak-->>SDK: {execution_id: "exec_abc",<br/>outputs: [{input_id: "case_042",<br/>output_id: "out_case_042_exec_abc",<br/>cost_usd: 0.00015, latency_ms: 820}],<br/>quality_metrics: null}
+    Bazak-->>SDK: {execution_id: "exec_abc",<br/>outputs: [{example_id: "case_042",<br/>output_id: "out_case_042_exec_abc",<br/>cost_usd: 0.00015, latency_ms: 820}],<br/>quality_metrics: null}
 
     Note over SDK: No response text returned!<br/>Only output_id + operational metrics
 
     Note over SDK,LLM: Evaluate Phase
 
     SDK->>Bazak: POST /traigent/v1/evaluate
-    Note right of SDK: References only IDs:<br/>{execution_id: "exec_abc",<br/>evaluations: [{input_id: "case_042",<br/>output_id: "out_case_042_exec_abc"}]}
+    Note right of SDK: References only IDs:<br/>{execution_id: "exec_abc",<br/>evaluations: [{example_id: "case_042",<br/>output_id: "out_case_042_exec_abc"}]}
 
     Bazak->>Store: Lookup out_case_042_exec_abc
     Store-->>Bazak: response: "Great! I can help..."
@@ -159,7 +159,7 @@ sequenceDiagram
 
     Note over Bazak: detectAgeQuestion("Great! I can help...")<br/>→ false (no age question)<br/>expected: should_not_ask_ages<br/>→ accuracy = 1 (correct!)
 
-    Bazak-->>SDK: {results: [{input_id: "case_042",<br/>metrics: {accuracy: 1}}],<br/>aggregate_metrics: {accuracy: {mean: 1.0, std: 0, n: 1}}}
+    Bazak-->>SDK: {results: [{example_id: "case_042",<br/>metrics: {accuracy: 1}}],<br/>aggregate_metrics: {accuracy: {mean: 1.0, std: 0, n: 1}}}
 
     Note over SDK: SDK sees accuracy=1 and cost=$0.00015<br/>Never saw the query or response text
 ```

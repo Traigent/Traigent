@@ -98,11 +98,13 @@ class TestDetectFromSource:
         return TunedVariableDetector()  # defaults to [ASTDetectionStrategy()]
 
     def test_detects_known_param_high_confidence(self, detector) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def my_func():
                 temperature = 0.7
                 return temperature
-        """)
+        """
+        )
         result = detector.detect_from_source(src, "my_func")
 
         assert result.function_name == "my_func"
@@ -113,12 +115,14 @@ class TestDetectFromSource:
         assert c.current_value == pytest.approx(0.7)
 
     def test_returns_empty_for_no_tvars(self, detector) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def simple():
                 x = 42
                 name = "Alice"
                 return x + len(name)
-        """)
+        """
+        )
         result = detector.detect_from_source(src, "simple")
         # No known LLM param names — count should be 0
         assert result.count == 0, f"Expected 0 candidates, got {result.count}"
@@ -136,11 +140,13 @@ class TestDetectFromSource:
         ), f"Expected 16-char hash, got: {result.source_hash!r}"
 
     def test_context_existing_tvars_skips_detected(self, detector) -> None:
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.7
                 max_tokens = 512
-        """)
+        """
+        )
         result = detector.detect_from_source(
             src, "fn", context={"existing_tvars": {"temperature"}}
         )
@@ -158,10 +164,12 @@ class TestDetectFromSource:
         detector = TunedVariableDetector(
             strategies=[ASTDetectionStrategy(), LLMDetectionStrategy(mock_llm)]
         )
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.7
-        """)
+        """
+        )
         result = detector.detect_from_source(src, "fn")
         c = _by_name(result.candidates, "temperature")
         assert c is not None
@@ -255,7 +263,8 @@ class TestDetectFromFile:
 
     @pytest.fixture
     def sample_py_file(self, tmp_path: Path) -> Path:
-        src = _dedent("""
+        src = _dedent(
+            """
             def agent_call():
                 model = "gpt-4"
                 temperature = 0.7
@@ -264,7 +273,8 @@ class TestDetectFromFile:
             def helper():
                 x = 42
                 return x
-        """)
+        """
+        )
         f = tmp_path / "agent.py"
         f.write_text(src)
         return f
@@ -410,12 +420,14 @@ class TestDetectorResultIntegration:
     def test_to_configuration_space_only_includes_high_medium(self) -> None:
         detector = TunedVariableDetector()
         # Only temperature (HIGH confidence) should appear in config space
-        src = _dedent("""
+        src = _dedent(
+            """
             def pipeline():
                 temperature = 0.7
                 model = "gpt-4"
                 max_tokens = 512
-        """)
+        """
+        )
         result = detector.detect_from_source(src, "pipeline")
 
         cs = result.to_configuration_space()
@@ -431,10 +443,12 @@ class TestDetectorResultIntegration:
 
     def test_high_confidence_property_filters_correctly(self) -> None:
         detector = TunedVariableDetector()
-        src = _dedent("""
+        src = _dedent(
+            """
             def fn():
                 temperature = 0.7
-        """)
+        """
+        )
         result = detector.detect_from_source(src, "fn")
         high = result.high_confidence
         for c in high:

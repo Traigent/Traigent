@@ -411,7 +411,7 @@ class OptimizedFunction:
         self.max_trials = kwargs.pop("max_trials", 50)
         kwargs["max_trials"] = self.max_trials
 
-        self.timeout = kwargs.pop("timeout", 60.0)
+        self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
 
         save_to_value = kwargs.pop("save_to", sentinel)
@@ -666,7 +666,7 @@ class OptimizedFunction:
         if self.max_trials < 0:
             raise ValueError("max_trials must be non-negative")
 
-        if self.timeout < 0:
+        if self.timeout is not None and self.timeout < 0:
             raise ValueError("timeout must be non-negative")
 
     def _validate_configuration(self) -> None:
