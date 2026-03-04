@@ -6,7 +6,7 @@ spec:
   version: 0.0.1
 
 metadata:
-  owner: "examples@traigent.ai"
+  owner: "team@example.com"
   description: "Legacy format example for deprecation testing"
 
 # Legacy configuration_space format (should emit deprecation warning)

@@ -48,4 +48,4 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 - Start with small `max_trials`; watch cost/latency metrics.
 - Confirm datasets exist under `examples/datasets/<example>/`.
 
-Still stuck? See `EXAMPLES_GUIDE.md` or ask in Discord.
+Still stuck? See `EXAMPLES_GUIDE.md` or open a GitHub issue.

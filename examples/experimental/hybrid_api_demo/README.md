@@ -1,4 +1,6 @@
-# Traigent Hybrid Mode Demo
+# Traigent Hybrid API Demo
+
+> **Experimental** — This example demonstrates the `hybrid_api` execution mode, which is functional but may change in future releases.
 
 A minimal Flask application demonstrating how to implement the Traigent Hybrid API for external agentic services.
 
@@ -240,6 +242,6 @@ def evaluate():
 
 ## Next Steps
 
-1. Read the [API Contract](../../docs/hybrid-mode-api-contract.md) for detailed specifications
-2. See the [Client Integration Guide](../../docs/hybrid-mode-client-guide.md) for implementation patterns
-3. Use the [TraigentService wrapper](../../traigent/wrapper/) for a decorator-based approach
+1. Read the [API Contract](../../../docs/hybrid-mode-api-contract.md) for detailed specifications
+2. See the [Client Integration Guide](../../../docs/hybrid-mode-client-guide.md) for implementation patterns
+3. Use the [TraigentService wrapper](../../../traigent/wrapper/) for a decorator-based approach
