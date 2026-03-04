@@ -13,7 +13,6 @@ This example demonstrates 5 error scenarios:
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
