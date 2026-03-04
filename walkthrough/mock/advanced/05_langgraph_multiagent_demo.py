@@ -55,7 +55,7 @@ MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 # Model configuration
 DEFAULT_MODEL = "gpt-4.1-nano"
 
-# TODO: LangGraphAdapter should auto-instrument workflows
+# NOTE: LangGraphAdapter will auto-instrument workflows when available.
 # This demo shows MANUAL workarounds until LangGraphAdapter is implemented.
 # Ideal experience: users just define agents, SDK handles instrumentation.
 
@@ -94,7 +94,7 @@ def retrieve_documents(state: RAGState) -> RAGState:
     Note: This is typically a vector DB lookup, not an LLM call.
     In production, this would use a vector database (Pinecone, Weaviate, etc.).
 
-    TODO: LangGraphAdapter should auto-instrument this node with OTEL spans.
+    NOTE: LangGraphAdapter will auto-instrument this node with OTEL spans.
     """
     question = state["question"]
 
@@ -115,7 +115,7 @@ def grade_documents(state: RAGState) -> RAGState:
     Note: Uses LangChain ChatOpenAI wrapper for automatic cost tracking.
     The LangChain interceptor automatically captures tokens and cost.
 
-    TODO: LangGraphAdapter should:
+    NOTE: LangGraphAdapter will:
     - Auto-create OTEL spans with node.id="grade_documents"
     - Auto-inject temperature from config_space["grade_documents.temperature"]
     """
@@ -167,7 +167,7 @@ def decide_next_step(state: RAGState) -> str:
 def web_search(state: RAGState) -> RAGState:
     """Web search agent: Search web for additional context.
 
-    TODO: LangGraphAdapter should auto-instrument this node.
+    NOTE: LangGraphAdapter will auto-instrument this node.
     """
     question = state["question"]
     # Mock web search results
@@ -187,7 +187,7 @@ def generate_answer(state: RAGState) -> RAGState:
     Note: Uses LangChain ChatOpenAI wrapper for automatic cost tracking.
     The LangChain interceptor automatically captures tokens and cost.
 
-    TODO: LangGraphAdapter should:
+    NOTE: LangGraphAdapter will:
     - Auto-inject temperature from config_space["generate.temperature"]
     - Auto-create OTEL spans
     """
@@ -205,7 +205,7 @@ def generate_answer(state: RAGState) -> RAGState:
         llm = ChatOpenAI(
             model=DEFAULT_MODEL,
             max_tokens=150,
-            temperature=0.7,  # TODO: Should be injected from config_space
+            temperature=0.7,  # NOTE: Will be injected from config_space when LangGraphAdapter is available
         )
         context = "\n".join(docs) if docs else "No relevant documents found."
 

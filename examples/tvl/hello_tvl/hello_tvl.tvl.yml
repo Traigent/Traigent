@@ -6,7 +6,7 @@ spec:
   version: 0.0.1
 
 metadata:
-  owner: "examples@traigent.ai"
+  owner: "team@example.com"
   description: "Minimal TVL spec demonstrating basic structure"
 
 # TVL 0.9 typed variables
@@ -34,4 +34,4 @@ constraints:
 
 promotion:
   gate: manual_review
-  reviewers: ["reviewer@traigent.ai"]
+  reviewers: ["reviewer@example.com"]

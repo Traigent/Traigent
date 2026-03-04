@@ -15,7 +15,7 @@ spec:
   version: "1.0"
 
 metadata:
-  owner: tutorials@traigent.ai
+  owner: team@example.com
   description: Demonstrates banded objectives and TOST
   tags:
     - tutorial

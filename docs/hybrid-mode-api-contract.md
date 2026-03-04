@@ -817,5 +817,5 @@ Optional extension:
 ## Related Documentation
 
 - [Client Integration Guide](./hybrid-mode-client-guide.md) - Implementation patterns and examples
-- [Flask Demo](../examples/hybrid_mode_demo/) - Working example implementation
+- [Flask Demo](../examples/experimental/hybrid_api_demo/) - Working example implementation
 - [TraigentService Wrapper](../traigent/wrapper/) - Decorator-based SDK for building services

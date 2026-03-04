@@ -16,11 +16,11 @@ Flow:
 
 Prerequisites:
   - JS-Mastra demo server running (see .env.example for endpoint config)
-  - Copy ``examples/hybrid_mode_demo/.env.example`` to ``.env`` in the
+  - Copy ``examples/experimental/hybrid_api_demo/.env.example`` to ``.env`` in the
     project root and fill in MASTRA_JS_AUTH_TOKEN
 
 Usage:
-    .venv/bin/python examples/hybrid_mode_demo/run_mastra_js_optimization.py
+    .venv/bin/python examples/experimental/hybrid_api_demo/run_mastra_js_optimization.py
 """
 
 import asyncio
