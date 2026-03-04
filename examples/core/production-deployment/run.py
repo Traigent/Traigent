@@ -70,17 +70,38 @@ def _mock_answer(query: str) -> str:
     """Deterministic mock answers for the evaluation set."""
     q = (query or "").lower()
     mapping = [
-        (["reset", "password"], "Go to Settings > Security > Reset Password and follow the prompts."),
+        (
+            ["reset", "password"],
+            "Go to Settings > Security > Reset Password and follow the prompts.",
+        ),
         (["business hours", "hours"], "We are open Monday to Friday, 9 AM to 5 PM."),
-        (["cancel", "subscription"], "Go to Account > Subscription > Cancel and confirm."),
-        (["payment", "methods"], "We accept Visa, Mastercard, PayPal, and bank transfers."),
+        (
+            ["cancel", "subscription"],
+            "Go to Account > Subscription > Cancel and confirm.",
+        ),
+        (
+            ["payment", "methods"],
+            "We accept Visa, Mastercard, PayPal, and bank transfers.",
+        ),
         (["contact", "support"], "Email support@example.com or call 1-800-555-0123."),
         (["order history"], "Go to Account > Orders to view your purchase history."),
-        (["billing", "address"], "Go to Account > Billing > Edit Address and save changes."),
-        (["refund", "policy"], "Full refund within 30 days of purchase, no questions asked."),
-        (["two-factor", "2fa"], "Go to Settings > Security > Enable 2FA and scan the QR code."),
+        (
+            ["billing", "address"],
+            "Go to Account > Billing > Edit Address and save changes.",
+        ),
+        (
+            ["refund", "policy"],
+            "Full refund within 30 days of purchase, no questions asked.",
+        ),
+        (
+            ["two-factor", "2fa"],
+            "Go to Settings > Security > Enable 2FA and scan the QR code.",
+        ),
         (["username"], "Go to Settings > Profile > Edit Username and save."),
-        (["export", "data"], "Go to Settings > Privacy > Export Data to download your information."),
+        (
+            ["export", "data"],
+            "Go to Settings > Privacy > Export Data to download your information.",
+        ),
         (["browser"], "We support Chrome, Firefox, Safari, and Edge."),
     ]
     for keywords, answer in mapping:
