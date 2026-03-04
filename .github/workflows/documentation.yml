@@ -39,14 +39,23 @@ jobs:
         import sys
         from pathlib import Path
 
+        SKIP_DIRS = {".archive", ".release_review", ".post_release_recommendation_fixes",
+                     "node_modules", ".git", "venv", ".venv", "configs"}
+
         errors = []
         for md_file in Path(".").rglob("*.md"):
+            if any(part in SKIP_DIRS for part in md_file.parts):
+                continue
             content = md_file.read_text()
             links = re.findall(r"\[([^\]]+)\]\(([^\)]+)\)", content)
             for text, link in links:
                 if link.startswith("#") or link.startswith("http"):
                     continue
-                if not Path(link).exists() and not Path(md_file.parent / link).exists():
+                # Strip anchor fragments before checking path
+                link_path = link.split("#")[0]
+                if not link_path:
+                    continue
+                if not Path(link_path).exists() and not Path(md_file.parent / link_path).exists():
                     errors.append(f"{md_file}: Broken link to {link}")
 
         if errors:

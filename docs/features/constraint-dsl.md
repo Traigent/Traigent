@@ -814,6 +814,5 @@ print(msg)
 
 ## See Also
 
-- [TVL Specification](../tvl/README.md) - Underlying constraint language
+- [TVL Tutorials](../../examples/tvl/tutorials/README.md) - TVL usage examples and tutorials
 - [Configuration Spaces](../user-guide/configuration-spaces.md) - Defining parameter ranges
-- [Optimization Guide](../user-guide/optimization.md) - Using constraints in optimization

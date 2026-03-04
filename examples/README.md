@@ -354,7 +354,7 @@ We welcome contributions! To add new examples:
 4. Test thoroughly before submitting
 5. Update this README and relevant docs
 
-See our [Contributing Guide](../docs/guides/CONTRIBUTING.md) for more details.
+See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ## 📝 Additional Resources
 
