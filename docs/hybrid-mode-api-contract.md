@@ -82,7 +82,7 @@ Traigent Hybrid Mode is designed with privacy as the default. **Only configurati
 
 ### How It Works
 
-1. **Inputs**: Only `input_id` is required. Your service stores input data locally and looks it up by ID.
+1. **Inputs**: Only `example_id` is required. Your service stores input data locally and looks it up by ID.
 2. **Outputs**: Return `output_id` instead of `output` content. Your service stores outputs locally.
 3. **Evaluation**: Use `output_id` and `target_id` instead of actual content. Your service performs evaluation locally.
 
@@ -105,12 +105,12 @@ For privacy-preserving mode, your service must:
 1. **Generate unique IDs**: Create stable identifiers for inputs, outputs, and targets
 2. **Track session context**: Use `session_id` to scope outputs to specific optimization runs
 3. **Store data locally**: Maintain a local mapping of IDs to actual content
-4. **Handle ID collisions**: Different optimization runs may reuse input IDs but produce different outputs - use `session_id` to distinguish
+4. **Handle ID collisions**: Different optimization runs may reuse example IDs but produce different outputs - use `session_id` to distinguish
 
 **Example ID format**:
 
 ```text
-input_id: "example_001"                    # Stable across runs
+example_id: "example_001"                  # Stable across runs
 output_id: "out_example_001_run_abc123"    # Scoped to run
 target_id: "target_001"                    # Stable across runs
 ```
@@ -118,7 +118,7 @@ target_id: "target_001"                    # Stable across runs
 ### Full-Content Datasets (Optional)
 
 If privacy is not a concern, you can send full content instead of IDs:
-- Include `data` in `InputItem`
+- Include `data` in `ExampleItem`
 - Include `output` in `OutputItem`
 - Include `output` and `target` in `EvaluationItem`
 
@@ -145,7 +145,7 @@ Return quality metrics directly in the execute response to skip the separate eva
   "status": "completed",
   "outputs": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output_id": "out_001_run_abc",
       "cost_usd": 0.005,
       "metrics": {"accuracy": 0.92, "relevance": 0.88}
@@ -165,7 +165,7 @@ Return `quality_metrics: null` (or omit it) and set `supports_evaluate: true` in
   "status": "completed",
   "outputs": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output_id": "out_001_run_abc",
       "cost_usd": 0.005
     }
@@ -370,13 +370,13 @@ Execute the agent with a specific configuration on a batch of inputs.
     "max_tokens": 1024,
     "use_cache": true
   },
-  "inputs": [
+  "examples": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "data": {"query": "What is machine learning?"}
     },
     {
-      "input_id": "ex_002",
+      "example_id": "ex_002",
       "data": {"query": "Explain neural networks"}
     }
   ],
@@ -395,15 +395,15 @@ Execute the agent with a specific configuration on a batch of inputs.
 | `request_id` | string | No | Idempotency key (UUID). Auto-generated if not provided |
 | `tunable_id` | string | Yes | Identifier for the tunable to invoke |
 | `config` | object | Yes | Configuration parameters (tunable values) |
-| `inputs` | array | Yes | List of input examples to process |
+| `examples` | array | Yes | List of input examples to process |
 | `session_id` | string | No | Session ID for stateful agents |
 | `batch_options` | object | No | Batch execution control |
 | `timeout_ms` | integer | No | Request timeout in milliseconds (default: 30000) |
 
-**Input Item**:
+**Example Item**:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `input_id` | string | Yes | Unique identifier for this input |
+| `example_id` | string | Yes | Unique identifier for this input |
 | `data` | object | No | Input data (optional in privacy-preserving mode) |
 
 **Batch Options**:
@@ -422,7 +422,7 @@ Execute the agent with a specific configuration on a batch of inputs.
   "status": "completed",
   "outputs": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output": {
         "response": "Machine learning is a subset of AI...",
         "model_used": "gpt-4o-2024-01-01"
@@ -431,7 +431,7 @@ Execute the agent with a specific configuration on a batch of inputs.
       "latency_ms": 150
     },
     {
-      "input_id": "ex_002",
+      "example_id": "ex_002",
       "output": {
         "response": "Neural networks are computing systems...",
         "model_used": "gpt-4o-2024-01-01"
@@ -468,7 +468,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 **Output Item**:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `input_id` | string | Yes | Matching input identifier |
+| `example_id` | string | Yes | Matching input identifier |
 | `output` | object | No | Agent output (optional in privacy-preserving mode) |
 | `output_id` | string | No | Output identifier (for privacy-preserving mode) |
 | `cost_usd` | number | No | Cost for this input |
@@ -516,12 +516,12 @@ Evaluate outputs against expected targets to measure quality.
   "execution_id": "exec_123456",
   "evaluations": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "output": {"response": "Machine learning is a subset of AI..."},
       "target": {"expected": "Machine learning is a branch of artificial intelligence..."}
     },
     {
-      "input_id": "ex_002",
+      "example_id": "ex_002",
       "output": {"response": "Neural networks are computing systems..."},
       "target": {"expected": "Neural networks are computer systems inspired by the brain..."}
     }
@@ -545,7 +545,7 @@ Evaluate outputs against expected targets to measure quality.
 **Evaluation Item**:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `input_id` | string | Yes | Matching input identifier |
+| `example_id` | string | Yes | Matching input identifier |
 | `output` | object | No | Agent output (optional in privacy-preserving mode) |
 | `output_id` | string | No | Output identifier (for privacy-preserving mode) |
 | `target` | object | No | Expected/reference output (optional in privacy-preserving mode) |
@@ -559,7 +559,7 @@ Evaluate outputs against expected targets to measure quality.
   "status": "completed",
   "results": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "metrics": {
         "accuracy": 0.92,
         "relevance": 0.88,
@@ -569,7 +569,7 @@ Evaluate outputs against expected targets to measure quality.
       }
     },
     {
-      "input_id": "ex_002",
+      "example_id": "ex_002",
       "metrics": {
         "accuracy": 0.89,
         "relevance": 0.91,
@@ -595,12 +595,12 @@ Evaluate outputs against expected targets to measure quality.
 | `status` | string | Yes | `"completed"`, `"partial"`, or `"failed"` |
 | `results` | array | Yes | Per-example evaluation results |
 | `aggregate_metrics` | object | Yes | Aggregated statistics per metric |
-| `error` | object | No | Error details for partial/failed evaluations (`code`, `message`, `failed_inputs`) |
+| `error` | object | No | Error details for partial/failed evaluations (`code`, `message`, `failed_examples`) |
 
 **Result Item**:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `input_id` | string | Yes | Matching input identifier |
+| `example_id` | string | Yes | Matching input identifier |
 | `metrics` | object | Yes | Quality metrics for this example |
 | `error` | string | No | Error message for this example when evaluation partially fails |
 
@@ -616,7 +616,7 @@ Evaluate outputs against expected targets to measure quality.
 {
   "results": [
     {
-      "input_id": "ex_001",
+      "example_id": "ex_001",
       "metrics": {
         "accuracy": 0.92,
         "semantic_similarity": 0.87,

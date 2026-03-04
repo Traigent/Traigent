@@ -201,7 +201,7 @@ class TestCreateAppRoutes:
             return {"model": {"type": "enum", "values": ["gpt-4"]}}
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok", "cost_usd": 0.01}
 
         @svc.evaluate
@@ -251,8 +251,9 @@ class TestCreateAppRoutes:
         """Test POST execute endpoint."""
         request_body = json.dumps(
             {
+                "benchmark_id": "bench_001",
                 "config": {"model": "gpt-4"},
-                "inputs": [{"input_id": "i1", "data": {"q": "hi"}}],
+                "examples": [{"example_id": "i1", "data": {"q": "hi"}}],
             }
         ).encode()
         send = _SendCollector()
@@ -272,7 +273,8 @@ class TestCreateAppRoutes:
         """Test POST evaluate endpoint."""
         request_body = json.dumps(
             {
-                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+                "benchmark_id": "bench_001",
+                "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         ).encode()
         send = _SendCollector()
@@ -380,7 +382,7 @@ class TestCreateAppErrorHandling:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         app = create_app(svc)
@@ -401,7 +403,7 @@ class TestCreateAppErrorHandling:
         # No execute handler -> handle_execute raises ValueError
         app = create_app(svc)
         send = _SendCollector()
-        request_body = json.dumps({"inputs": []}).encode()
+        request_body = json.dumps({"examples": []}).encode()
         await app(
             _make_scope("POST", EXECUTE_PATH),
             _make_receive(request_body),
@@ -430,11 +432,16 @@ class TestCreateAppErrorHandling:
 
     @pytest.mark.asyncio
     async def test_empty_body_treated_as_empty_dict(self) -> None:
-        """Test that empty request body is treated as empty dict."""
+        """Test that empty request body is treated as empty dict.
+
+        An empty body becomes ``{}``, which lacks ``benchmark_id``.
+        The service returns a failed response with INVALID_BENCHMARK_ID
+        (not a raised exception), so the server sends it back as 200.
+        """
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             return {"output": "ok"}
 
         app = create_app(svc)
@@ -444,8 +451,9 @@ class TestCreateAppErrorHandling:
             _make_receive(b""),
             send,
         )
-        assert send.status == 400
-        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
+        assert send.status == 200
+        assert send.body_json["status"] == "failed"
+        assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +659,7 @@ class TestErrorHandling:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             raise BadRequestError(
                 "Invalid input format",
                 error_code="VALIDATION_ERROR",
@@ -662,7 +670,8 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "inputs": [{"input_id": "i1", "data": {}}],
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
 
@@ -688,7 +697,7 @@ class TestErrorHandling:
         svc = TraigentService()
 
         @svc.execute
-        async def run(input_id, data, config):
+        async def run(example_id, data, config):
             await asyncio.sleep(2)  # Longer than timeout
             return {"output": "done"}
 
@@ -696,8 +705,9 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
+                "benchmark_id": "bench_001",
                 "timeout_ms": 1000,  # 1 second timeout
-                "inputs": [{"input_id": "i1", "data": {}}],
+                "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
 
@@ -720,14 +730,15 @@ class TestErrorHandling:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             raise RateLimitError(retry_after=60)
 
         app = create_app(svc)
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "inputs": [{"input_id": "i1", "data": {}}],
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
 
@@ -757,8 +768,9 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
+                "benchmark_id": "bench_001",
                 "timeout_ms": 1000,  # 1 second timeout
-                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+                "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         ).encode()
 
@@ -781,14 +793,15 @@ class TestErrorHandling:
         svc = TraigentService()
 
         @svc.execute
-        def run(input_id, data, config):
+        def run(example_id, data, config):
             raise RateLimitError(retry_after=60)
 
         app = create_app(svc)
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "inputs": [{"input_id": "i1", "data": {}}],
+                "benchmark_id": "bench_001",
+                "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
 

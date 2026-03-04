@@ -23,47 +23,50 @@ class TestInputItemPrivacy:
         """Test standard mode: input with data field."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "fast"},
-            inputs=[
-                {"input_id": "ex_1", "data": {"query": "What is AI?"}},
+            examples=[
+                {"example_id": "ex_1", "data": {"query": "What is AI?"}},
             ],
         )
 
         request_dict = request.to_dict()
-        assert request_dict["inputs"][0]["input_id"] == "ex_1"
-        assert request_dict["inputs"][0]["data"] == {"query": "What is AI?"}
+        assert request_dict["examples"][0]["example_id"] == "ex_1"
+        assert request_dict["examples"][0]["data"] == {"query": "What is AI?"}
 
     def test_input_without_data_privacy_mode(self) -> None:
-        """Test privacy-preserving mode: input with only input_id."""
+        """Test privacy-preserving mode: input with only example_id."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "fast"},
-            inputs=[
-                {"input_id": "ex_1"},  # No data field
-                {"input_id": "ex_2"},  # No data field
+            examples=[
+                {"example_id": "ex_1"},  # No data field
+                {"example_id": "ex_2"},  # No data field
             ],
         )
 
         request_dict = request.to_dict()
-        assert request_dict["inputs"][0]["input_id"] == "ex_1"
-        assert "data" not in request_dict["inputs"][0]
-        assert request_dict["inputs"][1]["input_id"] == "ex_2"
-        assert "data" not in request_dict["inputs"][1]
+        assert request_dict["examples"][0]["example_id"] == "ex_1"
+        assert "data" not in request_dict["examples"][0]
+        assert request_dict["examples"][1]["example_id"] == "ex_2"
+        assert "data" not in request_dict["examples"][1]
 
     def test_mixed_inputs(self) -> None:
         """Test mixed mode: some inputs with data, some without."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "balanced"},
-            inputs=[
-                {"input_id": "ex_1", "data": {"query": "test"}},  # With data
-                {"input_id": "ex_2"},  # Without data
+            examples=[
+                {"example_id": "ex_1", "data": {"query": "test"}},  # With data
+                {"example_id": "ex_2"},  # Without data
             ],
         )
 
         request_dict = request.to_dict()
-        assert "data" in request_dict["inputs"][0]
-        assert "data" not in request_dict["inputs"][1]
+        assert "data" in request_dict["examples"][0]
+        assert "data" not in request_dict["examples"][1]
 
 
 class TestOutputItemPrivacy:
@@ -77,7 +80,7 @@ class TestOutputItemPrivacy:
             "status": "completed",
             "outputs": [
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output": {"response": "AI is..."},
                     "cost_usd": 0.001,
                 },
@@ -86,7 +89,7 @@ class TestOutputItemPrivacy:
         }
 
         response = HybridExecuteResponse.from_dict(response_data)
-        assert response.outputs[0]["input_id"] == "ex_1"
+        assert response.outputs[0]["example_id"] == "ex_1"
         assert response.outputs[0]["output"]["response"] == "AI is..."
         assert "output_id" not in response.outputs[0]
 
@@ -98,7 +101,7 @@ class TestOutputItemPrivacy:
             "status": "completed",
             "outputs": [
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output_id": "out_ex_1_session_abc",
                     "cost_usd": 0.001,
                 },
@@ -107,7 +110,7 @@ class TestOutputItemPrivacy:
         }
 
         response = HybridExecuteResponse.from_dict(response_data)
-        assert response.outputs[0]["input_id"] == "ex_1"
+        assert response.outputs[0]["example_id"] == "ex_1"
         assert response.outputs[0]["output_id"] == "out_ex_1_session_abc"
         assert "output" not in response.outputs[0]
 
@@ -119,7 +122,7 @@ class TestOutputItemPrivacy:
             "status": "completed",
             "outputs": [
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output_id": "out_ex_1",
                     "cost_usd": 0.005,
                     "latency_ms": 150.0,
@@ -140,9 +143,10 @@ class TestEvaluationItemPrivacy:
         """Test standard mode: evaluation with full output and target content."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output": {"response": "AI is..."},
                     "target": {"expected": "AI is artificial..."},
                 },
@@ -158,9 +162,10 @@ class TestEvaluationItemPrivacy:
         """Test privacy-preserving mode: evaluation with output_id and target_id."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output_id": "out_ex_1_session_abc",
                     "target_id": "target_ex_1",
                 },
@@ -178,9 +183,10 @@ class TestEvaluationItemPrivacy:
         """Test mixed mode: output content with target_id."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output": {"response": "AI is..."},  # Full content
                     "target_id": "target_ex_1",  # ID reference
                 },
@@ -205,7 +211,7 @@ class TestEvaluateResponsePrivacy:
             "status": "completed",
             "results": [
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "metrics": {
                         "accuracy": 0.92,
                         "relevance": 0.88,
@@ -230,8 +236,9 @@ class TestSessionIdScoping:
         """Test that session_id is included in execute request."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "fast"},
-            inputs=[{"input_id": "ex_1"}],
+            examples=[{"example_id": "ex_1"}],
             session_id="session_abc123",
         )
 
@@ -242,8 +249,9 @@ class TestSessionIdScoping:
         """Test that session_id is included in evaluate request."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[
-                {"input_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}
+                {"example_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}
             ],
             session_id="session_abc123",
         )
@@ -269,17 +277,18 @@ class TestSessionIdScoping:
 class TestPrivacyModeDocumentation:
     """Tests that verify privacy-preserving mode contract."""
 
-    def test_input_only_requires_input_id(self) -> None:
-        """Verify that input_id is the only required field for InputItem."""
+    def test_input_only_requires_example_id(self) -> None:
+        """Verify that example_id is the only required field for InputItem."""
         # This should work without data field
         request = HybridExecuteRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={},
-            inputs=[{"input_id": "required_only"}],
+            examples=[{"example_id": "required_only"}],
         )
 
-        assert len(request.inputs) == 1
-        assert request.inputs[0]["input_id"] == "required_only"
+        assert len(request.examples) == 1
+        assert request.examples[0]["example_id"] == "required_only"
 
     def test_output_item_flexible_fields(self) -> None:
         """Verify OutputItem accepts both output and output_id."""
@@ -289,7 +298,7 @@ class TestPrivacyModeDocumentation:
                 "request_id": "r1",
                 "execution_id": "e1",
                 "status": "completed",
-                "outputs": [{"input_id": "ex_1", "output": {"data": "content"}}],
+                "outputs": [{"example_id": "ex_1", "output": {"data": "content"}}],
                 "operational_metrics": {},
             }
         )
@@ -301,7 +310,7 @@ class TestPrivacyModeDocumentation:
                 "request_id": "r2",
                 "execution_id": "e2",
                 "status": "completed",
-                "outputs": [{"input_id": "ex_1", "output_id": "out_123"}],
+                "outputs": [{"example_id": "ex_1", "output_id": "out_123"}],
                 "operational_metrics": {},
             }
         )
@@ -311,14 +320,15 @@ class TestPrivacyModeDocumentation:
         """Verify EvaluationItem accepts both content and IDs."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[
                 # All content
-                {"input_id": "ex_1", "output": {}, "target": {}},
+                {"example_id": "ex_1", "output": {}, "target": {}},
                 # All IDs
-                {"input_id": "ex_2", "output_id": "o2", "target_id": "t2"},
+                {"example_id": "ex_2", "output_id": "o2", "target_id": "t2"},
                 # Mixed
-                {"input_id": "ex_3", "output": {}, "target_id": "t3"},
-                {"input_id": "ex_4", "output_id": "o4", "target": {}},
+                {"example_id": "ex_3", "output": {}, "target_id": "t3"},
+                {"example_id": "ex_4", "output_id": "o4", "target": {}},
             ],
         )
 
