@@ -225,6 +225,9 @@ Client-side handling implemented in this run:
 Important logging limitation for auditability:
 - Trial artifacts currently persist per-example `accuracy`, but not the full per-example split metric map (`tool_accuracy` / `param_accuracy` / `text_accuracy` by example).
 - This means exact per-example split-key reconstruction is not fully possible from stored trial files alone after the run.
+- In this share package, `example_results[].query`, `example_results[].response`, and `example_results[].expected` are intentionally redacted (`null`), so raw prompt/response verification is not possible from artifacts alone.
+- In this share package, `example_results[].cost_usd` is an allocated display field (`trial total_cost / examples_attempted`), not an independently measured per-example provider-billed value.
+- `timestamp` in trial artifacts is intentionally redacted and represented as the sentinel value `REDACTED`.
 
 Recommended follow-up:
 - Persist full per-example metric dictionaries in trial logs to make post-run derivations and denominator choices fully auditable.
