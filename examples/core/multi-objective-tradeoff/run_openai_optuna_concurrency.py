@@ -38,7 +38,6 @@ from traigent.api.types import OptimizationResult  # noqa: E402
 from traigent.cloud.backend_client import BackendIntegratedClient  # noqa: E402
 from traigent.config.parallel import ParallelConfig  # noqa: E402
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
-from traigent.optimizers.pruners import CeilingPruner  # noqa: E402
 
 DATA_ROOT = (
     Path(__file__).resolve().parents[2] / "datasets" / "multi-objective-tradeoff"
@@ -143,10 +142,6 @@ else:
 
 MAX_TRIALS = int(os.getenv("TRAIGENT_MAX_TRIALS", "24"))
 BUDGET_LIMIT = _parse_float_env("TRAIGENT_BUDGET_LIMIT", 0.012)
-PRUNER_COST_THRESHOLD = _parse_float_env("TRAIGENT_COST_THRESHOLD", 0.0015)
-PRUNER_EPSILON = _parse_float_env("TRAIGENT_PRUNER_EPSILON", 1e-4) or 1e-4
-PRUNER_WARMUP_STEPS = int(os.getenv("TRAIGENT_PRUNER_WARMUP_STEPS", "2"))
-PRUNER_MIN_COMPLETED = int(os.getenv("TRAIGENT_PRUNER_MIN_COMPLETED", "2"))
 
 DEFAULT_WORKERS = max(
     1, _parse_int_env("TRAIGENT_PARALLEL_WORKERS", os.cpu_count() or 4)
@@ -202,10 +197,6 @@ print(
 print(f"Model candidates: {MODEL_CHOICES}")
 if BUDGET_LIMIT is not None:
     print(f"Budget limit: ${BUDGET_LIMIT:.6f}")
-print(
-    f"Pruner: min_completed={PRUNER_MIN_COMPLETED}, warmup_steps={PRUNER_WARMUP_STEPS}, "
-    f"epsilon={PRUNER_EPSILON}, cost_threshold={PRUNER_COST_THRESHOLD}"
-)
 print(
     "Resolved concurrency: "
     f"profile={CONCURRENCY_PROFILE or 'auto'}, "
@@ -580,12 +571,6 @@ _OPTIMIZE_KWARGS: dict[str, Any] = {
     "parallel_config": PARALLEL_CONFIG,
     "algorithm": "bayesian",
     "max_trials": MAX_TRIALS,
-    "pruner": CeilingPruner(
-        min_completed_trials=PRUNER_MIN_COMPLETED,
-        warmup_steps=PRUNER_WARMUP_STEPS,
-        epsilon=PRUNER_EPSILON,
-        cost_threshold=PRUNER_COST_THRESHOLD,
-    ),
 }
 
 if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
