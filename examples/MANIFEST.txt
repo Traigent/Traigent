@@ -1,6 +1,6 @@
 # Traigent SDK Publication Manifest
 # Canonical list of all publication-ready examples that must pass in mock mode.
-# Used by test_all_examples.sh (manifest target) for strict verification.
+# Documentation artifact (not parsed at runtime; keep in sync with test_all_examples.sh arrays).
 # 37 examples total.
 
 # Core (12)
