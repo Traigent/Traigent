@@ -452,7 +452,7 @@ def cost_metric(output: str, expected: str) -> float:
 
 
 @traigent.optimize(
-    eval_dataset=str(SCRIPT_DIR / "simple_questions.jsonl"),
+    eval_dataset=str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()),
     objectives=["accuracy", "cost"],
     metric_functions={
         "accuracy": accuracy_metric,  # Custom accuracy metric
