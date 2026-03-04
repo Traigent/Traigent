@@ -281,14 +281,15 @@ class HybridAPIEvaluator(BaseEvaluator):
             entry for entry in resp.benchmarks if tid in entry.tunable_ids
         ]
 
-        # Large payload guard
-        total_example_ids = sum(len(e.example_ids) for e in resp.benchmarks)
+        # Large payload guard — check only benchmarks matched to this tunable
+        total_example_ids = sum(len(e.example_ids) for e in matching)
         if total_example_ids > 10000:
             logger.warning(
-                "Benchmarks response contains %d total example_ids across %d "
-                "benchmarks; consider filtering by benchmark_id to reduce payload",
+                "Matched benchmarks contain %d total example_ids across %d "
+                "benchmarks for tunable %r; consider limiting dataset size",
                 total_example_ids,
-                len(resp.benchmarks),
+                len(matching),
+                tid,
             )
 
         # Benchmark selection logic
