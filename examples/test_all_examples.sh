@@ -392,6 +392,7 @@ case "$CATEGORY" in
             echo ""
             echo -e "${RED}Manifest requires all examples to pass (${skipped} skipped)${NC}"
             failed=$((failed + skipped))
+            skipped=0
         fi
         ;;
     all)
