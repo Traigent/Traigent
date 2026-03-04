@@ -39,7 +39,7 @@ jobs:
         import sys
         from pathlib import Path
 
-        SKIP_DIRS = {".archive", ".release_review", ".post_release_recommendation_fixes",
+        SKIP_DIRS = {".archive", "_archived", ".release_review", ".post_release_recommendation_fixes",
                      "node_modules", ".git", "venv", ".venv", "configs"}
 
         errors = []
