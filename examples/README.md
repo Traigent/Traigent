@@ -23,7 +23,7 @@ The gallery provides:
 | Folder | Description | Count |
 | ------ | ----------- | ----- |
 | **`quickstart/`** | **Start here!** Ready-to-run README examples | 3 examples |
-| **`core/`** | Essential examples introducing core Traigent concepts | 10 examples |
+| **`core/`** | Essential examples introducing core Traigent concepts | 12 examples |
 | **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
 | **`datasets/`** | Shared evaluation datasets and test data | 9+ datasets |
@@ -64,6 +64,8 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 | **`chunking-long-context`** | Handle documents exceeding context limits | Chunking strategies, long-context handling | ~4 min |
 | **`safety-guardrails`** | Apply content moderation and safety | Safety filters, guardrails, moderation | ~3 min |
 | **`prompt-ab-test`** | A/B test different prompt variants | Prompt comparison, statistical testing | ~3 min |
+| **`production-deployment`** | Load and apply optimized configs in production | Config persistence, hot-swap, deployment patterns | ~2 min |
+| **`error-handling`** | Graceful failure modes and fallback patterns | Error recovery, budget limits, timeouts, validation | ~2 min |
 
 ### What You'll Learn
 
@@ -88,6 +90,10 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 - **safety-guardrails**: Content moderation integration. Shows how to optimize for accuracy while maintaining safety constraints - essential for production deployments.
 
 - **prompt-ab-test**: Statistical A/B testing for prompts. Compare prompt variants with statistical significance, not just single-run comparisons.
+
+- **production-deployment**: Production deployment workflow. Optimize, save the best config to JSON, load it in production, and run with a frozen configuration.
+
+- **error-handling**: Graceful error handling patterns. Demonstrates invalid config detection, budget limits, timeout handling, preflight validation, and fallback to default configs.
 
 **Each example includes:**
 
@@ -204,11 +210,14 @@ Use `test_all_examples.sh` to run examples by category:
 cd examples
 
 # Run examples by category (mock mode, no API keys)
-./test_all_examples.sh core        # Run 10 core examples
-./test_all_examples.sh ragas       # Run 3 RAGAS examples
-./test_all_examples.sh docs        # Run 2 docs examples
-./test_all_examples.sh walkthrough # Run 8 walkthrough examples
-./test_all_examples.sh all         # Run all categories (23 examples)
+./test_all_examples.sh core               # Run 12 core examples
+./test_all_examples.sh quickstart         # Run 3 quickstart examples
+./test_all_examples.sh tvl                # Run 5 TVL tutorial examples
+./test_all_examples.sh multi-objective    # Run 5 multi-objective variants
+./test_all_examples.sh walkthrough        # Run 8 walkthrough examples
+./test_all_examples.sh advanced-walkthrough # Run 5 advanced walkthrough examples
+./test_all_examples.sh manifest           # Run all 37 manifest examples (strict)
+./test_all_examples.sh all                # Run all categories
 
 # Run with real API keys
 ./test_all_examples.sh --real core
@@ -222,11 +231,16 @@ cd examples
 
 | Category | Examples | Description |
 | -------- | -------- | ----------- |
-| `core` | 10 | Main Traigent feature demonstrations |
+| `core` | 12 | Main Traigent feature demonstrations |
+| `quickstart` | 3 | Ready-to-run README examples |
+| `tvl` | 5 | TVL specification tutorials |
+| `multi-objective` | 5 | Multi-objective optimization variants |
+| `walkthrough` | 8 | Tutorial walkthrough examples |
+| `advanced-walkthrough` | 5 | Advanced walkthrough mock examples |
 | `ragas` | 3 | RAGAS evaluation integration |
 | `docs` | 2 | Documentation inline examples |
-| `walkthrough` | 8 | Tutorial walkthrough examples |
-| `all` | 23 | Run all categories |
+| `manifest` | 37 | All publication-ready examples (strict) |
+| `all` | — | Run all categories |
 
 ### Quick Start (No API Keys!)
 

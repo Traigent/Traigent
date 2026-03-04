@@ -1,0 +1,10 @@
+{"input": {"text": "What is machine learning?"}, "output": "A subset of AI that learns from data."}
+{"input": {"text": "Explain cloud computing."}, "output": "On-demand delivery of IT resources via the internet."}
+{"input": {"text": "What is a neural network?"}, "output": "A computing system inspired by biological neural networks."}
+{"input": {"text": "Define DevOps."}, "output": "A set of practices combining software development and IT operations."}
+{"input": {"text": "What is containerization?"}, "output": "Packaging software with its dependencies into isolated containers."}
+{"input": {"text": "Explain microservices."}, "output": "An architecture where applications are collections of small services."}
+{"input": {"text": "What is CI/CD?"}, "output": "Continuous integration and continuous delivery for software releases."}
+{"input": {"text": "Define API."}, "output": "An interface that allows software applications to communicate."}
+{"input": {"text": "What is version control?"}, "output": "A system for tracking changes to files over time."}
+{"input": {"text": "Explain data encryption."}, "output": "Converting data into a coded format to prevent unauthorized access."}

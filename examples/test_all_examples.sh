@@ -17,7 +17,7 @@
 #   ./test_all_examples.sh tvl                     # Run TVL tutorial examples
 #   ./test_all_examples.sh multi-objective         # Run multi-objective examples
 #   ./test_all_examples.sh advanced-walkthrough    # Run advanced walkthrough
-#   ./test_all_examples.sh manifest                # Run SDK manifest (35 examples, strict)
+#   ./test_all_examples.sh manifest                # Run SDK manifest (37 examples, strict)
 #   ./test_all_examples.sh all                     # Run all examples (broad smoke)
 #   ./test_all_examples.sh --real core             # Real mode (needs API keys)
 #
@@ -31,7 +31,7 @@
 #   advanced            - Execution modes and specialized features
 #   ragas               - RAGAS evaluation integration examples (3 examples)
 #   docs                - Documentation inline examples (2 examples)
-#   manifest            - SDK publication manifest (35 examples, strict — skips = failure)
+#   manifest            - SDK publication manifest (37 examples, strict — skips = failure)
 #   all                 - Run all categories (broad smoke, skips OK)
 #
 # MODE FLAGS:
@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "  advanced            - Execution modes and specialized features"
             echo "  ragas               - RAGAS evaluation integration (3 examples)"
             echo "  docs                - Documentation inline examples (2 examples)"
-            echo "  manifest            - SDK publication manifest (35 examples, strict)"
+            echo "  manifest            - SDK publication manifest (37 examples, strict)"
             echo "  all                 - Run all categories (broad smoke)"
             echo ""
             echo "Mode flags:"
@@ -132,6 +132,8 @@ declare -a CORE_EXAMPLES=(
     "core/prompt-ab-test/run.py"
     "core/chunking-long-context/run.py"
     "core/tool-use-calculator/run.py"
+    "core/production-deployment/run.py"
+    "core/error-handling/run.py"
 )
 
 # RAGAS examples - evaluation integration (work in mock mode)
