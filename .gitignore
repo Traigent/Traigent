@@ -277,6 +277,8 @@ htmlcov/
 code_reviews/
 tmp/code-review/
 CLAUDE.local.md
+review_sdk_*.md
+linkedin_profile_paste_ready.md
 
 # Cleanup/fix scripts (temporary)
 fix_*.py
