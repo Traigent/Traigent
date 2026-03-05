@@ -1954,12 +1954,92 @@ _ALLOWED_AST_NODES = (
     ast.USub,
 )
 
+_SAFE_CONSTRAINT_CALLS = frozenset({"len", "min", "max", "sum", "abs", "any", "all"})
+_SAFE_MATH_CALLS = frozenset(
+    {
+        "sqrt",
+        "log",
+        "log2",
+        "log10",
+        "exp",
+        "expm1",
+        "pow",
+        "floor",
+        "ceil",
+        "trunc",
+        "fabs",
+        "factorial",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "sinh",
+        "cosh",
+        "tanh",
+        "asinh",
+        "acosh",
+        "atanh",
+        "degrees",
+        "radians",
+        "hypot",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "prod",
+        "fsum",
+        "gcd",
+        "lcm",
+        "comb",
+        "perm",
+        "copysign",
+        "fmod",
+        "remainder",
+        "dist",
+        "erf",
+        "erfc",
+        "gamma",
+        "lgamma",
+        "cbrt",
+    }
+)
+
+
+def _is_allowed_constraint_call(func_node: ast.AST) -> bool:
+    """Return True when a call target is explicitly permitted in constraints."""
+    if isinstance(func_node, ast.Name):
+        return func_node.id in _SAFE_CONSTRAINT_CALLS
+
+    if isinstance(func_node, ast.Attribute):
+        # Allow explicit math.<fn> subset only (e.g., math.sqrt, math.log)
+        if (
+            isinstance(func_node.value, ast.Name)
+            and func_node.value.id == "math"
+            and func_node.attr in _SAFE_MATH_CALLS
+        ):
+            return True
+
+    return False
+
 
 def _validate_expression_ast(node: ast.AST, source: str) -> None:
     for child in ast.walk(node):
         if not isinstance(child, _ALLOWED_AST_NODES):
             raise TVLValidationError(
                 f"Unsupported expression construct '{type(child).__name__}' in '{source}'"
+            )
+        if isinstance(child, ast.Attribute) and child.attr.startswith("__"):
+            raise TVLValidationError(
+                f"Unsafe attribute access '{child.attr}' in '{source}'"
+            )
+        if isinstance(child, ast.Name) and child.id.startswith("__"):
+            raise TVLValidationError(f"Unsafe identifier '{child.id}' in '{source}'")
+        if isinstance(child, ast.Call) and not _is_allowed_constraint_call(child.func):
+            raise TVLValidationError(
+                f"Unsupported function call in '{source}'; "
+                "only len/min/max/sum/abs/any/all and math.<fn> are allowed"
             )
 
 
