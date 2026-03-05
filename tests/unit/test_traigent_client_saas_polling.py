@@ -22,6 +22,8 @@ def _build_saas_client() -> TraigentClient:
 @pytest.mark.asyncio
 async def test_optimize_saas_times_out_when_status_never_completes() -> None:
     client = _build_saas_client()
+    fake_loop = Mock()
+    fake_loop.time = Mock(side_effect=[0.0, 0.0, 0.002])
 
     client.backend_client.upload_dataset = AsyncMock(return_value={"dataset_id": "d1"})
     client.backend_client.create_optimization_session = AsyncMock(
@@ -31,7 +33,12 @@ async def test_optimize_saas_times_out_when_status_never_completes() -> None:
         return_value={"status": "RUNNING", "completed_trials": 0}
     )
 
-    with pytest.raises(OptimizationError, match="polling timed out"):
+    with (
+        pytest.raises(OptimizationError, match="polling timed out"),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        mp.setattr("asyncio.get_running_loop", lambda: fake_loop)
+        mp.setattr("asyncio.sleep", AsyncMock(return_value=None))
         await client._optimize_saas(
             function=lambda: "ok",
             dataset={"examples": []},

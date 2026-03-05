@@ -398,7 +398,8 @@ class TraigentClient:
                 elapsed = asyncio.get_running_loop().time() - poll_start
                 if elapsed > max_poll_duration:
                     raise OptimizationError(
-                        f"SaaS optimization polling timed out after {max_poll_duration:.1f}s"
+                        f"SaaS optimization polling timed out after {elapsed:.1f}s "
+                        f"(limit: {max_poll_duration:.1f}s)"
                     )
 
                 status = await get_status(session_id)

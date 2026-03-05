@@ -1955,6 +1955,56 @@ _ALLOWED_AST_NODES = (
 )
 
 _SAFE_CONSTRAINT_CALLS = frozenset({"len", "min", "max", "sum", "abs", "any", "all"})
+_SAFE_MATH_CALLS = frozenset(
+    {
+        "sqrt",
+        "log",
+        "log2",
+        "log10",
+        "exp",
+        "expm1",
+        "pow",
+        "floor",
+        "ceil",
+        "trunc",
+        "fabs",
+        "factorial",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "sinh",
+        "cosh",
+        "tanh",
+        "asinh",
+        "acosh",
+        "atanh",
+        "degrees",
+        "radians",
+        "hypot",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "prod",
+        "fsum",
+        "gcd",
+        "lcm",
+        "comb",
+        "perm",
+        "copysign",
+        "fmod",
+        "remainder",
+        "dist",
+        "erf",
+        "erfc",
+        "gamma",
+        "lgamma",
+        "cbrt",
+    }
+)
 
 
 def _is_allowed_constraint_call(func_node: ast.AST) -> bool:
@@ -1963,14 +2013,13 @@ def _is_allowed_constraint_call(func_node: ast.AST) -> bool:
         return func_node.id in _SAFE_CONSTRAINT_CALLS
 
     if isinstance(func_node, ast.Attribute):
-        # Allow math.<callable> only (e.g., math.sqrt, math.log)
+        # Allow explicit math.<fn> subset only (e.g., math.sqrt, math.log)
         if (
             isinstance(func_node.value, ast.Name)
             and func_node.value.id == "math"
-            and not func_node.attr.startswith("__")
+            and func_node.attr in _SAFE_MATH_CALLS
         ):
-            candidate = getattr(math, func_node.attr, None)
-            return callable(candidate)
+            return True
 
     return False
 
