@@ -44,6 +44,7 @@ Before starting:
 
 - Blocking release gate trigger: push tag `v*`.
 - Dry run trigger: `workflow_dispatch`.
+- Continuous dry run trigger: push to `develop`.
 - Optional PR dry run to `main`: non-blocking until hardened.
 
 ## Model Runtime Policy (CLI)
