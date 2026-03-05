@@ -150,6 +150,8 @@ class ExecutionOptions(BaseModel):
         privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        cloud_fallback_policy: Cloud fallback behavior on execution failure.
+            "auto" or "warn" falls back to local optimization; "never" re-raises.
         reps_per_trial: Number of repetitions per configuration for statistical stability.
             Running multiple repetitions helps account for LLM non-determinism.
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
@@ -194,6 +196,7 @@ class ExecutionOptions(BaseModel):
     hybrid_api_timeout: float | None = None
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool = False
+    cloud_fallback_policy: str | None = None
 
 
 class MockModeOptions(BaseModel):
@@ -335,6 +338,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "hybrid_api_timeout": None,
     "hybrid_api_auth_header": None,
     "hybrid_api_auto_discover_tvars": False,
+    "cloud_fallback_policy": None,
     "local_storage_path": None,
     "minimal_logging": True,
     "parallel_config": None,
@@ -434,6 +438,7 @@ class LegacyOptimizeArgs:
     hybrid_api_timeout: float | None = None
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool | None = None
+    cloud_fallback_policy: str | None = None
     local_storage_path: str | None = None
     minimal_logging: bool | None = None
     parallel_config: ParallelConfig | dict[str, Any] | None = None
@@ -514,6 +519,7 @@ class LegacyOptimizeArgs:
             ("hybrid_api_timeout", self.hybrid_api_timeout),
             ("hybrid_api_auth_header", self.hybrid_api_auth_header),
             ("hybrid_api_auto_discover_tvars", self.hybrid_api_auto_discover_tvars),
+            ("cloud_fallback_policy", self.cloud_fallback_policy),
             ("local_storage_path", self.local_storage_path),
             ("minimal_logging", self.minimal_logging),
             ("parallel_config", self.parallel_config),
@@ -910,6 +916,7 @@ class ResolvedExecutionOptions:
     hybrid_api_timeout: Any
     hybrid_api_auth_header: Any
     hybrid_api_auto_discover_tvars: Any
+    cloud_fallback_policy: Any
     local_storage_path: Any
     minimal_logging: Any
     parallel_config: Any
@@ -1034,6 +1041,12 @@ def _resolve_execution_bundle_options(
             "hybrid_api_auto_discover_tvars",
             base_options.hybrid_api_auto_discover_tvars,
             execution_bundle.hybrid_api_auto_discover_tvars,
+            defaults,
+        ),
+        cloud_fallback_policy=_resolve_option(
+            "cloud_fallback_policy",
+            base_options.cloud_fallback_policy,
+            execution_bundle.cloud_fallback_policy,
             defaults,
         ),
         local_storage_path=_resolve_option(
@@ -1664,6 +1677,8 @@ def optimize(
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             privacy_enabled: Flag enabling hybrid privacy safeguards.
+            cloud_fallback_policy: Cloud failure policy: "auto"/"warn" fallback to
+                local, "never" to fail closed.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 
@@ -1889,6 +1904,7 @@ def optimize(
     hybrid_api_timeout = combined_settings["hybrid_api_timeout"]
     hybrid_api_auth_header = combined_settings["hybrid_api_auth_header"]
     hybrid_api_auto_discover_tvars = combined_settings["hybrid_api_auto_discover_tvars"]
+    cloud_fallback_policy = combined_settings["cloud_fallback_policy"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
@@ -1991,6 +2007,7 @@ def optimize(
         hybrid_api_timeout=hybrid_api_timeout,
         hybrid_api_auth_header=hybrid_api_auth_header,
         hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+        cloud_fallback_policy=cloud_fallback_policy,
         local_storage_path=local_storage_path,
         minimal_logging=minimal_logging,
         parallel_config=parallel_config,
@@ -2016,6 +2033,7 @@ def optimize(
     hybrid_api_timeout = resolved_execution.hybrid_api_timeout
     hybrid_api_auth_header = resolved_execution.hybrid_api_auth_header
     hybrid_api_auto_discover_tvars = resolved_execution.hybrid_api_auto_discover_tvars
+    cloud_fallback_policy = resolved_execution.cloud_fallback_policy
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging
     parallel_config = resolved_execution.parallel_config
@@ -2173,6 +2191,7 @@ def optimize(
             hybrid_api_timeout=hybrid_api_timeout,
             hybrid_api_auth_header=hybrid_api_auth_header,
             hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            cloud_fallback_policy=cloud_fallback_policy,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,

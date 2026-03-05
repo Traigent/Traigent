@@ -10,6 +10,7 @@ import pytest
 from traigent.tvl.spec_loader import (
     _parse_exploration_parallelism,
     _resolve_algorithm,
+    compile_constraint_expression,
     load_tvl_spec,
 )
 from traigent.utils.exceptions import TVLValidationError
@@ -159,6 +160,26 @@ objectives:
 
     artifact = load_tvl_spec(spec_path=spec_file, validate_constraints=False)
     assert len(artifact.constraints) == 1
+
+
+def test_constraint_expression_rejects_dunder_attribute_access() -> None:
+    """Constraint evaluator rejects dunder attribute traversal."""
+    with pytest.raises(TVLValidationError, match="Unsafe attribute access"):
+        compile_constraint_expression("params.__class__", label="dunder_escape")
+
+
+def test_constraint_expression_rejects_non_whitelisted_calls() -> None:
+    """Only safe call targets are allowed in constraint expressions."""
+    with pytest.raises(TVLValidationError, match="Unsupported function call"):
+        compile_constraint_expression("params.get('temperature') == 0.2", label="calls")
+
+
+def test_constraint_expression_allows_math_function_calls() -> None:
+    """math.<fn> calls are preserved for legitimate numeric constraints."""
+    evaluator = compile_constraint_expression(
+        "math.sqrt(params.value) <= 4.0", label="math_ok"
+    )
+    assert evaluator({"value": 16.0}, None) is True
 
 
 def test_legacy_formats_emit_deprecation_warnings() -> None:
