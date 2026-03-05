@@ -251,14 +251,17 @@ def extract_trial_data_for_metric(
         return []
 
     # Build ordered value vectors from shared IDs
+    # Use mean of shared examples as aggregate so ranking is consistent
+    # with the paired comparison (which only sees shared examples).
     ordered_ids = sorted(shared_ids)
     result: list[dict[str, Any]] = []
-    for trial_idx, emap, aggregate in trial_maps:
+    for trial_idx, emap, _full_aggregate in trial_maps:
         values = [emap[eid] for eid in ordered_ids]
+        shared_aggregate = sum(values) / len(values)
         result.append(
             {
                 "values": values,
-                "metric_value": aggregate,
+                "metric_value": shared_aggregate,
                 "trial_idx": trial_idx,
             }
         )
@@ -308,8 +311,14 @@ def compute_significance(
         elif orientation == "minimize":
             higher_is_better = False
         else:
-            # Fallback to heuristic
+            # Fallback to heuristic — no explicit orientation provided
             higher_is_better = not is_minimization_objective(obj_name)
+            logger.warning(
+                "No explicit orientation for objective '%s'; "
+                "using heuristic (higher_is_better=%s)",
+                obj_name,
+                higher_is_better,
+            )
 
         trial_data = extract_trial_data_for_metric(trials, obj_name)
         if len(trial_data) < 2:
