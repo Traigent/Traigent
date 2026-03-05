@@ -812,6 +812,15 @@ class TestExampleMeasure:
         with pytest.raises(ValueError, match="must be numeric"):
             ExampleMeasure(data)
 
+    def test_rejects_boolean_metric(self):
+        """Should reject boolean metric values."""
+        data = {
+            "example_id": "ex_test_5b",
+            "metrics": {"is_valid": True},
+        }
+        with pytest.raises(ValueError, match="must be numeric"):
+            ExampleMeasure(data)
+
     def test_rejects_invalid_metric_key_pattern(self):
         """Should reject metric keys that aren't Python identifiers."""
         data = {

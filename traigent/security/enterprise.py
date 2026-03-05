@@ -381,7 +381,9 @@ class SLAMonitor:
         """Stop SLA monitoring"""
         self.running = False
         if self.monitor_thread:
-            self.monitor_thread.join()
+            self.monitor_thread.join(timeout=5.0)
+            if self.monitor_thread.is_alive():
+                logger.warning("SLA monitor thread did not stop within 5 seconds")
         logger.info("Stopped SLA monitoring")
 
     def _monitor_loop(self, interval_seconds: int) -> None:
