@@ -296,6 +296,11 @@ validate_*.py
 # Keep core protocol/tracking files versioned for team sharing
 !.release_review/
 !.release_review/*.md
+# Keep run contract docs versioned, ignore generated run payloads
+.release_review/runs/*
+!.release_review/runs/
+!.release_review/runs/README.md
+.release_review/CURRENT_RUN
 # Ignore agent artifacts (scratch outputs, notes)
 .release_review/**/artifacts/
 .release_review/**/.mypy_cache/

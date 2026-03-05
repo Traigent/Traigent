@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -100,6 +100,10 @@ security:  ## Run security checks
 	@echo "Checking for hardcoded secrets..."
 	@grep -r "sk-proj\|sk-ant\|api_key\|secret\|password" --include="*.py" $(SRC_DIR) $(VALIDATION_SRC_DIR) || echo "No hardcoded secrets found"
 
+security-check:  ## Strict security gate checks (used by release-review gate)
+	@echo "Running strict Bandit scan..."
+	python3 -m bandit -ll -r $(SRC_DIR) $(VALIDATION_SRC_DIR)
+
 clean:  ## Clean up generated files
 	rm -rf build/
 	rm -rf dist/
@@ -153,6 +157,15 @@ dev: install-dev install-hooks  ## Complete development setup
 check: quality-check  ## Alias for quality-check
 
 fix: quick-fix  ## Alias for quick-fix
+
+release-review-local:  ## Run local v2 release gate and emit canonical verdict
+	@release_id="$${RELEASE_ID:-local-$$(date -u +%Y%m%d_%H%M%S)}"; \
+	version="$${VERSION:-local}"; \
+	base_branch="$${BASE_BRANCH:-main}"; \
+	echo "Running release review locally (release_id=$$release_id, version=$$version, base_branch=$$base_branch)"; \
+	python3 .release_review/automation/generate_tracking.py --version "$$version" --release-id "$$release_id" --base-branch "$$base_branch" --no-archive; \
+	python3 .release_review/automation/release_gate_runner.py --release-id "$$release_id" --mode local --strict; \
+	python3 .release_review/automation/build_release_verdict.py --release-id "$$release_id"
 
 # SonarQube scanning
 sonar-scan:  ## Run SonarQube scan using local config file
