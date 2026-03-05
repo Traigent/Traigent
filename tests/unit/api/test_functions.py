@@ -257,10 +257,10 @@ class TestOverrideConfig:
 
     def test_override_config_invalid_max_trials(self):
         """Test invalid max trials."""
-        with pytest.raises(ValueError, match="max_trials must be >= 1"):
-            override_config(max_trials=0)
+        result = override_config(max_trials=0)
+        assert result == {"max_trials": 0}
 
-        with pytest.raises(ValueError, match="max_trials must be >= 1"):
+        with pytest.raises(ValueError, match="max_trials must be non-negative"):
             override_config(max_trials=-10)
 
     def test_override_config_timeout(self):

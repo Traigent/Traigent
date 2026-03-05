@@ -483,6 +483,12 @@ class OptimizedFunction:
         self.samples_include_pruned = self._store_optional_param(
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
+        self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
+        if (
+            not isinstance(self.optimization_history_limit, int)
+            or self.optimization_history_limit < 1
+        ):
+            raise ValueError("optimization_history_limit must be >= 1")
 
         # Multi-agent configuration
         self.agents = self._store_optional_param(kwargs, sentinel, "agents", None)
@@ -579,6 +585,7 @@ class OptimizedFunction:
             auto_load_best=getattr(self, "_auto_load_best", False),
             load_from=getattr(self, "_load_from", None),
             setup_wrapper_callback=self._setup_function_wrapper,
+            optimization_history_limit=self.optimization_history_limit,
         )
 
         # Make function callable with current config
@@ -1400,7 +1407,7 @@ class OptimizedFunction:
 
             # Store results
             self._optimization_results = result
-            self._optimization_history.append(result)
+            self._csm.append_optimization_result(result)
 
             # Update current config to best found
             if result.best_config:
@@ -1773,7 +1780,7 @@ class OptimizedFunction:
 
             # Store results
             self._optimization_results = result
-            self._optimization_history.append(result)
+            self._csm.append_optimization_result(result)
 
             # Update current config and best config (consistent with local optimization)
             if result.best_config:

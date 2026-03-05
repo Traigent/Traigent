@@ -420,6 +420,7 @@ coverage.json
 tests/manual/
 tmp/
 walkthrough/myfiles.md
+scripts/smoke/run_local_real_openrouter_quick_smoke.sh
 
 # Presentations (internal/sensitive)
 presentations/

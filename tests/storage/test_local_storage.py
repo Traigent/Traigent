@@ -78,6 +78,13 @@ class TestLocalStorageManager:
         assert session.metadata == {}
         assert session.status == "pending"
 
+    def test_create_session_ids_are_unique(self):
+        """Session IDs should not collide for rapid consecutive sessions."""
+        session_id_1 = self.storage.create_session("same_func")
+        session_id_2 = self.storage.create_session("same_func")
+
+        assert session_id_1 != session_id_2
+
     def test_create_session_with_metadata(self):
         """Test session creation with comprehensive metadata."""
         metadata = {
@@ -377,6 +384,35 @@ class TestLocalStorageManager:
         session = self.storage.load_session(session_id)
         assert len(session.trials) == 10
         assert session.best_score == 0.95  # Last trial had highest score
+
+    def test_acquire_lock_removes_stale_pid_lock(self):
+        """Stale lock files should be cleaned up when owner pid is dead."""
+        from traigent.utils.function_identity import sanitize_identifier
+
+        lock_dir = self.storage_path / ".locks"
+        lock_dir.mkdir(exist_ok=True, parents=True)
+        lock_path = lock_dir / f"{sanitize_identifier('stale_lock')}.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+
+        with patch.object(self.storage, "_is_process_alive", return_value=False):
+            with self.storage.acquire_lock("stale_lock", timeout=0.2):
+                assert lock_path.exists()
+
+        assert not lock_path.exists()
+
+    def test_acquire_lock_keeps_live_pid_lock(self):
+        """Active lock owner pid should not be treated as stale."""
+        from traigent.utils.function_identity import sanitize_identifier
+
+        lock_dir = self.storage_path / ".locks"
+        lock_dir.mkdir(exist_ok=True, parents=True)
+        lock_path = lock_dir / f"{sanitize_identifier('live_lock')}.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+
+        with patch.object(self.storage, "_is_process_alive", return_value=True):
+            with pytest.raises(TimeoutError, match="Could not acquire lock"):
+                with self.storage.acquire_lock("live_lock", timeout=0.1):
+                    pass
 
     def test_edge_case_large_data(self):
         """Test handling of large configuration and metadata."""
