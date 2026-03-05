@@ -25,6 +25,7 @@ class TestCloudIntegration:
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
         )
 
         # Execution mode should be set to cloud for managed optimizations
@@ -41,6 +42,7 @@ class TestCloudIntegration:
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
         )
 
         # When cloud service fails, it should fall back to local
@@ -81,6 +83,61 @@ class TestCloudIntegration:
                 result = await opt_func.optimize()
                 assert result.best_score == 0.85
 
+    @pytest.mark.asyncio
+    async def test_cloud_mode_defaults_to_fail_closed_policy(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Cloud mode should raise on unexpected cloud failures by default."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            execution_mode="cloud",
+        )
+
+        with patch.object(
+            opt_func,
+            "_optimize_with_cloud_service",
+            side_effect=OSError("network down"),
+        ):
+            with pytest.raises(OSError, match="network down"):
+                await opt_func._try_cloud_execution(
+                    dataset=sample_dataset,
+                    max_trials=5,
+                    timeout=10.0,
+                    effective_config_space=sample_config_space,
+                    algorithm_kwargs={},
+                )
+
+    @pytest.mark.asyncio
+    async def test_cloud_mode_can_explicitly_enable_auto_fallback(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Explicit auto policy preserves local fallback behavior."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            execution_mode="cloud",
+            cloud_fallback_policy="auto",
+        )
+
+        with patch.object(
+            opt_func,
+            "_optimize_with_cloud_service",
+            side_effect=OSError("network down"),
+        ):
+            result = await opt_func._try_cloud_execution(
+                dataset=sample_dataset,
+                max_trials=5,
+                timeout=10.0,
+                effective_config_space=sample_config_space,
+                algorithm_kwargs={},
+            )
+            assert result is None
+
     def test_cloud_mode_configuration(
         self, simple_function, sample_config_space, sample_objectives
     ):
@@ -95,6 +152,19 @@ class TestCloudIntegration:
         assert opt_func.execution_mode == "cloud"
         # API key is handled by the cloud client, not stored in OptimizedFunction
 
+    def test_invalid_cloud_fallback_policy_raises_value_error(
+        self, simple_function, sample_config_space, sample_objectives
+    ):
+        """Reject unsupported cloud fallback policy values."""
+        with pytest.raises(ValueError, match="cloud_fallback_policy"):
+            OptimizedFunction(
+                func=simple_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                execution_mode="cloud",
+                cloud_fallback_policy="invalid",
+            )
+
     @pytest.mark.asyncio
     async def test_cloud_optimization_with_custom_params(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
@@ -106,6 +176,7 @@ class TestCloudIntegration:
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
         )
 
         # Test that cloud execution is set
@@ -163,6 +234,7 @@ class TestCloudIntegration:
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
         )
 
         # Mock cloud service to raise authentication error during initialization
