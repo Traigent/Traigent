@@ -81,7 +81,9 @@ def apply_config(
 
     safe_path = _sanitize_source_path(file_path)
 
-    source = safe_path.read_text()
+    source = (
+        safe_path.read_text()
+    )  # NOSONAR: validated canonical path from _sanitize_source_path
     lines = source.splitlines(keepends=True)
 
     try:
@@ -129,7 +131,9 @@ def apply_config(
     if backup:
         shutil.copy2(safe_path, safe_path.with_suffix(".py.bak"))
 
-    safe_path.write_text("".join(lines))
+    safe_path.write_text(
+        "".join(lines)
+    )  # NOSONAR: validated canonical path from _sanitize_source_path
     return safe_path
 
 
