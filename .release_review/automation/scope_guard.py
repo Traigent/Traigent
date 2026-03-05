@@ -1,238 +1,142 @@
 #!/usr/bin/env python3
-"""Scope Guard for Release Review Protocol.
-
-Validates that agent changes are within their assigned scope.
-Used by captain before approving any agent work.
-"""
+"""Scope guard for release-review v2."""
 
 from __future__ import annotations
 
+import argparse
 import fnmatch
-import os
+import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+
+@dataclass
+class ScopeConfig:
+    include: list[str]
+    exclude: list[str]
+    shared_files: list[str]
+    base_reference: str
+
 
 class ScopeGuard:
-    """Validate agent changes stay within assigned scope."""
-
     def __init__(self, repo_path: str | Path | None = None) -> None:
-        """Initialize scope guard.
-
-        Args:
-            repo_path: Path to git repository. Defaults to current directory.
-        """
         self.repo_path = Path(repo_path) if repo_path else Path.cwd()
 
-    def get_modified_files(
-        self,
-        branch: str,
-        base_branch: str | None = None,
-    ) -> list[str]:
-        """Get list of files modified in branch compared to base.
+    def _git(self, *args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
 
-        Args:
-            branch: Branch to check
-            base_branch: Base branch to compare against (defaults to RR_BASE_BRANCH or "main")
+    def load_scope_config(self, scope_file: str | Path) -> ScopeConfig:
+        data = yaml.safe_load(Path(scope_file).read_text())
+        if not isinstance(data, dict):
+            raise ValueError("scope config must be a mapping")
+        return ScopeConfig(
+            include=[str(x) for x in data.get("include", [])],
+            exclude=[str(x) for x in data.get("exclude", [])],
+            shared_files=[str(x) for x in data.get("shared_files", [])],
+            base_reference=str(data.get("base_reference", "main")),
+        )
 
-        Returns:
-            List of modified file paths
-        """
-        if base_branch is None:
-            base_branch = os.environ.get("RR_BASE_BRANCH", "main")
-
+    def resolve_base_reference(self, base_reference: str, explicit_base: str | None) -> str:
+        if explicit_base:
+            return explicit_base
+        if base_reference != "previous_release_tag":
+            return base_reference
         try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only", f"{base_branch}...{branch}"],
-                capture_output=True,
-                text=True,
-                cwd=self.repo_path,
-                check=True,
-            )
-            files = result.stdout.strip().split("\n")
-            return [f for f in files if f]  # Filter empty strings
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Git diff failed: {e.stderr}") from e
+            return self._git("describe", "--tags", "--abbrev=0")
+        except subprocess.CalledProcessError:
+            return "main"
 
-    def validate_changes(
+    def get_modified_files(self, target_ref: str, base_ref: str) -> list[str]:
+        merge_base = self._git("merge-base", base_ref, target_ref)
+        output = self._git("diff", "--name-only", f"{merge_base}..{target_ref}")
+        return [line for line in output.splitlines() if line.strip()]
+
+    def _matches_any(self, path: str, patterns: list[str]) -> bool:
+        if not patterns:
+            return True
+        return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+    def is_allowed(self, file_path: str, config: ScopeConfig) -> tuple[bool, str | None]:
+        if self._matches_any(file_path, config.exclude):
+            return True, "excluded-by-policy"
+
+        if file_path in config.shared_files:
+            return True, "shared-file"
+
+        if self._matches_any(file_path, config.include):
+            return True, "in-scope"
+
+        return False, "not-included"
+
+    def validate(
         self,
-        branch: str,
-        allowed_paths: list[str],
-        base_branch: str | None = None,
+        target_ref: str,
+        config: ScopeConfig,
+        base_ref: str,
     ) -> dict[str, Any]:
-        """Check if all changes are within assigned scope.
+        files = self.get_modified_files(target_ref=target_ref, base_ref=base_ref)
 
-        Args:
-            branch: Branch to validate
-            allowed_paths: List of allowed path patterns (supports glob)
-            base_branch: Base branch to compare against (defaults to RR_BASE_BRANCH or "main")
+        violations: list[str] = []
+        decisions: list[dict[str, str]] = []
 
-        Returns:
-            Validation result with violations list
-        """
-        modified_files = self.get_modified_files(branch, base_branch)
-
-        if not modified_files:
-            return {
-                "valid": True,
-                "violations": [],
-                "total_changes": 0,
-                "message": "No changes detected",
-            }
-
-        violations = []
-        for file in modified_files:
-            if not self._is_allowed(file, allowed_paths):
-                violations.append(file)
+        for file_path in files:
+            allowed, reason = self.is_allowed(file_path, config)
+            decisions.append({"file": file_path, "allowed": str(allowed).lower(), "reason": reason or ""})
+            if not allowed:
+                violations.append(file_path)
 
         return {
             "valid": len(violations) == 0,
+            "target_ref": target_ref,
+            "base_ref": base_ref,
+            "total_files": len(files),
             "violations": violations,
-            "total_changes": len(modified_files),
-            "allowed_changes": len(modified_files) - len(violations),
-            "message": (
-                "All changes within scope"
-                if not violations
-                else f"SCOPE VIOLATION: {len(violations)} files outside assigned scope"
-            ),
+            "decisions": decisions,
         }
 
-    def _is_allowed(self, file: str, allowed_paths: list[str]) -> bool:
-        """Check if a file path matches any allowed pattern.
 
-        Args:
-            file: File path to check
-            allowed_paths: List of allowed patterns
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate scope of modified files")
+    parser.add_argument("--target", default="HEAD", help="Target ref to validate")
+    parser.add_argument("--base", default=None, help="Base ref override")
+    parser.add_argument("--scope-file", default=".release_review/scope.yml")
+    parser.add_argument("--repo-path", default=".")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
 
-        Returns:
-            True if file is allowed
-        """
-        for pattern in allowed_paths:
-            # Handle directory patterns (e.g., "traigent/core/")
-            if pattern.endswith("/"):
-                if file.startswith(pattern):
-                    return True
-            # Handle glob patterns (e.g., "traigent/**/*.py")
-            elif "*" in pattern:
-                if fnmatch.fnmatch(file, pattern):
-                    return True
-            # Handle exact matches
-            elif file == pattern or file.startswith(pattern + "/"):
-                return True
-
-        return False
-
-    def validate_staged_changes(
-        self,
-        allowed_paths: list[str],
-    ) -> dict[str, Any]:
-        """Validate currently staged changes.
-
-        Args:
-            allowed_paths: List of allowed path patterns
-
-        Returns:
-            Validation result
-        """
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture_output=True,
-                text=True,
-                cwd=self.repo_path,
-                check=True,
-            )
-            staged_files = result.stdout.strip().split("\n")
-            staged_files = [f for f in staged_files if f]
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Git diff failed: {e.stderr}") from e
-
-        if not staged_files:
-            return {
-                "valid": True,
-                "violations": [],
-                "total_staged": 0,
-                "message": "No staged changes",
-            }
-
-        violations = []
-        for file in staged_files:
-            if not self._is_allowed(file, allowed_paths):
-                violations.append(file)
-
-        return {
-            "valid": len(violations) == 0,
-            "violations": violations,
-            "total_staged": len(staged_files),
-            "message": (
-                "All staged changes within scope"
-                if not violations
-                else f"SCOPE VIOLATION: {violations}"
-            ),
-        }
-
-    def generate_scope_declaration(
-        self,
-        component: str,
-        allowed_paths: list[str],
-    ) -> str:
-        """Generate scope declaration for agent pre-flight.
-
-        Args:
-            component: Component name
-            allowed_paths: Assigned paths
-
-        Returns:
-            Markdown scope declaration
-        """
-        paths_list = "\n".join(f"  - `{p}`" for p in allowed_paths)
-        return f"""## Agent Scope Declaration
-
-**Component**: {component}
-**Assigned Paths**:
-{paths_list}
-
-### Pre-flight Checklist
-
-- [ ] I have read my assigned component list
-- [ ] I will NOT modify files outside my scope
-- [ ] I will NOT merge branches (Captain-only)
-- [ ] I will flag cross-component issues to Captain instead of fixing directly
-"""
-
-
-def main() -> None:
-    """CLI entry point."""
-    import sys
-
-    if len(sys.argv) < 3:
-        print("Usage: scope_guard.py <branch> <allowed_path1> [allowed_path2] ...")
-        print("Example: scope_guard.py review/core/claude/20251213 traigent/core/")
-        sys.exit(1)
-
-    branch = sys.argv[1]
-    allowed_paths = sys.argv[2:]
-
-    guard = ScopeGuard()
+    guard = ScopeGuard(args.repo_path)
 
     try:
-        result = guard.validate_changes(branch, allowed_paths)
+        config = guard.load_scope_config(args.scope_file)
+        base_ref = guard.resolve_base_reference(config.base_reference, args.base)
+        result = guard.validate(target_ref=args.target, config=config, base_ref=base_ref)
+    except (ValueError, FileNotFoundError, subprocess.CalledProcessError) as exc:
+        print(f"Error: {exc}")
+        return 2
 
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
         if result["valid"]:
-            print(f"✅ {result['message']}")
-            print(f"   Total changes: {result['total_changes']}")
+            print(f"✅ Scope valid: {result['total_files']} files checked")
         else:
-            print(f"❌ {result['message']}")
-            print("   Violations:")
-            for v in result["violations"]:
-                print(f"     - {v}")
-            sys.exit(1)
+            print(f"❌ Scope violations ({len(result['violations'])}):")
+            for file_path in result["violations"]:
+                print(f"  - {file_path}")
 
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    return 0 if result["valid"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

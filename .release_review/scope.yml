@@ -1,0 +1,27 @@
+version: 1
+base_reference: "previous_release_tag"
+include:
+  - "traigent/**/*.py"
+  - "traigent_validation/**/*.py"
+  - "tests/**/*.py"
+  - ".github/workflows/*.yml"
+  - "pyproject.toml"
+  - "requirements/**/*.txt"
+  - "Makefile"
+  - ".release_review/**/*.md"
+  - ".release_review/automation/**/*.py"
+exclude:
+  - "docs/**"
+  - "examples/**"
+  - "playground/**"
+  - "walkthrough/**"
+  - "use-cases/**"
+  - "**/__pycache__/**"
+  - "**/*.pyc"
+shared_files:
+  - "pyproject.toml"
+  - "requirements/requirements.txt"
+  - "requirements/requirements-test.txt"
+  - "requirements/requirements-dev.txt"
+  - "Makefile"
+  - ".release_review/PRE_RELEASE_REVIEW_TRACKING.md"
