@@ -1954,12 +1954,43 @@ _ALLOWED_AST_NODES = (
     ast.USub,
 )
 
+_SAFE_CONSTRAINT_CALLS = frozenset({"len", "min", "max", "sum", "abs", "any", "all"})
+
+
+def _is_allowed_constraint_call(func_node: ast.AST) -> bool:
+    """Return True when a call target is explicitly permitted in constraints."""
+    if isinstance(func_node, ast.Name):
+        return func_node.id in _SAFE_CONSTRAINT_CALLS
+
+    if isinstance(func_node, ast.Attribute):
+        # Allow math.<callable> only (e.g., math.sqrt, math.log)
+        if (
+            isinstance(func_node.value, ast.Name)
+            and func_node.value.id == "math"
+            and not func_node.attr.startswith("__")
+        ):
+            candidate = getattr(math, func_node.attr, None)
+            return callable(candidate)
+
+    return False
+
 
 def _validate_expression_ast(node: ast.AST, source: str) -> None:
     for child in ast.walk(node):
         if not isinstance(child, _ALLOWED_AST_NODES):
             raise TVLValidationError(
                 f"Unsupported expression construct '{type(child).__name__}' in '{source}'"
+            )
+        if isinstance(child, ast.Attribute) and child.attr.startswith("__"):
+            raise TVLValidationError(
+                f"Unsafe attribute access '{child.attr}' in '{source}'"
+            )
+        if isinstance(child, ast.Name) and child.id.startswith("__"):
+            raise TVLValidationError(f"Unsafe identifier '{child.id}' in '{source}'")
+        if isinstance(child, ast.Call) and not _is_allowed_constraint_call(child.func):
+            raise TVLValidationError(
+                f"Unsupported function call in '{source}'; "
+                "only len/min/max/sum/abs/any/all and math.<fn> are allowed"
             )
 
 

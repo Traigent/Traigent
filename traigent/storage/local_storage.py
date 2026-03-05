@@ -8,6 +8,7 @@ Inspired by DeepEval's approach to local JSON file storage.
 import json
 import os
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -200,7 +201,7 @@ class LocalStorageManager:
         """
         timestamp = datetime.now(UTC)
         safe_function = sanitize_identifier(function_name)
-        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{safe_function}"
+        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{safe_function}_{uuid.uuid4().hex[:8]}"
 
         session = OptimizationSession(
             session_id=session_id,
