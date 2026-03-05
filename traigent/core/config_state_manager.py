@@ -30,6 +30,8 @@ from traigent.utils.secure_path import (
 
 logger = get_logger(__name__)
 
+DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
+
 
 class OptimizationState(Enum):
     """Lifecycle state of an OptimizedFunction.
@@ -64,6 +66,7 @@ class ConfigStateManager:
         auto_load_best: bool,
         load_from: str | None,
         setup_wrapper_callback: Callable[[], None],
+        optimization_history_limit: int = DEFAULT_OPTIMIZATION_HISTORY_LIMIT,
     ) -> None:
         """Initialize config state manager.
 
@@ -75,6 +78,8 @@ class ConfigStateManager:
             auto_load_best: Whether to auto-load best config on init
             load_from: Explicit path to load config from
             setup_wrapper_callback: Callback to re-wrap function with new config
+            optimization_history_limit: Maximum number of optimization results to
+                retain in in-memory history.
         """
         self.func = func
         self.default_config = default_config
@@ -83,6 +88,9 @@ class ConfigStateManager:
         self._auto_load_best = auto_load_best
         self._load_from = load_from
         self._setup_wrapper_callback = setup_wrapper_callback
+        if optimization_history_limit < 1:
+            raise ValueError("optimization_history_limit must be >= 1")
+        self._optimization_history_limit = optimization_history_limit
 
         # Core state
         self._state = OptimizationState.UNOPTIMIZED
@@ -172,6 +180,13 @@ class ConfigStateManager:
     def get_optimization_history(self) -> list[OptimizationResult]:
         """Get history of all optimization runs."""
         return self._optimization_history.copy()
+
+    def append_optimization_result(self, result: OptimizationResult) -> None:
+        """Append optimization result and enforce bounded history."""
+        self._optimization_history.append(result)
+        overflow = len(self._optimization_history) - self._optimization_history_limit
+        if overflow > 0:
+            del self._optimization_history[:overflow]
 
     def is_optimization_complete(self) -> bool:
         """Check if optimization has been completed."""
@@ -315,7 +330,7 @@ class ConfigStateManager:
                 timestamp=datetime.fromisoformat(result_dict["timestamp"]),
                 metadata=result_dict.get("metadata", {}),
             )
-            self._optimization_history.append(self._optimization_results)
+            self.append_optimization_result(self._optimization_results)
 
             if self._optimization_results.best_config:
                 self._current_config = self._optimization_results.best_config.copy()

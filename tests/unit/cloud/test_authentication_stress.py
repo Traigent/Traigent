@@ -1142,36 +1142,46 @@ class TestMemoryAndResourceManagement:
         # Track resource usage over time
         memory_samples = [initial_memory]
 
+        class _MemoryTestResponse:
+            def __init__(self, payload):
+                self.status = 200
+                self._payload = payload
+
+            async def json(self):
+                return self._payload
+
+        class _MemoryTestContext:
+            def __init__(self, response):
+                self._response = response
+
+            async def __aenter__(self):
+                return self._response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        class _MemoryTestSession:
+            def __init__(self, payload):
+                self.closed = False
+                self._response = _MemoryTestResponse(payload)
+
+            def get(self, *_args, **_kwargs):
+                return _MemoryTestContext(self._response)
+
+            async def close(self):
+                self.closed = True
+
         async def memory_intensive_operation_batch(batch_id):
             # Create many clients with different API keys
             clients = []
             for i in range(10):
                 api_key = f"tg_memory_test_{batch_id}_{i:02d}_" + "m" * 40
 
-                with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
-                    with patch(
-                        "traigent.cloud.client.aiohttp.ClientSession"
-                    ) as mock_cs:
-                        with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                            # Lightweight mock for memory testing
-                            mock_session = Mock()
-                            mock_response = Mock()
-                            mock_response.status = 200
-                            mock_response.json = AsyncMock(
-                                return_value={"batch": batch_id, "client": i}
-                            )
-
-                            mock_context = Mock()
-                            mock_context.__aenter__ = AsyncMock(
-                                return_value=mock_response
-                            )
-                            mock_context.__aexit__ = AsyncMock(return_value=None)
-
-                            mock_session.get = Mock(return_value=mock_context)
-                            mock_cs.return_value = mock_session
-
-                            client = TraigentCloudClient(api_key=api_key)
-                            clients.append(client)
+                client = TraigentCloudClient(api_key=api_key)
+                # Use lightweight in-memory session to avoid measuring mock
+                # bookkeeping instead of actual client memory behavior.
+                client._session = _MemoryTestSession({"batch": batch_id, "client": i})
+                clients.append(client)
 
             # Make requests with all clients
             tasks = []

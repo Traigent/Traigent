@@ -117,8 +117,10 @@ class ExampleMeasure:
                 raise ValueError(
                     f"metric key '{key}' must match pattern ^[a-zA-Z_]\\w*$"
                 )
-            # Values must be numeric or None
-            if value is not None and not isinstance(value, (int, float)):
+            # Values must be numeric or None (bool is explicitly rejected)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
                 raise ValueError(
                     f"metric '{key}' must be numeric, got {type(value).__name__}"
                 )
@@ -203,6 +205,12 @@ class MeasuresDict(UserDict):
                     f"Invalid: 'my-metric', '123abc'. Valid: 'my_metric', 'metric_123'."
                 )
 
+            # bool is not treated as numeric for contract parity with JSON Schema
+            if isinstance(value, bool):
+                raise TypeError(
+                    f"Measure '{key}' must be numeric type (int, float, None), got bool"
+                )
+
             # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
             if not isinstance(value, (int, float, type(None))):
                 logger.warning(
@@ -246,6 +254,12 @@ class MeasuresDict(UserDict):
                 f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
                 f"(Python identifier syntax). "
                 f"Use underscores instead of hyphens or spaces."
+            )
+
+        # bool is not treated as numeric for contract parity with JSON Schema
+        if isinstance(value, bool):
+            raise TypeError(
+                f"Value for measure '{key}' must be numeric type (int, float, None), got bool"
             )
 
         # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
