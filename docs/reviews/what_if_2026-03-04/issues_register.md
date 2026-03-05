@@ -19,7 +19,7 @@ Legend:
 
 ## Validation Note for WI-001
 A local proof-of-concept expression successfully bypassed the intended restricted eval context by traversing:
-`params.__class__.__init__.__globals__['__builtins__']['__import__'](...)`
+`params.__class__.__init__.__globals__.get("__builtins__").get("__import__")(...)`
 
 This confirms the what-if scenario is not theoretical under current AST/eval guarding.
 

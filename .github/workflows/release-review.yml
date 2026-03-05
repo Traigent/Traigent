@@ -47,7 +47,8 @@ jobs:
   lint_type:
     name: lint-type
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.lint_type_status.outputs.status }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,16 +59,31 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
       - name: Black + isort + Ruff + MyPy
+        id: lint_type_run
+        continue-on-error: true
         run: |
           black --check --diff traigent/ traigent_validation/
           isort --check-only --diff traigent/ traigent_validation/
           ruff check traigent/ traigent_validation/ --output-format=github
           mypy traigent/ traigent_validation/ --install-types --non-interactive
+      - name: Capture lint/type status
+        id: lint_type_status
+        if: always()
+        run: |
+          if [ "${{ steps.lint_type_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce lint/type on release tags
+        if: github.ref_type == 'tag' && steps.lint_type_status.outputs.status == 'fail'
+        run: exit 1
 
   tests_unit:
     name: tests-unit
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.tests_unit_status.outputs.status }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,14 +94,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[all,dev]"
       - name: Run unit tests
+        id: tests_unit_run
+        continue-on-error: true
         env:
           PYTHONPATH: .
         run: pytest tests/unit -q --tb=short
+      - name: Capture unit-test status
+        id: tests_unit_status
+        if: always()
+        run: |
+          if [ "${{ steps.tests_unit_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce unit tests on release tags
+        if: github.ref_type == 'tag' && steps.tests_unit_status.outputs.status == 'fail'
+        run: exit 1
 
   tests_integration:
     name: tests-integration
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.tests_integration_status.outputs.status }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -96,14 +127,29 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[all,dev]"
       - name: Run integration tests
+        id: tests_integration_run
+        continue-on-error: true
         env:
           PYTHONPATH: .
         run: pytest tests/integration -q --tb=short
+      - name: Capture integration-test status
+        id: tests_integration_status
+        if: always()
+        run: |
+          if [ "${{ steps.tests_integration_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce integration tests on release tags
+        if: github.ref_type == 'tag' && steps.tests_integration_status.outputs.status == 'fail'
+        run: exit 1
 
   security:
     name: security
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.security_status.outputs.status }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -114,35 +160,72 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install bandit pip-audit
       - name: Security checks
+        id: security_run
+        continue-on-error: true
         run: make security-check
+      - name: Capture security status
+        id: security_status
+        if: always()
+        run: |
+          if [ "${{ steps.security_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce security checks on release tags
+        if: github.ref_type == 'tag' && steps.security_status.outputs.status == 'fail'
+        run: exit 1
 
   dependency_review:
     name: dependency-review
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.dependency_review_status.outputs.status }}
     permissions:
       contents: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
       - name: PR dependency review
+        id: dependency_review_pr
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/dependency-review-action@v4
       - uses: actions/setup-python@v5
         if: github.event_name != 'pull_request'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Tag/manual dependency review
+        id: dependency_review_cli
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-audit
           pip-audit --progress-spinner off --desc -r requirements/requirements.txt
+      - name: Capture dependency-review status
+        id: dependency_review_status
+        if: always()
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            outcome="${{ steps.dependency_review_pr.outcome }}"
+          else
+            outcome="${{ steps.dependency_review_cli.outcome }}"
+          fi
+          if [ "$outcome" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce dependency review on release tags
+        if: github.ref_type == 'tag' && steps.dependency_review_status.outputs.status == 'fail'
+        run: exit 1
 
   codeql:
     name: codeql
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
+    outputs:
+      gate_status: ${{ steps.codeql_status.outputs.status }}
     permissions:
       actions: read
       contents: read
@@ -150,15 +233,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Initialize CodeQL
+        id: codeql_init
+        continue-on-error: true
         uses: github/codeql-action/init@v3
         with:
           languages: python
       - name: Perform CodeQL analysis
+        id: codeql_analyze
+        continue-on-error: true
         uses: github/codeql-action/analyze@v3
+      - name: Capture CodeQL status
+        id: codeql_status
+        if: always()
+        run: |
+          if [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce CodeQL on release tags
+        if: github.ref_type == 'tag' && steps.codeql_status.outputs.status == 'fail'
+        run: exit 1
 
   release_review_consistency:
     name: release-review-consistency
     runs-on: ubuntu-latest
+    if: always()
     needs:
       - lint_type
       - tests_unit
@@ -166,7 +266,6 @@ jobs:
       - security
       - dependency_review
       - codeql
-    continue-on-error: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -222,12 +321,12 @@ jobs:
           {
             "release_id": "${{ steps.release_id.outputs.release_id }}",
             "checks": [
-              {"key": "lint-type", "status": "${{ needs.lint_type.result == 'success' && 'pass' || 'fail' }}", "required": $required},
-              {"key": "tests-unit", "status": "${{ needs.tests_unit.result == 'success' && 'pass' || 'fail' }}", "required": $required},
-              {"key": "tests-integration", "status": "${{ needs.tests_integration.result == 'success' && 'pass' || 'fail' }}", "required": $required},
-              {"key": "security", "status": "${{ needs.security.result == 'success' && 'pass' || 'fail' }}", "required": $required},
-              {"key": "dependency-review", "status": "${{ needs.dependency_review.result == 'success' && 'pass' || 'fail' }}", "required": $required},
-              {"key": "codeql", "status": "${{ needs.codeql.result == 'success' && 'pass' || 'fail' }}", "required": $required},
+              {"key": "lint-type", "status": "${{ needs.lint_type.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "tests-unit", "status": "${{ needs.tests_unit.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "tests-integration", "status": "${{ needs.tests_integration.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "security", "status": "${{ needs.security.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "dependency-review", "status": "${{ needs.dependency_review.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "codeql", "status": "${{ needs.codeql.outputs.gate_status || 'fail' }}", "required": $required},
               {"key": "release-review-consistency", "status": "pass", "required": $required}
             ]
           }
