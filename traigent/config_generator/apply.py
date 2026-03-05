@@ -15,8 +15,10 @@ from pathlib import Path
 from traigent.config_generator.types import AutoConfigResult
 
 # Base directory for path containment checks (S2083).
-# Defaults to CWD; overridable via env var for testing / CI.
-_SAFE_BASE_DIR = os.environ.get("TRAIGENT_CONFIG_BASE_DIR", "")
+# Defaults to CWD and can be narrowed via env var for testing / CI.
+_SAFE_BASE_DIR = os.path.realpath(
+    os.environ.get("TRAIGENT_CONFIG_BASE_DIR", os.getcwd())
+)
 
 
 def _sanitize_source_path(file_path: Path) -> Path:
@@ -30,14 +32,12 @@ def _sanitize_source_path(file_path: Path) -> Path:
     """
     canonical = os.path.realpath(str(file_path))
 
-    # Optional containment check (S2083): enforce only when explicitly configured.
-    # Default behavior allows CLI usage on arbitrary source files (including temp paths).
-    if _SAFE_BASE_DIR:
-        base = os.path.realpath(_SAFE_BASE_DIR)
-        if not canonical.startswith(base + os.sep) and canonical != base:
-            raise ValueError(
-                f"Path '{canonical}' is outside the allowed base directory '{base}'"
-            )
+    # Always enforce containment to block user-controlled path traversal.
+    base = os.path.realpath(_SAFE_BASE_DIR)
+    if not canonical.startswith(base + os.sep) and canonical != base:
+        raise ValueError(
+            f"Path '{canonical}' is outside the allowed base directory '{base}'"
+        )
 
     # Reconstruct Path from the validated canonical string
     safe = Path(canonical)
