@@ -35,6 +35,22 @@ def load_json(path: Path, default: Any) -> Any:
         return default
 
 
+def resolve_within(base_dir: Path, candidate: Path, label: str) -> Path:
+    """Resolve candidate path and ensure it stays under base_dir."""
+    base_resolved = base_dir.resolve()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (base_resolved / candidate).resolve()
+
+    try:
+        resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError(f"{label} must remain under {base_resolved}") from exc
+
+    return resolved
+
+
 def get_git_sha_short() -> str:
     try:
         result = subprocess.run(
@@ -264,13 +280,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    run_dir = Path(args.run_dir) if args.run_dir else Path(".release_review") / "runs" / args.release_id
-    checks_file = (
+    run_dir = (
+        Path(args.run_dir)
+        if args.run_dir
+        else Path(".release_review") / "runs" / args.release_id
+    ).resolve()
+    checks_candidate = (
         Path(args.checks_file)
         if args.checks_file
-        else run_dir / "gate_results" / "check_results.json"
+        else Path("gate_results") / "check_results.json"
     )
-    output = Path(args.output) if args.output else run_dir / "gate_results" / "verdict.json"
+    output_candidate = (
+        Path(args.output)
+        if args.output
+        else Path("gate_results") / "verdict.json"
+    )
+
+    try:
+        checks_file = resolve_within(run_dir, checks_candidate, "--checks-file")
+        output = resolve_within(run_dir, output_candidate, "--output")
+    except ValueError as err:
+        print(f"Invalid path argument: {err}")
+        return 2
 
     checks_raw = load_json(checks_file, [])
     checks = normalize_check_results(checks_raw)
