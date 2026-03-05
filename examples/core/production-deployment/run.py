@@ -187,50 +187,50 @@ def run_with_config(config: dict, query: str) -> str:
 # --- Main ---
 
 
+async def main():
+    """Run the full production deployment workflow."""
+    print("=" * 60)
+    print("Production Deployment Example")
+    print("=" * 60)
+
+    # Phase 1: Optimize
+    print("\n--- Phase 1: Run Optimization ---")
+    result = await answer_query.optimize(max_trials=5)
+    print(f"\nBest Score: {result.best_score}")
+    print(f"Best Config: {result.best_config}")
+
+    # Phase 2: Save
+    print("\n--- Phase 2: Save Best Config ---")
+    save_best_config(result, SAVED_CONFIG_PATH)
+
+    # Phase 3: Load in "production"
+    print("\n--- Phase 3: Load Config in Production ---")
+    production_config = load_config(SAVED_CONFIG_PATH)
+
+    # Phase 4: Run with saved config
+    print("\n--- Phase 4: Run with Saved Config ---")
+    test_queries = [
+        "How do I reset my password?",
+        "What payment methods do you accept?",
+        "How do I export my data?",
+    ]
+    for query in test_queries:
+        print(f"\nQuery: {query}")
+        answer = run_with_config(production_config, query)
+        print(f"Answer: {answer}")
+
+    # Cleanup
+    if SAVED_CONFIG_PATH.exists():
+        SAVED_CONFIG_PATH.unlink()
+
+    print("\n" + "=" * 60)
+    print("Production deployment workflow complete!")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     try:
-        print("=" * 60)
-        print("Production Deployment Example")
-        print("=" * 60)
-
-        # Phase 1: Optimize
-        print("\n--- Phase 1: Run Optimization ---")
-
-        async def optimize_phase():
-            return await answer_query.optimize(max_trials=5)
-
-        result = asyncio.run(optimize_phase())
-        print(f"\nBest Score: {result.best_score}")
-        print(f"Best Config: {result.best_config}")
-
-        # Phase 2: Save
-        print("\n--- Phase 2: Save Best Config ---")
-        best_config = save_best_config(result, SAVED_CONFIG_PATH)
-
-        # Phase 3: Load in "production"
-        print("\n--- Phase 3: Load Config in Production ---")
-        production_config = load_config(SAVED_CONFIG_PATH)
-
-        # Phase 4: Run with saved config
-        print("\n--- Phase 4: Run with Saved Config ---")
-        test_queries = [
-            "How do I reset my password?",
-            "What payment methods do you accept?",
-            "How do I export my data?",
-        ]
-        for query in test_queries:
-            print(f"\nQuery: {query}")
-            answer = run_with_config(production_config, query)
-            print(f"Answer: {answer}")
-
-        # Cleanup
-        if SAVED_CONFIG_PATH.exists():
-            SAVED_CONFIG_PATH.unlink()
-
-        print("\n" + "=" * 60)
-        print("Production deployment workflow complete!")
-        print("=" * 60)
-
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
         raise SystemExit(130) from None
