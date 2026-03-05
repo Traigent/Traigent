@@ -53,7 +53,9 @@ if not DATASET_PATH.is_file():
     raise FileNotFoundError(f"Evaluation dataset not found at {DATASET_PATH}")
 DATASET = str(DATASET_PATH)
 CONFIG_DIR = BASE / ".traigent_local"
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+if MOCK:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+SAVED_CONFIG_PATH = CONFIG_DIR / "best_config.json"
 SAVED_CONFIG_PATH = CONFIG_DIR / "best_config.json"
 
 if MOCK:
