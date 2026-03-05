@@ -18,11 +18,7 @@ from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
-from traigent.utils.retry import (
-    NetworkError,
-    RateLimitError,
-    retry_http_request,
-)
+from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .auth import AuthenticationError, AuthManager
@@ -1463,12 +1459,19 @@ class TraigentCloudClient(BaseTraigentClient):
                 if response.status == 200:
                     data = await response.json()
                     return self._deserialize_agent_optimization_response(data)
+                elif response.status in {401, 403}:
+                    raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
                         f"Failed to start agent optimization: HTTP {response.status}: {error_text}"
                     )
 
+        except AuthenticationError:
+            await self._reset_http_session("agent_optimize auth failure")
+            raise
+        except CloudServiceError:
+            raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_optimize network error")
             raise CloudServiceError(

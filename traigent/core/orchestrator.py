@@ -514,8 +514,12 @@ class OptimizationOrchestrator:
     @property
     def progress(self) -> float:
         """Get optimization progress as a percentage (0.0 to 1.0)."""
-        if self.max_trials is None or self.max_trials == 0:
-            return 1.0 if self.trial_count == 0 else 0.0
+        if self.max_trials is None:
+            # Unbounded runs have indeterminate completion percentage.
+            return 0.0
+        if self.max_trials == 0:
+            # Explicit no-op optimization is immediately complete.
+            return 1.0
 
         return min(self.trial_count / self.max_trials, 1.0)
 
