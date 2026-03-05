@@ -30,17 +30,15 @@ def _sanitize_source_path(file_path: Path) -> Path:
     Returns a freshly-constructed ``Path`` whose components are derived
     from the validated canonical string — not from the original argument.
     """
-    canonical = os.path.realpath(str(file_path))
-
-    # Always enforce containment to block user-controlled path traversal.
-    base = os.path.realpath(_SAFE_BASE_DIR)
-    if not canonical.startswith(base + os.sep) and canonical != base:
+    safe = Path(file_path).resolve()
+    base = Path(_SAFE_BASE_DIR).resolve()
+    try:
+        safe.relative_to(base)
+    except ValueError as exc:
         raise ValueError(
-            f"Path '{canonical}' is outside the allowed base directory '{base}'"
-        )
+            f"Path '{safe}' is outside the allowed base directory '{base}'"
+        ) from exc
 
-    # Reconstruct Path from the validated canonical string
-    safe = Path(canonical)
     if not safe.is_file():
         raise ValueError(f"Not a file: {safe}")
     if safe.suffix != ".py":
