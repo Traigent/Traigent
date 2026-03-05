@@ -224,6 +224,10 @@ async def main():
     # Cleanup
     if SAVED_CONFIG_PATH.exists():
         SAVED_CONFIG_PATH.unlink()
+    try:
+        CONFIG_DIR.rmdir()  # Only removes if empty
+    except OSError:
+        pass  # Not empty (e.g. other Traigent results present), leave it
 
     print("\n" + "=" * 60)
     print("Production deployment workflow complete!")
