@@ -1799,10 +1799,10 @@ class OptimizationOrchestrator:
         # Compute statistical significance badges per objective
         # Guarded: significance is post-processing and must not fail the run
         try:
-            orientations = None
+            orientations: dict[str, str] | None = None
             if self.objective_schema and self.objective_schema.objectives:
                 orientations = {
-                    obj.name: obj.orientation
+                    obj.name: str(obj.orientation)
                     for obj in self.objective_schema.objectives
                 }
             significance = compute_significance(
