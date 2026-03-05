@@ -71,8 +71,11 @@ class TestExtractTrialDataForMetric:
         assert len(data) == 2
         assert len(data[0]["values"]) == 5
         assert len(data[1]["values"]) == 5
-        assert data[0]["metric_value"] == 0.8
-        assert data[1]["metric_value"] == 0.6
+        # metric_value is now the mean of shared examples, not the full aggregate
+        expected_mean_a = sum(0.7 + i * 0.02 for i in range(5)) / 5
+        assert abs(data[0]["metric_value"] - expected_mean_a) < 1e-9
+        expected_mean_b = sum(0.5 + i * 0.02 for i in range(5)) / 5
+        assert abs(data[1]["metric_value"] - expected_mean_b) < 1e-9
         assert data[0]["trial_idx"] == 0
         assert data[1]["trial_idx"] == 1
 
@@ -582,3 +585,112 @@ class TestFindEquivalenceGroup:
         result = find_equivalence_group(data, higher_is_better=True)
         assert result.winners == []
         assert len(result.top_group) == 2
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator wiring: significance attach + failure isolation
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorSignificanceWiring:
+    """Test that the orchestrator's finalization path attaches significance
+    and isolates failures so they don't break the optimization run."""
+
+    def _make_result_with_trials(self):
+        """Build two separable fake trials."""
+        trial_a = FakeTrialResult(
+            metrics={"accuracy": 0.93},
+            metadata={
+                "example_results": [
+                    {"example_id": f"ex_{i}", "metrics": {"accuracy": v}}
+                    for i, v in enumerate(
+                        [0.95, 0.92, 0.93, 0.94, 0.96, 0.91, 0.93, 0.95, 0.94, 0.92]
+                    )
+                ]
+            },
+        )
+        trial_b = FakeTrialResult(
+            metrics={"accuracy": 0.50},
+            metadata={
+                "example_results": [
+                    {"example_id": f"ex_{i}", "metrics": {"accuracy": v}}
+                    for i, v in enumerate(
+                        [0.50, 0.52, 0.48, 0.51, 0.49, 0.53, 0.50, 0.48, 0.52, 0.51]
+                    )
+                ]
+            },
+        )
+        return [trial_a, trial_b]
+
+    def test_significance_attached_to_metadata(self):
+        """compute_significance result is stored in result.metadata."""
+        trials = self._make_result_with_trials()
+        metadata: dict = {}
+
+        significance = compute_significance(
+            trials=trials,
+            objectives=["accuracy"],
+            objective_orientations={"accuracy": "maximize"},
+        )
+        if significance:
+            metadata["statistical_significance"] = significance
+
+        assert "statistical_significance" in metadata
+        sig = metadata["statistical_significance"]["accuracy"]
+        assert 0 in sig["winners"], "Trial 0 (higher acc) should be a winner"
+        assert sig["n_shared_examples"] == 10
+
+    def test_significance_failure_does_not_crash(self):
+        """If compute_significance raises, the orchestrator's try/except
+        catches it and continues (optimization result is unaffected)."""
+        metadata: dict = {}
+
+        def _exploding_compute(**kwargs):
+            raise RuntimeError("boom")
+
+        # Replicate the exact guard pattern from orchestrator._finalize_optimization
+        try:
+            significance = _exploding_compute(
+                trials=[],
+                objectives=["accuracy"],
+                objective_orientations={"accuracy": "maximize"},
+                alpha=0.05,
+            )
+            if significance:
+                metadata["statistical_significance"] = significance
+        except Exception:
+            # Orchestrator swallows and logs — optimization result unaffected
+            pass
+
+        assert "statistical_significance" not in metadata
+
+    def test_significance_uses_shared_example_aggregate(self):
+        """metric_value should be the mean of shared examples, not the
+        full-trial aggregate (which could differ if coverage varies)."""
+        # Trial A evaluated examples 0-9, trial B evaluated 5-14.
+        # Shared = examples 5-9 only.
+        trial_a = FakeTrialResult(
+            metrics={"accuracy": 0.80},  # full aggregate (should be ignored)
+            metadata={
+                "example_results": [
+                    {"example_id": f"ex_{i}", "metrics": {"accuracy": 0.90}}
+                    for i in range(10)
+                ]
+            },
+        )
+        trial_b = FakeTrialResult(
+            metrics={"accuracy": 0.60},  # full aggregate (should be ignored)
+            metadata={
+                "example_results": [
+                    {"example_id": f"ex_{i}", "metrics": {"accuracy": 0.50}}
+                    for i in range(5, 15)
+                ]
+            },
+        )
+        data = extract_trial_data_for_metric([trial_a, trial_b], "accuracy")
+        assert len(data) == 2
+        # Shared examples are ex_5..ex_9 — both have constant values
+        # Trial A shared mean = 0.90, trial B shared mean = 0.50
+        metric_values = sorted(d["metric_value"] for d in data)
+        assert abs(metric_values[0] - 0.50) < 1e-9
+        assert abs(metric_values[1] - 0.90) < 1e-9

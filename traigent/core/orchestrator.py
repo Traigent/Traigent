@@ -1797,19 +1797,28 @@ class OptimizationOrchestrator:
         merge_run_metrics_into_session_summary(result)
 
         # Compute statistical significance badges per objective
-        orientations = None
-        if self.objective_schema and self.objective_schema.objectives:
-            orientations = {
-                obj.name: obj.orientation for obj in self.objective_schema.objectives
-            }
-        significance = compute_significance(
-            trials=result.trials,
-            objectives=self.optimizer.objectives,
-            objective_orientations=orientations,
-            alpha=0.05,
-        )
-        if significance:
-            result.metadata["statistical_significance"] = significance
+        # Guarded: significance is post-processing and must not fail the run
+        try:
+            orientations = None
+            if self.objective_schema and self.objective_schema.objectives:
+                orientations = {
+                    obj.name: obj.orientation
+                    for obj in self.objective_schema.objectives
+                }
+            significance = compute_significance(
+                trials=result.trials,
+                objectives=self.optimizer.objectives,
+                objective_orientations=orientations,
+                alpha=0.05,
+            )
+            if significance:
+                result.metadata["statistical_significance"] = significance
+        except Exception:
+            logger.warning(
+                "Statistical significance computation failed; "
+                "optimization results are unaffected",
+                exc_info=True,
+            )
 
         await self.backend_session_manager.update_weighted_scores(result, session_id)
         self.backend_session_manager.submit_session_aggregation(result, session_id)
