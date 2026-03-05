@@ -556,8 +556,8 @@ def override_config(
         override["constraints"] = constraints
 
     if max_trials is not None:
-        if max_trials < 1:
-            raise ValueError("max_trials must be >= 1")
+        if max_trials < 0:
+            raise ValueError("max_trials must be non-negative")
         override["max_trials"] = max_trials
 
     if timeout is not None:

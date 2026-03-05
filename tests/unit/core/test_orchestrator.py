@@ -754,6 +754,11 @@ class TestOptimizationOrchestrator:
         """Test progress calculation edge cases."""
         from datetime import datetime
 
+        # No max trials set and no trials executed
+        orchestrator.max_trials = None
+        orchestrator._trials = []
+        assert orchestrator.progress == 0.0
+
         # Create some dummy trials
         for i in range(5):
             trial = TrialResult(
@@ -766,7 +771,7 @@ class TestOptimizationOrchestrator:
             )
             orchestrator._trials.append(trial)
 
-        # No max trials set
+        # No max trials set after trials executed (indeterminate progress)
         orchestrator.max_trials = None
         assert orchestrator.progress == 0.0
 
