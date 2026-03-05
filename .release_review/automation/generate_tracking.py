@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def utc_now() -> str:
@@ -39,6 +42,25 @@ def archive_tracking_file(path: Path) -> str | None:
     archived = archive_dir / f"PRE_RELEASE_REVIEW_TRACKING_{suffix}.md"
     shutil.move(str(path), str(archived))
     return str(archived)
+
+
+def validate_release_id(release_id: str) -> str:
+    if not RELEASE_ID_PATTERN.fullmatch(release_id):
+        raise ValueError(
+            "release_id must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ "
+            "(alphanumeric, dot, underscore, hyphen only)"
+        )
+    return release_id
+
+
+def resolve_run_dir(output_root: str, release_id: str) -> tuple[Path, Path]:
+    root = Path(output_root).resolve()
+    run_dir = (root / release_id).resolve()
+    try:
+        run_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("resolved run directory escapes output root") from exc
+    return root, run_dir
 
 
 def render_tracking_board(
@@ -149,6 +171,7 @@ def main() -> int:
     parser.add_argument("--no-archive", action="store_true")
     args = parser.parse_args()
 
+    release_id = validate_release_id(args.release_id)
     release_review_dir = Path(".release_review")
     tracking_file = release_review_dir / "PRE_RELEASE_REVIEW_TRACKING.md"
 
@@ -157,8 +180,7 @@ def main() -> int:
         if archived:
             print(f"Archived previous tracking file: {archived}")
 
-    run_root = Path(args.output_root)
-    run_dir = run_root / args.release_id
+    _, run_dir = resolve_run_dir(args.output_root, release_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "gate_results").mkdir(parents=True, exist_ok=True)
     (run_dir / "components").mkdir(parents=True, exist_ok=True)
@@ -169,7 +191,7 @@ def main() -> int:
     write_inventories(run_dir)
     write_run_manifest(
         run_dir=run_dir,
-        release_id=args.release_id,
+        release_id=release_id,
         version=args.version,
         base_branch=args.base_branch,
         baseline_sha=baseline_sha,
@@ -182,7 +204,7 @@ def main() -> int:
     if review_log_template.exists():
         review_log_path.write_text(
             review_log_template.read_text()
-            .replace("<release_id>", args.release_id)
+            .replace("<release_id>", release_id)
             .replace("<version>", args.version)
             .replace("<sha>", baseline_sha)
             .replace("<timestamp>", utc_now())
@@ -190,7 +212,7 @@ def main() -> int:
 
     tracking_file.write_text(
         render_tracking_board(
-            release_id=args.release_id,
+            release_id=release_id,
             version=args.version,
             baseline_sha=baseline_sha,
             captain=args.captain,
@@ -198,7 +220,7 @@ def main() -> int:
         )
     )
 
-    (release_review_dir / "CURRENT_RUN").write_text(f"{args.release_id}\n")
+    (release_review_dir / "CURRENT_RUN").write_text(f"{release_id}\n")
 
     print(f"Tracking board created: {tracking_file}")
     print(f"Run directory created: {run_dir}")

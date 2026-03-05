@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -13,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from build_release_verdict import main as build_verdict_main
+
+RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,37 @@ class GateResult:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def validate_release_id(release_id: str) -> str:
+    if not RELEASE_ID_PATTERN.fullmatch(release_id):
+        raise ValueError(
+            "release_id must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ "
+            "(alphanumeric, dot, underscore, hyphen only)"
+        )
+    return release_id
+
+
+def resolve_run_dir(run_dir_arg: str | None, release_id: str) -> Path:
+    runs_root = Path(".release_review") / "runs"
+    runs_root_resolved = runs_root.resolve()
+
+    if run_dir_arg:
+        candidate = Path(run_dir_arg)
+        if candidate.is_absolute():
+            run_dir = candidate.resolve()
+        else:
+            run_dir = (Path.cwd() / candidate).resolve()
+    else:
+        run_dir = (runs_root_resolved / release_id).resolve()
+
+    try:
+        run_dir.relative_to(runs_root_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"run directory must remain under {runs_root_resolved}"
+        ) from exc
+    return run_dir
 
 
 def command_exists(command: list[str]) -> bool:
@@ -294,8 +328,9 @@ def main() -> int:
     parser.add_argument("--base-branch", default="main")
     args = parser.parse_args()
 
-    run_dir = Path(args.run_dir) if args.run_dir else Path(".release_review") / "runs" / args.release_id
-    ensure_run_workspace(run_dir, args.release_id, args.base_branch)
+    release_id = validate_release_id(args.release_id)
+    run_dir = resolve_run_dir(args.run_dir, release_id)
+    ensure_run_workspace(run_dir, release_id, args.base_branch)
     write_inventories(run_dir)
 
     checks = get_default_checks(args.mode)
@@ -306,7 +341,7 @@ def main() -> int:
     finished_at = utc_now()
 
     checks_payload = {
-        "release_id": args.release_id,
+        "release_id": release_id,
         "mode": args.mode,
         "strict": args.strict,
         "started_at_utc": started_at,
@@ -319,7 +354,7 @@ def main() -> int:
 
     write_summary_markdown(
         path=run_dir / "gate_results" / "summary.md",
-        release_id=args.release_id,
+        release_id=release_id,
         mode=args.mode,
         strict=args.strict,
         started_at=started_at,
@@ -331,7 +366,7 @@ def main() -> int:
 
     verdict_args = [
         "--release-id",
-        args.release_id,
+        release_id,
         "--run-dir",
         str(run_dir),
         "--checks-file",
