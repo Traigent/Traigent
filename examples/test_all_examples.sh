@@ -17,12 +17,12 @@
 #   ./test_all_examples.sh tvl                     # Run TVL tutorial examples
 #   ./test_all_examples.sh multi-objective         # Run multi-objective examples
 #   ./test_all_examples.sh advanced-walkthrough    # Run advanced walkthrough
-#   ./test_all_examples.sh manifest                # Run SDK manifest (35 examples, strict)
+#   ./test_all_examples.sh manifest                # Run SDK manifest (37 examples, strict)
 #   ./test_all_examples.sh all                     # Run all examples (broad smoke)
 #   ./test_all_examples.sh --real core             # Real mode (needs API keys)
 #
 # CATEGORIES:
-#   core                - Main examples demonstrating Traigent features (10 examples)
+#   core                - Main examples demonstrating Traigent features (12 examples)
 #   multi-objective     - Multi-objective tradeoff variants (5 examples)
 #   quickstart          - Quickstart tutorial examples (3 examples)
 #   tvl                 - TVL tutorial examples (5 examples)
@@ -31,7 +31,7 @@
 #   advanced            - Execution modes and specialized features
 #   ragas               - RAGAS evaluation integration examples (3 examples)
 #   docs                - Documentation inline examples (2 examples)
-#   manifest            - SDK publication manifest (35 examples, strict — skips = failure)
+#   manifest            - SDK publication manifest (37 examples, strict — skips = failure)
 #   all                 - Run all categories (broad smoke, skips OK)
 #
 # MODE FLAGS:
@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [--mock|--real] <category>"
             echo ""
             echo "Categories:"
-            echo "  core                - Main Traigent feature examples (10 examples)"
+            echo "  core                - Main Traigent feature examples (12 examples)"
             echo "  multi-objective     - Multi-objective tradeoff variants (5 examples)"
             echo "  quickstart          - Quickstart tutorials (3 examples)"
             echo "  tvl                 - TVL tutorials (5 examples)"
@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "  advanced            - Execution modes and specialized features"
             echo "  ragas               - RAGAS evaluation integration (3 examples)"
             echo "  docs                - Documentation inline examples (2 examples)"
-            echo "  manifest            - SDK publication manifest (35 examples, strict)"
+            echo "  manifest            - SDK publication manifest (37 examples, strict)"
             echo "  all                 - Run all categories (broad smoke)"
             echo ""
             echo "Mode flags:"
@@ -132,6 +132,8 @@ declare -a CORE_EXAMPLES=(
     "core/prompt-ab-test/run.py"
     "core/chunking-long-context/run.py"
     "core/tool-use-calculator/run.py"
+    "core/production-deployment/run.py"
+    "core/error-handling/run.py"
 )
 
 # RAGAS examples - evaluation integration (work in mock mode)
@@ -369,8 +371,8 @@ case "$CATEGORY" in
         run_category "Advanced Walkthrough" "${ADVANCED_WALKTHROUGH_EXAMPLES[@]}"
         ;;
     manifest)
-        print_header "SDK Publication Manifest (35 examples)" "$MODE_NAME"
-        echo -e "${YELLOW}--- Core (10) ---${NC}"
+        print_header "SDK Publication Manifest (37 examples)" "$MODE_NAME"
+        echo -e "${YELLOW}--- Core (12) ---${NC}"
         run_category "Core" "${CORE_EXAMPLES[@]}"
         echo ""
         echo -e "${YELLOW}--- Multi-Objective (5) ---${NC}"
@@ -387,7 +389,7 @@ case "$CATEGORY" in
         echo ""
         echo -e "${YELLOW}--- Advanced Walkthrough (5) ---${NC}"
         run_category "Advanced Walkthrough" "${ADVANCED_WALKTHROUGH_EXAMPLES[@]}"
-        # Strict: manifest requires ALL 35 to pass, no skips allowed
+        # Strict: manifest requires ALL 37 to pass, no skips allowed
         if [ $skipped -gt 0 ]; then
             echo ""
             echo -e "${RED}Manifest requires all examples to pass (${skipped} skipped)${NC}"
