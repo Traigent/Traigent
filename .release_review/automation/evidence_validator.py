@@ -1,568 +1,283 @@
 #!/usr/bin/env python3
-"""Evidence Validator for Release Review Protocol.
+"""Validate release-review evidence JSON files.
 
-Parses and validates evidence format in review tracking.
-Used by captain to ensure all evidence meets standards.
+Supports both:
+- v2 evidence JSON files (single JSON object)
+- legacy markdown tracking files with embedded JSON evidence snippets
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+SHA_PATTERN = re.compile(r"^[a-f0-9]{7,40}$")
+UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 @dataclass
-class ParsedEvidence:
-    """Parsed evidence data."""
-
-    format: str
-    commits: list[str]
-    tests_command: str | None
-    tests_status: str | None
-    tests_passed: int | None
-    tests_total: int | None
-    model: str
-    reviewer: str
-    timestamp: str
-    followups: str | None = None
-    accepted_risks: str | None = None
-    legacy_summary: str | None = None
-
-    @property
-    def tests_pass_rate(self) -> float:
-        """Calculate test pass rate."""
-        if not self.tests_total:
-            return 0.0
-        return self.tests_passed / self.tests_total
+class ValidationResult:
+    valid: bool
+    errors: list[str]
 
 
-class EvidenceValidator:
-    """Validate evidence format and content."""
+V2_REQUIRED_FIELDS = [
+    "component",
+    "review_type",
+    "reviewer_model",
+    "commit_sha",
+    "findings",
+    "tests",
+    "decision",
+    "timestamp_utc",
+]
 
-    VALID_STATUSES = {"PASS", "FAIL", "SKIP", "UNKNOWN"}
-    REQUIRED_JSON_FIELDS = {
-        "format",
-        "commits",
-        "tests",
-        "models",
-        "reviewer",
-        "timestamp",
-        "followups",
-        "accepted_risks",
-    }
-    REQUIRED_TEST_FIELDS = {"command", "status", "passed", "total"}
+LEGACY_REQUIRED_FIELDS = [
+    "format",
+    "commits",
+    "tests",
+    "models",
+    "reviewer",
+    "timestamp",
+    "followups",
+    "accepted_risks",
+]
 
-    # Pattern for standard evidence format
-    # Example: Tests: 47/47 | Commits: abc123 | Model: Claude/Opus4.5 | Time: 2025-12-13T10:00:00Z
-    STANDARD_PATTERN = re.compile(
-        r"Tests:\s*(\d+)/(\d+)\s*"
-        r"(?:passed\s*)?\|?\s*"
-        r"Commits?:\s*([a-f0-9]{7,40})\s*\|?\s*"
-        r"Model:\s*([^\|]+?)\s*\|?\s*"
-        r"(?:Time(?:stamp)?:\s*)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?)",
-        re.IGNORECASE,
-    )
 
-    # Flexible pattern for various evidence formats
-    FLEXIBLE_PATTERNS = {
-        "tests": re.compile(
-            r"Tests?:\s*(\d+)/(\d+)\s*(?:passed)?",
-            re.IGNORECASE,
-        ),
-        "commit": re.compile(
-            r"Commits?:\s*([a-f0-9]{7,40})",
-            re.IGNORECASE,
-        ),
-        "model": re.compile(
-            r"Model:\s*([^\|]+?)(?:\s*\||$)",
-            re.IGNORECASE,
-        ),
-        "timestamp": re.compile(
-            r"(?:Time(?:stamp)?:\s*)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?)",
-            re.IGNORECASE,
-        ),
-        "followups": re.compile(
-            r"Follow-?ups?:\s*([^\|]+?)(?:\s*\||$)",
-            re.IGNORECASE,
-        ),
-        "risks": re.compile(
-            r"(?:Accepted\s*)?Risks?:\s*([^\|]+?)(?:\s*\||$)",
-            re.IGNORECASE,
-        ),
-    }
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text())
 
-    def validate(self, evidence_text: str, allow_legacy_text: bool = False) -> dict[str, Any]:
-        """Parse and validate evidence format.
 
-        Args:
-            evidence_text: Evidence string to validate
-            allow_legacy_text: Whether to accept legacy non-JSON evidence
+def validate_commit_sha(sha: str, repo_path: Path) -> bool:
+    if not SHA_PATTERN.match(sha):
+        return False
 
-        Returns:
-            Validation result with parsed data or error
-        """
-        if not evidence_text or not evidence_text.strip():
-            return {
-                "valid": False,
-                "error": "Evidence is empty",
-                "parsed": None,
-            }
-
-        stripped = evidence_text.strip()
-        if stripped.startswith("{"):
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError as e:
-                return {
-                    "valid": False,
-                    "error": f"Invalid JSON evidence: {e}",
-                    "parsed": None,
-                }
-            return self._validate_json(payload)
-
-        if allow_legacy_text:
-            return self._flexible_parse(evidence_text)
-
-        return {
-            "valid": False,
-            "error": "Evidence must be JSON (see CAPTAIN_PROTOCOL.md)",
-            "parsed": None,
-        }
-
-    def _validate_json(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Validate JSON evidence payload."""
-        if not isinstance(payload, dict):
-            return {
-                "valid": False,
-                "error": "Evidence JSON must be an object",
-                "parsed": None,
-            }
-
-        missing = self.REQUIRED_JSON_FIELDS - payload.keys()
-        if missing:
-            return {
-                "valid": False,
-                "error": f"Missing required JSON fields: {sorted(missing)}",
-                "parsed": None,
-            }
-
-        fmt = payload.get("format")
-        if fmt not in {"standard", "legacy"}:
-            return {
-                "valid": False,
-                "error": "format must be 'standard' or 'legacy'",
-                "parsed": None,
-            }
-
-        commits = payload.get("commits")
-        if not isinstance(commits, list):
-            return {
-                "valid": False,
-                "error": "commits must be a list",
-                "parsed": None,
-            }
-
-        if fmt == "standard":
-            if not commits:
-                return {
-                    "valid": False,
-                    "error": "standard evidence requires at least one commit",
-                    "parsed": None,
-                }
-            for sha in commits:
-                if not re.fullmatch(r"[a-f0-9]{7,40}", str(sha)):
-                    return {
-                        "valid": False,
-                        "error": f"Invalid commit SHA: {sha}",
-                        "parsed": None,
-                    }
-
-        tests = payload.get("tests")
-        if not isinstance(tests, dict):
-            return {
-                "valid": False,
-                "error": "tests must be an object",
-                "parsed": None,
-            }
-        missing_tests = self.REQUIRED_TEST_FIELDS - tests.keys()
-        if missing_tests:
-            return {
-                "valid": False,
-                "error": f"Missing tests fields: {sorted(missing_tests)}",
-                "parsed": None,
-            }
-
-        tests_command = tests.get("command")
-        tests_status = tests.get("status")
-        tests_passed = tests.get("passed")
-        tests_total = tests.get("total")
-
-        if tests_status not in self.VALID_STATUSES:
-            return {
-                "valid": False,
-                "error": f"Invalid tests.status: {tests_status}",
-                "parsed": None,
-            }
-
-        if fmt == "standard":
-            if not isinstance(tests_command, str) or not tests_command.strip():
-                return {
-                    "valid": False,
-                    "error": "standard evidence requires tests.command",
-                    "parsed": None,
-                }
-            if not isinstance(tests_passed, int) or not isinstance(tests_total, int):
-                return {
-                    "valid": False,
-                    "error": "standard evidence requires integer tests.passed/total",
-                    "parsed": None,
-                }
-        else:
-            if tests_command in ("", None):
-                tests_command = None
-            if tests_passed in ("", None):
-                tests_passed = None
-            if tests_total in ("", None):
-                tests_total = None
-
-        model = payload.get("models", "").strip()
-        reviewer = payload.get("reviewer", "").strip()
-        timestamp = payload.get("timestamp", "")
-
-        if fmt == "standard":
-            if not model or not reviewer:
-                return {
-                    "valid": False,
-                    "error": "standard evidence requires models and reviewer",
-                    "parsed": None,
-                }
-            ts_result = self.validate_timestamp(timestamp)
-            if not ts_result["valid"]:
-                return {
-                    "valid": False,
-                    "error": ts_result["error"],
-                    "parsed": None,
-                }
-
-        parsed = ParsedEvidence(
-            format=fmt,
-            commits=[str(c) for c in commits],
-            tests_command=tests_command,
-            tests_status=tests_status,
-            tests_passed=tests_passed,
-            tests_total=tests_total,
-            model=model or "UNKNOWN",
-            reviewer=reviewer or "UNKNOWN",
-            timestamp=timestamp or "UNKNOWN",
-            followups=payload.get("followups"),
-            accepted_risks=payload.get("accepted_risks"),
-            legacy_summary=payload.get("legacy_summary"),
+    try:
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
         )
-
-        return {
-            "valid": True,
-            "parsed": parsed,
-            "error": None,
-            "format": "json",
-        }
-
-    def _flexible_parse(self, evidence_text: str) -> dict[str, Any]:
-        """Try to parse evidence using flexible patterns.
-
-        Args:
-            evidence_text: Evidence string
-
-        Returns:
-            Validation result
-        """
-        extracted: dict[str, Any] = {}
-        missing: list[str] = []
-
-        # Extract tests
-        tests_match = self.FLEXIBLE_PATTERNS["tests"].search(evidence_text)
-        if tests_match:
-            extracted["tests_passed"] = int(tests_match.group(1))
-            extracted["tests_total"] = int(tests_match.group(2))
-        else:
-            missing.append("tests")
-
-        # Extract commit
-        commit_match = self.FLEXIBLE_PATTERNS["commit"].search(evidence_text)
-        if commit_match:
-            extracted["commit_sha"] = commit_match.group(1)
-        else:
-            missing.append("commit")
-
-        # Extract model
-        model_match = self.FLEXIBLE_PATTERNS["model"].search(evidence_text)
-        if model_match:
-            extracted["model"] = model_match.group(1).strip()
-        else:
-            missing.append("model")
-
-        # Extract timestamp
-        ts_match = self.FLEXIBLE_PATTERNS["timestamp"].search(evidence_text)
-        if ts_match:
-            extracted["timestamp"] = ts_match.group(1)
-        else:
-            missing.append("timestamp")
-
-        # Optional: followups
-        followups_match = self.FLEXIBLE_PATTERNS["followups"].search(evidence_text)
-        if followups_match:
-            extracted["followups"] = followups_match.group(1).strip()
-
-        # Optional: risks
-        risks_match = self.FLEXIBLE_PATTERNS["risks"].search(evidence_text)
-        if risks_match:
-            extracted["accepted_risks"] = risks_match.group(1).strip()
-
-        # Check required fields
-        if missing:
-            return {
-                "valid": False,
-                "error": f"Missing required fields: {missing}",
-                "parsed": None,
-                "extracted": extracted,
-                "missing": missing,
-            }
-
-        try:
-            parsed = ParsedEvidence(
-                format="legacy",
-                commits=[extracted["commit_sha"]],
-                tests_command=None,
-                tests_status="UNKNOWN",
-                tests_passed=extracted["tests_passed"],
-                tests_total=extracted["tests_total"],
-                model=extracted["model"],
-                reviewer="UNKNOWN",
-                timestamp=extracted["timestamp"],
-                followups=extracted.get("followups"),
-                accepted_risks=extracted.get("accepted_risks"),
-                legacy_summary=evidence_text.strip(),
-            )
-            return {
-                "valid": True,
-                "parsed": parsed,
-                "error": None,
-                "format": "legacy_text",
-            }
-        except Exception as e:
-            return {
-                "valid": False,
-                "error": f"Failed to create ParsedEvidence: {e}",
-                "parsed": None,
-            }
-
-    def validate_timestamp(self, timestamp: str) -> dict[str, Any]:
-        """Validate timestamp format and recency.
-
-        Args:
-            timestamp: ISO-8601 timestamp string
-
-        Returns:
-            Validation result
-        """
-        try:
-            # Handle with or without Z suffix
-            ts = timestamp.rstrip("Z")
-            dt = datetime.fromisoformat(ts)
-
-            # Check if timestamp is reasonable (not in future, not too old)
-            now = datetime.now()
-            age_hours = (now - dt).total_seconds() / 3600
-
-            return {
-                "valid": True,
-                "datetime": dt,
-                "age_hours": age_hours,
-                "warning": "Timestamp is over 24 hours old" if age_hours > 24 else None,
-            }
-        except ValueError as e:
-            return {
-                "valid": False,
-                "error": f"Invalid timestamp format: {e}",
-            }
-
-    def format_evidence_json(
-        self,
-        tests_passed: int,
-        tests_total: int,
-        commit_sha: str,
-        model: str,
-        reviewer: str,
-        timestamp: str | None = None,
-        followups: str = "None",
-        accepted_risks: str = "None",
-        tests_command: str = "pytest tests/ -q",
-        status: str = "PASS",
-        fmt: str = "standard",
-    ) -> str:
-        """Format evidence as machine-validated JSON.
-
-        Args:
-            tests_passed: Number of tests passed
-            tests_total: Total number of tests
-            commit_sha: Git commit SHA
-            model: Model name
-            reviewer: Reviewer string
-            timestamp: Optional timestamp (defaults to now)
-            followups: Follow-up items
-            accepted_risks: Accepted risks
-            tests_command: Test command executed
-            status: Test status (PASS/FAIL/SKIP/UNKNOWN)
-            fmt: Evidence format (standard/legacy)
-
-        Returns:
-            Formatted evidence string
-        """
-        if timestamp is None:
-            timestamp = datetime.now().isoformat() + "Z"
-
-        payload = {
-            "format": fmt,
-            "commits": [commit_sha],
-            "tests": {
-                "command": tests_command,
-                "status": status,
-                "passed": tests_passed,
-                "total": tests_total,
-            },
-            "models": model,
-            "reviewer": reviewer,
-            "timestamp": timestamp,
-            "followups": followups,
-            "accepted_risks": accepted_risks,
-        }
-        return json.dumps(payload, separators=(",", ":"))
-
-    def format_evidence(
-        self,
-        tests_passed: int,
-        tests_total: int,
-        commit_sha: str,
-        model: str,
-        reviewer: str,
-        timestamp: str | None = None,
-        followups: str = "None",
-        accepted_risks: str = "None",
-        tests_command: str = "pytest tests/ -q",
-        status: str = "PASS",
-        fmt: str = "standard",
-    ) -> str:
-        """Backwards-compatible alias for JSON evidence formatting."""
-        return self.format_evidence_json(
-            tests_passed=tests_passed,
-            tests_total=tests_total,
-            commit_sha=commit_sha,
-            model=model,
-            reviewer=reviewer,
-            timestamp=timestamp,
-            followups=followups,
-            accepted_risks=accepted_risks,
-            tests_command=tests_command,
-            status=status,
-            fmt=fmt,
-        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
-def main() -> None:
-    """CLI entry point."""
-    import sys
+def validate_timestamp(value: str) -> bool:
+    if not UTC_PATTERN.match(value):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        return True
+    except ValueError:
+        return False
 
-    if len(sys.argv) < 2:
-        print("Usage: evidence_validator.py '<evidence_string>'")
-        print("   or: evidence_validator.py --file <tracking.md>")
-        print(
-            'Example: evidence_validator.py '
-            '\'{"format":"standard","commits":["abc123"],'
-            '"tests":{"command":"pytest tests/unit/core -q","status":"PASS","passed":47,"total":47},'
-            '"models":"Claude","reviewer":"claude + captain","timestamp":"2025-12-13T10:00:00Z",'
-            '"followups":"None","accepted_risks":"None"}\''
-        )
-        sys.exit(1)
 
-    validator = EvidenceValidator()
+def validate_v2_payload(payload: Any, repo_path: Path) -> ValidationResult:
+    errors: list[str] = []
 
-    def split_table_row(line: str, expected_columns: int | None = None) -> list[str]:
-        """Split a markdown table row, preserving pipes in the last column."""
-        stripped = line.strip().strip("|")
-        parts = [p.strip() for p in stripped.split("|")]
-        if expected_columns and len(parts) > expected_columns:
-            head = parts[: expected_columns - 1]
-            tail = "|".join(parts[expected_columns - 1:]).strip()
-            parts = head + [tail]
-        return parts
+    if not isinstance(payload, dict):
+        return ValidationResult(False, ["payload is not a JSON object"])
 
-    if sys.argv[1] == "--file":
-        if len(sys.argv) < 3:
-            print("Usage: evidence_validator.py --file <tracking.md>")
-            sys.exit(1)
-        tracking_path = sys.argv[2]
-        errors: list[str] = []
-        with open(tracking_path, "r", encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
+    for field in V2_REQUIRED_FIELDS:
+        if field not in payload:
+            errors.append(f"missing required field: {field}")
 
-        in_table = False
-        evidence_idx = None
-        expected_columns = None
-        for line_num, line in enumerate(lines, 1):
-            if line.startswith("|") and "Component" in line and "Evidence" in line:
-                headers = split_table_row(line)
-                evidence_idx = headers.index("Evidence") if "Evidence" in headers else None
-                expected_columns = len(headers)
-                in_table = True
-                continue
-            if in_table and line.startswith("|") and line.strip().startswith("|---"):
-                continue
-            if in_table and line.startswith("|"):
-                if evidence_idx is None:
-                    continue
-                cells = split_table_row(line, expected_columns)
-                if len(cells) <= evidence_idx:
-                    continue
-                evidence_text = cells[evidence_idx]
-                result = validator.validate(evidence_text)
-                if not result["valid"]:
-                    component = cells[0] if cells else "UNKNOWN"
-                    errors.append(
-                        f"{tracking_path}:{line_num}: {component}: {result['error']}"
-                    )
-                continue
-            if in_table and not line.startswith("|"):
-                in_table = False
-                evidence_idx = None
-                expected_columns = None
+    if errors:
+        return ValidationResult(False, errors)
 
-        if errors:
-            print("❌ Evidence validation failed:")
-            for err in errors:
-                print(f"  - {err}")
-            sys.exit(1)
-        print("✅ All evidence entries are valid JSON")
-        return
+    if not isinstance(payload.get("component"), str) or not payload["component"].strip():
+        errors.append("component must be a non-empty string")
 
-    evidence = " ".join(sys.argv[1:])
-    result = validator.validate(evidence)
+    if payload.get("review_type") not in {"primary", "secondary", "reconciliation", "captain"}:
+        errors.append("review_type must be one of: primary, secondary, reconciliation, captain")
 
-    if result["valid"]:
-        print("✅ Evidence is valid")
-        parsed = result["parsed"]
-        print(f"   Tests: {parsed.tests_passed}/{parsed.tests_total} ({parsed.tests_pass_rate:.1%})")
-        print(f"   Commits: {', '.join(parsed.commits)}")
-        print(f"   Model: {parsed.model}")
-        print(f"   Reviewer: {parsed.reviewer}")
-        print(f"   Timestamp: {parsed.timestamp}")
+    if not isinstance(payload.get("reviewer_model"), str) or not payload["reviewer_model"].strip():
+        errors.append("reviewer_model must be a non-empty string")
+
+    commit_sha = payload.get("commit_sha")
+    if not isinstance(commit_sha, str) or not validate_commit_sha(commit_sha, repo_path):
+        errors.append("commit_sha must be a valid reachable git commit SHA")
+
+    if not isinstance(payload.get("timestamp_utc"), str) or not validate_timestamp(payload["timestamp_utc"]):
+        errors.append("timestamp_utc must be UTC ISO-8601 format: YYYY-MM-DDTHH:MM:SSZ")
+
+    decision = payload.get("decision")
+    if decision not in {"approved", "changes_required", "blocked"}:
+        errors.append("decision must be approved|changes_required|blocked")
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        errors.append("findings must be an array")
     else:
-        print(f"❌ Evidence is invalid: {result['error']}")
-        if "missing" in result:
-            print(f"   Missing fields: {result['missing']}")
-        sys.exit(1)
+        for idx, finding in enumerate(findings):
+            prefix = f"findings[{idx}]"
+            if not isinstance(finding, dict):
+                errors.append(f"{prefix} must be an object")
+                continue
+            for field in ["id", "severity", "file", "line", "title", "repro"]:
+                if field not in finding:
+                    errors.append(f"{prefix} missing required field: {field}")
+
+            if finding.get("severity") not in {"P0", "P1", "P2", "P3"}:
+                errors.append(f"{prefix}.severity must be one of P0,P1,P2,P3")
+
+            line = finding.get("line")
+            if not isinstance(line, int) or line < 1:
+                errors.append(f"{prefix}.line must be a positive integer")
+
+    tests = payload.get("tests")
+    if not isinstance(tests, list):
+        errors.append("tests must be an array")
+    else:
+        for idx, test in enumerate(tests):
+            prefix = f"tests[{idx}]"
+            if not isinstance(test, dict):
+                errors.append(f"{prefix} must be an object")
+                continue
+            for field in ["command", "exit_code", "summary"]:
+                if field not in test:
+                    errors.append(f"{prefix} missing required field: {field}")
+            if "exit_code" in test and not isinstance(test["exit_code"], int):
+                errors.append(f"{prefix}.exit_code must be an integer")
+
+    return ValidationResult(valid=not errors, errors=errors)
+
+
+def validate_legacy_payload(payload: Any) -> ValidationResult:
+    errors: list[str] = []
+
+    if not isinstance(payload, dict):
+        return ValidationResult(False, ["legacy payload is not a JSON object"])
+
+    for field in LEGACY_REQUIRED_FIELDS:
+        if field not in payload:
+            errors.append(f"missing legacy field: {field}")
+
+    tests = payload.get("tests")
+    if tests is not None and not isinstance(tests, dict):
+        errors.append("legacy tests must be an object")
+
+    commits = payload.get("commits")
+    if commits is not None and not isinstance(commits, list):
+        errors.append("legacy commits must be an array")
+
+    return ValidationResult(valid=not errors, errors=errors)
+
+
+def extract_json_objects(text: str) -> list[str]:
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+
+    for idx, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    objects.append(text[start : idx + 1])
+                    start = -1
+
+    return objects
+
+
+def validate_markdown_file(path: Path, repo_path: Path) -> ValidationResult:
+    text = path.read_text()
+    raw_objects = extract_json_objects(text)
+
+    matched = 0
+    errors: list[str] = []
+
+    for idx, raw in enumerate(raw_objects):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        if set(V2_REQUIRED_FIELDS).issubset(payload.keys()):
+            matched += 1
+            result = validate_v2_payload(payload, repo_path)
+            if not result.valid:
+                errors.extend([f"entry {idx}: {err}" for err in result.errors])
+            continue
+
+        if "format" in payload and "tests" in payload:
+            matched += 1
+            result = validate_legacy_payload(payload)
+            if not result.valid:
+                errors.extend([f"entry {idx}: {err}" for err in result.errors])
+
+    if matched == 0:
+        return ValidationResult(False, [f"no JSON evidence entries found in markdown file: {path}"])
+
+    return ValidationResult(valid=not errors, errors=errors)
+
+
+def validate_file(path: Path, repo_path: Path) -> ValidationResult:
+    if not path.exists():
+        return ValidationResult(False, [f"file not found: {path}"])
+
+    if path.suffix.lower() == ".md":
+        return validate_markdown_file(path, repo_path)
+
+    try:
+        payload = load_json(path)
+    except json.JSONDecodeError as exc:
+        return ValidationResult(False, [f"invalid JSON in {path}: {exc}"])
+
+    if isinstance(payload, dict) and "format" in payload and "tests" in payload and "component" not in payload:
+        return validate_legacy_payload(payload)
+
+    return validate_v2_payload(payload, repo_path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate release review evidence")
+    parser.add_argument("--file", required=True, help="Evidence file path (.json or .md)")
+    parser.add_argument("--repo-path", default=".", help="Git repo root for commit validation")
+    args = parser.parse_args()
+
+    result = validate_file(Path(args.file), Path(args.repo_path))
+
+    if result.valid:
+        print("✅ Evidence is valid")
+        return 0
+
+    print("❌ Evidence is invalid")
+    for err in result.errors:
+        print(f"  - {err}")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
