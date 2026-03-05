@@ -722,3 +722,103 @@ class TestBackendSessionManagerMetadata:
 
         # Metadata should remain empty
         assert result.metadata == {}
+
+
+class TestStatisticalSignificanceWiring:
+    """Verify significance data flows through submit_session_aggregation."""
+
+    def test_significance_included_in_aggregation_payload(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Significance metadata propagates to backend submit_result call."""
+        # Non-edge config so submit_session_aggregation actually submits
+        config = TraigentConfig()
+        config.execution_mode = "standard"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-sig-wiring",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        sig_data = {
+            "accuracy": {
+                "winners": [0],
+                "top_group": [0],
+                "rest_group": [1],
+                "badge_name": "accuracy",
+            }
+        }
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+            "statistical_significance": sig_data,
+        }
+
+        manager.submit_session_aggregation(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_called_once()
+        call_kwargs = mock_backend_client.submit_result.call_args
+        payload_metadata = call_kwargs.kwargs.get(
+            "metadata", call_kwargs[1].get("metadata", {})
+        )
+        summary_stats = payload_metadata.get("summary_stats", {})
+        inner_metadata = summary_stats.get("metadata", {})
+        assert "statistical_significance" in inner_metadata
+        assert inner_metadata["statistical_significance"] == sig_data
+
+    def test_aggregation_works_without_significance(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Aggregation still works when no significance data is present."""
+        config = TraigentConfig()
+        config.execution_mode = "standard"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-no-sig",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        manager.submit_session_aggregation(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_called_once()
+        call_kwargs = mock_backend_client.submit_result.call_args
+        payload_metadata = call_kwargs.kwargs.get(
+            "metadata", call_kwargs[1].get("metadata", {})
+        )
+        summary_stats = payload_metadata.get("summary_stats", {})
+        inner_metadata = summary_stats.get("metadata", {})
+        assert "statistical_significance" not in inner_metadata
