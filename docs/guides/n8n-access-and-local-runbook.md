@@ -26,7 +26,7 @@ It does not change DTOs or API contracts.
 From `Traigent`:
 
 ```bash
-cd examples/hybrid_mode_demo
+cd examples/experimental/hybrid_api_demo
 python app.py
 ```
 

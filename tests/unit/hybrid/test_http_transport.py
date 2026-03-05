@@ -296,7 +296,7 @@ class TestHTTPTransportMethods:
             "request_id": "req-123",
             "execution_id": "exec-456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": {"result": "test"}}],
+            "outputs": [{"example_id": "1", "output": {"result": "test"}}],
             "operational_metrics": {"total_cost_usd": 0.001},
         }
 
@@ -305,8 +305,9 @@ class TestHTTPTransportMethods:
         ):
             request = HybridExecuteRequest(
                 tunable_id="test_agent",
+                benchmark_id="bench_001",
                 config={"model": "fast"},
-                inputs=[{"input_id": "1", "data": {}}],
+                examples=[{"example_id": "1", "data": {}}],
             )
             response = await transport.execute(request)
 
@@ -710,7 +711,7 @@ class TestHTTPTransportAdditionalMethods:
         mock_response = {
             "request_id": "req-123",
             "status": "completed",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95}},
         }
 
@@ -730,7 +731,8 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
-                evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+                benchmark_id="bench_001",
+                evaluations=[{"example_id": "1", "output": {}, "target": {}}],
             )
             response = await transport.evaluate(request)
 
@@ -752,6 +754,7 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
+                benchmark_id="bench_001",
                 evaluations=[],
             )
             with pytest.raises(NotImplementedError):
@@ -795,8 +798,9 @@ class TestHTTPTransportAdditionalMethods:
         with patch.object(transport, "_request", mock_request):
             request = HybridExecuteRequest(
                 tunable_id="test_agent",
+                benchmark_id="bench_001",
                 config={},
-                inputs=[],
+                examples=[],
                 timeout_ms=60000,  # 60 seconds
             )
             await transport.execute(request)
@@ -830,13 +834,118 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
-                evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+                benchmark_id="bench_001",
+                evaluations=[{"example_id": "1", "output": {}, "target": {}}],
                 timeout_ms=45000,
             )
             await transport.evaluate(request)
 
         call_args = mock_request.call_args
         assert call_args.kwargs.get("timeout_override") == 45.0
+
+
+class TestHTTPTransportBenchmarks:
+    """Tests for benchmarks() endpoint."""
+
+    @pytest.fixture
+    def transport(self) -> HTTPTransport:
+        """Create transport for testing."""
+        return HTTPTransport(base_url="http://localhost:8080")
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_happy_path(self, transport: HTTPTransport) -> None:
+        """Test benchmarks returns all benchmarks with example IDs."""
+        mock_data = {
+            "benchmarks": [
+                {
+                    "benchmark_id": "bench_001",
+                    "tunable_ids": ["child-age-agent-a"],
+                    "example_ids": ["case_001", "case_002", "case_003"],
+                    "name": "Test Benchmark",
+                }
+            ],
+            "benchmarks_revision": None,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks("child-age-agent-a")
+
+        assert len(resp.benchmarks) == 1
+        assert resp.benchmarks[0].benchmark_id == "bench_001"
+        assert resp.benchmarks[0].tunable_ids == ["child-age-agent-a"]
+        assert resp.benchmarks[0].example_ids == ["case_001", "case_002", "case_003"]
+        assert resp.benchmarks_revision is None
+
+        # Verify correct path and params
+        mock_request.assert_called_once_with(
+            "GET",
+            "/traigent/v1/benchmarks",
+            params={"tunable_id": "child-age-agent-a"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_no_tunable_filter(self, transport: HTTPTransport) -> None:
+        """Test benchmarks without tunable_id filter."""
+        mock_data = {
+            "benchmarks": [
+                {
+                    "benchmark_id": "bench_001",
+                    "tunable_ids": ["agent-x"],
+                    "example_ids": ["q006", "q007"],
+                    "name": "Bench A",
+                },
+                {
+                    "benchmark_id": "bench_002",
+                    "tunable_ids": ["agent-y"],
+                    "example_ids": ["q008"],
+                    "name": "Bench B",
+                },
+            ],
+            "benchmarks_revision": "rev_abc",
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks()
+
+        assert len(resp.benchmarks) == 2
+        assert resp.benchmarks_revision == "rev_abc"
+
+        # Verify no params when tunable_id is None
+        mock_request.assert_called_once_with(
+            "GET", "/traigent/v1/benchmarks", params=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_empty_response(self, transport: HTTPTransport) -> None:
+        """Test benchmarks with empty response."""
+        mock_data = {
+            "benchmarks": [],
+            "benchmarks_revision": None,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks("t")
+
+        assert resp.benchmarks == []
+        assert resp.benchmarks_revision is None
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_unknown_tunable_raises(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test benchmarks propagates 404 as TransportError."""
+        with patch.object(
+            transport,
+            "_request",
+            new_callable=AsyncMock,
+            side_effect=TransportError("Not found", status_code=404),
+        ):
+            with pytest.raises(TransportError) as exc_info:
+                await transport.benchmarks("bogus")
+            assert exc_info.value.status_code == 404
 
 
 class TestHTTPTransportContextManager:

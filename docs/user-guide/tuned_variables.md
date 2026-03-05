@@ -629,20 +629,49 @@ When two strategies detect the same variable, confidence is **upgraded** (e.g., 
 
 ### Convert to Configuration Space
 
-`DetectionResult.to_configuration_space()` maps high/medium confidence candidates directly to a dict suitable for `@traigent.optimize`:
+`DetectionResult.to_configuration_space()` can emit either normalized dict values
+or typed `Range`/`Choices` objects.
 
 ```python
 result = detector.detect_from_callable(my_agent)
 
-# Get a ready-to-use config space from detected candidates
-config_space = result.to_configuration_space()
+# Get optimize-ready Range/Choices objects from detected candidates
+config_space = result.to_configuration_space(format="ranges")
 print(config_space)
-# {'temperature': Range(low=0.0, high=2.0), 'model': Choices(values=['gpt-4o', ...]), ...}
+# {'temperature': Range(...), 'model': Choices(...), ...}
 
 @traigent.optimize(**config_space, objectives=["accuracy", "cost"])
 def my_agent(query: str) -> str:
     ...
 ```
+
+### Seamless Decorator Auto-Setup
+
+`@traigent.optimize` can auto-build `configuration_space` directly from source
+detection when no explicit config space is provided:
+
+```python
+@traigent.optimize(
+    objectives=["accuracy", "cost"],
+    auto_detect_tvars_mode="apply",          # off | suggest | apply
+    auto_detect_tvars_min_confidence="medium",
+    auto_detect_tvars_include={"temperature", "model"},  # optional
+    auto_detect_tvars_exclude={"debug_flag"},            # optional
+)
+def my_agent(query: str) -> str:
+    temperature = 0.7
+    model = "gpt-4o-mini"
+    return run_agent(query, temperature=temperature, model=model)
+```
+
+Behavior:
+
+- `off`: do nothing (default)
+- `suggest`: log suggested tvars only (backward-compatible with `auto_detect_tvars=True`)
+- `apply`: auto-populate `configuration_space` before `OptimizedFunction` is created
+
+If you provide `configuration_space` manually, it always takes precedence and
+auto-apply is skipped.
 
 ### Excluding Already-Known Tunables
 
@@ -671,7 +700,14 @@ class DetectionResult:
     count: int                                      # Total candidate count
     high_confidence: tuple[TunedVariableCandidate, ...]  # HIGH confidence only
 
-    def to_configuration_space(self) -> dict: ...  # HIGH+MEDIUM → config space dict
+    def to_configuration_space(
+        self,
+        *,
+        format: Literal["normalized", "ranges"] = "normalized",
+        min_confidence: DetectionConfidence | str = DetectionConfidence.MEDIUM,
+        include: Collection[str] | None = None,
+        exclude: Collection[str] | None = None,
+    ) -> dict: ...
 ```
 
 ### TunedVariableCandidate Attributes
@@ -754,6 +790,6 @@ traigent detect-tvars my_agent.py --function answer_question
 ## See Also
 
 - [Data-Flow Detection (technical deep dive)](../features/dataflow-detection.md) - Algorithm details, sink catalog, plugin packaging
-- [DSPy Integration Guide](../../examples/docs/DSPY_INTEGRATION.md) - Prompt optimization with DSPy
+
 - [Configuration Spaces](./configuration-spaces.md) - Parameter ranges and constraints
 - [Evaluation Guide](./evaluation_guide.md) - Metrics and evaluation

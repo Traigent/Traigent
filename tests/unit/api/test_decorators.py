@@ -78,6 +78,24 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
+    def test_execution_bundle_passes_cloud_fallback_policy(self):
+        """Execution bundle should propagate cloud fallback policy to runtime."""
+        from traigent.api.decorators import ExecutionOptions
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution=ExecutionOptions(
+                execution_mode="cloud",
+                cloud_fallback_policy="auto",
+            ),
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "cloud"
+        assert sample_function.cloud_fallback_policy == "auto"
+
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
         transport = Mock(name="hybrid_transport_direct")
@@ -177,6 +195,7 @@ class TestOptimizeDecorator:
             return f"Using {model}"
 
         assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.cloud_fallback_policy == "never"
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""
@@ -260,7 +279,8 @@ class TestOptimizeDecorator:
     def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
         """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
         spec_path = tmp_path / "evalset.tvl.yml"
-        spec_path.write_text("""tvl:
+        spec_path.write_text(
+            """tvl:
   module: test.evalset
 tvl_version: "0.9"
 evaluation_set:
@@ -272,7 +292,8 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-""")
+"""
+        )
 
         @optimize(tvl_spec=spec_path)
         def tvl_wrapped(question: str) -> str:
@@ -284,7 +305,8 @@ objectives:
     def test_decorator_does_not_override_explicit_eval_dataset(self, tmp_path):
         """Explicit eval_dataset beats evaluation_set in a TVL spec."""
         spec_path = tmp_path / "evalset_override.tvl.yml"
-        spec_path.write_text("""tvl:
+        spec_path.write_text(
+            """tvl:
   module: test.evalset.override
 tvl_version: "0.9"
 evaluation_set:
@@ -296,7 +318,8 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-""")
+"""
+        )
 
         @optimize(tvl_spec=spec_path, eval_dataset="user.jsonl")
         def tvl_wrapped(question: str) -> str:

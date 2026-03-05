@@ -34,36 +34,40 @@ class BatchOptions:
 
 @dataclass(slots=True)
 class HybridExecuteRequest:
-    """Request to execute agent with configuration on inputs.
+    """Request to execute agent with configuration on examples.
 
     Attributes:
         request_id: Idempotency key for retry safety (UUID)
         tunable_id: Identifier for the tunable to invoke
+        benchmark_id: Benchmark containing the examples to run
         config: Configuration parameters (TVAR values)
-        inputs: List of input examples to process
+        examples: List of examples to process
         session_id: Session ID for stateful agents (echoed from previous response)
         batch_options: Optional batch control settings
         timeout_ms: Request timeout in milliseconds
+        benchmarks_revision: Optional revision token for stale-detection
     """
 
     tunable_id: str
+    benchmark_id: str
     config: dict[str, Any]
-    inputs: list[dict[str, Any]]
+    examples: list[dict[str, Any]]
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str | None = None
     batch_options: BatchOptions | None = None
     timeout_ms: int = 30000
+    benchmarks_revision: str | None = None
 
     def __post_init__(self) -> None:
-        """Log malformed inputs that violate the OpenAPI contract."""
+        """Log malformed examples that violate the OpenAPI contract."""
         missing_indices: list[int] = []
-        for idx, item in enumerate(self.inputs):
-            if not isinstance(item, dict) or "input_id" not in item:
+        for idx, item in enumerate(self.examples):
+            if not isinstance(item, dict) or "example_id" not in item:
                 missing_indices.append(idx)
 
         if missing_indices:
             logger.warning(
-                "HybridExecuteRequest inputs missing required input_id at indices %s",
+                "HybridExecuteRequest examples missing required example_id at indices %s",
                 missing_indices,
             )
 
@@ -72,8 +76,9 @@ class HybridExecuteRequest:
         result: dict[str, Any] = {
             "request_id": self.request_id,
             "tunable_id": self.tunable_id,
+            "benchmark_id": self.benchmark_id,
             "config": self.config,
-            "inputs": self.inputs,
+            "examples": self.examples,
             "timeout_ms": self.timeout_ms,
         }
         if self.session_id is not None:
@@ -84,6 +89,8 @@ class HybridExecuteRequest:
                 "fail_fast": self.batch_options.fail_fast,
                 "timeout_per_item_ms": self.batch_options.timeout_per_item_ms,
             }
+        if self.benchmarks_revision is not None:
+            result["benchmarks_revision"] = self.benchmarks_revision
         return result
 
 
@@ -146,26 +153,31 @@ class HybridEvaluateRequest:
     Attributes:
         request_id: Idempotency key for retry safety
         tunable_id: Identifier for the tunable to evaluate
+        benchmark_id: Benchmark containing the examples being evaluated
         execution_id: Reference to previous execute (avoids resending outputs)
         evaluations: List of output+target pairs to evaluate
         config: Optional config for evaluation-time parameters
         session_id: Session ID for stateful agents
         timeout_ms: Optional server-side timeout budget in milliseconds
+        benchmarks_revision: Optional revision token for stale-detection
     """
 
     tunable_id: str
+    benchmark_id: str
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     execution_id: str | None = None
     evaluations: list[dict[str, Any]] | None = None
     config: dict[str, Any] | None = None
     session_id: str | None = None
     timeout_ms: int | None = None
+    benchmarks_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         result: dict[str, Any] = {
             "request_id": self.request_id,
             "tunable_id": self.tunable_id,
+            "benchmark_id": self.benchmark_id,
         }
         if self.execution_id is not None:
             result["execution_id"] = self.execution_id
@@ -177,6 +189,8 @@ class HybridEvaluateRequest:
             result["session_id"] = self.session_id
         if self.timeout_ms is not None:
             result["timeout_ms"] = self.timeout_ms
+        if self.benchmarks_revision is not None:
+            result["benchmarks_revision"] = self.benchmarks_revision
         return result
 
 
@@ -437,6 +451,59 @@ class ConfigSpaceResponse:
     def to_traigent_config_space(self) -> dict[str, Any]:
         """Convert all TVARs to Traigent configuration space format."""
         return {tvar.name: tvar.to_traigent_config_space() for tvar in self.tvars}
+
+
+@dataclass(slots=True)
+class BenchmarkEntry:
+    """A single benchmark with its associated example IDs.
+
+    Attributes:
+        benchmark_id: Unique identifier for this benchmark.
+        tunable_ids: Agents linked to this benchmark (full list, sorted ASCII).
+        example_ids: Datapoint identifiers within this benchmark (sorted ASCII).
+        name: Optional display name for the benchmark.
+    """
+
+    benchmark_id: str
+    tunable_ids: list[str]
+    example_ids: list[str]
+    name: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BenchmarkEntry:
+        """Create from dictionary (API response)."""
+        return cls(
+            benchmark_id=data.get("benchmark_id", ""),
+            tunable_ids=data.get("tunable_ids", []),
+            example_ids=data.get("example_ids", []),
+            name=data.get("name"),
+        )
+
+
+@dataclass(slots=True)
+class BenchmarksResponse:
+    """Response from benchmarks discovery endpoint.
+
+    Attributes:
+        benchmarks: List of benchmark entries (sorted by benchmark_id, ASCII).
+        benchmarks_revision: Optional opaque revision token for stale-detection.
+    """
+
+    benchmarks: list[BenchmarkEntry]
+    benchmarks_revision: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BenchmarksResponse:
+        """Create from dictionary (API response)."""
+        raw_benchmarks = data.get("benchmarks", [])
+        benchmarks = [
+            BenchmarkEntry.from_dict(b) if isinstance(b, dict) else b
+            for b in raw_benchmarks
+        ]
+        return cls(
+            benchmarks=benchmarks,
+            benchmarks_revision=data.get("benchmarks_revision"),
+        )
 
 
 @dataclass(slots=True)

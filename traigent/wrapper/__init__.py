@@ -17,7 +17,7 @@ Example:
         }
 
     @app.execute
-    async def run_agent(input_id: str, data: dict, config: dict) -> dict:
+    async def run_agent(example_id: str, data: dict, config: dict) -> dict:
         # Your agent logic here
         return {"output": result, "cost_usd": 0.002, "latency_ms": 150}
 

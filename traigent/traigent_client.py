@@ -317,9 +317,27 @@ class TraigentClient:
         logger.info("Starting SaaS mode optimization")
         _ = config_defaults  # Unused but kept for signature symmetry
 
-        poll_interval = float((optimization_config or {}).get("poll_interval") or 1.0)
+        raw_poll_interval = (optimization_config or {}).get("poll_interval")
+        try:
+            poll_interval = (
+                float(raw_poll_interval) if raw_poll_interval is not None else 1.0
+            )
+        except (TypeError, ValueError):
+            poll_interval = 1.0
         if poll_interval <= 0:
             poll_interval = 0.1
+
+        raw_max_poll_duration = (optimization_config or {}).get("max_poll_duration")
+        try:
+            max_poll_duration = (
+                float(raw_max_poll_duration)
+                if raw_max_poll_duration is not None
+                else 1800.0
+            )
+        except (TypeError, ValueError):
+            max_poll_duration = 1800.0
+        if max_poll_duration <= 0:
+            max_poll_duration = 1800.0
 
         async with self.backend_client:
             # Upload dataset (using dynamic attribute access for optional methods)
@@ -359,15 +377,45 @@ class TraigentClient:
                 raise OptimizationError(
                     "Backend client does not support get_session_status"
                 )
+
+            active_statuses = {
+                "PENDING",
+                "RUNNING",
+                "IN_PROGRESS",
+                "QUEUED",
+                "STARTED",
+            }
+            terminal_statuses = {
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED",
+                "TIMEOUT",
+                "TIMED_OUT",
+                "STOPPED",
+            }
+            poll_start = asyncio.get_running_loop().time()
             while True:
+                elapsed = asyncio.get_running_loop().time() - poll_start
+                if elapsed > max_poll_duration:
+                    raise OptimizationError(
+                        f"SaaS optimization polling timed out after {elapsed:.1f}s "
+                        f"(limit: {max_poll_duration:.1f}s)"
+                    )
+
                 status = await get_status(session_id)
+                status_value = str(status.get("status") or "").upper()
 
                 logger.info(
                     f"Session progress: {status.get('completed_trials', 0)}/{max_trials} trials"
                 )
 
-                if status["status"] in ["COMPLETED", "FAILED"]:
+                if status_value in terminal_statuses:
                     break
+                if status_value not in active_statuses:
+                    raise OptimizationError(
+                        f"Unexpected SaaS session status '{status.get('status')}' "
+                        f"for session {session_id}"
+                    )
 
                 await asyncio.sleep(poll_interval)
 

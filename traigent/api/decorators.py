@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -150,6 +150,8 @@ class ExecutionOptions(BaseModel):
         privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        cloud_fallback_policy: Cloud fallback behavior on execution failure.
+            "auto" or "warn" falls back to local optimization; "never" re-raises.
         reps_per_trial: Number of repetitions per configuration for statistical stability.
             Running multiple repetitions helps account for LLM non-determinism.
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
@@ -194,6 +196,7 @@ class ExecutionOptions(BaseModel):
     hybrid_api_timeout: float | None = None
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool = False
+    cloud_fallback_policy: str | None = None
 
 
 class MockModeOptions(BaseModel):
@@ -307,6 +310,7 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
 
 
 _DEFAULT_SENTINEL = object()
+_AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
 _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "eval_dataset": None,
@@ -334,6 +338,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "hybrid_api_timeout": None,
     "hybrid_api_auth_header": None,
     "hybrid_api_auto_discover_tvars": False,
+    "cloud_fallback_policy": None,
     "local_storage_path": None,
     "minimal_logging": True,
     "parallel_config": None,
@@ -363,6 +368,10 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "load_from": None,  # Explicit path to load config from
     # Tuned variable auto-detection
     "auto_detect_tvars": False,  # Log suggestions when no configuration_space is set
+    "auto_detect_tvars_mode": None,  # "off" | "suggest" | "apply"
+    "auto_detect_tvars_min_confidence": "medium",  # "high" | "medium" | "low"
+    "auto_detect_tvars_include": None,  # Optional names to include
+    "auto_detect_tvars_exclude": None,  # Optional names to exclude
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -429,6 +438,7 @@ class LegacyOptimizeArgs:
     hybrid_api_timeout: float | None = None
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool | None = None
+    cloud_fallback_policy: str | None = None
     local_storage_path: str | None = None
     minimal_logging: bool | None = None
     parallel_config: ParallelConfig | dict[str, Any] | None = None
@@ -509,6 +519,7 @@ class LegacyOptimizeArgs:
             ("hybrid_api_timeout", self.hybrid_api_timeout),
             ("hybrid_api_auth_header", self.hybrid_api_auth_header),
             ("hybrid_api_auto_discover_tvars", self.hybrid_api_auto_discover_tvars),
+            ("cloud_fallback_policy", self.cloud_fallback_policy),
             ("local_storage_path", self.local_storage_path),
             ("minimal_logging", self.minimal_logging),
             ("parallel_config", self.parallel_config),
@@ -905,6 +916,7 @@ class ResolvedExecutionOptions:
     hybrid_api_timeout: Any
     hybrid_api_auth_header: Any
     hybrid_api_auto_discover_tvars: Any
+    cloud_fallback_policy: Any
     local_storage_path: Any
     minimal_logging: Any
     parallel_config: Any
@@ -1029,6 +1041,12 @@ def _resolve_execution_bundle_options(
             "hybrid_api_auto_discover_tvars",
             base_options.hybrid_api_auto_discover_tvars,
             execution_bundle.hybrid_api_auto_discover_tvars,
+            defaults,
+        ),
+        cloud_fallback_policy=_resolve_option(
+            "cloud_fallback_policy",
+            base_options.cloud_fallback_policy,
+            execution_bundle.cloud_fallback_policy,
             defaults,
         ),
         local_storage_path=_resolve_option(
@@ -1419,11 +1437,81 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
-def _suggest_detected_tvars(func: Callable[..., Any]) -> None:
-    """Run AST-based detection on ``func`` and log suggested tunable variables.
+def _resolve_auto_detect_tvars_mode(
+    auto_detect_tvars: Any, auto_detect_tvars_mode: Any
+) -> str:
+    """Resolve effective auto-detection mode with backward compatibility."""
+    if not isinstance(auto_detect_tvars, bool):
+        raise TypeError(
+            "auto_detect_tvars must be a bool. "
+            f"Received {type(auto_detect_tvars).__name__}."
+        )
+    if auto_detect_tvars_mode is None:
+        return "suggest" if auto_detect_tvars else "off"
+    if not isinstance(auto_detect_tvars_mode, str):
+        raise TypeError(
+            "auto_detect_tvars_mode must be one of "
+            f"{sorted(_AUTO_DETECT_TVARS_MODES)}, got "
+            f"{type(auto_detect_tvars_mode).__name__}."
+        )
+    mode = auto_detect_tvars_mode.strip().lower()
+    if mode not in _AUTO_DETECT_TVARS_MODES:
+        raise TypeError(
+            "auto_detect_tvars_mode must be one of "
+            f"{sorted(_AUTO_DETECT_TVARS_MODES)}, got {auto_detect_tvars_mode!r}."
+        )
+    return mode
 
-    Only called when ``auto_detect_tvars=True`` and no ``configuration_space``
-    was provided. Logs suggestions at INFO level without blocking execution.
+
+def _coerce_auto_detect_tvars_min_confidence(value: Any) -> str:
+    """Validate and normalize auto-detection minimum confidence."""
+    from traigent.tuned_variables.detection_types import DetectionConfidence
+
+    if isinstance(value, DetectionConfidence):
+        return value.value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        try:
+            return DetectionConfidence(normalized).value
+        except ValueError as exc:
+            raise TypeError(
+                "auto_detect_tvars_min_confidence must be one of "
+                "['high', 'medium', 'low']."
+            ) from exc
+    raise TypeError(
+        "auto_detect_tvars_min_confidence must be a string " "('high'|'medium'|'low')."
+    )
+
+
+def _coerce_auto_detect_tvars_name_filter(
+    value: Any, option_name: str
+) -> set[str] | None:
+    """Validate include/exclude name filters for auto-detection."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, Collection):
+        values = list(value)
+        if any(not isinstance(v, str) for v in values):
+            raise TypeError(f"{option_name} must contain only strings.")
+        return set(values)
+    raise TypeError(
+        f"{option_name} must be None, a string, or a collection of strings."
+    )
+
+
+def _suggest_detected_tvars(
+    func: Callable[..., Any],
+    *,
+    mode: str,
+    min_confidence: str,
+    include: Collection[str] | None = None,
+    exclude: Collection[str] | None = None,
+) -> dict[str, Any] | None:
+    """Run detection on ``func`` and return filtered configuration candidates.
+
+    Logs suggestion or auto-apply messages at INFO level.
     """
     try:
         from traigent.tuned_variables.detector import TunedVariableDetector
@@ -1431,7 +1519,24 @@ def _suggest_detected_tvars(func: Callable[..., Any]) -> None:
         detector = TunedVariableDetector()
         result = detector.detect_from_callable(func)
         if result.count == 0:
-            return
+            return None
+
+        config_space = result.to_configuration_space(
+            format="ranges",
+            min_confidence=min_confidence,
+            include=include,
+            exclude=exclude,
+        )
+        if not config_space:
+            logger.info(
+                "auto_detect_tvars: no candidates met filters in '%s' "
+                "(min_confidence=%s, include=%s, exclude=%s).",
+                func.__name__,
+                min_confidence,
+                sorted(include) if include is not None else None,
+                sorted(exclude) if exclude is not None else None,
+            )
+            return None
 
         suggestions = [
             f"{c.name} ({c.candidate_type.value}, {c.confidence.value} confidence)"
@@ -1441,16 +1546,29 @@ def _suggest_detected_tvars(func: Callable[..., Any]) -> None:
                 else ""
             )
             for c in result.candidates
+            if c.name in config_space
         ]
-        logger.info(
-            "auto_detect_tvars: detected %d tunable variable(s) in '%s'. "
-            "Consider adding to configuration_space: %s",
-            result.count,
-            func.__name__,
-            suggestions,
-        )
+
+        if mode == "apply":
+            logger.info(
+                "auto_detect_tvars: auto-applied %d tunable variable(s) to "
+                "configuration_space in '%s': %s",
+                len(config_space),
+                func.__name__,
+                suggestions,
+            )
+        else:
+            logger.info(
+                "auto_detect_tvars: detected %d tunable variable(s) in '%s'. "
+                "Consider adding to configuration_space: %s",
+                len(config_space),
+                func.__name__,
+                suggestions,
+            )
+        return config_space
     except Exception:
         logger.debug("auto_detect_tvars: detection failed", exc_info=True)
+        return None
 
 
 def optimize(
@@ -1559,6 +1677,8 @@ def optimize(
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             privacy_enabled: Flag enabling hybrid privacy safeguards.
+            cloud_fallback_policy: Cloud failure policy: "auto"/"warn" fallback to
+                local, "never" to fail closed.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 
@@ -1579,6 +1699,11 @@ def optimize(
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
                 ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+                Tuned-variable detection controls are also available via runtime
+                overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
+                (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
+                (``high|medium|low``), and optional include/exclude filters via
+                ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
 
     Warning:
         Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
@@ -1779,6 +1904,7 @@ def optimize(
     hybrid_api_timeout = combined_settings["hybrid_api_timeout"]
     hybrid_api_auth_header = combined_settings["hybrid_api_auth_header"]
     hybrid_api_auto_discover_tvars = combined_settings["hybrid_api_auto_discover_tvars"]
+    cloud_fallback_policy = combined_settings["cloud_fallback_policy"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
@@ -1804,6 +1930,25 @@ def optimize(
     max_trials_value = combined_settings["max_trials"]
     # Tuned variable auto-detection
     auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
+    auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
+    auto_detect_tvars_min_confidence_value = combined_settings[
+        "auto_detect_tvars_min_confidence"
+    ]
+    auto_detect_tvars_include_value = combined_settings["auto_detect_tvars_include"]
+    auto_detect_tvars_exclude_value = combined_settings["auto_detect_tvars_exclude"]
+
+    effective_auto_detect_tvars_mode = _resolve_auto_detect_tvars_mode(
+        auto_detect_tvars_value, auto_detect_tvars_mode_value
+    )
+    auto_detect_tvars_min_confidence = _coerce_auto_detect_tvars_min_confidence(
+        auto_detect_tvars_min_confidence_value
+    )
+    auto_detect_tvars_include = _coerce_auto_detect_tvars_name_filter(
+        auto_detect_tvars_include_value, "auto_detect_tvars_include"
+    )
+    auto_detect_tvars_exclude = _coerce_auto_detect_tvars_name_filter(
+        auto_detect_tvars_exclude_value, "auto_detect_tvars_exclude"
+    )
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1862,6 +2007,7 @@ def optimize(
         hybrid_api_timeout=hybrid_api_timeout,
         hybrid_api_auth_header=hybrid_api_auth_header,
         hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+        cloud_fallback_policy=cloud_fallback_policy,
         local_storage_path=local_storage_path,
         minimal_logging=minimal_logging,
         parallel_config=parallel_config,
@@ -1887,6 +2033,7 @@ def optimize(
     hybrid_api_timeout = resolved_execution.hybrid_api_timeout
     hybrid_api_auth_header = resolved_execution.hybrid_api_auth_header
     hybrid_api_auto_discover_tvars = resolved_execution.hybrid_api_auto_discover_tvars
+    cloud_fallback_policy = resolved_execution.cloud_fallback_policy
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging
     parallel_config = resolved_execution.parallel_config
@@ -1992,18 +2139,40 @@ def optimize(
         combined_runtime_overrides.pop("algorithm", None)
         combined_runtime_overrides.pop("max_trials", None)
 
-        # Tuned variable auto-detection: when opted in and no config space is set,
-        # run AST detection on the function and log suggestions.
-        if auto_detect_tvars_value and not configuration_space:
-            _suggest_detected_tvars(func)
+        resolved_configuration_space = configuration_space
+        resolved_default_config = default_config
+
+        # Tuned variable auto-detection:
+        # - suggest mode logs candidates
+        # - apply mode auto-materializes configuration_space
+        if (
+            effective_auto_detect_tvars_mode != "off"
+            and not resolved_configuration_space
+        ):
+            detected_config = _suggest_detected_tvars(
+                func,
+                mode=effective_auto_detect_tvars_mode,
+                min_confidence=auto_detect_tvars_min_confidence,
+                include=auto_detect_tvars_include,
+                exclude=auto_detect_tvars_exclude,
+            )
+            if effective_auto_detect_tvars_mode == "apply" and detected_config:
+                resolved_configuration_space, detected_defaults = (
+                    normalize_configuration_space(detected_config)
+                )
+                if detected_defaults:
+                    resolved_default_config = {
+                        **detected_defaults,
+                        **(resolved_default_config or {}),
+                    }
 
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
-            configuration_space=configuration_space,
+            configuration_space=resolved_configuration_space,
             algorithm=algorithm_value,
-            default_config=default_config,
+            default_config=resolved_default_config,
             constraints=normalized_constraints,
             safety_constraints=safety_constraints,
             injection_mode=actual_injection_mode,
@@ -2022,6 +2191,7 @@ def optimize(
             hybrid_api_timeout=hybrid_api_timeout,
             hybrid_api_auth_header=hybrid_api_auth_header,
             hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            cloud_fallback_policy=cloud_fallback_policy,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,

@@ -1,4 +1,6 @@
-# Traigent Hybrid Mode Demo
+# Traigent Hybrid API Demo
+
+> **Experimental** — This example demonstrates the `hybrid_api` execution mode, which is functional but may change in future releases.
 
 A minimal Flask application demonstrating how to implement the Traigent Hybrid API for external agentic services.
 
@@ -56,7 +58,7 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
     "request_id": "test-001",
     "tunable_id": "demo_agent",
     "config": {"model": "accurate", "temperature": 0.7},
-    "inputs": [{"input_id": "ex_001", "data": {"query": "What is AI?"}}]
+    "examples": [{"example_id": "ex_001", "data": {"query": "What is AI?"}}]
   }'
 ```
 
@@ -190,10 +192,10 @@ Replace the mock implementation in the `execute()` function with your actual age
 def execute():
     data = request.get_json()
     config = data.get("config", {})
-    inputs = data.get("inputs", [])
+    examples = data.get("examples", [])
 
     outputs = []
-    for inp in inputs:
+    for inp in examples:
         # Call your actual agent/LLM here
         result = my_real_agent(
             query=inp["data"]["query"],
@@ -201,7 +203,7 @@ def execute():
             temperature=config.get("temperature"),
         )
         outputs.append({
-            "input_id": inp["input_id"],
+            "example_id": inp["example_id"],
             "output": {"response": result.text},
             "cost_usd": result.cost,
             "latency_ms": result.latency,
@@ -240,6 +242,6 @@ def evaluate():
 
 ## Next Steps
 
-1. Read the [API Contract](../../docs/hybrid-mode-api-contract.md) for detailed specifications
-2. See the [Client Integration Guide](../../docs/hybrid-mode-client-guide.md) for implementation patterns
-3. Use the [TraigentService wrapper](../../traigent/wrapper/) for a decorator-based approach
+1. Read the [API Contract](../../../docs/hybrid-mode-api-contract.md) for detailed specifications
+2. See the [Client Integration Guide](../../../docs/hybrid-mode-client-guide.md) for implementation patterns
+3. Use the [TraigentService wrapper](../../../traigent/wrapper/) for a decorator-based approach

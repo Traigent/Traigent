@@ -26,6 +26,8 @@ from traigent.cloud.dtos import MeasuresDict
 from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator, HybridExampleResult
 from traigent.hybrid.protocol import (
+    BenchmarkEntry,
+    BenchmarksResponse,
     HybridEvaluateResponse,
     HybridExecuteResponse,
     ServiceCapabilities,
@@ -105,20 +107,31 @@ def mock_transport() -> MagicMock:
     transport.execute = AsyncMock(
         return_value=_make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "result_0"},
-                {"input_id": "ex_1", "output": "result_1"},
+                {"example_id": "ex_0", "output": "result_0"},
+                {"example_id": "ex_1", "output": "result_1"},
             ],
         )
     )
     transport.evaluate = AsyncMock(
         return_value=_make_evaluate_response(
             results=[
-                {"input_id": "ex_0", "metrics": {"accuracy": 1.0}},
-                {"input_id": "ex_1", "metrics": {"accuracy": 0.5}},
+                {"example_id": "ex_0", "metrics": {"accuracy": 1.0}},
+                {"example_id": "ex_1", "metrics": {"accuracy": 0.5}},
             ]
         )
     )
     transport.capabilities = AsyncMock(return_value=_default_capabilities())
+    transport.benchmarks = AsyncMock(
+        return_value=BenchmarksResponse(
+            benchmarks=[
+                BenchmarkEntry(
+                    benchmark_id="test-bench",
+                    tunable_ids=["test_cap"],
+                    example_ids=["ex_0", "ex_1"],
+                )
+            ]
+        )
+    )
     transport.close = AsyncMock()
     transport.keep_alive = AsyncMock(return_value=True)
     return transport
@@ -145,17 +158,17 @@ class TestHybridExampleResult:
 
     def test_success_when_no_error(self) -> None:
         """success property returns True when error is None."""
-        result = HybridExampleResult(input_id="ex_0", error=None)
+        result = HybridExampleResult(example_id="ex_0", error=None)
         assert result.success is True
 
     def test_not_success_when_error(self) -> None:
         """success property returns False when error is set."""
-        result = HybridExampleResult(input_id="ex_0", error="something went wrong")
+        result = HybridExampleResult(example_id="ex_0", error="something went wrong")
         assert result.success is False
 
     def test_default_values(self) -> None:
         """Default field values are sensible."""
-        result = HybridExampleResult(input_id="x")
+        result = HybridExampleResult(example_id="x")
         assert result.actual_output is None
         assert result.expected_output is None
         assert result.metrics == {}
@@ -429,6 +442,160 @@ class TestDiscoverConfigSpace:
 
 
 # ---------------------------------------------------------------------------
+# discover_example_ids tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverExampleIds:
+    """Tests for discover_example_ids method."""
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_single_benchmark(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Returns all example IDs from a single benchmark."""
+        from traigent.hybrid.protocol import BenchmarkEntry, BenchmarksResponse
+
+        mock_transport.benchmarks = AsyncMock(
+            return_value=BenchmarksResponse(
+                benchmarks=[
+                    BenchmarkEntry(
+                        benchmark_id="bench_001",
+                        tunable_ids=["test_cap"],
+                        example_ids=["case_001", "case_002", "case_003"],
+                        name="Test Benchmark",
+                    )
+                ],
+                benchmarks_revision=None,
+            )
+        )
+
+        ids = await evaluator.discover_example_ids()
+
+        assert ids == ["case_001", "case_002", "case_003"]
+        mock_transport.benchmarks.assert_called_once_with(tunable_id="test_cap")
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_multiple_benchmarks_raises(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Raises ValueError when multiple benchmarks match the tunable."""
+        from traigent.hybrid.protocol import BenchmarkEntry, BenchmarksResponse
+
+        mock_transport.benchmarks = AsyncMock(
+            return_value=BenchmarksResponse(
+                benchmarks=[
+                    BenchmarkEntry(
+                        benchmark_id="bench_001",
+                        tunable_ids=["test_cap"],
+                        example_ids=["a", "b"],
+                    ),
+                    BenchmarkEntry(
+                        benchmark_id="bench_002",
+                        tunable_ids=["test_cap"],
+                        example_ids=["c", "d", "e"],
+                    ),
+                ],
+                benchmarks_revision=None,
+            )
+        )
+
+        with pytest.raises(ValueError, match="Multiple benchmarks match"):
+            await evaluator.discover_example_ids()
+
+        assert mock_transport.benchmarks.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_multiple_benchmarks_with_explicit_id(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Selects correct benchmark when benchmark_id is provided explicitly."""
+        from traigent.hybrid.protocol import BenchmarkEntry, BenchmarksResponse
+
+        mock_transport.benchmarks = AsyncMock(
+            return_value=BenchmarksResponse(
+                benchmarks=[
+                    BenchmarkEntry(
+                        benchmark_id="bench_001",
+                        tunable_ids=["test_cap"],
+                        example_ids=["a", "b"],
+                    ),
+                    BenchmarkEntry(
+                        benchmark_id="bench_002",
+                        tunable_ids=["test_cap"],
+                        example_ids=["c", "d", "e"],
+                    ),
+                ],
+                benchmarks_revision=None,
+            )
+        )
+
+        ids = await evaluator.discover_example_ids(benchmark_id="bench_002")
+
+        assert ids == ["c", "d", "e"]
+        assert evaluator._benchmark_id == "bench_002"
+        assert mock_transport.benchmarks.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_empty_benchmarks_raises(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Raises ValueError when no benchmarks are available."""
+        from traigent.hybrid.protocol import BenchmarksResponse
+
+        mock_transport.benchmarks = AsyncMock(
+            return_value=BenchmarksResponse(
+                benchmarks=[],
+                benchmarks_revision=None,
+            )
+        )
+
+        with pytest.raises(ValueError, match="No benchmarks found"):
+            await evaluator.discover_example_ids()
+
+        assert mock_transport.benchmarks.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_explicit_tunable(
+        self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
+    ) -> None:
+        """Uses explicit tunable_id when provided."""
+        from traigent.hybrid.protocol import BenchmarkEntry, BenchmarksResponse
+
+        mock_transport.benchmarks = AsyncMock(
+            return_value=BenchmarksResponse(
+                benchmarks=[
+                    BenchmarkEntry(
+                        benchmark_id="bench_001",
+                        tunable_ids=["other"],
+                        example_ids=["x"],
+                    )
+                ],
+                benchmarks_revision=None,
+            )
+        )
+
+        ids = await evaluator.discover_example_ids(tunable_id="other")
+
+        assert ids == ["x"]
+        mock_transport.benchmarks.assert_called_once_with(tunable_id="other")
+
+    @pytest.mark.asyncio
+    async def test_discover_example_ids_no_tunable_raises(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Raises ValueError when no tunable_id is available."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id=None,
+            keep_alive=False,
+        )
+
+        with pytest.raises(ValueError, match="tunable_id is required"):
+            await ev.discover_example_ids()
+
+
+# ---------------------------------------------------------------------------
 # _ensure_lifecycle_manager tests
 # ---------------------------------------------------------------------------
 
@@ -683,8 +850,8 @@ class TestComputeAggregatedMetrics:
     def test_basic_metrics(self, ev: HybridAPIEvaluator) -> None:
         """Computes cost and success_rate."""
         results = [
-            HybridExampleResult(input_id="1", metrics={}),
-            HybridExampleResult(input_id="2", error="fail", metrics={}),
+            HybridExampleResult(example_id="1", metrics={}),
+            HybridExampleResult(example_id="2", error="fail", metrics={}),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.05)
         assert agg["cost"] == 0.05
@@ -694,8 +861,8 @@ class TestComputeAggregatedMetrics:
     def test_all_successful(self, ev: HybridAPIEvaluator) -> None:
         """success_rate is 1.0 when all succeed."""
         results = [
-            HybridExampleResult(input_id="1"),
-            HybridExampleResult(input_id="2"),
+            HybridExampleResult(example_id="1"),
+            HybridExampleResult(example_id="2"),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         assert agg["success_rate"] == 1.0
@@ -703,8 +870,8 @@ class TestComputeAggregatedMetrics:
     def test_per_example_metrics_averaged(self, ev: HybridAPIEvaluator) -> None:
         """Per-example metrics are averaged across results."""
         results = [
-            HybridExampleResult(input_id="1", metrics={"accuracy": 1.0, "f1": 0.8}),
-            HybridExampleResult(input_id="2", metrics={"accuracy": 0.5, "f1": 0.6}),
+            HybridExampleResult(example_id="1", metrics={"accuracy": 1.0, "f1": 0.8}),
+            HybridExampleResult(example_id="2", metrics={"accuracy": 0.5, "f1": 0.6}),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         assert agg["accuracy"] == pytest.approx(0.75)
@@ -713,9 +880,9 @@ class TestComputeAggregatedMetrics:
     def test_latency_averaged(self, ev: HybridAPIEvaluator) -> None:
         """Average latency is computed from positive latency values."""
         results = [
-            HybridExampleResult(input_id="1", latency_ms=100.0),
-            HybridExampleResult(input_id="2", latency_ms=200.0),
-            HybridExampleResult(input_id="3", latency_ms=0.0),  # skipped
+            HybridExampleResult(example_id="1", latency_ms=100.0),
+            HybridExampleResult(example_id="2", latency_ms=200.0),
+            HybridExampleResult(example_id="3", latency_ms=0.0),  # skipped
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         assert agg["latency"] == pytest.approx(150.0)
@@ -723,7 +890,7 @@ class TestComputeAggregatedMetrics:
     def test_no_positive_latency(self, ev: HybridAPIEvaluator) -> None:
         """No 'latency' key when all latencies are zero."""
         results = [
-            HybridExampleResult(input_id="1", latency_ms=0.0),
+            HybridExampleResult(example_id="1", latency_ms=0.0),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         assert "latency" not in agg
@@ -731,8 +898,8 @@ class TestComputeAggregatedMetrics:
     def test_partial_metrics(self, ev: HybridAPIEvaluator) -> None:
         """Metrics only present in some results are averaged over their count."""
         results = [
-            HybridExampleResult(input_id="1", metrics={"accuracy": 1.0}),
-            HybridExampleResult(input_id="2", metrics={}),
+            HybridExampleResult(example_id="1", metrics={"accuracy": 1.0}),
+            HybridExampleResult(example_id="2", metrics={}),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         # accuracy only has 1 data point
@@ -743,8 +910,8 @@ class TestComputeAggregatedMetrics:
     ) -> None:
         """Derives canonical accuracy from overall_accuracy when missing."""
         results = [
-            HybridExampleResult(input_id="1", metrics={"overall_accuracy": 0.8}),
-            HybridExampleResult(input_id="2", metrics={"overall_accuracy": 0.6}),
+            HybridExampleResult(example_id="1", metrics={"overall_accuracy": 0.8}),
+            HybridExampleResult(example_id="2", metrics={"overall_accuracy": 0.6}),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
         assert agg["overall_accuracy"] == pytest.approx(0.7)
@@ -757,7 +924,7 @@ class TestComputeAggregatedMetrics:
         """Derives canonical accuracy from split *_accuracy metrics."""
         results = [
             HybridExampleResult(
-                input_id="1",
+                example_id="1",
                 metrics={"text_accuracy": 0.6, "tool_accuracy": 1.0},
                 latency_ms=123.0,
             ),
@@ -773,8 +940,12 @@ class TestComputeAggregatedMetrics:
         """Explicit accuracy remains the source of truth."""
         results = [
             HybridExampleResult(
-                input_id="1",
-                metrics={"accuracy": 0.9, "overall_accuracy": 0.1, "text_accuracy": 0.2},
+                example_id="1",
+                metrics={
+                    "accuracy": 0.9,
+                    "overall_accuracy": 0.1,
+                    "text_accuracy": 0.2,
+                },
             ),
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.0)
@@ -812,7 +983,9 @@ class TestMetricNormalizationHelpers:
     def test_derive_accuracy_preserves_explicit_zero(self) -> None:
         """Explicit accuracy=0.0 must not be treated as missing."""
         metrics = {"accuracy": 0.0, "overall_accuracy": 0.9, "text_accuracy": 1.0}
-        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.0)
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(
+            metrics
+        ) == pytest.approx(0.0)
 
     def test_derive_accuracy_ignores_bool_accuracy_values(self) -> None:
         """Bool-valued keys must not be interpreted as numeric accuracy."""
@@ -822,7 +995,9 @@ class TestMetricNormalizationHelpers:
     def test_derive_accuracy_uses_numeric_split_accuracy(self) -> None:
         """Derive mean of numeric split accuracy keys only."""
         metrics = {"text_accuracy": 0.6, "tool_accuracy": 1.0, "aux_accuracy": "n/a"}
-        assert HybridAPIEvaluator._derive_accuracy_from_metrics(metrics) == pytest.approx(0.8)
+        assert HybridAPIEvaluator._derive_accuracy_from_metrics(
+            metrics
+        ) == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------
@@ -841,9 +1016,10 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "out0", "metrics": {"accuracy": 0.9}},
+                {"example_id": "ex_0", "output": "out0", "metrics": {"accuracy": 0.9}},
             ],
             quality_metrics={"overall_accuracy": 0.9},
         )
@@ -858,7 +1034,7 @@ class TestExecuteBatch:
         )
 
         assert len(results) == 1
-        assert results[0].input_id == "ex_0"
+        assert results[0].example_id == "ex_0"
         assert results[0].actual_output == "out0"
         assert results[0].metrics == {"accuracy": 0.9}
         # evaluate should NOT be called in combined mode
@@ -872,13 +1048,14 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "out0"}],
+            outputs=[{"example_id": "ex_0", "output": "out0"}],
             quality_metrics=None,
             operational_metrics={"cost_usd": 0.02, "latency_ms": 50.0},
         )
         eval_response = _make_evaluate_response(
-            results=[{"input_id": "ex_0", "metrics": {"accuracy": 0.8}}]
+            results=[{"example_id": "ex_0", "metrics": {"accuracy": 0.8}}]
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
         mock_transport.evaluate = AsyncMock(return_value=eval_response)
@@ -903,8 +1080,9 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "out0"}],
+            outputs=[{"example_id": "ex_0", "output": "out0"}],
             quality_metrics=None,
             operational_metrics={"cost_usd": 0.01, "latency_ms": 30.0},
         )
@@ -933,6 +1111,7 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         mock_transport.execute = AsyncMock(
             side_effect=TransportError("connection lost", status_code=500)
         )
@@ -965,9 +1144,10 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         ev._session_id = "old_session"
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "out"}],
+            outputs=[{"example_id": "ex_0", "output": "out"}],
             session_id="new_session",
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -989,13 +1169,14 @@ class TestExecuteBatch:
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         ev._session_id = "old"
         mock_lm = MagicMock()
         mock_lm.register = AsyncMock()
         ev._lifecycle_manager = mock_lm
 
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "out"}],
+            outputs=[{"example_id": "ex_0", "output": "out"}],
             session_id="new",
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -1008,31 +1189,32 @@ class TestExecuteBatch:
         mock_lm.register.assert_awaited_once_with("new")
 
     @pytest.mark.asyncio
-    async def test_uses_input_id_from_input_data(
+    async def test_uses_example_id_from_input_data(
         self, mock_transport: MagicMock
     ) -> None:
-        """Uses input_id from the input data if present."""
+        """Uses example_id from the input data if present."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
             tunable_id="cap",
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "custom_id", "output": "out"}],
+            outputs=[{"example_id": "custom_id", "output": "out"}],
             quality_metrics=None,
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
         caps = _default_capabilities(supports_evaluate=False)
 
-        # EvaluationExample with input_id in input_data
+        # EvaluationExample with example_id in input_data
         example = EvaluationExample(
-            input_data={"input_id": "custom_id", "question": "?"}
+            input_data={"example_id": "custom_id", "question": "?"}
         )
         dataset = Dataset(examples=[example], name="test")
         batch = list(dataset)
 
         results = await ev._execute_batch(mock_transport, caps, {}, batch)
-        assert results[0].input_id == "custom_id"
+        assert results[0].example_id == "custom_id"
 
 
 # ---------------------------------------------------------------------------
@@ -1055,15 +1237,15 @@ class TestEvaluateOutputs:
         )
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "result_0"},
-                {"input_id": "ex_1", "output": "result_1"},
+                {"example_id": "ex_0", "output": "result_0"},
+                {"example_id": "ex_1", "output": "result_1"},
             ],
             operational_metrics={"cost_usd": 0.04, "latency_ms": 200.0},
         )
         eval_response = _make_evaluate_response(
             results=[
-                {"input_id": "ex_0", "metrics": {"accuracy": 1.0}},
-                {"input_id": "ex_1", "metrics": {"accuracy": 0.5}},
+                {"example_id": "ex_0", "metrics": {"accuracy": 1.0}},
+                {"example_id": "ex_1", "metrics": {"accuracy": 0.5}},
             ]
         )
         mock_transport.evaluate = AsyncMock(return_value=eval_response)
@@ -1071,8 +1253,8 @@ class TestEvaluateOutputs:
         dataset = _make_dataset()
         batch = list(dataset)
         inputs = [
-            {"input_id": "ex_0", "data": {"question": "What is 2+2?"}},
-            {"input_id": "ex_1", "data": {"question": "What is 3+3?"}},
+            {"example_id": "ex_0", "data": {"question": "What is 2+2?"}},
+            {"example_id": "ex_1", "data": {"question": "What is 3+3?"}},
         ]
 
         results = await ev._evaluate_outputs(
@@ -1096,14 +1278,14 @@ class TestEvaluateOutputs:
             keep_alive=False,
         )
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "out_0"}],
+            outputs=[{"example_id": "ex_0", "output": "out_0"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
         )
         mock_transport.evaluate = AsyncMock(side_effect=Exception("evaluate failed"))
 
         dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
         batch = list(dataset)
-        inputs = [{"input_id": "ex_0", "data": {"q": "?"}}]
+        inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
         results = await ev._evaluate_outputs(
             mock_transport, batch, inputs, exec_response
@@ -1118,15 +1300,15 @@ class TestEvaluateOutputs:
     async def test_evaluate_outputs_no_matching_output(
         self, mock_transport: MagicMock
     ) -> None:
-        """Handles case where output input_id doesn't match."""
+        """Handles case where output example_id doesn't match."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
             tunable_id="cap",
             keep_alive=False,
         )
-        # outputs have different input_id than expected
+        # outputs have different example_id than expected
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "other_id", "output": "something"}],
+            outputs=[{"example_id": "other_id", "output": "something"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
         )
         eval_response = _make_evaluate_response(results=[])
@@ -1134,7 +1316,7 @@ class TestEvaluateOutputs:
 
         dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
         batch = list(dataset)
-        inputs = [{"input_id": "ex_0", "data": {"q": "?"}}]
+        inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
         results = await ev._evaluate_outputs(
             mock_transport, batch, inputs, exec_response
@@ -1156,14 +1338,14 @@ class TestEvaluateOutputs:
             timeout=12.5,
         )
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "result_0"}],
+            outputs=[{"example_id": "ex_0", "output": "result_0"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 100.0},
         )
         mock_transport.evaluate = AsyncMock(return_value=_make_evaluate_response())
 
         dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
         batch = list(dataset)
-        inputs = [{"input_id": "ex_0", "data": {"q": "?"}}]
+        inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
         await ev._evaluate_outputs(mock_transport, batch, inputs, exec_response)
 
@@ -1188,8 +1370,8 @@ class TestProcessCombinedResponse:
         )
         response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "out0", "metrics": {"score": 0.9}},
-                {"input_id": "ex_1", "output": "out1", "metrics": {"score": 0.7}},
+                {"example_id": "ex_0", "output": "out0", "metrics": {"score": 0.9}},
+                {"example_id": "ex_1", "output": "out1", "metrics": {"score": 0.7}},
             ],
             operational_metrics={"cost_usd": 0.10, "latency_ms": 300.0},
             quality_metrics={"overall": 0.8},
@@ -1197,8 +1379,8 @@ class TestProcessCombinedResponse:
         dataset = _make_dataset()
         batch = list(dataset)
         inputs = [
-            {"input_id": "ex_0", "data": {}},
-            {"input_id": "ex_1", "data": {}},
+            {"example_id": "ex_0", "data": {}},
+            {"example_id": "ex_1", "data": {}},
         ]
 
         results = ev._process_combined_response(batch, inputs, response)
@@ -1212,20 +1394,20 @@ class TestProcessCombinedResponse:
         assert results[1].expected_output == "6"  # From dataset
 
     def test_combined_no_matching_output(self, mock_transport: MagicMock) -> None:
-        """When output input_id doesn't match, output is None."""
+        """When output example_id doesn't match, output is None."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
             tunable_id="cap",
             keep_alive=False,
         )
         response = _make_execute_response(
-            outputs=[{"input_id": "no_match", "output": "x"}],
+            outputs=[{"example_id": "no_match", "output": "x"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 10.0},
             quality_metrics={"overall": 0.5},
         )
         dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
         batch = list(dataset)
-        inputs = [{"input_id": "ex_0", "data": {}}]
+        inputs = [{"example_id": "ex_0", "data": {}}]
 
         results = ev._process_combined_response(batch, inputs, response)
 
@@ -1250,12 +1432,12 @@ class TestProcessExecuteOnlyResponse:
             keep_alive=False,
         )
         response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "result"}],
+            outputs=[{"example_id": "ex_0", "output": "result"}],
             operational_metrics={"cost_usd": 0.02, "latency_ms": 150.0},
         )
         dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "ans"}])
         batch = list(dataset)
-        inputs = [{"input_id": "ex_0", "data": {}}]
+        inputs = [{"example_id": "ex_0", "data": {}}]
 
         results = ev._process_execute_only_response(batch, inputs, response)
 
@@ -1275,16 +1457,16 @@ class TestProcessExecuteOnlyResponse:
         )
         response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "r0"},
-                {"input_id": "ex_1", "output": "r1"},
+                {"example_id": "ex_0", "output": "r0"},
+                {"example_id": "ex_1", "output": "r1"},
             ],
             operational_metrics={"cost_usd": 0.10, "latency_ms": 100.0},
         )
         dataset = _make_dataset()
         batch = list(dataset)
         inputs = [
-            {"input_id": "ex_0", "data": {}},
-            {"input_id": "ex_1", "data": {}},
+            {"example_id": "ex_0", "data": {}},
+            {"example_id": "ex_1", "data": {}},
         ]
 
         results = ev._process_execute_only_response(batch, inputs, response)
@@ -1312,8 +1494,8 @@ class TestEvaluate:
         )
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "r0"},
-                {"input_id": "ex_1", "output": "r1"},
+                {"example_id": "ex_0", "output": "r0"},
+                {"example_id": "ex_1", "output": "r1"},
             ],
             operational_metrics={"cost_usd": 0.04, "latency_ms": 100.0},
         )
@@ -1365,7 +1547,7 @@ class TestEvaluate:
             return_value=_default_capabilities(supports_evaluate=False)
         )
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "r0"}],
+            outputs=[{"example_id": "ex_0", "output": "r0"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -1400,7 +1582,7 @@ class TestEvaluate:
         evaluator._batch_size = 1  # Process one at a time
 
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "r0"}],
+            outputs=[{"example_id": "ex_0", "output": "r0"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -1458,8 +1640,8 @@ class TestEvaluate:
         )
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "r0"},
-                {"input_id": "ex_1", "output": "r1"},
+                {"example_id": "ex_0", "output": "r0"},
+                {"example_id": "ex_1", "output": "r1"},
             ],
             operational_metrics={"cost_usd": 0.02, "latency_ms": 100.0},
         )
@@ -1495,7 +1677,7 @@ class TestEvaluate:
             return_value=_default_capabilities(supports_evaluate=False)
         )
         exec_response = _make_execute_response(
-            outputs=[{"input_id": "ex_0", "output": "r0"}],
+            outputs=[{"example_id": "ex_0", "output": "r0"}],
             operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -1521,6 +1703,7 @@ class TestEvaluate:
             batch_size=1,  # one example per batch
             keep_alive=False,
         )
+        ev._benchmark_id = "test-bench"
         mock_transport.capabilities = AsyncMock(
             return_value=_default_capabilities(supports_evaluate=False)
         )
@@ -1528,11 +1711,11 @@ class TestEvaluate:
         # Two separate calls for two batches
         responses = [
             _make_execute_response(
-                outputs=[{"input_id": "ex_0", "output": "r0"}],
+                outputs=[{"example_id": "ex_0", "output": "r0"}],
                 operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
             ),
             _make_execute_response(
-                outputs=[{"input_id": "ex_0", "output": "r1"}],
+                outputs=[{"example_id": "ex_0", "output": "r1"}],
                 operational_metrics={"cost_usd": 0.02, "latency_ms": 60.0},
             ),
         ]
@@ -1554,8 +1737,8 @@ class TestEvaluate:
         )
         exec_response = _make_execute_response(
             outputs=[
-                {"input_id": "ex_0", "output": "r0"},
-                {"input_id": "ex_1", "output": "r1"},
+                {"example_id": "ex_0", "output": "r0"},
+                {"example_id": "ex_1", "output": "r1"},
             ],
         )
         mock_transport.execute = AsyncMock(return_value=exec_response)
@@ -1576,12 +1759,12 @@ class TestEvaluate:
         exec_response = _make_execute_response(
             outputs=[
                 {
-                    "input_id": "ex_0",
+                    "example_id": "ex_0",
                     "output": "r0",
                     "metrics": {"text_accuracy": 1.0, "tool_accuracy": 0.5},
                 },
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output": "r1",
                     "metrics": {"text_accuracy": 0.5, "tool_accuracy": 1.0},
                 },
@@ -1615,12 +1798,12 @@ class TestEvaluate:
         exec_response = _make_execute_response(
             outputs=[
                 {
-                    "input_id": "ex_0",
+                    "example_id": "ex_0",
                     "output": "r0",
                     "metrics": {"text_accuracy": 0.8, "tool_accuracy": 0.9},
                 },
                 {
-                    "input_id": "ex_1",
+                    "example_id": "ex_1",
                     "output": "r1",
                     "metrics": {"text_accuracy": 0.6, "tool_accuracy": 1.0},
                 },

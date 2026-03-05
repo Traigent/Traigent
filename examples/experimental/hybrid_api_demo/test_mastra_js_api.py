@@ -8,10 +8,10 @@ Usage:
     cd JS-Mastra-APIs-Validation && npm run api:dev
 
     # Then run this test:
-    .venv/bin/python examples/hybrid_mode_demo/test_mastra_js_api.py
+    .venv/bin/python examples/experimental/hybrid_api_demo/test_mastra_js_api.py
 
     # Or specify a different URL:
-    .venv/bin/python examples/hybrid_mode_demo/test_mastra_js_api.py http://localhost:3000
+    .venv/bin/python examples/experimental/hybrid_api_demo/test_mastra_js_api.py http://localhost:3000
 
 Environment variables:
     MASTRA_API_URL       - Server URL (default: http://localhost:8080)
@@ -119,19 +119,18 @@ def _build_config_from_tunables(tunables: list) -> dict:
 
 
 def test_execute(tunable_id: str, config: dict):
-    """Test execute endpoint with dataset input_ids (privacy-preserving)."""
+    """Test execute endpoint with dataset example_ids (privacy-preserving)."""
     print("\n>>> Testing POST /traigent/v1/execute")
 
-    # input_ids are server-specific; these match the zap_agent benchmark dataset.
-    # TODO: replace with dynamic discovery once traigent-api#43 is resolved.
+    # example_ids are server-specific; these match the zap_agent benchmark dataset.
     sent_request_id = f"test-{uuid.uuid4().hex[:8]}"
     request_data = {
         "request_id": sent_request_id,
         "tunable_id": tunable_id,
         "config": config,
-        "inputs": [
-            {"input_id": "q001"},
-            {"input_id": "q051"},
+        "examples": [
+            {"example_id": "q001"},
+            {"example_id": "q051"},
         ],
     }
 
@@ -159,17 +158,17 @@ def test_execute(tunable_id: str, config: dict):
     # Check outputs — server returns output_id (privacy-preserving)
     assert len(data["outputs"]) == 2, f"Expected 2 outputs, got {len(data['outputs'])}"
     for output in data["outputs"]:
-        assert "input_id" in output, "Output missing input_id"
+        assert "example_id" in output, "Output missing example_id"
         assert "output_id" in output, "Output missing output_id"
         assert "cost_usd" in output, "Output missing cost_usd"
 
-    # Verify input_id preservation (order-independent, catches duplicates)
+    # Verify example_id preservation (order-independent, catches duplicates)
     # See traigent-api#44 for spec wording on exact preservation requirement.
-    sent_ids = Counter(inp["input_id"] for inp in request_data["inputs"])
-    received_ids = Counter(out["input_id"] for out in data["outputs"])
+    sent_ids = Counter(inp["example_id"] for inp in request_data["examples"])
+    received_ids = Counter(out["example_id"] for out in data["outputs"])
     assert (
         sent_ids == received_ids
-    ), f"input_id mismatch: sent {dict(sent_ids)}, got {dict(received_ids)}"
+    ), f"example_id mismatch: sent {dict(sent_ids)}, got {dict(received_ids)}"
 
     # Validate quality_metrics shape when present (combined mode)
     if data.get("quality_metrics") is not None:
@@ -199,7 +198,7 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     for out in execute_data["outputs"]:
         evaluations.append(
             {
-                "input_id": out["input_id"],
+                "example_id": out["example_id"],
                 "output_id": out["output_id"],
             }
         )
@@ -229,7 +228,7 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     # Check results
     assert len(data["results"]) == 2, f"Expected 2 results, got {len(data['results'])}"
     for result in data["results"]:
-        assert "input_id" in result, "Result missing input_id"
+        assert "example_id" in result, "Result missing example_id"
         assert "metrics" in result, "Result missing metrics"
 
     # Check aggregate metrics — validate required fields per AggregateMetricStats
@@ -275,7 +274,7 @@ def test_error_format(tunable_id: str):
     bad_request = {
         "request_id": f"err-{uuid.uuid4().hex[:8]}",
         "tunable_id": tunable_id,
-        "inputs": [{"input_id": "q001"}],
+        "examples": [{"example_id": "q001"}],
         # 'config' deliberately omitted
     }
 

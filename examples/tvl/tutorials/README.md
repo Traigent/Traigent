@@ -165,8 +165,7 @@ def my_llm_function(query: str, *, model: str, temperature: float):
 ## Next Steps
 
 1. Complete these tutorials in order
-2. Read the [TVL 0.9 Specification](../../docs/tvl/)
-3. Explore the [Advanced Examples](../advanced/)
-4. Join the Traigent community for support
+2. Read the [TVL 0.9 Specification](../../../docs/tvl/)
+3. Join the Traigent community for support
 
 Happy optimizing! 🚀

@@ -68,6 +68,21 @@ class TestLocalStorageManager:
         session_file = self.storage_path / "sessions" / f"{session_id}.json"
         assert session_file.exists()
 
+    def test_create_session_ids_are_unique_even_with_same_timestamp(self):
+        """Session IDs should remain unique when creation time is identical."""
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return fixed_time
+
+        with patch("traigent.storage.local_storage.datetime", FrozenDateTime):
+            first = self.storage.create_session("duplicate_func")
+            second = self.storage.create_session("duplicate_func")
+
+        assert first != second
+
     def test_create_session_minimal_params(self):
         """Test session creation with minimal parameters."""
         session_id = self.storage.create_session("minimal_func")

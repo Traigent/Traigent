@@ -89,6 +89,8 @@ _COST_WARNING_EMITTED = False
 # Error message for invalid configuration space type
 _CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
 
+_CLOUD_FALLBACK_POLICIES = frozenset({"auto", "warn", "never"})
+
 
 def _emit_cost_warning_once() -> None:
     """Emit cost warning once per process when optimization starts.
@@ -411,7 +413,7 @@ class OptimizedFunction:
         self.max_trials = kwargs.pop("max_trials", 50)
         kwargs["max_trials"] = self.max_trials
 
-        self.timeout = kwargs.pop("timeout", 60.0)
+        self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
 
         save_to_value = kwargs.pop("save_to", sentinel)
@@ -428,6 +430,26 @@ class OptimizedFunction:
         self.use_cloud_service = self._store_optional_param(
             kwargs, sentinel, "use_cloud_service", False, as_bool=True
         )
+        default_cloud_fallback_policy = (
+            "never"
+            if getattr(self, "_effective_execution_mode", None) is ExecutionMode.CLOUD
+            else "auto"
+        )
+        raw_cloud_fallback_policy = kwargs.pop("cloud_fallback_policy", sentinel)
+        if raw_cloud_fallback_policy is sentinel or raw_cloud_fallback_policy is None:
+            self.cloud_fallback_policy = default_cloud_fallback_policy
+        else:
+            if not isinstance(raw_cloud_fallback_policy, str):
+                raise ValueError(
+                    "cloud_fallback_policy must be one of: auto, warn, never"
+                )
+            resolved_cloud_fallback_policy = raw_cloud_fallback_policy.strip().lower()
+            if resolved_cloud_fallback_policy not in _CLOUD_FALLBACK_POLICIES:
+                raise ValueError(
+                    "cloud_fallback_policy must be one of: auto, warn, never"
+                )
+            self.cloud_fallback_policy = resolved_cloud_fallback_policy
+        kwargs["cloud_fallback_policy"] = self.cloud_fallback_policy
         self.framework_target = self._store_optional_param(
             kwargs, sentinel, "framework_target", None
         )
@@ -530,6 +552,7 @@ class OptimizedFunction:
             "parallel_config",
             "_parallel_config_sources",
             "use_cloud_service",
+            "cloud_fallback_policy",
             "framework_target",
             "privacy_enabled",
             "mock_mode_config",
@@ -673,7 +696,7 @@ class OptimizedFunction:
         if self.max_trials < 0:
             raise ValueError("max_trials must be non-negative")
 
-        if self.timeout < 0:
+        if self.timeout is not None and self.timeout < 0:
             raise ValueError("timeout must be non-negative")
 
     def _validate_configuration(self) -> None:
@@ -1481,10 +1504,14 @@ class OptimizedFunction:
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
         except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
+            if self.cloud_fallback_policy == "never":
+                raise
             logger.warning(
                 "Cloud optimization failed (transient), falling back to local: %s", e
             )
         except Exception as e:
+            if self.cloud_fallback_policy == "never":
+                raise
             logger.warning(
                 "Cloud optimization failed unexpectedly, falling back to local: %s",
                 e,

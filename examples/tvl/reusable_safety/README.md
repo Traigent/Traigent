@@ -210,6 +210,4 @@ def qa_agent(question: str, **kwargs):
 
 ## See Also
 
-- [TVL 0.9 Specification](../../../docs/tvl_spec.md)
-- [Safety Presets Documentation](../../../docs/safety_presets.md)
-- [RAGAS Integration](../../../docs/ragas_integration.md)
+- [TVL Tutorials](../tutorials/README.md)

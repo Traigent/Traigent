@@ -412,7 +412,9 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
 
     @pytest.mark.asyncio
     async def test_privacy_uses_rendered_prompt_length_for_prompt_length_based_tokens(
@@ -441,7 +443,9 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
 
     @pytest.mark.asyncio
     async def test_non_privacy_format_failure_falls_back_to_additive_length(
@@ -469,7 +473,9 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
 
     @pytest.mark.asyncio
     async def test_privacy_format_failure_falls_back_to_additive_length(
@@ -497,7 +503,9 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini", "prompt": prompt}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
 
     @pytest.mark.asyncio
     async def test_non_privacy_without_prompt_preserves_legacy_input_estimation(
@@ -524,7 +532,9 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini"}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
 
     @pytest.mark.asyncio
     async def test_privacy_without_prompt_preserves_legacy_input_estimation(
@@ -551,4 +561,6 @@ class TestPromptTemplateFallbackLength:
             returns_plain_string, {"model": "gpt-4o-mini"}, dataset
         )
 
-        assert result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        assert (
+            result.example_results[0].metrics["input_tokens"] == expected_input_tokens
+        )
