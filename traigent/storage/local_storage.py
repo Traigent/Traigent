@@ -8,13 +8,13 @@ Inspired by DeepEval's approach to local JSON file storage.
 import json
 import os
 import time
-import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
@@ -131,6 +131,53 @@ class LocalStorageManager:
                 f"Failed to create storage directories: {e}"
             ) from e
 
+    def _is_process_alive(self, pid: int) -> bool:
+        """Best-effort check whether a process is alive."""
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    def _read_lock_pid(self, lock_path: Path) -> int | None:
+        """Read owning PID from lock file, if present."""
+        try:
+            with open(lock_path, encoding="utf-8") as lock_file:
+                raw_value = lock_file.read().strip()
+        except OSError:
+            return None
+
+        if not raw_value:
+            return None
+        try:
+            return int(raw_value)
+        except ValueError:
+            return None
+
+    def _try_cleanup_stale_lock(self, lock_path: Path, lock_name: str) -> bool:
+        """Remove stale lock when owner PID is no longer running."""
+        owner_pid = self._read_lock_pid(lock_path)
+        if owner_pid is None or self._is_process_alive(owner_pid):
+            return False
+
+        try:
+            os.unlink(str(lock_path))
+            logger.warning(
+                "Removed stale lock '%s' owned by dead pid %s", lock_name, owner_pid
+            )
+            return True
+        except FileNotFoundError:
+            # Another process removed it before us.
+            return True
+        except OSError:
+            return False
+
     @contextmanager
     def acquire_lock(self, lock_name: str, timeout: float = 5.0):
         """
@@ -162,6 +209,7 @@ class LocalStorageManager:
             try:
                 # Atomic file creation works on all platforms
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.write(fd, str(os.getpid()).encode("utf-8"))
                 logger.debug(f"Acquired lock: {lock_name}")
                 try:
                     yield  # Lock acquired
@@ -175,6 +223,8 @@ class LocalStorageManager:
                 break
             except FileExistsError:
                 # Lock is held by another process
+                if self._try_cleanup_stale_lock(lock_path, lock_name):
+                    continue
                 if time.time() - start_time > timeout:
                     raise TimeoutError(
                         f"Could not acquire lock '{lock_name}' after {timeout}s"
@@ -201,7 +251,7 @@ class LocalStorageManager:
         """
         timestamp = datetime.now(UTC)
         safe_function = sanitize_identifier(function_name)
-        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{safe_function}_{uuid.uuid4().hex[:8]}"
+        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
 
         session = OptimizationSession(
             session_id=session_id,
