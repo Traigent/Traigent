@@ -71,6 +71,7 @@ from traigent.core.parallel_execution_manager import (
 from traigent.core.progress_manager import ProgressManager
 from traigent.core.result_selection import TieBreaker, select_best_configuration
 from traigent.core.sample_budget import SampleBudgetManager
+from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
@@ -1790,6 +1791,22 @@ class OptimizationOrchestrator:
         )
 
         merge_run_metrics_into_session_summary(result)
+
+        # Compute statistical significance badges per objective
+        orientations = None
+        if self.objective_schema and self.objective_schema.objectives:
+            orientations = {
+                obj.name: obj.orientation for obj in self.objective_schema.objectives
+            }
+        significance = compute_significance(
+            trials=result.trials,
+            objectives=self.optimizer.objectives,
+            objective_orientations=orientations,
+            alpha=0.05,
+        )
+        if significance:
+            result.metadata["statistical_significance"] = significance
+
         await self.backend_session_manager.update_weighted_scores(result, session_id)
         self.backend_session_manager.submit_session_aggregation(result, session_id)
 
