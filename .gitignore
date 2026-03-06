@@ -407,6 +407,7 @@ report.json
 mlruns/
 mlflow.db
 .secrets.*
+!.secrets.baseline
 
 # Trial output files (local development)
 trial_*.json
