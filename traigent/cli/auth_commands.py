@@ -179,7 +179,7 @@ class TraigentAuthCLI:
 
                 # Show response details on failure
                 if response.status != 200:
-                    console.print(f"\n[red]--- Backend Response ---[/red]")
+                    console.print("\n[red]--- Backend Response ---[/red]")
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     safe_headers = {
                         k: v
@@ -195,13 +195,13 @@ class TraigentAuthCLI:
                 try:
                     login_data = json.loads(response_text)
                 except json.JSONDecodeError:
-                    console.print(f"\n[red]--- Backend Response ---[/red]")
+                    console.print("\n[red]--- Backend Response ---[/red]")
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     console.print(f"[red]Body (not JSON): {response_text}[/red]")
                     raise Exception("Invalid JSON response from backend") from None
 
                 if not login_data.get("success"):
-                    console.print(f"\n[red]--- Backend Response ---[/red]")
+                    console.print("\n[red]--- Backend Response ---[/red]")
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
@@ -212,7 +212,7 @@ class TraigentAuthCLI:
                 jwt_token = token_data.get("access_token")
 
                 if not jwt_token:
-                    console.print(f"\n[red]--- Backend Response ---[/red]")
+                    console.print("\n[red]--- Backend Response ---[/red]")
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
@@ -245,16 +245,16 @@ class TraigentAuthCLI:
                     try:
                         api_key_data = json.loads(response_text)
                         api_key = api_key_data["data"]["key"]
-                        console.print(f"[green]✓ API key created[/green]")
+                        console.print("[green]✓ API key created[/green]")
                     except (json.JSONDecodeError, KeyError) as e:
-                        console.print(f"\n[yellow]--- API Key Response ---[/yellow]")
+                        console.print("\n[yellow]--- API Key Response ---[/yellow]")
                         console.print(f"[yellow]Status: {response.status}[/yellow]")
                         console.print(f"[yellow]Body: {response_text}[/yellow]")
                         console.print(
                             f"[yellow]⚠️ Could not parse API key: {e}[/yellow]"
                         )
                 else:
-                    console.print(f"\n[yellow]--- API Key Response ---[/yellow]")
+                    console.print("\n[yellow]--- API Key Response ---[/yellow]")
                     console.print(f"[yellow]Status Code: {response.status}[/yellow]")
                     console.print(f"[yellow]Body: {response_text}[/yellow]")
                     console.print(
