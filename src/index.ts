@@ -39,6 +39,35 @@ export type {
   LLMMetrics,
 } from './core/types.js';
 
+// Optimization exports
+export {
+  optimize,
+  param,
+  getOptimizationSpec,
+  toHybridConfigSpace,
+} from './optimization/index.js';
+
+export type {
+  BuiltInObjectiveName,
+  EvaluationSpec,
+  FloatParamDefinition,
+  HybridConfigSpace,
+  HybridTunableDefinition,
+  IntParamDefinition,
+  NativeOptimizedFunction,
+  NativeOptimizeOptions,
+  NativeTrialFunctionResult,
+  ObjectiveDefinition,
+  ObjectiveDirection,
+  ObjectiveInput,
+  OptimizationBudget,
+  OptimizationResult,
+  OptimizationSpec,
+  OptimizationTrialRecord,
+  ParameterDefinition,
+  ParamScale,
+} from './optimization/index.js';
+
 // DTO exports
 export {
   // Trial schemas

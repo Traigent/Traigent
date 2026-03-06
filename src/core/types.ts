@@ -1,3 +1,5 @@
+import type { TrialConfig } from '../dtos/trial.js';
+
 /**
  * Core type definitions for the Traigent JS SDK.
  */
@@ -31,14 +33,15 @@ export interface TrialFunctionResult {
   output?: unknown;
   /** Optional metadata to include in results */
   metadata?: Record<string, unknown>;
+  /** Optional execution duration in seconds */
+  duration?: number;
 }
 
 /**
  * User-defined trial function signature.
  */
 export type TrialFunction = (
-  config: Record<string, unknown>,
-  dataIndices: number[]
+  config: TrialConfig,
 ) => Promise<TrialFunctionResult>;
 
 /**
