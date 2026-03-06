@@ -196,7 +196,8 @@ class TraigentAuthCLI:
                 if response.status != 200:
                     console.print(f"\n[red]--- Backend Response ---[/red]")
                     console.print(f"[red]Status Code: {response.status}[/red]")
-                    console.print(f"[red]Headers: {dict(response.headers)}[/red]")
+                    safe_headers = {k: v for k, v in response.headers.items() if k.lower() in ("content-type", "x-request-id", "x-trace-id")}
+                    console.print(f"[red]Headers: {safe_headers}[/red]")
                     console.print(f"[red]Body: {response_text}[/red]")
                     raise Exception(
                         f"Authentication failed (HTTP {response.status})"
