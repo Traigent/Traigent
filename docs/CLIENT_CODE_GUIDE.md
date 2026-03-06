@@ -77,6 +77,12 @@ Hybrid mode uses the backend interactive session API:
 - `POST /sessions/{session_id}/results`
 - `POST /sessions/{session_id}/finalize`
 
+Compatibility note:
+
+- The legacy TraiGent `/api/v1/sessions` route that expects `problem_statement`, `dataset`, `search_space`, and `optimization_config` is not this contract.
+- The separate `/api/v1/hybrid/sessions` route in `TraigentBackend` is an IRT round-based workflow, not the Optuna-style single-trial session flow used here.
+- `wrapped.optimize({ mode: 'hybrid', algorithm: 'optuna' })` now fails fast against the legacy `/sessions` contract instead of surfacing a vague HTTP 400 later in the run.
+
 `backendUrl` may be either the backend origin or the `/api/v1` base URL. Resolution order is:
 
 1. `backendUrl`
@@ -88,9 +94,13 @@ API key resolution order is:
 1. `apiKey`
 2. `TRAIGENT_API_KEY`
 
+For a real backend session smoke run, use `npm run smoke:hybrid-live` after setting `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus `TRAIGENT_API_KEY`.
+Hybrid `optimizationStrategy` options stay camelCase in JS and are serialized to snake_case on the backend request.
+
 ## Hybrid v1 Limits
 
 - only `mode: 'hybrid'` + `algorithm: 'optuna'`
+- requires a backend that exposes the typed interactive session API on `/api/v1/sessions`
 - no client-side resume
 - no `trialConcurrency`, `plateau`, `checkpoint`, or `randomSeed`
 - explicit objective objects must match backend direction inference and cannot be weighted

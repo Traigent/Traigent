@@ -21,7 +21,9 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
   - local JS trial execution with backend-driven configuration suggestions
   - backend session orchestration via `/sessions`, `/next-trial`, `/results`, and `/finalize`
   - env-backed backend discovery through `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` and `TRAIGENT_API_KEY`
+  - snake_case transport serialization for hybrid `optimizationStrategy` keys
   - backend finalization fallback for `bestConfig` / `bestMetrics`
+  - fast compatibility failure when a backend still exposes the legacy TraiGent `/sessions` contract instead of the typed interactive one
 
 ## Cross-SDK Validation
 
@@ -36,6 +38,10 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 - No native in-process Optuna-family algorithms or example-level concurrency yet.
 - `budget.maxCostUsd` requires numeric `metrics.cost` on every trial.
 - Hybrid mode rejects weighted objectives, explicit direction overrides that do not match backend inference, conditional parameters, and native-only runtime options.
+- The current local `TraigentBackend` codebase exposes two different session APIs:
+  - `/api/v1/sessions` is still the older TraiGent grid/random contract and is incompatible with JS hybrid Optuna mode.
+  - `/api/v1/hybrid/sessions` is an IRT round-based service and is also not the Optuna-style one-trial-at-a-time contract used by this client.
+- Live backend validation is therefore blocked until the backend publishes the typed interactive session API expected by the JS hybrid client.
 
 ## Release Validation
 
@@ -43,7 +49,10 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 npm test
 npm run test:cross-sdk
 npm run smoke:example
+npm run smoke:hybrid-live
 npm run benchmark:cross-sdk
 npm run build
 npm pack --dry-run
 ```
+
+`smoke:hybrid-live` requires `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus `TRAIGENT_API_KEY`.

@@ -143,6 +143,8 @@ API key resolution order:
 - `apiKey`
 - `TRAIGENT_API_KEY`
 
+Hybrid transport keeps JS options camelCase at the public API and serializes `optimizationStrategy` keys to snake_case for the backend session request.
+
 The hybrid session client talks to:
 
 - `POST /sessions`
@@ -151,6 +153,13 @@ The hybrid session client talks to:
 - `POST /sessions/{session_id}/finalize`
 
 See [`examples/hybrid-optuna.mjs`](./examples/hybrid-optuna.mjs) for a runnable example that expects backend env vars.
+Use `npm run smoke:hybrid-live` to run a real backend session smoke test once `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` and `TRAIGENT_API_KEY` are configured.
+
+Backend compatibility note:
+
+- This client expects a typed interactive session contract on `/api/v1/sessions`.
+- The older TraiGent `/api/v1/sessions` contract that expects `problem_statement`, `dataset`, `search_space`, and `optimization_config` is not compatible and now fails fast with a validation error.
+- The separate `/api/v1/hybrid/sessions` API in `TraigentBackend` is an IRT round-based service, not the Optuna-style one-trial-at-a-time contract used by this JS client.
 
 The wrapped function must satisfy the JS trial contract:
 
@@ -202,6 +211,7 @@ Use `TrialContext`, `getTrialConfig()`, and `getTrialParam()` inside a bound tri
 ## Current Hybrid v1 Limits
 
 - Hybrid optimization currently requires `mode: 'hybrid'` and `algorithm: 'optuna'`.
+- Hybrid optimization requires a backend that actually exposes the typed interactive session API on `/api/v1/sessions`.
 - `spec.evaluation.data` or `spec.evaluation.loadData()` is required so the SDK can derive dataset size for backend sessions.
 - Weighted objectives are rejected in hybrid mode.
 - Explicit objective objects are allowed only when their direction matches backend inference.
@@ -216,6 +226,7 @@ Internal validation:
 npm test
 npm run test:cross-sdk
 npm run smoke:example
+npm run smoke:hybrid-live
 npm run benchmark:cross-sdk
 npm run build
 npm pack --dry-run

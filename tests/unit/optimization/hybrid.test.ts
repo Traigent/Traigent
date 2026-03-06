@@ -53,6 +53,9 @@ describe('hybrid optimize()', () => {
     expect(normalizeBackendApiBase('http://localhost:5000/api/v1')).toBe(
       'http://localhost:5000/api/v1',
     );
+    expect(normalizeBackendApiBase('http://localhost:5000/api/v1/')).toBe(
+      'http://localhost:5000/api/v1',
+    );
     expect(() =>
       normalizeBackendApiBase('http://localhost:5000/custom/path'),
     ).toThrow(/backendUrl must be a backend origin or the \/api\/v1 base URL/i);
@@ -230,6 +233,200 @@ describe('hybrid optimize()', () => {
         mode: 'hybrid',
       },
     });
+  });
+
+  it('falls back to TRAIGENT_API_URL and forwards optional session metadata', async () => {
+    vi.stubEnv('TRAIGENT_API_URL', 'http://localhost:5000');
+    vi.stubEnv('TRAIGENT_API_KEY', 'env-key');
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          session_id: 'session-metadata',
+          status: 'active',
+          optimization_strategy: { algorithm: 'optuna', sampler: 'tpe' },
+          metadata: {},
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: null,
+          should_continue: false,
+          reason: 'search complete',
+          session_status: 'completed',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: 'session-metadata',
+          metadata: { finalized_by: 'backend' },
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }, { id: 2 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    const result = await wrapped.optimize({
+      mode: 'hybrid',
+      algorithm: 'optuna',
+      maxTrials: 2,
+      userId: 'user-123',
+      billingTier: 'enterprise',
+      optimizationStrategy: { sampler: 'tpe', startupTrials: 5 },
+      datasetMetadata: { source: 'unit-test' },
+    });
+
+    expect(result.stopReason).toBe('completed');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:5000/api/v1/sessions');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer env-key',
+      }),
+    });
+
+    const createPayload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(createPayload).toMatchObject({
+      function_name: 'anonymous_js_trial',
+      user_id: 'user-123',
+      billing_tier: 'enterprise',
+      dataset_metadata: {
+        size: 2,
+        source: 'unit-test',
+      },
+      optimization_strategy: {
+        algorithm: 'optuna',
+        sampler: 'tpe',
+        startup_trials: 5,
+      },
+    });
+
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      'http://localhost:5000/api/v1/sessions/session-metadata/finalize',
+    );
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer env-key',
+      }),
+    });
+  });
+
+  it('rejects dataset metadata size that does not match the loaded evaluation size', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }, { id: 2 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    await expect(
+      wrapped.optimize({
+        mode: 'hybrid',
+        algorithm: 'optuna',
+        maxTrials: 1,
+        backendUrl: 'http://localhost:5000',
+        apiKey: 'key',
+        datasetMetadata: { size: 3 },
+      }),
+    ).rejects.toThrow(
+      /datasetMetadata\.size must match the loaded evaluation dataset size/i,
+    );
+  });
+
+  it('rejects dataset metadata size when it is not a positive number', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }, { id: 2 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    await expect(
+      wrapped.optimize({
+        mode: 'hybrid',
+        algorithm: 'optuna',
+        maxTrials: 1,
+        backendUrl: 'http://localhost:5000',
+        apiKey: 'key',
+        datasetMetadata: { size: 0 },
+      }),
+    ).rejects.toThrow(
+      /datasetMetadata\.size must be a positive number when provided/i,
+    );
+  });
+
+  it('returns an error result when env-backed TRAIGENT_API_URL requests fail', async () => {
+    vi.stubEnv('TRAIGENT_API_URL', 'http://localhost:5000/api/v1/');
+    vi.stubEnv('TRAIGENT_API_KEY', 'env-key');
+    fetchMock.mockResolvedValueOnce(textResponse(503, 'backend unavailable'));
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    const result = await wrapped.optimize({
+      mode: 'hybrid',
+      algorithm: 'optuna',
+      maxTrials: 1,
+    });
+
+    expect(result.stopReason).toBe('error');
+    expect(result.errorMessage).toMatch(/http 503/i);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:5000/api/v1/sessions');
+  });
+
+  it('fails fast when the backend exposes the legacy TraiGent /sessions contract', async () => {
+    vi.stubEnv('TRAIGENT_API_URL', 'http://localhost:5000');
+    vi.stubEnv('TRAIGENT_API_KEY', 'env-key');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, {
+        error:
+          'Missing required fields: problem_statement, dataset, search_space, optimization_config',
+        message:
+          'Missing required fields: problem_statement, dataset, search_space, optimization_config',
+        success: false,
+      }),
+    );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    await expect(
+      wrapped.optimize({
+        mode: 'hybrid',
+        algorithm: 'optuna',
+        maxTrials: 1,
+      }),
+    ).rejects.toThrow(
+      /pointed at a legacy TraiGent \/sessions API/i,
+    );
   });
 
   it('rejects weighted objectives, conditional params, and native-only options in hybrid mode', async () => {

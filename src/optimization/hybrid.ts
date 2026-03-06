@@ -117,6 +117,30 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function toSnakeCaseKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase();
+}
+
+function serializeSnakeCaseObject(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeSnakeCaseObject(item));
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nestedValue]) => [
+      toSnakeCaseKey(key),
+      serializeSnakeCaseObject(nestedValue),
+    ]),
+  );
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -750,6 +774,50 @@ interface HybridFetchResponse {
   text: () => Promise<string>;
 }
 
+interface HybridErrorPayload {
+  error?: string;
+  message?: string;
+  error_code?: string;
+}
+
+function parseHybridErrorPayload(raw: string): HybridErrorPayload | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isPlainObject(parsed) ? (parsed as HybridErrorPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+function classifyHybridCompatibilityError(
+  method: string,
+  path: string,
+  status: number,
+  errorText: string,
+): ValidationError | null {
+  if (method !== 'POST' || path !== '/sessions' || status !== 400) {
+    return null;
+  }
+
+  const payload = parseHybridErrorPayload(errorText);
+  const message =
+    payload?.error ??
+    payload?.message ??
+    errorText;
+
+  if (
+    message.includes(
+      'Missing required fields: problem_statement, dataset, search_space, optimization_config',
+    )
+  ) {
+    return new ValidationError(
+      'Hybrid optimize() is pointed at a legacy TraiGent /sessions API that expects problem_statement, dataset, search_space, and optimization_config. This JS client requires the typed interactive session contract for backend-guided optimization.',
+    );
+  }
+
+  return null;
+}
+
 class HybridSessionClient {
   constructor(
     private readonly apiBase: string,
@@ -859,6 +927,15 @@ class HybridSessionClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        const compatibilityError = classifyHybridCompatibilityError(
+          method,
+          path,
+          response.status,
+          errorText,
+        );
+        if (compatibilityError) {
+          throw compatibilityError;
+        }
         throw new Error(
           `Hybrid optimize() request failed (${method} ${path}) with HTTP ${response.status}: ${errorText || 'No response body'}`,
         );
@@ -969,7 +1046,10 @@ export async function runHybridOptimization(
         max_trials: options.maxTrials,
         optimization_strategy: {
           algorithm: 'optuna',
-          ...(options.optimizationStrategy ?? {}),
+          ...(serializeSnakeCaseObject(options.optimizationStrategy ?? {}) as Record<
+            string,
+            unknown
+          >),
         },
         user_id: options.userId,
         billing_tier: options.billingTier ?? 'standard',

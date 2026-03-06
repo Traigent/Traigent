@@ -45,6 +45,7 @@
     "build:cli": "tsup --config tsup.cli.config.ts",
     "dev": "tsup --watch",
     "smoke:example": "npm run build:sdk && node examples/native-optimization.mjs",
+    "smoke:hybrid-live": "npm run build:sdk && node scripts/run-hybrid-live-smoke.mjs",
     "test": "vitest run",
     "test:cross-sdk": "vitest run tests/cross-sdk/**/*.test.ts",
     "test:watch": "vitest",
