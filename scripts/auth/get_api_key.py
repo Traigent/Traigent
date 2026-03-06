@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Generate Traigent API key from email/password.
+
+Usage:
+    # Via command line args:
+    python scripts/auth/get_api_key.py --email user@example.com --password yourpass
+
+    # Via environment variables:
+    export TRAIGENT_AUTH_EMAIL=user@example.com
+    export TRAIGENT_AUTH_PASSWORD=yourpass
+    python scripts/auth/get_api_key.py
+
+    # Mixed (CLI args take precedence):
+    export TRAIGENT_AUTH_PASSWORD=yourpass
+    python scripts/auth/get_api_key.py --email user@example.com
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import requests
+
+# Auto-load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+
+    # Look for .env in the repo root
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"Loaded environment from: {env_path}")
+except ImportError:
+    # python-dotenv not installed, rely on shell environment
+    pass
+
+
+def get_api_key(email: str, password: str, backend_url: str, verbose: bool = True) -> str:
+    """Authenticate and create an API key.
+
+    Args:
+        email: User email
+        password: User password
+        backend_url: Backend API URL
+        verbose: Whether to print detailed response info
+
+    Returns:
+        The generated API key
+
+    Raises:
+        Exception: If authentication or API key creation fails
+    """
+    # Step 1: Login to get JWT token
+    login_url = f"{backend_url}/api/v1/auth/login"
+    print(f"\n{'='*60}")
+    print("STEP 1: LOGIN")
+    print(f"{'='*60}")
+    print(f"URL: {login_url}")
+    print(f"Email: {email}")
+    print("Sending request...")
+
+    login_resp = requests.post(
+        login_url,
+        json={"email": email, "password": password},
+        timeout=30,
+    )
+
+    print(f"\n--- Response ---")
+    print(f"Status Code: {login_resp.status_code}")
+    print(f"Headers: {dict(login_resp.headers)}")
+
+    try:
+        login_data = login_resp.json()
+        if verbose:
+            import json
+            print(f"Body (JSON):\n{json.dumps(login_data, indent=2)}")
+    except Exception:
+        print(f"Body (raw): {login_resp.text}")
+        raise Exception(f"Login failed: {login_resp.status_code} - {login_resp.text}")
+
+    if login_resp.status_code != 200:
+        raise Exception(f"Login failed: {login_resp.status_code} - {login_resp.text}")
+
+    if not login_data.get("success"):
+        raise Exception(f"Login failed: {login_data.get('error', 'Unknown error')}")
+
+    token = login_data["data"]["access_token"]
+    # Show truncated token for security
+    token_preview = f"{token[:20]}...{token[-10:]}" if len(token) > 30 else token
+    print(f"\n✅ Login successful!")
+    print(f"JWT Token: {token_preview}")
+
+    # Step 2: Create API key
+    api_key_url = f"{backend_url}/api/v1/keys"
+    print(f"\n{'='*60}")
+    print("STEP 2: CREATE API KEY")
+    print(f"{'='*60}")
+    print(f"URL: {api_key_url}")
+    print("Sending request...")
+
+    key_resp = requests.post(
+        api_key_url,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"key_name": "CLI Generated Key"},
+        timeout=30,
+    )
+
+    print(f"\n--- Response ---")
+    print(f"Status Code: {key_resp.status_code}")
+    print(f"Headers: {dict(key_resp.headers)}")
+
+    try:
+        key_data = key_resp.json()
+        if verbose:
+            import json
+            print(f"Body (JSON):\n{json.dumps(key_data, indent=2)}")
+    except Exception:
+        print(f"Body (raw): {key_resp.text}")
+        raise Exception(f"API key creation failed: {key_resp.status_code} - {key_resp.text}")
+
+    if key_resp.status_code != 201:
+        raise Exception(
+            f"API key creation failed: {key_resp.status_code} - {key_resp.text}"
+        )
+
+    api_key = key_data["data"]["key"]
+    print(f"\n✅ API key created successfully!")
+
+    return api_key
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate Traigent API key from email/password"
+    )
+    parser.add_argument(
+        "--email",
+        "-e",
+        help="Email address (or set TRAIGENT_AUTH_EMAIL env var)",
+    )
+    parser.add_argument(
+        "--password",
+        "-p",
+        help="Password (or set TRAIGENT_AUTH_PASSWORD env var)",
+    )
+    parser.add_argument(
+        "--backend-url",
+        "-b",
+        help="Backend URL (or set TRAIGENT_BACKEND_URL env var)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=True,
+        help="Show full response bodies (default: True)",
+    )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Only show the API key (minimal output)",
+    )
+
+    args = parser.parse_args()
+
+    # Get values from args or env vars (args take precedence)
+    email = args.email or os.environ.get("TRAIGENT_AUTH_EMAIL")
+    password = args.password or os.environ.get("TRAIGENT_AUTH_PASSWORD")
+    backend_url = (
+        args.backend_url
+        or os.environ.get("TRAIGENT_BACKEND_URL")
+        or "https://api.traigent.ai"
+    )
+
+    # Validate required fields
+    if not email:
+        print("Error: Email required. Use --email or set TRAIGENT_AUTH_EMAIL")
+        sys.exit(1)
+
+    if not password:
+        print("Error: Password required. Use --password or set TRAIGENT_AUTH_PASSWORD")
+        sys.exit(1)
+
+    verbose = not args.quiet
+
+    try:
+        api_key = get_api_key(email, password, backend_url, verbose=verbose)
+
+        if args.quiet:
+            print(api_key)
+        else:
+            print(f"\n{'=' * 60}")
+            print("SUCCESS!")
+            print(f"{'=' * 60}")
+            print(f"API Key: {api_key}")
+            print(f"\nTo use this key, add to your .env file:")
+            print(f"TRAIGENT_API_KEY={api_key}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
