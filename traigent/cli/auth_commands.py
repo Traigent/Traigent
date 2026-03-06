@@ -219,7 +219,7 @@ class TraigentAuthCLI:
                     raise Exception("No access_token in response") from None
 
                 # Show truncated token
-                console.print(f"[green]✓ JWT Token received[/green]")
+                console.print("[green]✓ JWT Token received[/green]")
 
         # Step 2: Create API key using JWT token
         api_key = None
