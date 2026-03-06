@@ -17,21 +17,6 @@ from typing import Any
 import click
 from rich.console import Console
 
-# Auto-load .env file if python-dotenv is available
-try:
-    from dotenv import load_dotenv
-
-    # Look for .env in common locations
-    for env_path in [
-        Path.cwd() / ".env",
-        Path(__file__).resolve().parents[2] / ".env",
-    ]:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-except ImportError:
-    pass
-
 # Try to import keyring, but make it optional
 try:
     import keyring
@@ -196,7 +181,11 @@ class TraigentAuthCLI:
                 if response.status != 200:
                     console.print(f"\n[red]--- Backend Response ---[/red]")
                     console.print(f"[red]Status Code: {response.status}[/red]")
-                    safe_headers = {k: v for k, v in response.headers.items() if k.lower() in ("content-type", "x-request-id", "x-trace-id")}
+                    safe_headers = {
+                        k: v
+                        for k, v in response.headers.items()
+                        if k.lower() in ("content-type", "x-request-id", "x-trace-id")
+                    }
                     console.print(f"[red]Headers: {safe_headers}[/red]")
                     console.print(f"[red]Body: {response_text}[/red]")
                     raise Exception(
@@ -573,7 +562,12 @@ def auth() -> None:
         traigent auth refresh           # Refresh authentication tokens
         traigent auth configure         # Configure authentication settings
     """
-    pass
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
 
 
 @auth.command()
