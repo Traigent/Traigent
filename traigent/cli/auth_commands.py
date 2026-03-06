@@ -28,7 +28,11 @@ except ImportError:
 from rich.prompt import Prompt
 from rich.table import Table
 
-from traigent.cloud.auth import AuthManager
+from traigent.cloud.auth import (
+    AuthenticationError,
+    AuthManager,
+    InvalidCredentialsError,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.logging import get_logger
 
@@ -40,6 +44,7 @@ TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
 KEYRING_SERVICE = "traigent-sdk"
 KEYRING_ACCOUNT = "default"
+BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 
 
 class TraigentAuthCLI:
@@ -77,7 +82,7 @@ class TraigentAuthCLI:
                 with open(self.credentials_file) as f:
                     data = json.load(f)
                     return dict(data)
-            except Exception as e:
+            except (json.JSONDecodeError, OSError) as e:
                 logger.debug(f"Failed to load credentials file: {e}")
 
         return None
@@ -114,7 +119,7 @@ class TraigentAuthCLI:
             self.credentials_file.chmod(0o600)
             logger.debug(f"Credentials saved to {self.credentials_file}")
             return True
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Failed to save credentials: {e}")
             return False
 
@@ -141,7 +146,7 @@ class TraigentAuthCLI:
             try:
                 self.credentials_file.unlink()
                 logger.debug("Cleared credentials file")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
 
@@ -160,7 +165,8 @@ class TraigentAuthCLI:
             Authentication tokens
 
         Raises:
-            Exception: If authentication fails
+            AuthenticationError: If authentication fails due to HTTP/protocol errors
+            InvalidCredentialsError: If credentials are rejected by the backend
         """
         import aiohttp
 
@@ -179,7 +185,7 @@ class TraigentAuthCLI:
 
                 # Show response details on failure
                 if response.status != 200:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     safe_headers = {
                         k: v
@@ -188,35 +194,35 @@ class TraigentAuthCLI:
                     }
                     console.print(f"[red]Headers: {safe_headers}[/red]")
                     console.print(f"[red]Body: {response_text}[/red]")
-                    raise Exception(
+                    raise AuthenticationError(
                         f"Authentication failed (HTTP {response.status})"
                     ) from None
 
                 try:
                     login_data = json.loads(response_text)
                 except json.JSONDecodeError:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     console.print(f"[red]Body (not JSON): {response_text}[/red]")
-                    raise Exception("Invalid JSON response from backend") from None
+                    raise AuthenticationError("Invalid JSON response from backend") from None
 
                 if not login_data.get("success"):
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
                     error_msg = login_data.get("error", "Unknown error")
-                    raise Exception(f"Authentication failed: {error_msg}") from None
+                    raise InvalidCredentialsError(f"Authentication failed: {error_msg}") from None
 
                 token_data = login_data.get("data", {})
                 jwt_token = token_data.get("access_token")
 
                 if not jwt_token:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
-                    raise Exception("No access_token in response") from None
+                    raise AuthenticationError("No access_token in response") from None
 
                 # Show truncated token
                 console.print("[green]✓ JWT Token received[/green]")
@@ -345,7 +351,7 @@ class TraigentAuthCLI:
 
             return True
 
-        except Exception as e:
+        except AuthenticationError as e:
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
             console.print(
@@ -489,7 +495,7 @@ class TraigentAuthCLI:
                 console.print("[red]❌ Refresh failed[/red]")
                 return False
 
-        except Exception as e:
+        except AuthenticationError as e:
             console.print(f"[red]❌ Refresh failed: {e}[/red]")
             console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
             return False
