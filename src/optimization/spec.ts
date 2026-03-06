@@ -113,6 +113,11 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
       `${kind} parameters only support scale "linear" or "log".`,
     );
   }
+  if (definition.scale === 'log' && (definition.min <= 0 || definition.max <= 0)) {
+    throw new ValidationError(
+      `${kind} parameters with scale "log" require min/max > 0.`,
+    );
+  }
   if (definition.step !== undefined) {
     if (!Number.isFinite(definition.step) || definition.step <= 0) {
       throw new ValidationError(
@@ -121,6 +126,11 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
     }
     if (kind === 'int' && !Number.isInteger(definition.step)) {
       throw new ValidationError('int parameters require step to be an integer.');
+    }
+    if (definition.scale === 'log' && definition.step <= 1) {
+      throw new ValidationError(
+        `${kind} parameters with scale "log" require step to be greater than 1 when provided.`,
+      );
     }
   }
 

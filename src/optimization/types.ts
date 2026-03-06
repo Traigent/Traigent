@@ -68,9 +68,10 @@ export interface NormalizedOptimizationSpec {
 }
 
 export interface NativeOptimizeOptions {
-  algorithm: 'grid' | 'random';
+  algorithm: 'grid' | 'random' | 'bayesian';
   maxTrials: number;
   randomSeed?: number;
+  timeoutMs?: number;
 }
 
 export interface OptimizationTrialRecord {
@@ -86,8 +87,9 @@ export interface OptimizationResult {
   bestConfig: TrialConfig['config'] | null;
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
-  stopReason: 'completed' | 'maxTrials' | 'budget';
+  stopReason: 'completed' | 'maxTrials' | 'budget' | 'timeout' | 'error';
   totalCostUsd: number;
+  errorMessage?: string;
 }
 
 export interface HybridTunableDefinition {
