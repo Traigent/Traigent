@@ -128,7 +128,9 @@ class TestSuggestedRange:
         assert obj.high == 1024
 
     def test_to_parameter_range_object_choices(self) -> None:
-        sr = SuggestedRange(range_type="Choices", kwargs={"values": ["gpt-4", "gpt-4o"]})
+        sr = SuggestedRange(
+            range_type="Choices", kwargs={"values": ["gpt-4", "gpt-4o"]}
+        )
         obj = sr.to_parameter_range()
         assert isinstance(obj, Choices)
         assert "gpt-4" in obj

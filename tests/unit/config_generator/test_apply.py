@@ -35,14 +35,12 @@ def _allow_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def simple_source() -> str:
-    return textwrap.dedent(
-        """\
+    return textwrap.dedent("""\
         import os
 
         def answer_question(query: str) -> str:
             return "42"
-    """
-    )
+    """)
 
 
 @pytest.fixture()
@@ -115,14 +113,12 @@ class TestApplyConfig:
     def test_adds_import_traigent(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import os
 
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -134,14 +130,12 @@ class TestApplyConfig:
     def test_adds_range_imports(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import os
 
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -153,14 +147,12 @@ class TestApplyConfig:
     def test_adds_safety_imports(
         self, tmp_path: Path, result_with_safety: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import os
 
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -172,15 +164,13 @@ class TestApplyConfig:
     def test_skips_existing_imports(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import traigent
             from traigent import Range
 
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -194,8 +184,7 @@ class TestApplyConfig:
     def test_replaces_existing_decorator(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import traigent
 
             @traigent.optimize(
@@ -203,8 +192,7 @@ class TestApplyConfig:
             )
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -220,15 +208,13 @@ class TestApplyConfig:
     def test_replaces_bare_optimize_decorator(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             from traigent import optimize
 
             @optimize(configuration_space={"old": (0, 1)})
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -241,13 +227,11 @@ class TestApplyConfig:
     def test_indentation_preserved_for_method(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             class Agent:
                 def my_method(self):
                     pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -292,15 +276,13 @@ class TestApplyConfig:
     def test_inserts_above_existing_decorators(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import os
 
             @some_other_decorator
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -320,15 +302,13 @@ class TestApplyConfig:
     def test_replaces_fully_qualified_decorator(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import traigent.api.decorators
 
             @traigent.api.decorators.optimize(configuration_space={"old": (0, 1)})
             def my_func():
                 pass
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
@@ -342,14 +322,12 @@ class TestApplyConfig:
     def test_async_function(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult
     ) -> None:
-        source = textwrap.dedent(
-            """\
+        source = textwrap.dedent("""\
             import asyncio
 
             async def my_async_func():
                 await asyncio.sleep(0)
-        """
-        )
+        """)
         src = tmp_path / "agent.py"
         src.write_text(source)
 
