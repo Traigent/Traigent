@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,6 @@ from rich.table import Table
 
 from traigent.cloud.auth import AuthManager
 from traigent.config.backend_config import BackendConfig
-from traigent.core.constants import MAX_RETRIES
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -162,89 +162,103 @@ class TraigentAuthCLI:
         Raises:
             Exception: If authentication fails
         """
-        # Step 1: Use SecureAuthManager for authentication with resilient client
-        from traigent.cloud.auth import AuthCredentials, AuthMode
-
-        credentials = AuthCredentials(
-            mode=AuthMode.JWT_TOKEN, metadata={"email": email, "password": password}
-        )
-
-        # Authenticate using the secure manager with retry logic
-        auth_result = await self.auth_manager.authenticate(credentials)
-
-        if not auth_result.success:
-            raise Exception("Authentication failed - check credentials") from None
-
-        # Get auth headers to verify we have a token
-        auth_headers = await self.auth_manager.get_auth_headers()
-
-        # Extract the JWT token from auth headers
-        jwt_token = None
-        if "Authorization" in auth_headers:
-            # Bearer token format
-            jwt_token = auth_headers["Authorization"].replace("Bearer ", "")
-
-        if not jwt_token:
-            raise Exception("No authentication token received")
-
-        # Step 2: Create API key using JWT token with resilient client
         import aiohttp
 
-        from traigent.cloud.resilient_client import ResilientClient
+        # Step 1: Direct login call for better error visibility
+        login_url = f"{self.backend_api_url}/auth/login"
+        console.print(f"[dim]POST {login_url}[/dim]")
 
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                login_url,
+                json={"email": email, "password": password},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                response_text = await response.text()
+
+                # Show response details on failure
+                if response.status != 200:
+                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(f"[red]Status Code: {response.status}[/red]")
+                    safe_headers = {
+                        k: v
+                        for k, v in response.headers.items()
+                        if k.lower() in ("content-type", "x-request-id", "x-trace-id")
+                    }
+                    console.print(f"[red]Headers: {safe_headers}[/red]")
+                    console.print(f"[red]Body: {response_text}[/red]")
+                    raise Exception(
+                        f"Authentication failed (HTTP {response.status})"
+                    ) from None
+
+                try:
+                    login_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(f"[red]Status Code: {response.status}[/red]")
+                    console.print(f"[red]Body (not JSON): {response_text}[/red]")
+                    raise Exception("Invalid JSON response from backend") from None
+
+                if not login_data.get("success"):
+                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(
+                        f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
+                    )
+                    error_msg = login_data.get("error", "Unknown error")
+                    raise Exception(f"Authentication failed: {error_msg}") from None
+
+                token_data = login_data.get("data", {})
+                jwt_token = token_data.get("access_token")
+
+                if not jwt_token:
+                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(
+                        f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
+                    )
+                    raise Exception("No access_token in response") from None
+
+                # Show truncated token
+                console.print("[green]✓ JWT Token received[/green]")
+
+        # Step 2: Create API key using JWT token
         api_key = None
-        api_key_url = f"{self.backend_api_url}/api-keys"
+        api_key_url = f"{self.backend_api_url}/keys"
+        console.print(f"\n[dim]POST {api_key_url}[/dim]")
 
-        # Use resilient client for API key creation
-        client = ResilientClient(
-            max_retries=MAX_RETRIES,
-            base_delay=1.0,
-            max_delay=10.0,
-            jitter_factor=0.1,
-        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                api_key_url,
+                json={
+                    "key_name": "Traigent SDK CLI",
+                },
+                headers={
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                response_text = await response.text()
 
-        async def create_api_key() -> str | None:
-            """Create API key with retry logic."""
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_key_url,
-                    json={
-                        "name": "Traigent SDK CLI",
-                        "description": "Generated by traigent auth login",
-                    },
-                    headers={
-                        "Authorization": f"Bearer {jwt_token}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status == 201:
-                        api_key_data = await response.json()
-                        return str(api_key_data["data"]["key"])
-                    elif response.status == 401:
-                        # Auth error - don't retry
-                        raise ValueError("Invalid JWT token for API key creation")
-                    elif response.status == 429:
-                        # Rate limited - will be retried
-                        error_msg = await response.text()
-                        raise Exception(f"429 Rate Limited: {error_msg}")
-                    else:
-                        # Other error - log but continue
-                        logger.debug(
-                            f"API key creation failed with status {response.status}"
+                if response.status == 201:
+                    try:
+                        api_key_data = json.loads(response_text)
+                        api_key = api_key_data["data"]["key"]
+                        console.print("[green]✓ API key created[/green]")
+                    except (json.JSONDecodeError, KeyError) as e:
+                        console.print("\n[yellow]--- API Key Response ---[/yellow]")
+                        console.print(f"[yellow]Status: {response.status}[/yellow]")
+                        console.print(f"[yellow]Body: {response_text}[/yellow]")
+                        console.print(
+                            f"[yellow]⚠️ Could not parse API key: {e}[/yellow]"
                         )
-                        return None
-
-        try:
-            # Try to create API key with retry logic
-            api_key = await client.execute_with_retry(
-                create_api_key, operation_name="api_key_creation"
-            )
-        except ValueError:
-            # Auth errors shouldn't be retried
-            logger.debug("API key creation auth error")
-        except Exception as e:
-            logger.debug(f"API key creation failed: {e}")
+                else:
+                    console.print("\n[yellow]--- API Key Response ---[/yellow]")
+                    console.print(f"[yellow]Status Code: {response.status}[/yellow]")
+                    console.print(f"[yellow]Body: {response_text}[/yellow]")
+                    console.print(
+                        "[yellow]⚠️ API key creation failed, using JWT token only[/yellow]"
+                    )
 
         # Get user info from stored token data (if available)
         # Note: SecureAuthManager doesn't expose user info directly
@@ -265,7 +279,7 @@ class TraigentAuthCLI:
         """Login to Traigent backend.
 
         Args:
-            email: Email address (optional, will prompt if not provided)
+            email: Email address (optional, will use env var or prompt)
             non_interactive: If True, fail instead of prompting
 
         Returns:
@@ -274,21 +288,32 @@ class TraigentAuthCLI:
         console.print("\n[bold blue]🔐 Traigent Authentication[/bold blue]")
         console.print(f"Authenticating with: [cyan]{self.backend_url}[/cyan]\n")
 
-        # Get email
+        # Get email from arg, env var, or prompt
+        if not email:
+            email = os.environ.get("TRAIGENT_AUTH_EMAIL")
         if not email:
             if non_interactive:
-                console.print("[red]Email required in non-interactive mode[/red]")
+                console.print(
+                    "[red]Email required. Use --email or set TRAIGENT_AUTH_EMAIL[/red]"
+                )
                 return False
             email = Prompt.ask("Email")
+        else:
+            console.print(f"Using email: [cyan]{email}[/cyan]")
 
-        # Get password securely
-        if non_interactive:
-            console.print("[red]Password required in non-interactive mode[/red]")
-            return False
+        # Get password from env var or prompt
+        password = os.environ.get("TRAIGENT_AUTH_PASSWORD")
+        if not password:
+            if non_interactive:
+                console.print(
+                    "[red]Password required. Set TRAIGENT_AUTH_PASSWORD[/red]"
+                )
+                return False
+            from getpass import getpass
 
-        from getpass import getpass
-
-        password = getpass("Password: ")
+            password = getpass("Password: ")
+        else:
+            console.print("Using password from: [cyan]TRAIGENT_AUTH_PASSWORD[/cyan]")
 
         try:
             # Authenticate
@@ -536,7 +561,12 @@ def auth() -> None:
         traigent auth refresh           # Refresh authentication tokens
         traigent auth configure         # Configure authentication settings
     """
-    pass
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
 
 
 @auth.command()
