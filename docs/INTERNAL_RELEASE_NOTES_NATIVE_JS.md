@@ -12,19 +12,21 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
   - Node-only execution
   - `grid`, `random`, and sequential `bayesian`
   - log-scale `float` and `int` parameters
+  - conditional parameters with equality conditions and required default fallback
   - budget enforcement from numeric `metrics.cost`
   - `stopReason: 'timeout' | 'error' | 'cancelled' | 'plateau'`
   - wrapper-local `applyBestConfig()` / `currentConfig()`
 
 ## Cross-SDK Validation
 
-- Python-owned oracle fixtures validate deterministic grid, seeded random, and budget cutoff behavior.
+- Python-owned oracle fixtures validate deterministic grid, conditional grid, seeded random, conditional random, and budget cutoff behavior.
 - JS reports async optimization scheduling against Python with a shared synthetic workload.
 - The lightweight Python oracle exporter is stdlib-only; full Python Bayesian oracle parity remains deferred in this environment.
 
 ## Intentional v1 Limits
 
 - `trialConcurrency` is currently limited to `grid` and `random`.
+- Conditional parameters are native-only for now; `toHybridConfigSpace()` rejects them.
 - No Optuna-family algorithms, example-level concurrency, or cloud orchestration.
 - `budget.maxCostUsd` requires numeric `metrics.cost` on every trial.
 

@@ -126,4 +126,99 @@ describe('optimization spec helpers', () => {
       param.float({ min: 0.001, max: 1, scale: 'log', step: 1 }),
     ).toThrow(/require step to be greater than 1/i);
   });
+
+  it('supports conditional parameters with equality conditions and default fallback', () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-3.5', 'gpt-4']),
+        max_tokens: param.int({
+          min: 256,
+          max: 1024,
+          step: 256,
+          conditions: { model: 'gpt-4' },
+          default: 512,
+        }),
+      },
+      objectives: ['accuracy'],
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    expect(getOptimizationSpec(wrapped)?.configurationSpace.max_tokens).toEqual({
+      type: 'int',
+      min: 256,
+      max: 1024,
+      step: 256,
+      scale: 'linear',
+      conditions: { model: 'gpt-4' },
+      default: 512,
+    });
+  });
+
+  it('rejects conditional parameters without a valid default fallback', () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(['gpt-3.5', 'gpt-4']),
+          max_tokens: param.int({
+            min: 256,
+            max: 1024,
+            step: 256,
+            conditions: { model: 'gpt-4' },
+          }),
+        },
+        objectives: ['accuracy'],
+      }),
+    ).toThrow(/requires a default fallback value/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(['gpt-3.5', 'gpt-4']),
+          max_tokens: param.int({
+            min: 256,
+            max: 1024,
+            step: 256,
+            conditions: { model: 'gpt-4' },
+            default: 2048,
+          }),
+        },
+        objectives: ['accuracy'],
+      }),
+    ).toThrow(/default must fall within min\/max/i);
+  });
+
+  it('rejects conditional dependency cycles and hybrid serialization for native-only conditionals', () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          alpha: param.enum(['x', 'y'], {
+            conditions: { beta: 'x' },
+            default: 'x',
+          }),
+          beta: param.enum(['x', 'y'], {
+            conditions: { alpha: 'x' },
+            default: 'x',
+          }),
+        },
+        objectives: ['accuracy'],
+      }),
+    ).toThrow(/cannot form dependency cycles/i);
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-3.5', 'gpt-4']),
+        max_tokens: param.int({
+          min: 256,
+          max: 1024,
+          step: 256,
+          conditions: { model: 'gpt-4' },
+          default: 512,
+        }),
+      },
+      objectives: ['accuracy'],
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    expect(() => toHybridConfigSpace(wrapped)).toThrow(
+      /does not support conditional parameter "max_tokens" yet/i,
+    );
+  });
 });

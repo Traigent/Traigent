@@ -3,6 +3,8 @@ import type { Metrics, TrialConfig } from '../dtos/trial.js';
 export type ObjectiveDirection = 'maximize' | 'minimize';
 export type BuiltInObjectiveName = 'accuracy' | 'cost' | 'latency';
 export type ParamScale = 'linear' | 'log';
+export type ParameterConditionValue = string | number | boolean;
+export type ParameterConditions = Record<string, ParameterConditionValue>;
 
 export interface ObjectiveDefinition {
   metric: string;
@@ -12,12 +14,19 @@ export interface ObjectiveDefinition {
 
 export type ObjectiveInput = BuiltInObjectiveName | ObjectiveDefinition;
 
-export interface EnumParamDefinition<T = string | number | boolean> {
+interface ConditionalParameterDefinition<T> {
+  conditions?: ParameterConditions;
+  default?: T;
+}
+
+export interface EnumParamDefinition<T = string | number | boolean>
+  extends ConditionalParameterDefinition<T> {
   type: 'enum';
   values: readonly T[];
 }
 
-export interface FloatParamDefinition {
+export interface FloatParamDefinition
+  extends ConditionalParameterDefinition<number> {
   type: 'float';
   min: number;
   max: number;
@@ -25,7 +34,7 @@ export interface FloatParamDefinition {
   step?: number;
 }
 
-export interface IntParamDefinition {
+export interface IntParamDefinition extends ConditionalParameterDefinition<number> {
   type: 'int';
   min: number;
   max: number;

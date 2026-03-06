@@ -119,16 +119,75 @@ function configKey(config: CandidateConfig): string {
   return stableJson(config);
 }
 
+function compareParameterNames(left: string, right: string): number {
+  if (left === 'model' && right !== 'model') return 1;
+  if (right === 'model' && left !== 'model') return -1;
+  return left.localeCompare(right);
+}
+
 function getOrderedParameterEntries(
   configurationSpace: NormalizedOptimizationSpec['configurationSpace'],
 ): [string, ParameterDefinition][] {
-  const names = Object.keys(configurationSpace).sort((left, right) => {
-    if (left === 'model' && right !== 'model') return 1;
-    if (right === 'model' && left !== 'model') return -1;
-    return left.localeCompare(right);
-  });
+  const names = Object.keys(configurationSpace);
+  const inDegree = new Map(names.map((name) => [name, 0]));
+  const dependents = new Map<string, string[]>();
 
-  return names.map((name) => [name, configurationSpace[name]!]);
+  for (const name of names) {
+    for (const dependency of Object.keys(configurationSpace[name]!.conditions ?? {})) {
+      inDegree.set(name, (inDegree.get(name) ?? 0) + 1);
+      const siblings = dependents.get(dependency) ?? [];
+      siblings.push(name);
+      dependents.set(dependency, siblings);
+    }
+  }
+
+  const queue = names
+    .filter((name) => (inDegree.get(name) ?? 0) === 0)
+    .sort(compareParameterNames);
+  const ordered: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    ordered.push(current);
+
+    for (const dependent of dependents.get(current) ?? []) {
+      const nextDegree = (inDegree.get(dependent) ?? 0) - 1;
+      inDegree.set(dependent, nextDegree);
+      if (nextDegree === 0) {
+        queue.push(dependent);
+        queue.sort(compareParameterNames);
+      }
+    }
+  }
+
+  if (ordered.length !== names.length) {
+    throw new ValidationError(
+      'Conditional parameters cannot form dependency cycles.',
+    );
+  }
+
+  return ordered.map((name) => [name, configurationSpace[name]!]);
+}
+
+function isParameterActive(
+  definition: ParameterDefinition,
+  config: CandidateConfig,
+): boolean {
+  return Object.entries(definition.conditions ?? {}).every(
+    ([name, expected]) => config[name] === expected,
+  );
+}
+
+function getInactiveParameterValue(
+  name: string,
+  definition: ParameterDefinition,
+): unknown {
+  if (definition.default === undefined) {
+    throw new ValidationError(
+      `Conditional parameter "${name}" requires a default fallback value.`,
+    );
+  }
+  return definition.default;
 }
 
 function ensureLogBounds(
@@ -324,14 +383,8 @@ function isDiscreteSpace(entries: [string, ParameterDefinition][]): boolean {
 function discreteCardinality(
   entries: [string, ParameterDefinition][],
 ): number | null {
-  if (!isDiscreteSpace(entries)) {
-    return null;
-  }
-
-  return entries.reduce((product, [name, definition]) => {
-    const size = buildDiscreteValues(name, definition).length;
-    return product * size;
-  }, 1);
+  const configs = buildDiscreteCandidateConfigs(entries);
+  return configs?.length ?? null;
 }
 
 function sampleLogValue(
@@ -395,15 +448,27 @@ function sampleParameter(
   }
 }
 
-function cartesianProduct(
-  entries: [string, unknown[]][],
-): CandidateConfig[] {
+function buildDiscreteCandidateConfigs(
+  entries: [string, ParameterDefinition][],
+): CandidateConfig[] | null {
+  if (!isDiscreteSpace(entries)) {
+    return null;
+  }
+
   let product: CandidateConfig[] = [{}];
 
-  for (const [name, values] of entries) {
+  for (const [name, definition] of entries) {
     const next: CandidateConfig[] = [];
     for (const candidate of product) {
-      for (const value of values) {
+      if (!isParameterActive(definition, candidate)) {
+        next.push({
+          ...candidate,
+          [name]: getInactiveParameterValue(name, definition),
+        });
+        continue;
+      }
+
+      for (const value of buildDiscreteValues(name, definition)) {
         next.push({ ...candidate, [name]: value });
       }
     }
@@ -413,15 +478,34 @@ function cartesianProduct(
   return product;
 }
 
+function sampleConditionalCandidateConfig(
+  entries: [string, ParameterDefinition][],
+  random: PythonRandom,
+): CandidateConfig {
+  const candidate: CandidateConfig = {};
+
+  for (const [name, definition] of entries) {
+    candidate[name] = isParameterActive(definition, candidate)
+      ? sampleParameter(name, definition, random)
+      : getInactiveParameterValue(name, definition);
+  }
+
+  return candidate;
+}
+
 function buildGridCandidatePlan(
   entries: [string, ParameterDefinition][],
   options: ValidatedOptimizeOptions,
 ): CandidatePlan {
-  const values = entries.map(
-    ([name, definition]) =>
-      [name, buildDiscreteValues(name, definition)] as [string, unknown[]],
-  );
-  const product = cartesianProduct(values);
+  const product = buildDiscreteCandidateConfigs(entries);
+  if (!product) {
+    for (const [name, definition] of entries) {
+      buildDiscreteValues(name, definition);
+    }
+    throw new ValidationError(
+      'Grid search requires every parameter to be discrete or stepped.',
+    );
+  }
 
   return {
     configs: product.slice(0, options.maxTrials),
@@ -440,12 +524,7 @@ function buildRandomCandidatePlan(
   const uniqueOnly = cardinality !== null;
 
   while (configs.length < options.maxTrials) {
-    const candidate = Object.fromEntries(
-      entries.map(([name, definition]) => [
-        name,
-        sampleParameter(name, definition, random),
-      ]),
-    );
+    const candidate = sampleConditionalCandidateConfig(entries, random);
 
     if (!uniqueOnly) {
       configs.push(candidate);
@@ -1080,6 +1159,11 @@ function buildBayesianLocalCandidate(
   const candidate: CandidateConfig = {};
 
   for (const [name, definition] of entries) {
+    if (!isParameterActive(definition, candidate)) {
+      candidate[name] = getInactiveParameterValue(name, definition);
+      continue;
+    }
+
     const baselineValue = baseline[name];
 
     switch (definition.type) {
@@ -1168,12 +1252,7 @@ function sampleCandidateConfig(
   entries: [string, ParameterDefinition][],
   random: PythonRandom,
 ): CandidateConfig {
-  return Object.fromEntries(
-    entries.map(([name, definition]) => [
-      name,
-      sampleParameter(name, definition, random),
-    ]),
-  );
+  return sampleConditionalCandidateConfig(entries, random);
 }
 
 function suggestBayesianConfig(

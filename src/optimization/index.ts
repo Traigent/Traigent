@@ -24,6 +24,8 @@ export type {
   OptimizationResult,
   OptimizationSpec,
   OptimizationTrialRecord,
+  ParameterConditions,
+  ParameterConditionValue,
   ParameterDefinition,
   ParamScale,
 } from './types.js';

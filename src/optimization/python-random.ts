@@ -188,7 +188,7 @@ export class PythonRandom {
     }
 
     const max = BigInt(limit);
-    const bits = bitLength(max - 1n);
+    const bits = bitLength(max);
     let candidate = this.getRandBits(bits);
     while (candidate >= max) {
       candidate = this.getRandBits(bits);

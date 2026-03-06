@@ -16,6 +16,8 @@ import type {
   ObjectiveInput,
   OptimizationResult,
   OptimizationSpec,
+  ParameterConditions,
+  ParameterConditionValue,
   ParameterDefinition,
 } from './types.js';
 
@@ -37,6 +39,14 @@ type NativeTrialFunction = (
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isConditionValue(value: unknown): value is ParameterConditionValue {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
 }
 
 function normalizeWeight(weight: unknown): number {
@@ -95,7 +105,35 @@ function validateParameterName(name: string): void {
   }
 }
 
+function normalizeConditions(
+  name: string,
+  conditions: unknown,
+): ParameterConditions | undefined {
+  if (conditions === undefined) {
+    return undefined;
+  }
+
+  if (!isPlainObject(conditions) || Object.keys(conditions).length === 0) {
+    throw new ValidationError(
+      `Parameter "${name}" conditions must be a non-empty object when provided.`,
+    );
+  }
+
+  const normalizedEntries = Object.entries(conditions).map(([key, value]) => {
+    validateParameterName(key);
+    if (!isConditionValue(value)) {
+      throw new ValidationError(
+        `Parameter "${name}" conditions only support string, number, or boolean equality values.`,
+      );
+    }
+    return [key, value] as const;
+  });
+
+  return Object.fromEntries(normalizedEntries);
+}
+
 function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefinition>(
+  name: string,
   kind: T['type'],
   definition: T,
 ): T {
@@ -137,11 +175,13 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
 
   return {
     ...definition,
+    conditions: normalizeConditions(name, definition.conditions),
     scale: definition.scale ?? 'linear',
   };
 }
 
 function normalizeParameterDefinition(
+  name: string,
   definition: ParameterDefinition,
 ): ParameterDefinition {
   if (!definition || typeof definition !== 'object') {
@@ -156,13 +196,125 @@ function normalizeParameterDefinition(
       return {
         type: 'enum',
         values: [...definition.values],
+        conditions: normalizeConditions(name, definition.conditions),
+        default: definition.default,
       } satisfies EnumParamDefinition;
     case 'float':
-      return normalizeRangeDefinition('float', definition);
+      return normalizeRangeDefinition(name, 'float', definition);
     case 'int':
-      return normalizeRangeDefinition('int', definition);
+      return normalizeRangeDefinition(name, 'int', definition);
     default:
       throw new ValidationError('Unsupported parameter definition type.');
+  }
+}
+
+function validateConditionalDefault(
+  name: string,
+  definition: ParameterDefinition,
+): void {
+  if (definition.conditions === undefined) {
+    if (definition.default !== undefined) {
+      throw new ValidationError(
+        `Parameter "${name}" default requires conditions to be defined.`,
+      );
+    }
+    return;
+  }
+
+  if (definition.default === undefined) {
+    throw new ValidationError(
+      `Conditional parameter "${name}" requires a default fallback value.`,
+    );
+  }
+
+  switch (definition.type) {
+    case 'enum':
+      if (!definition.values.includes(definition.default)) {
+        throw new ValidationError(
+          `Conditional enum parameter "${name}" default must be one of its values.`,
+        );
+      }
+      return;
+    case 'int':
+      if (
+        typeof definition.default !== 'number' ||
+        !Number.isInteger(definition.default)
+      ) {
+        throw new ValidationError(
+          `Conditional int parameter "${name}" default must be an integer.`,
+        );
+      }
+      if (
+        definition.default < definition.min ||
+        definition.default > definition.max
+      ) {
+        throw new ValidationError(
+          `Conditional int parameter "${name}" default must fall within min/max.`,
+        );
+      }
+      return;
+    case 'float':
+      if (
+        typeof definition.default !== 'number' ||
+        !Number.isFinite(definition.default)
+      ) {
+        throw new ValidationError(
+          `Conditional float parameter "${name}" default must be a finite number.`,
+        );
+      }
+      if (
+        definition.default < definition.min ||
+        definition.default > definition.max
+      ) {
+        throw new ValidationError(
+          `Conditional float parameter "${name}" default must fall within min/max.`,
+        );
+      }
+      return;
+    default:
+      return;
+  }
+}
+
+function validateConditionalDependencies(
+  configurationSpace: Record<string, ParameterDefinition>,
+): void {
+  const names = Object.keys(configurationSpace);
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (name: string): void => {
+    if (visited.has(name)) {
+      return;
+    }
+    if (visiting.has(name)) {
+      throw new ValidationError(
+        `Conditional parameters cannot form dependency cycles. Cycle detected at "${name}".`,
+      );
+    }
+
+    visiting.add(name);
+    const definition = configurationSpace[name]!;
+    for (const dependency of Object.keys(definition.conditions ?? {})) {
+      if (!(dependency in configurationSpace)) {
+        throw new ValidationError(
+          `Conditional parameter "${name}" references unknown dependency "${dependency}".`,
+        );
+      }
+      if (dependency === name) {
+        throw new ValidationError(
+          `Conditional parameter "${name}" cannot depend on itself.`,
+        );
+      }
+      visit(dependency);
+    }
+    visiting.delete(name);
+    visited.add(name);
+  };
+
+  for (const name of names) {
+    validateConditionalDefault(name, configurationSpace[name]!);
+    visit(name);
   }
 }
 
@@ -180,7 +332,7 @@ export function normalizeOptimizationSpec(
   const configurationSpace = Object.fromEntries(
     Object.entries(spec.configurationSpace).map(([name, definition]) => {
       validateParameterName(name);
-      return [name, normalizeParameterDefinition(definition)];
+      return [name, normalizeParameterDefinition(name, definition)];
     }),
   );
 
@@ -189,6 +341,8 @@ export function normalizeOptimizationSpec(
       'Optimization spec requires at least one configuration parameter.',
     );
   }
+
+  validateConditionalDependencies(configurationSpace);
 
   if (!Array.isArray(spec.objectives) || spec.objectives.length === 0) {
     throw new ValidationError(
@@ -238,20 +392,24 @@ function defineHiddenProperty(
 }
 
 export const param = {
-  enum(values: readonly (string | number | boolean)[]): EnumParamDefinition {
-    return normalizeParameterDefinition({
+  enum(
+    values: readonly (string | number | boolean)[],
+    options?: Omit<EnumParamDefinition, 'type' | 'values'>,
+  ): EnumParamDefinition {
+    return normalizeParameterDefinition('parameter', {
       type: 'enum',
       values,
+      ...options,
     }) as EnumParamDefinition;
   },
   float(definition: Omit<FloatParamDefinition, 'type'>): FloatParamDefinition {
-    return normalizeParameterDefinition({
+    return normalizeParameterDefinition('parameter', {
       type: 'float',
       ...definition,
     }) as FloatParamDefinition;
   },
   int(definition: Omit<IntParamDefinition, 'type'>): IntParamDefinition {
-    return normalizeParameterDefinition({
+    return normalizeParameterDefinition('parameter', {
       type: 'int',
       ...definition,
     }) as IntParamDefinition;
@@ -284,6 +442,11 @@ export function toHybridConfigSpace(target: unknown): HybridConfigSpace {
 
   return {
     tunables: Object.entries(spec.configurationSpace).map(([name, definition]) => {
+      if (definition.conditions) {
+        throw new ValidationError(
+          `toHybridConfigSpace() does not support conditional parameter "${name}" yet.`,
+        );
+      }
       switch (definition.type) {
         case 'enum':
           return {

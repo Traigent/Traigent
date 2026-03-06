@@ -16,6 +16,8 @@ Covered oracle cases:
 
 - `grid_3x3`: exact config order, best config, best metrics, normalized stop reason
 - `random_seed_42`: exact seeded config sequence for deterministic discrete sampling
+- `conditional_grid`: exact config order, default fallback application, best config, best metrics
+- `conditional_random_seed_7`: exact seeded config sequence for conditional native sampling
 - `budget_cutoff`: same budget stop point, total cost, best config, normalized stop reason
 - `bayesian_branin`: optional outcome-envelope check when the Python Bayesian environment is available
 

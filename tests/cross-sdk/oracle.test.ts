@@ -76,13 +76,18 @@ function getFixture(payload: OraclePayload, name: string): OracleFixture {
 function toParamDefinition(definition: Record<string, any>) {
   switch (definition.type) {
     case 'enum':
-      return param.enum(definition.values);
+      return param.enum(definition.values, {
+        conditions: definition.conditions,
+        default: definition.default,
+      });
     case 'int':
       return param.int({
         min: definition.min,
         max: definition.max,
         scale: definition.scale,
         step: definition.step,
+        conditions: definition.conditions,
+        default: definition.default,
       });
     case 'float':
       return param.float({
@@ -90,6 +95,8 @@ function toParamDefinition(definition: Record<string, any>) {
         max: definition.max,
         scale: definition.scale,
         step: definition.step,
+        conditions: definition.conditions,
+        default: definition.default,
       });
     default:
       throw new Error(`Unsupported oracle parameter type: ${definition.type}`);
@@ -199,6 +206,68 @@ maybeDescribe('cross-SDK oracle parity', () => {
     expect(result.bestConfig).toEqual(fixture.best_config);
     expect(result.bestMetrics).toEqual(fixture.best_metrics);
     expect(result.totalCostUsd).toBeCloseTo(fixture.total_cost_usd ?? 0, 10);
+    expect(result.trials.map((trial) => trial.config)).toEqual(fixture.configs);
+  });
+
+  it('matches the Python-owned conditional_grid oracle exactly', async () => {
+    const fixture = getFixture(payload, 'conditional_grid');
+    const wrapped = optimize({
+      configurationSpace: Object.fromEntries(
+        Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
+          name,
+          toParamDefinition(definition),
+        ]),
+      ),
+      objectives: fixture.spec.objectives,
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy:
+          trialConfig.config.model === 'gpt-4'
+            ? Number(trialConfig.config.max_tokens) / 1000
+            : Number(trialConfig.config.temperature),
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: fixture.trial_count ?? 6,
+    });
+
+    expect(result.stopReason).toBe(fixture.normalized_stop_reason);
+    expect(result.bestConfig).toEqual(fixture.best_config);
+    expect(result.bestMetrics).toEqual(fixture.best_metrics);
+    expect(result.trials.map((trial) => trial.config)).toEqual(fixture.configs);
+  });
+
+  it('matches the Python-owned conditional_random_seed_7 oracle exactly', async () => {
+    const fixture = getFixture(payload, 'conditional_random_seed_7');
+    const wrapped = optimize({
+      configurationSpace: Object.fromEntries(
+        Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
+          name,
+          toParamDefinition(definition),
+        ]),
+      ),
+      objectives: fixture.spec.objectives,
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      algorithm: 'random',
+      maxTrials: fixture.trial_count ?? 6,
+      randomSeed: 7,
+    });
+
+    expect(result.stopReason).toBe(fixture.normalized_stop_reason);
     expect(result.trials.map((trial) => trial.config)).toEqual(fixture.configs);
   });
 

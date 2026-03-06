@@ -119,9 +119,9 @@ objectives: [{ metric: 'quality_score', direction: 'maximize', weight: 1 }]
 
 Parameter helpers:
 
-- `param.enum(values)`
-- `param.float({ min, max, scale, step? })`
-- `param.int({ min, max, scale, step? })`
+- `param.enum(values, { conditions?, default? })`
+- `param.float({ min, max, scale, step?, conditions?, default? })`
+- `param.int({ min, max, scale, step?, conditions?, default? })`
 
 ## Trial Context Access
 
@@ -140,6 +140,8 @@ Use `TrialContext`, `getTrialConfig()`, and `getTrialParam()` inside a bound tri
 - `budget.maxCostUsd` is enforced only from numeric `metrics.cost`.
 - `timeoutMs`, `trialConcurrency`, `plateau`, `checkpoint`, and wrapper-local `applyBestConfig()` / `currentConfig()` are supported in native mode.
 - Log-scale grid search requires a multiplicative `step > 1`.
+- Conditional parameters support simple equality conditions with a required `default` fallback in native optimization.
+- `toHybridConfigSpace()` currently rejects conditional parameters because the existing hybrid wire format does not encode them.
 - `trialConcurrency` is currently limited to `grid` and `random`.
 - Worker pools, Optuna-family optimizers, example-level concurrency, and hybrid API orchestration are still out of scope.
 

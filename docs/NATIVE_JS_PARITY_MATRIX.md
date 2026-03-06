@@ -8,6 +8,7 @@ This matrix tracks the current native JS optimization surface against the Python
 | Random search | Yes | Yes | `matched` | JS now uses Python-style seeded sampling for parity fixtures. |
 | Bayesian optimizer | Yes | Yes | `partial` | JS supports sequential in-process Bayesian search; Optuna/TPE parity is deferred. |
 | Optuna family | Yes | No | `deferred` | Includes TPE, CMA-ES, NSGA-II, Optuna grid/random. |
+| Conditional parameters | Yes | Yes | `partial` | Native JS supports simple equality conditions with required defaults; `toHybridConfigSpace()` still rejects them. |
 | Log-scale params | Yes | Yes | `matched` | JS supports log-scale sampling and multiplicative grid steps. |
 | Budget stop | Yes | Yes | `matched` | JS still relies only on numeric `metrics.cost`. |
 | Timeout stop | Yes | Yes | `matched` | JS exposes `timeoutMs` and returns `stopReason: 'timeout'`. |
@@ -40,7 +41,7 @@ These mappings are used by parity tests and release reports:
 
 - Optuna-family algorithms
 - Pareto multi-objective search
-- Conditionals and constraints
+- Metric and compound constraints
 - Example-level concurrency
 - Pruners and early-stop policies beyond plateau
 - Cloud and hybrid orchestration

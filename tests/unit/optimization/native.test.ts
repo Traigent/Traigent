@@ -350,6 +350,148 @@ describe('native optimize()', () => {
     expect(Number(result.bestMetrics?.score)).toBeGreaterThan(-5);
   });
 
+  it('applies conditional parameter defaults during grid search', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-3.5', 'gpt-4']),
+        max_tokens: param.int({
+          min: 256,
+          max: 768,
+          step: 256,
+          conditions: { model: 'gpt-4' },
+          default: 512,
+        }),
+        temperature: param.float({
+          min: 0.1,
+          max: 0.5,
+          step: 0.2,
+          conditions: { model: 'gpt-3.5' },
+          default: 0.3,
+        }),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy:
+          trialConfig.config.model === 'gpt-4'
+            ? Number(trialConfig.config.max_tokens) / 1000
+            : Number(trialConfig.config.temperature),
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 10,
+    });
+
+    expect(result.trials.map((trial) => trial.config)).toEqual([
+      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.1 },
+      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.3 },
+      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.5 },
+      { model: 'gpt-4', max_tokens: 256, temperature: 0.3 },
+      { model: 'gpt-4', max_tokens: 512, temperature: 0.3 },
+      { model: 'gpt-4', max_tokens: 768, temperature: 0.3 },
+    ]);
+    expect(result.bestConfig).toEqual({
+      model: 'gpt-4',
+      max_tokens: 768,
+      temperature: 0.3,
+    });
+  });
+
+  it('preserves conditional activation rules in deterministic random search', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-3.5', 'gpt-4']),
+        max_tokens: param.int({
+          min: 256,
+          max: 768,
+          step: 256,
+          conditions: { model: 'gpt-4' },
+          default: 512,
+        }),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy:
+          trialConfig.config.model === 'gpt-4'
+            ? Number(trialConfig.config.max_tokens)
+            : 1,
+      },
+    }));
+
+    const first = await wrapped.optimize({
+      algorithm: 'random',
+      maxTrials: 6,
+      randomSeed: 7,
+    });
+    const second = await wrapped.optimize({
+      algorithm: 'random',
+      maxTrials: 6,
+      randomSeed: 7,
+    });
+
+    expect(first.trials.map((trial) => trial.config)).toEqual(
+      second.trials.map((trial) => trial.config),
+    );
+
+    for (const trial of first.trials) {
+      if (trial.config.model === 'gpt-4') {
+        expect([256, 512, 768]).toContain(trial.config.max_tokens);
+      } else {
+        expect(trial.config.max_tokens).toBe(512);
+      }
+    }
+  });
+
+  it('keeps conditional parameters valid during bayesian optimization', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['cheap', 'best']),
+        temperature: param.float({
+          min: 0.1,
+          max: 0.9,
+          step: 0.2,
+          conditions: { model: 'cheap' },
+          default: 0.3,
+        }),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy:
+          trialConfig.config.model === 'best'
+            ? 1
+            : 0.5 + Number(trialConfig.config.temperature) / 10,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      algorithm: 'bayesian',
+      maxTrials: 8,
+      randomSeed: 5,
+    });
+
+    expect(result.stopReason).toBe('completed');
+    for (const trial of result.trials) {
+      if (trial.config.model === 'best') {
+        expect(trial.config.temperature).toBe(0.3);
+      } else {
+        expect([0.1, 0.3, 0.5, 0.7, 0.9]).toContain(trial.config.temperature);
+      }
+    }
+  });
+
   it('rejects bayesian trialConcurrency > 1', async () => {
     const wrapped = optimize({
       configurationSpace: {
