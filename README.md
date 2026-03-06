@@ -1,8 +1,12 @@
 # @traigent/sdk
 
-TypeScript SDK for Traigent LLM optimization platform.
+TypeScript SDK for Traigent optimization in JavaScript and TypeScript.
 
-This SDK enables JavaScript/TypeScript LLM applications to participate in Traigent's optimization loop via a Python-to-Node.js bridge.
+## Supported Flows
+
+- Hybrid spec authoring for services that expose Traigent-compatible `/config-space`, `/execute`, and `/evaluate` routes.
+- Native Node optimization with `optimize(spec)(trialFn)` and `await wrapped.optimize(...)`.
+- Legacy Python-to-Node bridge execution through the CLI runner.
 
 ## Installation
 
@@ -10,89 +14,151 @@ This SDK enables JavaScript/TypeScript LLM applications to participate in Traige
 npm install @traigent/sdk
 ```
 
-## Quick Start
+## Hybrid Mode Authoring
 
-### Within a Traigent Trial
+Use `optimize(...)` and `toHybridConfigSpace(...)` to define tunables in code while keeping the existing hybrid API wire format unchanged.
 
-```typescript
-import { TrialContext, getTrialConfig } from '@traigent/sdk';
+```ts
+import {
+  getTrialParam,
+  optimize,
+  param,
+  toHybridConfigSpace,
+} from '@traigent/sdk';
 
-// Access the current trial configuration
-const config = getTrialConfig();
-const model = config.model as string;
-const temperature = config.temperature as number;
+export const childAgeTrial = optimize({
+  configurationSpace: {
+    model: param.enum(['gpt-4o-mini', 'gpt-4o']),
+    temperature: param.float({ min: 0, max: 1, scale: 'linear' }),
+    max_retries: param.int({ min: 0, max: 3, scale: 'linear' }),
+  },
+  objectives: ['accuracy', 'cost'],
+})(async () => ({
+  metrics: {
+    accuracy: 0,
+    cost: 0,
+  },
+}));
+
+export const configSpace = toHybridConfigSpace(childAgeTrial);
+
+export function resolveRuntimeConfig() {
+  return {
+    model: getTrialParam('model', 'gpt-4o-mini'),
+    temperature: getTrialParam('temperature', 0.2),
+    maxRetries: getTrialParam('max_retries', 0),
+  };
+}
 ```
 
-### With LangChain.js
+## Native Node Optimization
 
-```typescript
-import { TraigentHandler } from '@traigent/sdk/langchain';
-import { ChatOpenAI } from '@langchain/openai';
+Native optimization runs in-process in Node and reuses the same spec metadata.
 
-const handler = new TraigentHandler();
-const llm = new ChatOpenAI({ callbacks: [handler] });
+```ts
+import { optimize, param } from '@traigent/sdk';
 
-await llm.invoke("Hello!");
+const evaluatePrompt = optimize({
+  configurationSpace: {
+    model: param.enum(['cheap', 'accurate']),
+    temperature: param.float({ min: 0, max: 0.5, step: 0.5, scale: 'linear' }),
+  },
+  objectives: ['accuracy', 'cost'],
+  budget: {
+    maxCostUsd: 2,
+  },
+  evaluation: {
+    data: [{ id: 1 }, { id: 2 }],
+  },
+})(async (trialConfig) => {
+  const model = String(trialConfig.config.model);
+  const accuracy = model === 'accurate' ? 0.95 : 0.72;
+  const cost = model === 'accurate' ? 0.4 : 0.1;
 
-// Get metrics for optimization
-const metrics = handler.toMeasuresDict();
-// { langchain_total_cost: 0.001, langchain_input_tokens: 5, ... }
+  return {
+    metrics: {
+      accuracy,
+      cost,
+      latency: model === 'accurate' ? 1.2 : 0.6,
+    },
+  };
+});
+
+const result = await evaluatePrompt.optimize({
+  algorithm: 'grid',
+  maxTrials: 10,
+  timeoutMs: 5_000,
+});
+
+console.log(result.bestConfig);
+console.log(result.bestMetrics);
 ```
 
-## Framework Integrations
+See [`examples/native-optimization.mjs`](./examples/native-optimization.mjs) for the runnable smoke example.
 
-### LangChain.js
+The wrapped function must satisfy the JS trial contract:
 
-```typescript
-import { TraigentHandler } from '@traigent/sdk/langchain';
+- Input: `TrialConfig`
+- Output: `{ metrics, metadata?, duration? }`
+
+## Objectives and Parameters
+
+Built-in objective strings:
+
+- `accuracy` -> `maximize`
+- `cost` -> `minimize`
+- `latency` -> `minimize`
+
+Any other metric must use an explicit object:
+
+```ts
+objectives: [{ metric: 'quality_score', direction: 'maximize', weight: 1 }]
 ```
 
-### Vercel AI SDK (Coming Soon)
+Parameter helpers:
 
-```typescript
-import { withTraigent } from '@traigent/sdk/vercel-ai';
-```
+- `param.enum(values)`
+- `param.float({ min, max, scale, step? })`
+- `param.int({ min, max, scale, step? })`
 
-### OpenAI Direct (Coming Soon)
+## Trial Context Access
 
-```typescript
-import { createTraigentOpenAI } from '@traigent/sdk/openai';
-```
+Use `TrialContext`, `getTrialConfig()`, and `getTrialParam()` inside a bound trial or capability execution path.
 
-## API Reference
+`TrialContext` is only guaranteed inside:
 
-### Core
+- native `wrapped.optimize(...)` trial execution
+- host-managed capability execution where your app calls `TrialContext.run(...)`
 
-- `TrialContext` - Manage trial context using AsyncLocalStorage
-- `getTrialConfig()` - Get current trial's configuration parameters
-- `getTrialParam(key, defaultValue?)` - Get a specific config parameter
-- `TrialContext.isCancelled()` - Check if current trial is cancelled
-- `TrialContext.checkCancellation()` - Throw if cancelled (for cooperative cancellation)
-- `bindContext(fn)` - Bind a function to the current trial context
-- `wrapCallback(fn)` - Wrap a callback to preserve trial context
+## Current Native Phase-1 Limits
 
-### DTOs
+- Native optimization is Node-only.
+- Supported algorithms are `grid`, `random`, and sequential `bayesian`.
+- `evaluation.data` or `evaluation.loadData` is required for `.optimize()`.
+- `budget.maxCostUsd` is enforced only from numeric `metrics.cost`.
+- `timeoutMs` is supported in native mode.
+- Log-scale grid search requires a multiplicative `step > 1`.
+- Public `trialConcurrency`, `signal`, `plateau`, `checkpoint`, and wrapper-local config application are deferred to later phases.
+- Worker pools, Optuna-family optimizers, example-level concurrency, and hybrid API orchestration are still out of scope.
 
-- `TrialConfig` - Trial configuration from orchestrator
-- `TrialResultPayload` - Trial result to return
-- `MeasuresDict` - Validated metrics dictionary
+## Cross-SDK Validation
 
-## CLI Runner
-
-The SDK includes a CLI runner for executing trials via the Python-to-JS bridge:
+Internal phase-1 validation:
 
 ```bash
-npx traigent-runner --module ./dist/my-agent.js --function runTrial
+npm test
+npm run test:cross-sdk
+npm run smoke:example
+npm run benchmark:cross-sdk
+npm run build
+npm pack --dry-run
 ```
 
-The runner communicates with the Python orchestrator via NDJSON over stdin/stdout.
-
-See [agent.md](./agent.md) for detailed bridge architecture and protocol documentation.
+See [docs/NATIVE_JS_PARITY_MATRIX.md](./docs/NATIVE_JS_PARITY_MATRIX.md) and [docs/CROSS_SDK_VALIDATION.md](./docs/CROSS_SDK_VALIDATION.md) for the current parity and methodology.
 
 ## Requirements
 
 - Node.js >= 18.0.0
-- TypeScript >= 5.0 (for development)
 
 ## License
 

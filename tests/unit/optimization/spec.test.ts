@@ -87,4 +87,14 @@ describe('optimization spec helpers', () => {
       { metric: 'quality_score', direction: 'maximize', weight: 1 },
     ]);
   });
+
+  it('rejects log-scaled parameters with non-positive ranges or non-multiplicative steps', () => {
+    expect(() =>
+      param.float({ min: 0, max: 1, scale: 'log' }),
+    ).toThrow(/require min\/max > 0/i);
+
+    expect(() =>
+      param.float({ min: 0.001, max: 1, scale: 'log', step: 1 }),
+    ).toThrow(/require step to be greater than 1/i);
+  });
 });
