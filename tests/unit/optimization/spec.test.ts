@@ -28,6 +28,8 @@ describe('optimization spec helpers', () => {
       objectives: [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
     });
     expect(typeof wrapped.optimize).toBe('function');
+    expect(typeof wrapped.applyBestConfig).toBe('function');
+    expect(typeof wrapped.currentConfig).toBe('function');
   });
 
   it('serializes config space to the hybrid tunables shape', () => {
@@ -86,6 +88,33 @@ describe('optimization spec helpers', () => {
     expect(getOptimizationSpec(wrapped)?.objectives).toEqual([
       { metric: 'quality_score', direction: 'maximize', weight: 1 },
     ]);
+  });
+
+  it('stores wrapper-local applied config without creating runtime global state', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini', 'gpt-4o']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy: trialConfig.config.model === 'gpt-4o' ? 1 : 0.5,
+      },
+    }));
+
+    expect(wrapped.currentConfig()).toBeUndefined();
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 2,
+    });
+
+    const applied = wrapped.applyBestConfig(result);
+    expect(applied).toEqual({ model: 'gpt-4o' });
+    expect(wrapped.currentConfig()).toEqual({ model: 'gpt-4o' });
   });
 
   it('rejects log-scaled parameters with non-positive ranges or non-multiplicative steps', () => {

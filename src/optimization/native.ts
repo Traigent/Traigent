@@ -1,9 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { TrialContext } from '../core/context.js';
-import { TimeoutError, ValidationError } from '../core/errors.js';
+import { TrialCancelledError, TrialContext } from '../core/context.js';
+import {
+  CancelledError,
+  TimeoutError,
+  ValidationError,
+} from '../core/errors.js';
 import { MetricsSchema, type Metrics, type TrialConfig } from '../dtos/trial.js';
-import { PythonRandom } from './python-random.js';
+import { PythonRandom, type SerializedPythonRandomState } from './python-random.js';
 import type {
   FloatParamDefinition,
   IntParamDefinition,
@@ -28,9 +34,47 @@ type TrialOutcome =
       record: OptimizationTrialRecord;
     }
   | {
-      status: 'timeout' | 'error';
+      status: 'timeout' | 'error' | 'cancelled';
+      trialNumber: number;
       errorMessage: string;
     };
+
+interface ValidatedOptimizeOptions extends NativeOptimizeOptions {
+  trialConcurrency: number;
+}
+
+interface CandidatePlan {
+  configs: CandidateConfig[];
+  exhaustive: boolean;
+}
+
+interface CheckpointState {
+  version: 1;
+  algorithm: ValidatedOptimizeOptions['algorithm'];
+  specHash: string;
+  optionsHash: string;
+  experimentRunId: string;
+  exhaustive?: boolean;
+  candidateConfigs?: CandidateConfig[];
+  samplerState?: SerializedPythonRandomState;
+  completedTrials: OptimizationTrialRecord[];
+  totalCostUsd: number;
+}
+
+interface ResumeState {
+  experimentRunId: string;
+  exhaustive?: boolean;
+  candidateConfigs?: CandidateConfig[];
+  samplerState?: SerializedPythonRandomState;
+  completedTrials: OptimizationTrialRecord[];
+  totalCostUsd: number;
+}
+
+interface CheckpointContext {
+  specHash: string;
+  optionsHash: string;
+  path: string;
+}
 
 function ensureFiniteNumber(
   value: unknown,
@@ -65,6 +109,10 @@ function canonicalize(value: unknown): unknown {
 
 function stableJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
+}
+
+function hashJson(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
 }
 
 function configKey(config: CandidateConfig): string {
@@ -129,7 +177,8 @@ function buildLogIntValues(name: string, definition: IntParamDefinition): number
 
   const values: number[] = [];
   let current = definition.min;
-  while (current <= definition.max) {
+  const limit = definition.max;
+  while (current <= limit) {
     values.push(current);
     const next = Math.round(current * definition.step);
     if (next <= current) {
@@ -268,17 +317,21 @@ function isDiscreteDefinition(definition: ParameterDefinition): boolean {
   }
 }
 
+function isDiscreteSpace(entries: [string, ParameterDefinition][]): boolean {
+  return entries.every(([, definition]) => isDiscreteDefinition(definition));
+}
+
 function discreteCardinality(
   entries: [string, ParameterDefinition][],
 ): number | null {
-  if (!entries.every(([, definition]) => isDiscreteDefinition(definition))) {
+  if (!isDiscreteSpace(entries)) {
     return null;
   }
 
-  return entries.reduce(
-    (product, [name, definition]) => product * buildDiscreteValues(name, definition).length,
-    1,
-  );
+  return entries.reduce((product, [name, definition]) => {
+    const size = buildDiscreteValues(name, definition).length;
+    return product * size;
+  }, 1);
 }
 
 function sampleLogValue(
@@ -360,26 +413,26 @@ function cartesianProduct(
   return product;
 }
 
-function buildCandidatePlan(
-  spec: NormalizedOptimizationSpec,
-  options: NativeOptimizeOptions,
-): { configs: CandidateConfig[]; exhaustive: boolean } {
-  const entries = getOrderedParameterEntries(spec.configurationSpace);
+function buildGridCandidatePlan(
+  entries: [string, ParameterDefinition][],
+  options: ValidatedOptimizeOptions,
+): CandidatePlan {
+  const values = entries.map(
+    ([name, definition]) =>
+      [name, buildDiscreteValues(name, definition)] as [string, unknown[]],
+  );
+  const product = cartesianProduct(values);
 
-  if (options.algorithm === 'grid') {
-    const product = cartesianProduct(
-      entries.map(
-        ([name, definition]) =>
-          [name, buildDiscreteValues(name, definition)] as [string, unknown[]],
-      ),
-    );
+  return {
+    configs: product.slice(0, options.maxTrials),
+    exhaustive: product.length <= options.maxTrials,
+  };
+}
 
-    return {
-      configs: product.slice(0, options.maxTrials),
-      exhaustive: product.length <= options.maxTrials,
-    };
-  }
-
+function buildRandomCandidatePlan(
+  entries: [string, ParameterDefinition][],
+  options: ValidatedOptimizeOptions,
+): CandidatePlan {
   const random = new PythonRandom(options.randomSeed ?? 0);
   const configs: CandidateConfig[] = [];
   const seen = new Set<string>();
@@ -421,6 +474,23 @@ function buildCandidatePlan(
   };
 }
 
+function buildCandidatePlan(
+  spec: NormalizedOptimizationSpec,
+  options: ValidatedOptimizeOptions,
+): CandidatePlan {
+  const entries = getOrderedParameterEntries(spec.configurationSpace);
+
+  if (options.algorithm === 'grid') {
+    return buildGridCandidatePlan(entries, options);
+  }
+
+  if (options.algorithm === 'random') {
+    return buildRandomCandidatePlan(entries, options);
+  }
+
+  return { configs: [], exhaustive: false };
+}
+
 async function resolveEvaluationRows(
   spec: NormalizedOptimizationSpec,
 ): Promise<readonly unknown[]> {
@@ -434,7 +504,7 @@ async function resolveEvaluationRows(
 
 function validateOptimizeOptions(
   options: NativeOptimizeOptions,
-): NativeOptimizeOptions {
+): ValidatedOptimizeOptions {
   if (!options || typeof options !== 'object') {
     throw new ValidationError('optimize() options are required.');
   }
@@ -469,7 +539,60 @@ function validateOptimizeOptions(
     );
   }
 
-  return options;
+  const trialConcurrency = options.trialConcurrency ?? 1;
+  if (!Number.isInteger(trialConcurrency) || trialConcurrency <= 0) {
+    throw new ValidationError(
+      'optimize() trialConcurrency must be a positive integer when provided.',
+    );
+  }
+  if (options.algorithm === 'bayesian' && trialConcurrency > 1) {
+    throw new ValidationError(
+      'optimize() bayesian does not support trialConcurrency > 1 yet.',
+    );
+  }
+
+  if (options.plateau !== undefined) {
+    if (
+      !options.plateau ||
+      !Number.isInteger(options.plateau.window) ||
+      options.plateau.window <= 0
+    ) {
+      throw new ValidationError(
+        'optimize() plateau.window must be a positive integer.',
+      );
+    }
+    if (
+      typeof options.plateau.minImprovement !== 'number' ||
+      !Number.isFinite(options.plateau.minImprovement) ||
+      options.plateau.minImprovement < 0
+    ) {
+      throw new ValidationError(
+        'optimize() plateau.minImprovement must be a finite number >= 0.',
+      );
+    }
+  }
+
+  if (options.checkpoint !== undefined) {
+    if (
+      typeof options.checkpoint.key !== 'string' ||
+      options.checkpoint.key.trim().length === 0
+    ) {
+      throw new ValidationError('optimize() checkpoint.key must be non-empty.');
+    }
+    if (
+      options.checkpoint.dir !== undefined &&
+      options.checkpoint.dir.trim().length === 0
+    ) {
+      throw new ValidationError(
+        'optimize() checkpoint.dir must be non-empty when provided.',
+      );
+    }
+  }
+
+  return {
+    ...options,
+    trialConcurrency,
+  };
 }
 
 function getObjectiveMetric(
@@ -499,7 +622,6 @@ function computeSearchScore(
         `Trial metrics are missing numeric objective "${objective.metric}".`,
       );
     }
-
     const signedValue = objective.direction === 'minimize' ? -value : value;
     weightedTotal += signedValue * objective.weight;
     totalWeight += objective.weight;
@@ -556,6 +678,28 @@ function selectBestTrial(
   return bestTrial;
 }
 
+function hasPlateau(
+  trials: OptimizationTrialRecord[],
+  objectives: readonly NormalizedObjectiveDefinition[],
+  plateau: NonNullable<ValidatedOptimizeOptions['plateau']> | undefined,
+): boolean {
+  if (!plateau || trials.length <= plateau.window) {
+    return false;
+  }
+
+  const bestHistory: number[] = [];
+  let best = Number.NEGATIVE_INFINITY;
+
+  for (const trial of trials) {
+    best = Math.max(best, computeSearchScore(trial.metrics, objectives));
+    bestHistory.push(best);
+  }
+
+  const current = bestHistory.at(-1)!;
+  const previous = bestHistory.at(-(plateau.window + 1))!;
+  return current - previous < plateau.minImprovement;
+}
+
 function createTrialConfig(
   config: CandidateConfig,
   trialNumber: number,
@@ -600,28 +744,56 @@ async function executeTrial(
   trialFn: NativeTrialFunction,
   trialConfig: TrialConfig,
   timeoutMs: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<TrialOutcome> {
-  const start = Date.now();
+  const controller = new AbortController();
+  const listeners: Array<() => void> = [];
+
   let timeoutId: NodeJS.Timeout | undefined;
+  const start = Date.now();
 
   try {
     const trialPromise = Promise.resolve(
-      TrialContext.run(trialConfig, async () => trialFn(trialConfig)),
+      TrialContext.run(
+        trialConfig,
+        async () => trialFn(trialConfig),
+        controller.signal,
+      ),
     );
 
+    const timeoutPromise =
+      timeoutMs === undefined
+        ? undefined
+        : new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              controller.abort();
+              reject(new TimeoutError('Trial timeout', timeoutMs));
+            }, timeoutMs);
+          });
+
+    const cancelPromise =
+      signal === undefined
+        ? undefined
+        : new Promise<never>((_, reject) => {
+            const onAbort = () => {
+              controller.abort();
+              reject(new CancelledError('Optimization cancelled'));
+            };
+
+            if (signal.aborted) {
+              onAbort();
+              return;
+            }
+
+            signal.addEventListener('abort', onAbort, { once: true });
+            listeners.push(() => signal.removeEventListener('abort', onAbort));
+          });
+
     const rawResult = await Promise.race(
-      [
-        trialPromise,
-        ...(timeoutMs === undefined
-          ? []
-          : [
-              new Promise<never>((_, reject) => {
-                timeoutId = setTimeout(() => {
-                  reject(new TimeoutError('Trial timeout', timeoutMs));
-                }, timeoutMs);
-              }),
-            ]),
-      ],
+      [trialPromise, timeoutPromise, cancelPromise].filter(
+        (value): value is Promise<NativeTrialFunctionResult> =>
+          value !== undefined,
+      ),
     );
 
     if (!rawResult || typeof rawResult !== 'object') {
@@ -637,6 +809,7 @@ async function executeTrial(
       );
     }
 
+    const duration = normalizeDuration(rawResult, (Date.now() - start) / 1000);
     return {
       status: 'completed',
       record: {
@@ -644,7 +817,7 @@ async function executeTrial(
         trialNumber: trialConfig.trial_number,
         config: { ...trialConfig.config },
         metrics: metricsParse.data,
-        duration: normalizeDuration(rawResult, (Date.now() - start) / 1000),
+        duration,
         metadata: rawResult.metadata,
       },
     };
@@ -655,18 +828,131 @@ async function executeTrial(
     if (error instanceof TimeoutError) {
       return {
         status: 'timeout',
+        trialNumber: trialConfig.trial_number,
         errorMessage: error.message,
+      };
+    }
+    if (
+      error instanceof CancelledError ||
+      error instanceof TrialCancelledError ||
+      controller.signal.aborted
+    ) {
+      return {
+        status: 'cancelled',
+        trialNumber: trialConfig.trial_number,
+        errorMessage: toErrorMessage(error),
       };
     }
     return {
       status: 'error',
+      trialNumber: trialConfig.trial_number,
       errorMessage: toErrorMessage(error),
     };
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
+    for (const removeListener of listeners) {
+      removeListener();
+    }
   }
+}
+
+async function ensureCheckpointDirectory(path: string): Promise<void> {
+  await mkdir(path, { recursive: true });
+}
+
+async function resolveCheckpointContext(
+  spec: NormalizedOptimizationSpec,
+  options: ValidatedOptimizeOptions,
+): Promise<CheckpointContext | undefined> {
+  if (!options.checkpoint) {
+    return undefined;
+  }
+
+  const dir = options.checkpoint.dir ?? join(process.cwd(), '.traigent-checkpoints');
+  await ensureCheckpointDirectory(dir);
+
+  const specHash = hashJson(spec);
+  const optionsHash = hashJson({
+    algorithm: options.algorithm,
+    maxTrials: options.maxTrials,
+    randomSeed: options.randomSeed,
+    timeoutMs: options.timeoutMs,
+    trialConcurrency: options.trialConcurrency,
+    plateau: options.plateau,
+  });
+  const filename = `${createHash('sha256')
+    .update(options.checkpoint.key)
+    .digest('hex')}.json`;
+
+  return {
+    specHash,
+    optionsHash,
+    path: join(dir, filename),
+  };
+}
+
+async function loadCheckpointState(
+  checkpoint: CheckpointContext | undefined,
+  options: ValidatedOptimizeOptions,
+): Promise<ResumeState | undefined> {
+  if (!checkpoint || !options.checkpoint?.resume) {
+    return undefined;
+  }
+
+  try {
+    const raw = await readFile(checkpoint.path, 'utf8');
+    const parsed = JSON.parse(raw) as CheckpointState;
+    if (
+      parsed.version !== 1 ||
+      parsed.specHash !== checkpoint.specHash ||
+      parsed.optionsHash !== checkpoint.optionsHash
+    ) {
+      throw new ValidationError(
+        'optimize() checkpoint does not match the current spec/options.',
+      );
+    }
+
+    return {
+      experimentRunId: parsed.experimentRunId,
+      exhaustive: parsed.exhaustive,
+      candidateConfigs: parsed.candidateConfigs,
+      samplerState: parsed.samplerState,
+      completedTrials: parsed.completedTrials ?? [],
+      totalCostUsd: parsed.totalCostUsd ?? 0,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function saveCheckpointState(
+  checkpoint: CheckpointContext | undefined,
+  options: ValidatedOptimizeOptions,
+  state: ResumeState,
+): Promise<void> {
+  if (!checkpoint || !options.checkpoint) {
+    return;
+  }
+
+  const payload: CheckpointState = {
+    version: 1,
+    algorithm: options.algorithm,
+    specHash: checkpoint.specHash,
+    optionsHash: checkpoint.optionsHash,
+    experimentRunId: state.experimentRunId,
+    exhaustive: state.exhaustive,
+    candidateConfigs: state.candidateConfigs,
+    samplerState: state.samplerState,
+    completedTrials: state.completedTrials,
+    totalCostUsd: state.totalCostUsd,
+  };
+
+  await writeFile(checkpoint.path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
 function finalizeResult(
@@ -676,12 +962,15 @@ function finalizeResult(
   totalCostUsd: number,
   errorMessage?: string,
 ): OptimizationResult {
-  const bestTrial = selectBestTrial(trials, objectives);
+  const orderedTrials = [...trials].sort(
+    (left, right) => left.trialNumber - right.trialNumber,
+  );
+  const bestTrial = selectBestTrial(orderedTrials, objectives);
 
   return {
     bestConfig: bestTrial?.config ?? null,
     bestMetrics: bestTrial?.metrics ?? null,
-    trials,
+    trials: orderedTrials,
     stopReason,
     totalCostUsd,
     errorMessage,
@@ -795,10 +1084,11 @@ function buildBayesianLocalCandidate(
 
     switch (definition.type) {
       case 'enum': {
-        candidate[name] =
-          random.random() < 0.75 && baselineValue !== undefined
-            ? baselineValue
-            : random.choice(definition.values);
+        if (random.random() < 0.75 && baselineValue !== undefined) {
+          candidate[name] = baselineValue;
+        } else {
+          candidate[name] = random.choice(definition.values);
+        }
         break;
       }
       case 'int': {
@@ -813,7 +1103,6 @@ function buildBayesianLocalCandidate(
           );
           break;
         }
-
         const span = Math.max(1, Math.round((definition.max - definition.min) / 4));
         const lower = clamp(center - span, definition.min, definition.max);
         const upper = clamp(center + span, definition.min, definition.max);
@@ -847,7 +1136,6 @@ function buildBayesianLocalCandidate(
               : roundToPrecision(clamp(mixed, definition.min, definition.max));
           break;
         }
-
         const span = Math.max(
           (definition.max - definition.min) / 6,
           definition.step ?? 0.01,
@@ -979,104 +1267,201 @@ function updateTotalCost(
     return totalCostUsd + costMetric;
   }
 
-  if (
-    typeof trialRecord.metrics['cost'] === 'number' &&
-    Number.isFinite(trialRecord.metrics['cost'])
-  ) {
-    return totalCostUsd + trialRecord.metrics['cost'];
+  const trialCost = trialRecord.metrics['cost'];
+  if (typeof trialCost === 'number' && Number.isFinite(trialCost)) {
+    return totalCostUsd + trialCost;
   }
 
   return totalCostUsd;
 }
 
-async function runSequentialPlan(
+async function runCandidatePlan(
   trialFn: NativeTrialFunction,
   spec: NormalizedOptimizationSpec,
-  options: NativeOptimizeOptions,
-  configs: CandidateConfig[],
-  exhaustive: boolean,
+  options: ValidatedOptimizeOptions,
+  plan: CandidatePlan,
+  resume: ResumeState,
   evaluationRows: readonly unknown[],
+  checkpoint: CheckpointContext | undefined,
 ): Promise<OptimizationResult> {
-  const experimentRunId = `native_${randomUUID()}`;
-  const trials: OptimizationTrialRecord[] = [];
-  let totalCostUsd = 0;
-  let stopReason: OptimizationResult['stopReason'] = exhaustive
-    ? 'completed'
-    : 'maxTrials';
+  const trials = [...resume.completedTrials];
+  let totalCostUsd = resume.totalCostUsd;
+  let stopReason: OptimizationResult['stopReason'] =
+    plan.exhaustive ? 'completed' : 'maxTrials';
+  let errorMessage: string | undefined;
+  let committedTrialNumber = trials.length;
 
-  for (const [index, candidateConfig] of configs.entries()) {
-    const trialConfig = createTrialConfig(
-      candidateConfig,
-      index + 1,
-      evaluationRows.length,
-      experimentRunId,
-    );
-
-    const outcome = await executeTrial(trialFn, trialConfig, options.timeoutMs);
-    if (outcome.status !== 'completed') {
+  const abortController = new AbortController();
+  if (options.signal) {
+    if (options.signal.aborted) {
+      abortController.abort();
       return finalizeResult(
         trials,
         spec.objectives,
-        outcome.status,
+        'cancelled',
         totalCostUsd,
-        outcome.errorMessage,
+        'Optimization cancelled',
       );
     }
-
-    for (const objective of spec.objectives) {
-      getObjectiveMetric(outcome.record, objective);
-    }
-
-    totalCostUsd = updateTotalCost(spec, outcome.record, totalCostUsd);
-    trials.push(outcome.record);
-
-    if (
-      spec.budget?.maxCostUsd !== undefined &&
-      totalCostUsd >= spec.budget.maxCostUsd
-    ) {
-      stopReason = 'budget';
-      break;
-    }
+    options.signal.addEventListener('abort', () => abortController.abort(), {
+      once: true,
+    });
   }
 
-  return finalizeResult(trials, spec.objectives, stopReason, totalCostUsd);
+  type ActiveTask = { trialNumber: number; promise: Promise<TrialOutcome> };
+  const active = new Map<number, ActiveTask>();
+  const buffered = new Map<number, TrialOutcome>();
+
+  let nextIndex = committedTrialNumber;
+  const maybeDispatch = (): void => {
+    while (
+      !abortController.signal.aborted &&
+      active.size < options.trialConcurrency &&
+      nextIndex < plan.configs.length
+    ) {
+      const trialNumber = nextIndex + 1;
+      const trialConfig = createTrialConfig(
+        plan.configs[nextIndex]!,
+        trialNumber,
+        evaluationRows.length,
+        resume.experimentRunId,
+      );
+      const promise = executeTrial(
+        trialFn,
+        trialConfig,
+        options.timeoutMs,
+        abortController.signal,
+      );
+      active.set(trialNumber, { trialNumber, promise });
+      nextIndex += 1;
+    }
+  };
+
+  maybeDispatch();
+
+  while (active.size > 0) {
+    const { trialNumber, outcome } = await Promise.race(
+      [...active.values()].map(async (task) => ({
+        trialNumber: task.trialNumber,
+        outcome: await task.promise,
+      })),
+    );
+    active.delete(trialNumber);
+    buffered.set(trialNumber, outcome);
+
+    while (buffered.has(committedTrialNumber + 1)) {
+      const current = buffered.get(committedTrialNumber + 1)!;
+      buffered.delete(committedTrialNumber + 1);
+      committedTrialNumber += 1;
+
+      if (current.status !== 'completed') {
+        stopReason = current.status;
+        errorMessage = current.errorMessage;
+        abortController.abort();
+        break;
+      }
+
+      for (const objective of spec.objectives) {
+        getObjectiveMetric(current.record, objective);
+      }
+
+      totalCostUsd = updateTotalCost(spec, current.record, totalCostUsd);
+      trials.push(current.record);
+
+      await saveCheckpointState(checkpoint, options, {
+        ...resume,
+        exhaustive: plan.exhaustive,
+        candidateConfigs: plan.configs,
+        completedTrials: [...trials].sort(
+          (left, right) => left.trialNumber - right.trialNumber,
+        ),
+        totalCostUsd,
+      });
+
+      if (
+        spec.budget?.maxCostUsd !== undefined &&
+        totalCostUsd >= spec.budget.maxCostUsd
+      ) {
+        stopReason = 'budget';
+        abortController.abort();
+        break;
+      }
+
+      if (hasPlateau(trials, spec.objectives, options.plateau)) {
+        stopReason = 'plateau';
+        abortController.abort();
+        break;
+      }
+    }
+
+    if (abortController.signal.aborted) {
+      if (
+        options.signal?.aborted &&
+        (stopReason === 'completed' || stopReason === 'maxTrials')
+      ) {
+        stopReason = 'cancelled';
+        errorMessage ??= 'Optimization cancelled';
+      }
+      break;
+    }
+
+    maybeDispatch();
+  }
+
+  await Promise.allSettled([...active.values()].map((task) => task.promise));
+  return finalizeResult(trials, spec.objectives, stopReason, totalCostUsd, errorMessage);
 }
 
 async function runBayesianPlan(
   trialFn: NativeTrialFunction,
   spec: NormalizedOptimizationSpec,
-  options: NativeOptimizeOptions,
+  options: ValidatedOptimizeOptions,
+  resume: ResumeState,
   evaluationRows: readonly unknown[],
+  checkpoint: CheckpointContext | undefined,
 ): Promise<OptimizationResult> {
-  const experimentRunId = `native_${randomUUID()}`;
-  const trials: OptimizationTrialRecord[] = [];
-  const random = new PythonRandom(options.randomSeed ?? 0);
-  let totalCostUsd = 0;
+  const trials = [...resume.completedTrials].sort(
+    (left, right) => left.trialNumber - right.trialNumber,
+  );
+  let totalCostUsd = resume.totalCostUsd;
   let stopReason: OptimizationResult['stopReason'] = 'maxTrials';
+  let errorMessage: string | undefined;
+  const random = resume.samplerState
+    ? new PythonRandom(resume.samplerState)
+    : new PythonRandom(options.randomSeed ?? 0);
 
-  for (let index = 0; index < options.maxTrials; index += 1) {
-    const suggestion = suggestBayesianConfig(spec, trials, random, options.maxTrials);
-    if (!suggestion.config) {
-      stopReason = suggestion.exhaustive ? 'completed' : 'maxTrials';
+  for (let index = trials.length; index < options.maxTrials; index += 1) {
+    if (options.signal?.aborted) {
+      stopReason = 'cancelled';
+      errorMessage = 'Optimization cancelled';
       break;
     }
 
+    const suggestion = suggestBayesianConfig(spec, trials, random, options.maxTrials);
+    if (!suggestion.config) {
+      stopReason = 'completed';
+      break;
+    }
+
+    const trialNumber = index + 1;
     const trialConfig = createTrialConfig(
       suggestion.config,
-      index + 1,
+      trialNumber,
       evaluationRows.length,
-      experimentRunId,
+      resume.experimentRunId,
     );
 
-    const outcome = await executeTrial(trialFn, trialConfig, options.timeoutMs);
+    const outcome = await executeTrial(
+      trialFn,
+      trialConfig,
+      options.timeoutMs,
+      options.signal,
+    );
+
     if (outcome.status !== 'completed') {
-      return finalizeResult(
-        trials,
-        spec.objectives,
-        outcome.status,
-        totalCostUsd,
-        outcome.errorMessage,
-      );
+      stopReason = outcome.status;
+      errorMessage = outcome.errorMessage;
+      break;
     }
 
     for (const objective of spec.objectives) {
@@ -1086,6 +1471,14 @@ async function runBayesianPlan(
     totalCostUsd = updateTotalCost(spec, outcome.record, totalCostUsd);
     trials.push(outcome.record);
 
+    await saveCheckpointState(checkpoint, options, {
+      ...resume,
+      exhaustive: suggestion.exhaustive,
+      samplerState: random.serialize(),
+      completedTrials: [...trials],
+      totalCostUsd,
+    });
+
     if (
       spec.budget?.maxCostUsd !== undefined &&
       totalCostUsd >= spec.budget.maxCostUsd
@@ -1093,9 +1486,14 @@ async function runBayesianPlan(
       stopReason = 'budget';
       break;
     }
+
+    if (hasPlateau(trials, spec.objectives, options.plateau)) {
+      stopReason = 'plateau';
+      break;
+    }
   }
 
-  return finalizeResult(trials, spec.objectives, stopReason, totalCostUsd);
+  return finalizeResult(trials, spec.objectives, stopReason, totalCostUsd, errorMessage);
 }
 
 export async function runNativeOptimization(
@@ -1112,17 +1510,43 @@ export async function runNativeOptimization(
     );
   }
 
+  const checkpoint = await resolveCheckpointContext(spec, options);
+  const resume =
+    (await loadCheckpointState(checkpoint, options)) ?? {
+      experimentRunId: `native_${randomUUID()}`,
+      completedTrials: [],
+      totalCostUsd: 0,
+    };
+
   if (options.algorithm === 'bayesian') {
-    return runBayesianPlan(trialFn, spec, options, evaluationRows);
+    return runBayesianPlan(
+      trialFn,
+      spec,
+      options,
+      resume,
+      evaluationRows,
+      checkpoint,
+    );
   }
 
-  const { configs, exhaustive } = buildCandidatePlan(spec, options);
-  return runSequentialPlan(
+  const plan = {
+    ...buildCandidatePlan(spec, options),
+    configs: resume.candidateConfigs ?? buildCandidatePlan(spec, options).configs,
+    exhaustive:
+      resume.exhaustive ?? buildCandidatePlan(spec, options).exhaustive,
+  };
+
+  return runCandidatePlan(
     trialFn,
     spec,
     options,
-    configs,
-    exhaustive,
+    plan,
+    {
+      ...resume,
+      candidateConfigs: plan.configs,
+      exhaustive: plan.exhaustive,
+    },
     evaluationRows,
+    checkpoint,
   );
 }

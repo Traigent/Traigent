@@ -72,6 +72,17 @@ export interface NativeOptimizeOptions {
   maxTrials: number;
   randomSeed?: number;
   timeoutMs?: number;
+  trialConcurrency?: number;
+  signal?: AbortSignal;
+  plateau?: {
+    window: number;
+    minImprovement: number;
+  };
+  checkpoint?: {
+    key: string;
+    dir?: string;
+    resume?: boolean;
+  };
 }
 
 export interface OptimizationTrialRecord {
@@ -87,7 +98,14 @@ export interface OptimizationResult {
   bestConfig: TrialConfig['config'] | null;
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
-  stopReason: 'completed' | 'maxTrials' | 'budget' | 'timeout' | 'error';
+  stopReason:
+    | 'completed'
+    | 'maxTrials'
+    | 'budget'
+    | 'timeout'
+    | 'error'
+    | 'plateau'
+    | 'cancelled';
   totalCostUsd: number;
   errorMessage?: string;
 }
@@ -116,4 +134,8 @@ export interface NativeTrialFunctionResult {
 
 export type NativeOptimizedFunction<T extends (...args: any[]) => any> = T & {
   optimize(options: NativeOptimizeOptions): Promise<OptimizationResult>;
+  applyBestConfig(
+    result: OptimizationResult,
+  ): TrialConfig['config'] | undefined;
+  currentConfig(): TrialConfig['config'] | undefined;
 };

@@ -1,30 +1,30 @@
-# Internal Release Notes: Native JS Optimization Phase 1
+# Internal Release Notes: Native JS Optimization
 
 ## Scope
 
-This release isolates the phase-1 native JS parity slice for `@traigent/sdk`.
+This release extends the native JS optimization surface in `@traigent/sdk` beyond the phase-1 slice.
 
 ## SDK Changes
 
 - Root exports continue to include `optimize`, `param`, `getOptimizationSpec`, and `toHybridConfigSpace`.
-- Wrapped functions now support native `.optimize({ algorithm, maxTrials, randomSeed, timeoutMs })`.
+- Wrapped functions now support native `.optimize({ algorithm, maxTrials, randomSeed, timeoutMs, trialConcurrency, plateau, checkpoint, signal })`.
 - Native optimization currently supports:
   - Node-only execution
   - `grid`, `random`, and sequential `bayesian`
   - log-scale `float` and `int` parameters
   - budget enforcement from numeric `metrics.cost`
-  - `stopReason: 'timeout' | 'error'`
+  - `stopReason: 'timeout' | 'error' | 'cancelled' | 'plateau'`
+  - wrapper-local `applyBestConfig()` / `currentConfig()`
 
 ## Cross-SDK Validation
 
 - Python-owned oracle fixtures validate deterministic grid, seeded random, and budget cutoff behavior.
-- JS reports async scheduler performance against Python with a shared synthetic workload.
+- JS reports async optimization scheduling against Python with a shared synthetic workload.
 - The lightweight Python oracle exporter is stdlib-only; full Python Bayesian oracle parity remains deferred in this environment.
 
-## Intentional Phase-1 Limits
+## Intentional v1 Limits
 
-- No public `trialConcurrency`, `signal`, `plateau`, or `checkpoint` options.
-- No wrapper-local `applyBestConfig()` or `currentConfig()`.
+- `trialConcurrency` is currently limited to `grid` and `random`.
 - No Optuna-family algorithms, example-level concurrency, or cloud orchestration.
 - `budget.maxCostUsd` requires numeric `metrics.cost` on every trial.
 

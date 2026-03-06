@@ -4,9 +4,10 @@ import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 
 import {
-  TrialContext,
   getTrialConfig,
   getTrialParam,
+  optimize,
+  param,
 } from '../dist/index.js';
 
 const pythonRepoRoot = resolve(process.cwd(), '../Traigent');
@@ -58,6 +59,22 @@ function loadOraclePayload() {
   return JSON.parse(stdout);
 }
 
+function toParamDefinition(definition) {
+  switch (definition.type) {
+    case 'enum':
+      return param.enum(definition.values);
+    case 'int':
+      return param.int({
+        min: definition.min,
+        max: definition.max,
+        step: definition.step,
+        scale: definition.scale,
+      });
+    default:
+      throw new Error(`Unsupported benchmark parameter type: ${definition.type}`);
+  }
+}
+
 function summarizeRuns(runs) {
   const wallClockMs = runs.map((run) => run.wallClockMs);
   const throughput = runs.map((run) => run.throughput);
@@ -88,85 +105,82 @@ function summarizeRuns(runs) {
     },
     bestConfig: runs.at(-1)?.bestConfig ?? {},
     bestLatency: runs.at(-1)?.bestLatency ?? 0,
-    stopReason: runs.at(-1)?.stopReason ?? 'completed',
+    stopReason: runs.at(-1)?.stopReason ?? 'maxTrials',
     trialCount: runs.at(-1)?.trialCount ?? 0,
   };
 }
 
-function createTrialConfig(config, trialNumber) {
-  return {
-    trial_id: `bench_${trialNumber}`,
-    trial_number: trialNumber,
-    experiment_run_id: 'cross_sdk_benchmark',
-    config,
-    dataset_subset: {
-      indices: [0],
-      total: 1,
-    },
-  };
-}
-
 async function runSingleJsBenchmark(spec, concurrency) {
-  const results = new Array(spec.configs.length);
-  let nextIndex = 0;
+  const wrapped = optimize({
+    configurationSpace: Object.fromEntries(
+      Object.entries(spec.configurationSpace).map(([name, definition]) => [
+        name,
+        toParamDefinition(definition),
+      ]),
+    ),
+    objectives: ['latency'],
+    evaluation: {
+      data: [{ id: 1 }],
+    },
+  })(async () => {
+    const lane = String(getTrialParam('lane'));
+    const slot = Number(getTrialParam('slot'));
+    const currentConfig = getTrialConfig();
+    const before = lane;
+    const sleepMs = spec.sleepScheduleMs[lane] + slot * 2;
+    await delay(sleepMs);
+    const after = String(getTrialParam('lane'));
+    const contextLeak = before !== after || currentConfig.lane !== lane;
+    return {
+      metrics: {
+        latency: sleepMs,
+        cost: sleepMs / 1000,
+      },
+      metadata: {
+        contextLeak,
+        sleepMs,
+      },
+    };
+  });
+
   const rssBeforeMb = process.memoryUsage().rss / (1024 * 1024);
   const start = performance.now();
-
-  async function worker() {
-    while (true) {
-      const index = nextIndex;
-      nextIndex += 1;
-
-      if (index >= spec.configs.length) {
-        return;
-      }
-
-      const config = spec.configs[index];
-      const trialConfig = createTrialConfig(config, index + 1);
-      const lane = String(config.lane);
-      const sleepMs = spec.sleepScheduleMs[lane] + Number(config.slot) * 2;
-
-      results[index] = await TrialContext.run(trialConfig, async () => {
-        const before = String(getTrialParam('lane'));
-        const currentConfig = getTrialConfig();
-        await delay(sleepMs);
-        const after = String(getTrialParam('lane'));
-        return {
-          config,
-          sleepMs,
-          contextLeak: before !== after || currentConfig.lane !== lane,
-        };
-      });
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: concurrency }, () => worker()),
-  );
-
+  const result = await wrapped.optimize({
+    algorithm: spec.algorithm,
+    maxTrials: spec.maxTrials,
+    randomSeed: spec.randomSeed,
+    trialConcurrency: concurrency,
+  });
   const wallClockMs = performance.now() - start;
   const rssAfterMb = process.memoryUsage().rss / (1024 * 1024);
-  const uniqueConfigs = new Set(results.map((result) => JSON.stringify(result.config)));
-  const best = results.reduce((currentBest, result) => {
-    if (!currentBest || result.sleepMs < currentBest.sleepMs) {
-      return result;
-    }
-    return currentBest;
-  }, null);
-  const totalSleepMs = results.reduce((sum, result) => sum + result.sleepMs, 0);
+
+  const theoreticalMinMs =
+    result.trials.reduce(
+      (sum, trial) =>
+        sum +
+        spec.sleepScheduleMs[String(trial.config.lane)] +
+        Number(trial.config.slot) * 2,
+      0,
+    ) / concurrency;
+  const uniqueConfigs = new Set(
+    result.trials.map((trial) => JSON.stringify(trial.config)),
+  );
 
   return {
     wallClockMs,
-    throughput: results.length / (wallClockMs / 1000),
-    theoreticalMinMs: totalSleepMs / concurrency,
-    overheadRatio: wallClockMs / (totalSleepMs / concurrency),
-    duplicateConfigRate: 1 - uniqueConfigs.size / Math.max(results.length, 1),
-    contextLeakCount: results.filter((result) => result.contextLeak).length,
+    throughput: result.trials.length / (wallClockMs / 1000),
+    theoreticalMinMs,
+    overheadRatio: wallClockMs / theoreticalMinMs,
+    duplicateConfigRate:
+      1 - uniqueConfigs.size / Math.max(result.trials.length, 1),
+    contextLeakCount: result.trials.filter(
+      (trial) => trial.metadata?.contextLeak === true,
+    ).length,
     rssDeltaMb: Math.max(rssAfterMb - rssBeforeMb, 0),
-    bestConfig: best?.config ?? {},
-    bestLatency: best?.sleepMs ?? 0,
-    stopReason: 'completed',
-    trialCount: results.length,
+    bestConfig: result.bestConfig ?? {},
+    bestLatency: Number(result.bestMetrics?.latency ?? 0),
+    stopReason: result.stopReason,
+    trialCount: result.trials.length,
   };
 }
 
@@ -175,7 +189,6 @@ async function runJsBenchmark(benchmarkSpec) {
     generatedAt: new Date().toISOString(),
     runtime: 'js',
     nodeVersion: process.version,
-    mode: 'standalone_async_scheduler',
     concurrencyLevels: {},
   };
 
@@ -188,7 +201,6 @@ async function runJsBenchmark(benchmarkSpec) {
     for (let index = 0; index < benchmarkSpec.measuredRuns; index += 1) {
       measuredRuns.push(await runSingleJsBenchmark(benchmarkSpec, concurrency));
     }
-
     results.concurrencyLevels[String(concurrency)] = summarizeRuns(measuredRuns);
   }
 
@@ -199,7 +211,6 @@ function runPythonBenchmark() {
   if (!existsSync(pythonBenchmarkScript)) {
     throw new Error(`Missing Python benchmark script: ${pythonBenchmarkScript}`);
   }
-
   const stdout = execFileSync('python3', [pythonBenchmarkScript], {
     cwd: pythonRepoRoot,
     env: {
@@ -232,10 +243,6 @@ function compareBenchmarks(jsResults, pythonResults) {
 
 const oraclePayload = loadOraclePayload();
 const benchmarkSpec = oraclePayload.benchmark_spec;
-if (!Array.isArray(benchmarkSpec?.configs) || benchmarkSpec.configs.length === 0) {
-  throw new Error('benchmark_spec.configs is required for the JS benchmark harness.');
-}
-
 const jsResults = await runJsBenchmark(benchmarkSpec);
 const pythonResults = runPythonBenchmark();
 

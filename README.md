@@ -92,6 +92,8 @@ const result = await evaluatePrompt.optimize({
 
 console.log(result.bestConfig);
 console.log(result.bestMetrics);
+evaluatePrompt.applyBestConfig(result);
+console.log(evaluatePrompt.currentConfig());
 ```
 
 See [`examples/native-optimization.mjs`](./examples/native-optimization.mjs) for the runnable smoke example.
@@ -130,20 +132,20 @@ Use `TrialContext`, `getTrialConfig()`, and `getTrialParam()` inside a bound tri
 - native `wrapped.optimize(...)` trial execution
 - host-managed capability execution where your app calls `TrialContext.run(...)`
 
-## Current Native Phase-1 Limits
+## Current Native v1 Limits
 
 - Native optimization is Node-only.
 - Supported algorithms are `grid`, `random`, and sequential `bayesian`.
 - `evaluation.data` or `evaluation.loadData` is required for `.optimize()`.
 - `budget.maxCostUsd` is enforced only from numeric `metrics.cost`.
-- `timeoutMs` is supported in native mode.
+- `timeoutMs`, `trialConcurrency`, `plateau`, `checkpoint`, and wrapper-local `applyBestConfig()` / `currentConfig()` are supported in native mode.
 - Log-scale grid search requires a multiplicative `step > 1`.
-- Public `trialConcurrency`, `signal`, `plateau`, `checkpoint`, and wrapper-local config application are deferred to later phases.
+- `trialConcurrency` is currently limited to `grid` and `random`.
 - Worker pools, Optuna-family optimizers, example-level concurrency, and hybrid API orchestration are still out of scope.
 
 ## Cross-SDK Validation
 
-Internal phase-1 validation:
+Internal validation:
 
 ```bash
 npm test

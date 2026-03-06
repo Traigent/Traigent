@@ -1,6 +1,6 @@
 # Cross-SDK Validation
 
-Phase-1 native JS correctness is validated against Python-owned fixtures and benchmark specs in the sibling `Traigent` repo.
+Native JS correctness and performance are validated against Python-owned fixtures and benchmark specs in the sibling `Traigent` repo.
 
 ## Correctness Oracles
 
@@ -23,7 +23,7 @@ If the sibling Python repo is absent, the cross-SDK oracle test skips locally. I
 
 ## Async Benchmark Methodology
 
-Phase 1 does not expose public native trial concurrency yet, so the JS benchmark is a standalone async scheduler harness rather than an `.optimize()` benchmark.
+Cross-language async comparison uses a synthetic workload, not real provider calls.
 
 Shared benchmark inputs come from:
 
@@ -33,10 +33,9 @@ Shared benchmark inputs come from:
 
 Method:
 
-1. Use a shared fixed config list and deterministic sleep schedule in both runtimes.
+1. Use the same seeded random config space and the same sleep schedule in both runtimes.
 2. Run warmups first, then measured runs at concurrency `1`, `2`, `4`, and `8`.
 3. Compare normalized scheduler behavior rather than absolute language speed.
-4. Treat the output as release reporting in phase 1, not release gating.
 
 Reported metrics:
 
@@ -59,4 +58,4 @@ npm run test:cross-sdk
 npm run benchmark:cross-sdk
 ```
 
-The benchmark command builds the SDK, runs the JS scheduler harness, executes the Python benchmark script, and prints a combined JSON report.
+The benchmark command builds the SDK, runs the JS benchmark harness, executes the Python benchmark script, and prints a combined JSON report.

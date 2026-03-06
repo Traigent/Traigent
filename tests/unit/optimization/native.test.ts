@@ -1,7 +1,17 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { ValidationError } from '../../../src/core/errors.js';
-import { optimize, param } from '../../../src/index.js';
+import {
+  TrialContext,
+  getTrialConfig,
+  getTrialParam,
+  optimize,
+  param,
+} from '../../../src/index.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -101,12 +111,12 @@ describe('native optimize()', () => {
 
     const first = await wrapped.optimize({
       algorithm: 'random',
-      maxTrials: 4,
+      maxTrials: 5,
       randomSeed: 42,
     });
     const second = await wrapped.optimize({
       algorithm: 'random',
-      maxTrials: 4,
+      maxTrials: 5,
       randomSeed: 42,
     });
 
@@ -338,5 +348,164 @@ describe('native optimize()', () => {
     expect(Number(result.bestConfig?.y)).toBeGreaterThanOrEqual(0);
     expect(Number(result.bestConfig?.y)).toBeLessThanOrEqual(15);
     expect(Number(result.bestMetrics?.score)).toBeGreaterThan(-5);
+  });
+
+  it('rejects bayesian trialConcurrency > 1', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        x: param.float({ min: 0, max: 1 }),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    await expect(
+      wrapped.optimize({
+        algorithm: 'bayesian',
+        maxTrials: 4,
+        trialConcurrency: 2,
+      }),
+    ).rejects.toThrow(/does not support trialConcurrency > 1/i);
+  });
+
+  it('preserves TrialContext isolation across concurrent trials', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['a', 'b', 'c', 'd']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => {
+      const before = getTrialParam('model');
+      await delay(trialConfig.config.model === 'a' ? 20 : 5);
+      const currentConfig = getTrialConfig();
+      const after = getTrialParam('model');
+      return {
+        metrics: {
+          accuracy: before === after ? 1 : 0,
+        },
+        metadata: {
+          before,
+          after,
+          current: currentConfig.model,
+          trialId: TrialContext.getTrialId(),
+        },
+      };
+    });
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 4,
+      trialConcurrency: 4,
+    });
+
+    expect(result.stopReason).toBe('completed');
+    for (const trial of result.trials) {
+      expect(trial.metrics.accuracy).toBe(1);
+      expect(trial.metadata).toMatchObject({
+        before: trial.config.model,
+        after: trial.config.model,
+        current: trial.config.model,
+      });
+    }
+  });
+
+  it('supports checkpoint/resume with the same final result as an uninterrupted run', async () => {
+    const checkpointDir = await mkdtemp(join(tmpdir(), 'traigent-checkpoint-'));
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['a', 'b', 'c']),
+        retries: param.int({ min: 0, max: 2 }),
+      },
+      objectives: ['accuracy', 'cost'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => {
+      await delay(15);
+      return {
+        metrics: {
+          accuracy:
+            Number(trialConfig.config.retries) * 0.2 +
+            (trialConfig.config.model === 'c' ? 0.6 : 0.3),
+          cost: trialConfig.config.model === 'c' ? 0.5 : 0.1,
+        },
+      };
+    });
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 35);
+
+    const partial = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 9,
+      signal: controller.signal,
+      checkpoint: {
+        key: 'resume-grid',
+        dir: checkpointDir,
+      },
+    });
+
+    const resumed = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 9,
+      checkpoint: {
+        key: 'resume-grid',
+        dir: checkpointDir,
+        resume: true,
+      },
+    });
+
+    const uninterrupted = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 9,
+    });
+
+    expect(partial.stopReason).toBe('cancelled');
+    expect(partial.trials.length).toBeGreaterThan(0);
+    expect(resumed.bestConfig).toEqual(uninterrupted.bestConfig);
+    expect(resumed.bestMetrics).toEqual(uninterrupted.bestMetrics);
+    expect(resumed.stopReason).toEqual(uninterrupted.stopReason);
+    expect(resumed.trials.map((trial) => trial.config)).toEqual(
+      uninterrupted.trials.map((trial) => trial.config),
+    );
+
+    await rm(checkpointDir, { recursive: true, force: true });
+  });
+
+  it('stops with plateau when improvements stay below the configured threshold', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['a', 'b', 'c', 'd', 'e']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 5,
+      plateau: {
+        window: 2,
+        minImprovement: 0.01,
+      },
+    });
+
+    expect(result.stopReason).toBe('plateau');
+    expect(result.trials).toHaveLength(3);
   });
 });
