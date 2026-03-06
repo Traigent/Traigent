@@ -223,7 +223,7 @@ class TraigentAuthCLI:
 
         # Step 2: Create API key using JWT token
         api_key = None
-        api_key_url = f"{self.backend_api_url}/api-keys"
+        api_key_url = f"{self.backend_api_url}/keys"
         console.print(f"\n[dim]POST {api_key_url}[/dim]")
 
         async with aiohttp.ClientSession() as session:
