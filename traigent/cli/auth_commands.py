@@ -25,6 +25,17 @@ try:
 except ImportError:
     keyring = None
     KEYRING_AVAILABLE = False
+
+# Try to import aiohttp for exception handling
+try:
+    import aiohttp
+
+    # Network errors to catch: OSError covers most, aiohttp.ClientError for async HTTP
+    NETWORK_ERRORS: tuple[type[Exception], ...] = (OSError, aiohttp.ClientError)
+except ImportError:
+    aiohttp = None  # type: ignore[assignment]
+    NETWORK_ERRORS = (OSError,)
+
 from rich.prompt import Prompt
 from rich.table import Table
 
@@ -593,6 +604,18 @@ class TraigentAuthCLI:
                 "If you don't have an account, visit: https://traigent.ai/signup\n"
             )
             return False
+        except TimeoutError as e:
+            console.print(f"\n[red]❌ Connection timed out: {e}[/red]")
+            console.print("\nThe backend server took too long to respond.")
+            console.print("Please check your network connection and try again.\n")
+            return False
+        except NETWORK_ERRORS as e:
+            # Catch aiohttp.ClientError and other network-related errors (OSError)
+            error_type = type(e).__name__
+            console.print(f"\n[red]❌ Connection error ({error_type}): {e}[/red]")
+            console.print("\nCould not connect to the authentication server.")
+            console.print("Please check your network connection and try again.\n")
+            return False
 
     async def logout(self) -> bool:
         """Logout and clear stored credentials.
@@ -752,6 +775,21 @@ class TraigentAuthCLI:
 
         except AuthenticationError as e:
             console.print(f"[red]❌ Refresh failed: {e}[/red]")
+            console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
+            return False
+        except ValueError as e:
+            console.print(f"[red]❌ Refresh failed (invalid data): {e}[/red]")
+            console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
+            return False
+        except TimeoutError as e:
+            console.print(f"[red]❌ Connection timed out: {e}[/red]")
+            console.print("\nThe backend server took too long to respond.")
+            console.print("Please check your network connection and try again.\n")
+            return False
+        except NETWORK_ERRORS as e:
+            # Catch aiohttp.ClientError and other network-related errors (OSError)
+            error_type = type(e).__name__
+            console.print(f"[red]❌ Refresh failed ({error_type}): {e}[/red]")
             console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
             return False
 
