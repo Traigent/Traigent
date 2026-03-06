@@ -16,8 +16,7 @@ def _write_temp_module(root: Path) -> Path:
     module_dir.mkdir(exist_ok=True)
     module_path = module_dir / f"module_{uuid4().hex}.py"
 
-    module_path.write_text(
-        """
+    module_path.write_text("""
 last_kwargs = {}
 
 
@@ -41,8 +40,7 @@ def fake_optimized_function():
 
 
 fake_optimized_function.optimize = _optimize_stub
-"""
-    )
+""")
 
     return module_path
 
