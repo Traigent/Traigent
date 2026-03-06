@@ -7,6 +7,7 @@ import {
   sanitizeMeasures,
   mergeMeasures,
   prefixMeasures,
+  createEmptyMeasures,
   MAX_MEASURES_KEYS,
   MEASURE_KEY_PATTERN,
 } from '../../../src/dtos/measures.js';
@@ -113,6 +114,25 @@ describe('sanitizeMeasures()', () => {
     );
   });
 
+  it('should throw in strict mode for too many keys', () => {
+    const input: Record<string, number> = {};
+    for (let i = 0; i < 60; i++) {
+      input[`metric_${i}`] = i;
+    }
+
+    expect(() => sanitizeMeasures(input, { strict: true })).toThrow(
+      'truncating'
+    );
+  });
+
+  it('should throw in strict mode for non-numeric values', () => {
+    const input = { accuracy: 0.95, model_name: 'gpt-4' };
+
+    expect(() => sanitizeMeasures(input as Record<string, unknown>, { strict: true })).toThrow(
+      'Non-numeric measure value'
+    );
+  });
+
   it('should preserve null values', () => {
     const input = { accuracy: 0.95, missing: null };
     const result = sanitizeMeasures(input);
@@ -154,6 +174,14 @@ describe('mergeMeasures()', () => {
   it('should return empty dict for no arguments', () => {
     const result = mergeMeasures();
     expect(result).toEqual({});
+  });
+});
+
+describe('createEmptyMeasures()', () => {
+  it('should return an empty object', () => {
+    const result = createEmptyMeasures();
+    expect(result).toEqual({});
+    expect(Object.keys(result).length).toBe(0);
   });
 });
 

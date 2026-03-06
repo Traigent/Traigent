@@ -14,6 +14,7 @@ import type {
   NormalizedOptimizationSpec,
   ObjectiveDefinition,
   ObjectiveInput,
+  OptimizationResult,
   OptimizationSpec,
   ParameterDefinition,
 } from './types.js';
@@ -113,6 +114,11 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
       `${kind} parameters only support scale "linear" or "log".`,
     );
   }
+  if (definition.scale === 'log' && (definition.min <= 0 || definition.max <= 0)) {
+    throw new ValidationError(
+      `${kind} parameters with scale "log" require min/max > 0.`,
+    );
+  }
   if (definition.step !== undefined) {
     if (!Number.isFinite(definition.step) || definition.step <= 0) {
       throw new ValidationError(
@@ -121,6 +127,11 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
     }
     if (kind === 'int' && !Number.isInteger(definition.step)) {
       throw new ValidationError('int parameters require step to be an integer.');
+    }
+    if (definition.scale === 'log' && definition.step <= 1) {
+      throw new ValidationError(
+        `${kind} parameters with scale "log" require step to be greater than 1 when provided.`,
+      );
     }
   }
 
@@ -309,6 +320,8 @@ export function optimize(specInput: OptimizationSpec) {
 
   return function <T extends AnyFunction>(fn: T): NativeOptimizedFunction<T> {
     const target = fn as NativeOptimizedFunction<T>;
+    let appliedConfig: TrialConfig['config'] | undefined;
+
     defineHiddenProperty(target, OPTIMIZATION_SPEC, spec);
 
     defineHiddenProperty(
@@ -321,6 +334,21 @@ export function optimize(specInput: OptimizationSpec) {
           options,
         );
       },
+    );
+
+    defineHiddenProperty(
+      target,
+      'applyBestConfig',
+      (result: OptimizationResult) => {
+        appliedConfig = result.bestConfig ? { ...result.bestConfig } : undefined;
+        return appliedConfig ? { ...appliedConfig } : undefined;
+      },
+    );
+
+    defineHiddenProperty(
+      target,
+      'currentConfig',
+      () => (appliedConfig ? { ...appliedConfig } : undefined),
     );
 
     return target;

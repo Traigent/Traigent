@@ -10,6 +10,20 @@ export {
   bindContext,
 } from './context.js';
 
+export {
+  TraigentError,
+  TimeoutError,
+  CancelledError,
+  ValidationError,
+  DatasetMismatchError,
+  BusyError,
+  UnsupportedActionError,
+  PayloadTooLargeError,
+  isTraigentError,
+  getErrorCode,
+  isRetryable,
+} from './errors.js';
+
 export type {
   ProgressCallback,
   ProgressInfo,

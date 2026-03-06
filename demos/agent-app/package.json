@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/run-optimization.js",
-    "dev": "tsx src/run-optimization.ts"
+    "dev": "tsx src/run-optimization.ts",
+    "dev:real": "tsx src/run-real-optimization.ts"
   },
   "dependencies": {
     "@traigent/sdk": "file:../..",

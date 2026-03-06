@@ -1,0 +1,75 @@
+%% Legacy/orchestrated reference only.
+%% This diagram documents the Python-to-Node bridge flow, not the current
+%% recommended JS-native optimize() or hybrid spec-authoring surface.
+%% Render with: https://mermaid.live or VSCode Mermaid extension
+
+flowchart TB
+    subgraph Python["🐍 Python Side"]
+        A["User Script<br/><code>run_with_python.py:166</code>"]
+        B["@traigent.optimize<br/><code>decorators.py</code>"]
+        C["OptimizedFunction<br/><code>optimized_function.py</code>"]
+        D["Orchestrator<br/><code>orchestrator.py:105</code>"]
+        E["Optimizer<br/><code>random.py</code>"]
+        F["JSEvaluator<br/><code>js_evaluator.py:55</code>"]
+        G["JSProcessPool<br/><code>process_pool.py:89</code>"]
+        H["JSBridge<br/><code>js_bridge.py:133</code>"]
+    end
+
+    subgraph NDJSON["📡 NDJSON Protocol"]
+        I[/"stdin: Request JSON"/]
+        J[/"stdout: Response JSON"/]
+    end
+
+    subgraph NodeJS["🟢 Node.js Side"]
+        K["CLI Runner<br/><code>runner.ts:646</code>"]
+        L["processRequest()<br/><code>runner.ts:578</code>"]
+        M["handleRunTrial()<br/><code>runner.ts:271</code>"]
+        N["TrialContext.run()<br/><code>context.ts</code>"]
+        O["runTrial()<br/><code>trial.ts:104</code>"]
+        P["runSalesAgent()<br/><code>agent.ts</code>"]
+    end
+
+    subgraph External["☁️ External"]
+        Q["LLM API<br/>(Groq/OpenAI)"]
+        R["Backend API<br/>(localhost:5000)"]
+    end
+
+    A -->|"@optimize(...)"| B
+    B -->|"creates"| C
+    C -->|"optimize()"| D
+    D -->|"suggest()"| E
+    E -->|"config"| D
+    D -->|"evaluate()"| F
+    F -->|"run_trial()"| G
+    G -->|"acquire/release"| H
+    H -->|"subprocess spawn"| K
+
+    H -->|"NDJSON"| I
+    I --> L
+    L --> M
+    M --> N
+    N --> O
+    O --> P
+
+    P -->|"REAL_MODE"| Q
+    Q -->|"response"| P
+
+    P -->|"metrics"| O
+    O -->|"result"| M
+    M -->|"NDJSON"| J
+    J --> H
+    H -->|"JSTrialResult"| F
+    F -->|"EvaluationResult"| D
+
+    D -->|"submit_trial()"| R
+    D -->|"report()"| E
+
+    style A fill:#e1f5fe
+    style K fill:#c8e6c9
+    style Q fill:#fff3e0
+    style R fill:#fce4ec
+    style I fill:#f3e5f5
+    style J fill:#f3e5f5
+
+    linkStyle 8 stroke:#ff6b6b,stroke-width:2px
+    linkStyle 14 stroke:#4ecdc4,stroke-width:2px
