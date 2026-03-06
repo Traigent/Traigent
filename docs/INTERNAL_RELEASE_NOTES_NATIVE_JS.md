@@ -8,6 +8,7 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 
 - Root exports continue to include `optimize`, `param`, `getOptimizationSpec`, and `toHybridConfigSpace`.
 - Wrapped functions now support native `.optimize({ algorithm, maxTrials, randomSeed, timeoutMs, trialConcurrency, plateau, checkpoint, signal })`.
+- Wrapped functions also support backend-guided `.optimize({ mode: 'hybrid', algorithm: 'optuna', maxTrials, backendUrl, apiKey, timeoutMs, requestTimeoutMs, signal })`.
 - Native optimization currently supports:
   - Node-only execution
   - `grid`, `random`, and sequential `bayesian`
@@ -16,6 +17,11 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
   - budget enforcement from numeric `metrics.cost`
   - `stopReason: 'timeout' | 'error' | 'cancelled' | 'plateau'`
   - wrapper-local `applyBestConfig()` / `currentConfig()`
+- Hybrid optimization currently supports:
+  - local JS trial execution with backend-driven configuration suggestions
+  - backend session orchestration via `/sessions`, `/next-trial`, `/results`, and `/finalize`
+  - env-backed backend discovery through `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` and `TRAIGENT_API_KEY`
+  - backend finalization fallback for `bestConfig` / `bestMetrics`
 
 ## Cross-SDK Validation
 
@@ -27,8 +33,9 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 
 - `trialConcurrency` is currently limited to `grid` and `random`.
 - Conditional parameters are native-only for now; `toHybridConfigSpace()` rejects them.
-- No Optuna-family algorithms, example-level concurrency, or cloud orchestration.
+- No native in-process Optuna-family algorithms or example-level concurrency yet.
 - `budget.maxCostUsd` requires numeric `metrics.cost` on every trial.
+- Hybrid mode rejects weighted objectives, explicit direction overrides that do not match backend inference, conditional parameters, and native-only runtime options.
 
 ## Release Validation
 

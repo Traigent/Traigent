@@ -587,6 +587,9 @@ function validateOptimizeOptions(
   if (!options || typeof options !== 'object') {
     throw new ValidationError('optimize() options are required.');
   }
+  if (options.mode !== undefined && options.mode !== 'native') {
+    throw new ValidationError('optimize() native mode only accepts mode: "native".');
+  }
   if (
     options.algorithm !== 'grid' &&
     options.algorithm !== 'random' &&
@@ -670,6 +673,7 @@ function validateOptimizeOptions(
 
   return {
     ...options,
+    mode: 'native',
     trialConcurrency,
   };
 }
@@ -1047,6 +1051,7 @@ function finalizeResult(
   const bestTrial = selectBestTrial(orderedTrials, objectives);
 
   return {
+    mode: 'native',
     bestConfig: bestTrial?.config ?? null,
     bestMetrics: bestTrial?.metrics ?? null,
     trials: orderedTrials,

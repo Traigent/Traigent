@@ -1,19 +1,21 @@
 import { ValidationError } from '../core/errors.js';
 import type { TrialConfig } from '../dtos/trial.js';
+import { runHybridOptimization } from './hybrid.js';
 import { runNativeOptimization } from './native.js';
 import type {
   BuiltInObjectiveName,
   EnumParamDefinition,
   FloatParamDefinition,
+  HybridOptimizeOptions,
   HybridConfigSpace,
   IntParamDefinition,
   NativeOptimizedFunction,
-  NativeOptimizeOptions,
   NativeTrialFunctionResult,
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
   ObjectiveDefinition,
   ObjectiveInput,
+  OptimizeOptions,
   OptimizationResult,
   OptimizationSpec,
   ParameterConditions,
@@ -36,6 +38,12 @@ type AnyFunction = (...args: any[]) => any;
 type NativeTrialFunction = (
   trialConfig: TrialConfig,
 ) => Promise<NativeTrialFunctionResult>;
+
+function isHybridOptimizeOptions(
+  options: OptimizeOptions,
+): options is HybridOptimizeOptions {
+  return options.mode === 'hybrid';
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -489,7 +497,17 @@ export function optimize(specInput: OptimizationSpec) {
     defineHiddenProperty(
       target,
       'optimize',
-      async (options: NativeOptimizeOptions) => {
+      async (options: OptimizeOptions) => {
+        if (isHybridOptimizeOptions(options)) {
+          return runHybridOptimization(
+            target as unknown as NativeTrialFunction,
+            spec,
+            specInput,
+            options,
+            fn.name,
+          );
+        }
+
         return runNativeOptimization(
           target as unknown as NativeTrialFunction,
           spec,

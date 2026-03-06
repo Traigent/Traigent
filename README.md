@@ -6,6 +6,7 @@ TypeScript SDK for Traigent optimization in JavaScript and TypeScript.
 
 - Hybrid spec authoring for services that expose Traigent-compatible `/config-space`, `/execute`, and `/evaluate` routes.
 - Native Node optimization with `optimize(spec)(trialFn)` and `await wrapped.optimize(...)`.
+- Backend-guided hybrid optimization with `wrapped.optimize({ mode: 'hybrid', algorithm: 'optuna', ... })`.
 - Legacy Python-to-Node bridge execution through the CLI runner.
 
 ## Installation
@@ -98,6 +99,59 @@ console.log(evaluatePrompt.currentConfig());
 
 See [`examples/native-optimization.mjs`](./examples/native-optimization.mjs) for the runnable smoke example.
 
+## Backend-Guided Hybrid Optimization
+
+Hybrid optimization keeps trial execution local in JS while the Traigent backend drives Optuna-style configuration suggestions through the session API.
+
+```ts
+import { optimize, param } from '@traigent/sdk';
+
+const runTrial = optimize({
+  configurationSpace: {
+    model: param.enum(['gpt-4o-mini', 'gpt-4o']),
+    temperature: param.float({ min: 0, max: 1, step: 0.2 }),
+  },
+  objectives: ['accuracy', 'cost'],
+  evaluation: {
+    data: [{ id: 1 }, { id: 2 }, { id: 3 }],
+  },
+})(async (trialConfig) => ({
+  metrics: {
+    accuracy: trialConfig.config.model === 'gpt-4o' ? 0.9 : 0.82,
+    cost: trialConfig.config.model === 'gpt-4o' ? 0.3 : 0.08,
+  },
+}));
+
+const result = await runTrial.optimize({
+  mode: 'hybrid',
+  algorithm: 'optuna',
+  maxTrials: 12,
+  backendUrl: process.env.TRAIGENT_BACKEND_URL,
+  apiKey: process.env.TRAIGENT_API_KEY,
+  timeoutMs: 5_000,
+});
+```
+
+Resolution order:
+
+- `backendUrl`
+- `TRAIGENT_BACKEND_URL`
+- `TRAIGENT_API_URL`
+
+API key resolution order:
+
+- `apiKey`
+- `TRAIGENT_API_KEY`
+
+The hybrid session client talks to:
+
+- `POST /sessions`
+- `POST /sessions/{session_id}/next-trial`
+- `POST /sessions/{session_id}/results`
+- `POST /sessions/{session_id}/finalize`
+
+See [`examples/hybrid-optuna.mjs`](./examples/hybrid-optuna.mjs) for a runnable example that expects backend env vars.
+
 The wrapped function must satisfy the JS trial contract:
 
 - Input: `TrialConfig`
@@ -145,6 +199,15 @@ Use `TrialContext`, `getTrialConfig()`, and `getTrialParam()` inside a bound tri
 - `trialConcurrency` is currently limited to `grid` and `random`.
 - Worker pools, Optuna-family optimizers, example-level concurrency, and hybrid API orchestration are still out of scope.
 
+## Current Hybrid v1 Limits
+
+- Hybrid optimization currently requires `mode: 'hybrid'` and `algorithm: 'optuna'`.
+- `spec.evaluation.data` or `spec.evaluation.loadData()` is required so the SDK can derive dataset size for backend sessions.
+- Weighted objectives are rejected in hybrid mode.
+- Explicit objective objects are allowed only when their direction matches backend inference.
+- Conditional parameters are native-only for now.
+- `trialConcurrency`, `plateau`, `checkpoint`, and `randomSeed` are native-only options.
+
 ## Cross-SDK Validation
 
 Internal validation:
@@ -166,4 +229,4 @@ See [docs/NATIVE_JS_PARITY_MATRIX.md](./docs/NATIVE_JS_PARITY_MATRIX.md) and [do
 
 ## License
 
-MIT
+Apache-2.0

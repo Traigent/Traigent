@@ -77,6 +77,7 @@ export interface NormalizedOptimizationSpec {
 }
 
 export interface NativeOptimizeOptions {
+  mode?: 'native';
   algorithm: 'grid' | 'random' | 'bayesian';
   maxTrials: number;
   randomSeed?: number;
@@ -94,6 +95,23 @@ export interface NativeOptimizeOptions {
   };
 }
 
+export interface HybridOptimizeOptions {
+  mode: 'hybrid';
+  algorithm: 'optuna';
+  maxTrials: number;
+  backendUrl?: string;
+  apiKey?: string;
+  userId?: string;
+  billingTier?: string;
+  optimizationStrategy?: Record<string, unknown>;
+  datasetMetadata?: Record<string, unknown>;
+  timeoutMs?: number;
+  requestTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export type OptimizeOptions = NativeOptimizeOptions | HybridOptimizeOptions;
+
 export interface OptimizationTrialRecord {
   trialId: string;
   trialNumber: number;
@@ -104,6 +122,7 @@ export interface OptimizationTrialRecord {
 }
 
 export interface OptimizationResult {
+  mode: 'native' | 'hybrid';
   bestConfig: TrialConfig['config'] | null;
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
@@ -116,6 +135,8 @@ export interface OptimizationResult {
     | 'plateau'
     | 'cancelled';
   totalCostUsd: number;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
   errorMessage?: string;
 }
 
@@ -142,7 +163,7 @@ export interface NativeTrialFunctionResult {
 }
 
 export type NativeOptimizedFunction<T extends (...args: any[]) => any> = T & {
-  optimize(options: NativeOptimizeOptions): Promise<OptimizationResult>;
+  optimize(options: OptimizeOptions): Promise<OptimizationResult>;
   applyBestConfig(
     result: OptimizationResult,
   ): TrialConfig['config'] | undefined;
