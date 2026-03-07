@@ -22,14 +22,12 @@ def test_migration_applies_to_sqlite(tmp_path):
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
     migration = migrations_dir / "0001.sql"
-    migration.write_text(
-        """
+    migration.write_text("""
         CREATE TABLE IF NOT EXISTS optuna_demo (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             created TIMESTAMPTZ DEFAULT NOW()
         );
-        """
-    )
+        """)
 
     apply_migrations(db_url, migrations_dir, dry_run=False)
 
