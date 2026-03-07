@@ -2,6 +2,7 @@
 Tests for multi-tenant support systems
 """
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -370,6 +371,28 @@ class TestTenantContext:
 
         # Should restore tenant1
         assert context.get_tenant() == "tenant1"
+
+    @pytest.mark.asyncio
+    async def test_tenant_scope_isolated_between_coroutines(self):
+        """Test tenant scopes stay isolated across concurrent async tasks."""
+        context = TenantContext()
+        results: dict[str, tuple[str | None, str | None]] = {}
+
+        async def worker(name: str, tenant_id: str, delay: float) -> None:
+            with context.tenant_scope(tenant_id):
+                before = context.get_tenant()
+                await asyncio.sleep(delay)
+                after = context.get_tenant()
+                results[name] = (before, after)
+
+        await asyncio.gather(
+            worker("a", "tenant-a", 0.01),
+            worker("b", "tenant-b", 0.0),
+        )
+
+        assert results["a"] == ("tenant-a", "tenant-a")
+        assert results["b"] == ("tenant-b", "tenant-b")
+        assert context.get_tenant() is None
 
 
 class TestTenantManager:

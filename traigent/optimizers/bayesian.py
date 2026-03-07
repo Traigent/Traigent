@@ -119,9 +119,8 @@ class BayesianOptimizer(BaseOptimizer):
         self.kappa = kappa
         self.random_seed = random_seed
 
-        # Set random seed
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        # Create a local RNG instance to avoid mutating NumPy's global RNG state
+        self._rng = np.random.default_rng(random_seed)
 
         # Initialize Gaussian Process
         # Increased alpha (noise) to prevent overconfidence
@@ -298,15 +297,15 @@ class BayesianOptimizer(BaseOptimizer):
             bounds = param["bounds"]
             if param.get("is_integer", False):
                 # For integer parameters, sample uniformly from integer range
-                value = np.random.randint(int(bounds[0]), int(bounds[1]) + 1)
+                value = int(self._rng.integers(int(bounds[0]), int(bounds[1]) + 1))
             else:
                 # For continuous parameters
-                value = np.random.uniform(bounds[0], bounds[1])
+                value = self._rng.uniform(bounds[0], bounds[1])
             config[param["name"]] = value
 
         # Random categorical parameters
         for param in self._param_mapping["categorical"]:
-            value = np.random.choice(param["values"])
+            value = self._rng.choice(param["values"])
             # Convert numpy types to native Python types
             if param.get("type") == "boolean" and hasattr(value, "item"):
                 value = bool(value.item())
@@ -384,7 +383,7 @@ class BayesianOptimizer(BaseOptimizer):
         best_acquisition = float("inf")
 
         for _ in range(10):  # Try 10 random starting points
-            x0 = np.random.rand(n_dims)
+            x0 = self._rng.random(n_dims)
 
             try:
                 result = minimize(
@@ -403,7 +402,7 @@ class BayesianOptimizer(BaseOptimizer):
             logger.warning(
                 "All acquisition optimization methods failed, using random point"
             )
-            return cast(np.ndarray[Any, Any], np.random.rand(n_dims))
+            return cast(np.ndarray[Any, Any], self._rng.random(n_dims))
 
         logger.debug(f"L-BFGS-B fallback succeeded with fun={best_acquisition}")
         return cast(np.ndarray[Any, Any], best_x)

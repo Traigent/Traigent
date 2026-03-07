@@ -96,8 +96,9 @@ class SessionManager:
             self._rate_limits: dict[str, list[float]] = {}
             logger.info("Session manager initialized with in-memory backend")
 
-        # Security settings
-        self._token_secret = secrets.token_bytes(32)
+        # Tokens are already high-entropy random values. Use a stable hash so
+        # persisted sessions remain valid across restarts and worker boundaries.
+        self._token_secret: bytes | None = None
 
     def create_session(
         self,
@@ -382,11 +383,14 @@ class SessionManager:
 
     def _hash_token(self, token: str) -> str:
         """Hash a session token for secure storage."""
-        return hmac.new(
-            self._token_secret,
-            token.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
+        token_bytes = token.encode("utf-8")
+        if self._token_secret:
+            return hmac.new(
+                self._token_secret,
+                token_bytes,
+                hashlib.sha256,
+            ).hexdigest()
+        return hashlib.sha256(token_bytes).hexdigest()
 
     def _get_session(self, session_id: str) -> dict[str, Any] | None:
         """Get session data from storage."""

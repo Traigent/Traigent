@@ -341,6 +341,8 @@ class ProductionMCPClient:
                 except TimeoutError as e:
                     # Timeout errors should be retryable
                     raise NetworkError(f"MCP operation timeout: {e}") from None
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     # Other exceptions may not be retryable
                     logger.error(f"MCP tool call failed: {tool_name} - {e}")
@@ -360,6 +362,8 @@ class ProductionMCPClient:
                         "Tool call failed after retries"
                     )
 
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 self._stats["failed_requests"] += 1
 

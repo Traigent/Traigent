@@ -361,6 +361,21 @@ class TestApplyConfig:
 
 
 class TestSanitizeSourcePath:
+    def test_rejects_path_outside_cwd_when_base_dir_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default containment should fall back to the working directory."""
+        safe_dir = tmp_path / "safe"
+        safe_dir.mkdir()
+        outside = tmp_path / "evil.py"
+        outside.write_text("x = 1\n")
+
+        monkeypatch.setattr(_apply_mod, "_SAFE_BASE_DIR", None)
+        monkeypatch.chdir(safe_dir)
+
+        with pytest.raises(ValueError, match="outside the allowed base directory"):
+            _sanitize_source_path(outside)
+
     def test_rejects_path_outside_base_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

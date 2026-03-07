@@ -33,6 +33,7 @@ from traigent.tvl.spec_loader import (
     _parse_exploration_parallelism,
     _parse_tvars,
     _parse_tvl_header,
+    _validate_tvars_list_structure,
 )
 from traigent.utils.exceptions import TVLValidationError
 
@@ -376,6 +377,30 @@ class TestParseTvars:
 
         with pytest.raises(TVLValidationError, match="[Rr]egistry"):
             _parse_tvars(resolved, registry_resolver=None)
+
+    def test_schema_validation_accepts_enum_and_callable_tvar_types(self) -> None:
+        """The lightweight validator should not warn on parser-supported TVAR types."""
+        issues = _validate_tvars_list_structure(
+            [
+                {
+                    "name": "model",
+                    "type": "enum[str]",
+                    "domain": ["gpt-4o-mini", "gpt-4o"],
+                },
+                {
+                    "name": "temperature",
+                    "type": "enum[float]",
+                    "domain": [0.0, 0.2, 0.4],
+                },
+                {
+                    "name": "scorer",
+                    "type": "callable[ScorerProto]",
+                    "domain": [],
+                },
+            ]
+        )
+
+        assert issues == []
 
 
 class TestParseConvergence:

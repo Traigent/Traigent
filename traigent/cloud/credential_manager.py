@@ -3,7 +3,7 @@
 Provides unified access to authentication credentials from multiple sources:
 1. Environment variables (highest priority)
 2. CLI stored credentials (secure storage)
-3. Default/test credentials (development only)
+3. Explicit dev-mode credentials (development only)
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-CLOUD-009 REQ-SEC-010 SYNC-CloudHybrid
@@ -45,7 +45,7 @@ class CredentialManager:
         Priority order:
         1. TRAIGENT_API_KEY environment variable
         2. Stored credentials from CLI auth
-        3. Default test credentials (dev only)
+        3. Explicit dev-mode credentials
 
         Returns:
             API key or None if not found
@@ -67,7 +67,7 @@ class CredentialManager:
                 logger.debug("Using JWT token from CLI credentials")
                 return cast(str, stored_creds["jwt_token"])
 
-        # Development/test fallback
+        # Development fallback
         if cls._is_development_environment():
             logger.debug("Using default test credentials (development only)")
             return "test_api_key_for_development"
@@ -100,7 +100,7 @@ class CredentialManager:
         # Development fallback
         if cls._is_development_environment():
             return {
-                "api_key": "test_api_key_for_development",
+                "api_key": "test_api_key_for_development",  # pragma: allowlist secret
                 "backend_url": BackendConfig.get_backend_url(),
                 "source": "development",
             }
@@ -140,13 +140,12 @@ class CredentialManager:
         Returns:
             True if in development mode
         """
-        # Check various indicators of development mode
+        # Only explicit development toggles may enable the fallback credential.
         return any(
             [
                 os.environ.get("TRAIGENT_DEV_MODE", "").lower() in ("true", "1", "yes"),
                 os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
                 in ("true", "1", "yes"),
-                os.environ.get("TESTING", "").lower() in ("true", "1", "yes"),
             ]
         )
 

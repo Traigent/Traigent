@@ -10,6 +10,7 @@ including session creation, validation, expiration, rate limiting, cleanup.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -17,10 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from traigent.security.session_manager import (
-    SessionManager,
-    SessionMiddleware,
-)
+from traigent.security.session_manager import SessionManager, SessionMiddleware
 
 
 class TestSessionManagerInit:
@@ -384,6 +382,20 @@ class TestSessionManagerValidateSession:
         result = manager.validate_session(session_id, session_token)
         assert result is not None
         assert result["metadata"] == metadata
+
+    def test_validate_session_across_manager_instances(self) -> None:
+        """Test persisted sessions validate across manager instances."""
+        manager1 = SessionManager(enable_rate_limiting=False)
+        session_id, session_token = manager1.create_session("user123")
+
+        manager2 = SessionManager(enable_rate_limiting=False)
+        manager2._sessions[session_id] = copy.deepcopy(manager1._sessions[session_id])
+
+        result = manager2.validate_session(session_id, session_token)
+
+        assert result is not None
+        assert result["user_id"] == "user123"
+        assert manager2._sessions[session_id]["access_count"] == 1
 
     @patch("traigent.security.session_manager.REDIS_AVAILABLE", True)
     @patch("traigent.security.session_manager.redis")

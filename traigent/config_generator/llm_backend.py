@@ -9,6 +9,7 @@ mode.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -71,46 +72,50 @@ class LiteLLMBackend:
         self._budget_usd = budget_usd
         self._spent_usd: float = 0.0
         self._calls_made: int = 0
+        self._lock = threading.Lock()
 
     @property
     def calls_made(self) -> int:
-        return self._calls_made
+        with self._lock:
+            return self._calls_made
 
     @property
     def total_cost_usd(self) -> float:
-        return self._spent_usd
+        with self._lock:
+            return self._spent_usd
 
     def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:
         """Call the LLM and return the completion text."""
-        if self._spent_usd >= self._budget_usd:
-            raise BudgetExhausted(
-                f"Budget of ${self._budget_usd:.2f} exceeded "
-                f"(spent ${self._spent_usd:.4f})"
+        with self._lock:
+            if self._spent_usd >= self._budget_usd:
+                raise BudgetExhausted(
+                    f"Budget of ${self._budget_usd:.2f} exceeded "
+                    f"(spent ${self._spent_usd:.4f})"
+                )
+
+            try:
+                import litellm
+            except ImportError as exc:
+                logger.warning(
+                    "litellm not installed; falling back to preset-only mode"
+                )
+                raise BudgetExhausted("litellm not installed") from exc
+
+            response = litellm.completion(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.0,  # Deterministic for config generation
             )
 
-        try:
-            import litellm
-        except ImportError as exc:
-            logger.warning("litellm not installed; falling back to preset-only mode")
-            raise BudgetExhausted("litellm not installed") from exc
+            self._calls_made += 1
 
-        response = litellm.completion(
-            model=self._model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            temperature=0.0,  # Deterministic for config generation
-        )
+            usage = getattr(response, "usage", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                cost = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
+                self._spent_usd += cost
 
-        self._calls_made += 1
-
-        # Track cost from response usage
-        usage = getattr(response, "usage", None)
-        if usage:
-            prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-            completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-            # Approximate cost for gpt-4o-mini: $0.15/1M input, $0.60/1M output
-            cost = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
-            self._spent_usd += cost
-
-        content = response.choices[0].message.content
-        return content or ""
+            content = response.choices[0].message.content
+            return content or ""

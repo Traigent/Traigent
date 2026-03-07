@@ -32,6 +32,7 @@ For OpenTelemetry integration, use OptiGenSpanExporter:
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -1077,28 +1078,42 @@ class WorkflowTracesTracker:
             self.backend_url, self.auth_token  # type: ignore[arg-type]
         )
 
-        # Thread-local storage for trial context
-        self._local = threading.local()
+        # ContextVar-based storage for trial context.
+        # contextvars.ContextVar is safe for concurrent async coroutines on the
+        # same event-loop thread: each asyncio Task gets its own context copy so
+        # coroutines running concurrently (e.g. via asyncio.gather) cannot
+        # overwrite each other's trace state.  threading.local() is NOT safe
+        # here because all coroutines on a single OS thread share one slot.
+        self._cv_spans: contextvars.ContextVar[list[SpanPayload] | None] = (
+            contextvars.ContextVar("workflow_spans", default=None)
+        )
+        self._cv_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "workflow_trace_id", default=None
+        )
+        self._cv_config_run_id: contextvars.ContextVar[str | None] = (
+            contextvars.ContextVar("workflow_config_run_id", default=None)
+        )
         self._graph_id: str | None = None
         self._lock = threading.Lock()
 
     @property
     def _spans(self) -> list[SpanPayload]:
-        """Get thread-local span buffer."""
-        if not hasattr(self._local, "spans"):
-            self._local.spans = []  # type: ignore[attr-defined]
-        spans: list[SpanPayload] = self._local.spans  # type: ignore[attr-defined]
+        """Get context-local span buffer."""
+        spans = self._cv_spans.get(None)  # type: ignore[arg-type]
+        if spans is None:
+            spans = []
+            self._cv_spans.set(spans)
         return spans
 
     @property
     def _current_trace_id(self) -> str | None:
-        """Get thread-local current trace ID."""
-        return getattr(self._local, "trace_id", None)
+        """Get context-local current trace ID."""
+        return self._cv_trace_id.get(None)
 
     @property
     def _current_config_run_id(self) -> str | None:
-        """Get thread-local current configuration run ID."""
-        return getattr(self._local, "config_run_id", None)
+        """Get context-local current configuration run ID."""
+        return self._cv_config_run_id.get(None)
 
     def send_workflow_graph(
         self,
@@ -1237,10 +1252,11 @@ class WorkflowTracesTracker:
         # Generate trace ID if not provided
         _trace_id = trace_id or str(uuid.uuid4()).replace("-", "")
 
-        # Set thread-local context
-        self._local.trace_id = _trace_id
-        self._local.config_run_id = configuration_run_id
-        self._local.spans = []
+        # Set context-local state via ContextVar tokens so that each
+        # concurrent coroutine (asyncio Task) has its own isolated copy.
+        token_trace = self._cv_trace_id.set(_trace_id)
+        token_config = self._cv_config_run_id.set(configuration_run_id)
+        token_spans = self._cv_spans.set([])
 
         context = {
             "trace_id": _trace_id,
@@ -1255,10 +1271,10 @@ class WorkflowTracesTracker:
             if self.auto_send and self._spans:
                 self._flush_spans()
 
-            # Clear thread-local context
-            self._local.trace_id = None
-            self._local.config_run_id = None
-            self._local.spans = []
+            # Restore previous context-local state using tokens
+            self._cv_trace_id.reset(token_trace)
+            self._cv_config_run_id.reset(token_config)
+            self._cv_spans.reset(token_spans)
 
     def add_span(
         self,
@@ -1350,7 +1366,7 @@ class WorkflowTracesTracker:
             return
 
         spans_to_send = self._spans.copy()
-        self._local.spans = []
+        self._cv_spans.set([])
 
         response = self.client.ingest_traces(
             spans=spans_to_send,

@@ -1590,17 +1590,19 @@ class TestFlushSpansWithoutContext:
             auto_send=False,
         )
 
-        # Manually add spans without context
-        tracker._local.spans = [
-            SpanPayload(
-                span_id="span_001",
-                trace_id="trace_abc",
-                configuration_run_id="config_001",
-                span_name="Test",
-                span_type="node",
-                start_time="2026-01-13T10:00:00Z",
-            )
-        ]
+        # Manually inject spans without context (use ContextVar directly)
+        tracker._cv_spans.set(
+            [
+                SpanPayload(
+                    span_id="span_001",
+                    trace_id="trace_abc",
+                    configuration_run_id="config_001",
+                    span_name="Test",
+                    span_type="node",
+                    start_time="2026-01-13T10:00:00Z",
+                )
+            ]
+        )
 
         with caplog.at_level(logging.WARNING):
             tracker._flush_spans()
