@@ -7,7 +7,7 @@ Demonstrates:
 - Domain presets for LLM optimization
 
 This mock version uses hardcoded responses - no API keys needed.
-Run with: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python 01_tuned_variables.py
+Run with: TRAIGENT_MOCK_LLM=true python 01_tuned_variables.py
 """
 
 import asyncio

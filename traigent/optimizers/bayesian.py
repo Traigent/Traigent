@@ -445,11 +445,14 @@ class BayesianOptimizer(BaseOptimizer):
         logger.debug(f"Successful trials so far: {len(successful_trials)}")
 
         for trial in successful_trials:
+            objective_value = trial.get_metric(primary_objective)
+            if objective_value is None:
+                continue
+
             config_array = self._config_to_array(trial.config)
             X.append(config_array)
 
             # Extract objective value
-            objective_value = trial.metrics.get(primary_objective, 0.0)
             y.append(objective_value)
 
             # Log trial history
@@ -598,8 +601,9 @@ class BayesianOptimizer(BaseOptimizer):
                 primary_objective = self.objectives[0]
                 recent_scores = []
                 for trial in successful_trials[-10:]:
-                    score = trial.metrics.get(primary_objective, 0.0)
-                    recent_scores.append(score)
+                    score = trial.get_metric(primary_objective)
+                    if score is not None:
+                        recent_scores.append(score)
 
                 if len(recent_scores) >= 10:
                     improvement = max(recent_scores) - min(recent_scores)

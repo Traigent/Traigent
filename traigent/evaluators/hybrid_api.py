@@ -10,13 +10,16 @@ hybrid API protocol.
 from __future__ import annotations
 
 import asyncio
+import os
 import statistics
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from traigent._version import get_version
+from traigent.api.types import ComparabilityInfo, MetricCoverage
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.hybrid import (
     AgentLifecycleManager,
@@ -32,6 +35,7 @@ from traigent.hybrid import (
     create_transport,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import classify_objective
 
 if TYPE_CHECKING:
     from traigent.cloud.production_mcp_client import (
@@ -57,13 +61,23 @@ class HybridExampleResult:
         error: Error message if failed
     """
 
-    example_id: str
+    example_id: str = ""
     actual_output: Any = None
     expected_output: Any = None
     metrics: dict[str, float] = field(default_factory=dict)
     cost_usd: float = 0.0
     latency_ms: float = 0.0
     error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    input_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize legacy input_id and canonical example_id fields."""
+        resolved_id = self.example_id or self.input_id or ""
+        if not resolved_id:
+            raise ValueError("HybridExampleResult requires example_id or input_id")
+        self.example_id = resolved_id
+        self.input_id = resolved_id
 
     @property
     def success(self) -> bool:
@@ -437,22 +451,30 @@ class HybridAPIEvaluator(BaseEvaluator):
             "max": float(sorted_values[-1]),
         }
 
-    @classmethod
-    def _derive_accuracy_from_metrics(cls, metrics: dict[str, Any]) -> float | None:
-        """Derive canonical accuracy from a metric dictionary.
+    @staticmethod
+    def _get_comparability_mode() -> Literal["legacy", "warn", "strict"]:
+        """Resolve comparability mode from environment.
 
-        Preference order:
-        1. explicit `accuracy`
-        2. `overall_accuracy`
-        3. mean of numeric `*_accuracy` metrics
+        Hybrid evaluators do not currently receive full TraigentConfig directly.
+        This uses the shared env contract to keep behavior aligned with orchestrator.
         """
+        mode = os.getenv("TRAIGENT_COMPARABILITY_MODE", "warn").strip().lower()
+        if mode in {"legacy", "warn", "strict"}:
+            return mode  # type: ignore[return-value]
+        return "warn"
+
+    @classmethod
+    def _derive_accuracy_with_path(
+        cls, metrics: dict[str, Any]
+    ) -> tuple[float | None, str]:
+        """Derive canonical accuracy and return derivation path."""
         explicit = cls._coerce_metric(metrics.get("accuracy"), default=-1.0)
         if explicit >= 0.0:
-            return explicit
+            return explicit, "explicit"
 
         overall = cls._coerce_metric(metrics.get("overall_accuracy"), default=-1.0)
         if overall >= 0.0:
-            return overall
+            return overall, "overall_accuracy"
 
         split_accuracies = [
             float(v)
@@ -462,14 +484,22 @@ class HybridAPIEvaluator(BaseEvaluator):
             and not isinstance(v, bool)
         ]
         if split_accuracies:
-            return float(sum(split_accuracies) / len(split_accuracies))
-        return None
+            return float(sum(split_accuracies) / len(split_accuracies)), "split_mean"
+        return None, "none"
 
     @classmethod
-    def _normalize_example_metrics(cls, metrics: Any) -> dict[str, float]:
-        """Normalize per-example metrics to numeric values and derive accuracy."""
+    def _derive_accuracy_from_metrics(cls, metrics: dict[str, Any]) -> float | None:
+        """Derive canonical accuracy from a metric dictionary."""
+        derived, _ = cls._derive_accuracy_with_path(metrics)
+        return derived
+
+    @classmethod
+    def _normalize_example_metrics_with_path(
+        cls, metrics: Any
+    ) -> tuple[dict[str, float], str]:
+        """Normalize per-example metrics and return derivation path."""
         if not isinstance(metrics, dict):
-            return {}
+            return {}, "none"
 
         normalized: dict[str, float] = {}
         for key, value in metrics.items():
@@ -478,17 +508,23 @@ class HybridAPIEvaluator(BaseEvaluator):
             if isinstance(value, (int, float)):
                 normalized[key] = float(value)
 
-        if "accuracy" not in normalized:
-            derived_accuracy = cls._derive_accuracy_from_metrics(normalized)
-            if derived_accuracy is not None:
-                normalized["accuracy"] = derived_accuracy
+        derived_accuracy, path = cls._derive_accuracy_with_path(normalized)
+        if "accuracy" not in normalized and derived_accuracy is not None:
+            normalized["accuracy"] = derived_accuracy
 
+        return normalized, path
+
+    @classmethod
+    def _normalize_example_metrics(cls, metrics: Any) -> dict[str, float]:
+        """Normalize per-example metrics to numeric values and derive accuracy."""
+        normalized, _ = cls._normalize_example_metrics_with_path(metrics)
         return normalized
 
     def _build_summary_stats(
         self,
         results: list[HybridExampleResult],
         duration: float,
+        comparability: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Build summary_stats from per-example hybrid results."""
         if not results:
@@ -550,6 +586,11 @@ class HybridAPIEvaluator(BaseEvaluator):
                 "aggregation_method": "pandas.describe",
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "source": "hybrid_api",
+                **(
+                    {"comparability": comparability}
+                    if isinstance(comparability, dict)
+                    else {}
+                ),
             },
         }
 
@@ -662,12 +703,16 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Compute aggregated metrics
         duration = time.time() - start_time
-        aggregated_metrics = self._compute_aggregated_metrics(
-            example_results, total_cost
+        aggregated_metrics, comparability = (
+            self._compute_aggregated_metrics_with_comparability(
+                example_results, total_cost
+            )
         )
-        summary_stats = self._build_summary_stats(example_results, duration)
+        summary_stats = self._build_summary_stats(
+            example_results, duration, comparability=comparability
+        )
 
-        return EvaluationResult(
+        evaluation_result = EvaluationResult(
             config=config,
             example_results=example_results,
             aggregated_metrics=aggregated_metrics,
@@ -678,6 +723,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             sample_budget_exhausted=sample_lease is not None and sample_lease.exhausted,
             examples_consumed=len(example_results),
         )
+        # Compatibility-safe dynamic field for downstream trial metadata mapping.
+        evaluation_result.comparability = comparability  # type: ignore[attr-defined]
+        return evaluation_result
 
     async def _execute_batch(
         self,
@@ -825,11 +873,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             output_data = output_item.get("output")
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
-            per_example_metrics = (
-                self._normalize_example_metrics(output_item.get("metrics", {}))
-                if isinstance(output_item.get("metrics"), dict)
-                else {}
-            )
+            if isinstance(output_item.get("metrics"), dict):
+                per_example_metrics, derivation_path = (
+                    self._normalize_example_metrics_with_path(
+                        output_item.get("metrics", {})
+                    )
+                )
+            else:
+                per_example_metrics, derivation_path = ({}, "none")
             error = output_item.get("error")
 
             # Prefer per-item metrics, fall back to aggregate execution metrics.
@@ -847,6 +898,10 @@ class HybridAPIEvaluator(BaseEvaluator):
                     cost_usd=cost,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
+                    metadata={
+                        "evaluation_mode": "evaluated",
+                        "accuracy_derivation_path": derivation_path,
+                    },
                 )
             )
 
@@ -940,14 +995,18 @@ class HybridAPIEvaluator(BaseEvaluator):
                 for result in eval_response.results:
                     result_id = result.get("example_id") or result.get("input_id")
                     if result_id == example_id:
-                        per_example_metrics = self._normalize_example_metrics(
-                            result.get("metrics", {})
+                        per_example_metrics, derivation_path = (
+                            self._normalize_example_metrics_with_path(
+                                result.get("metrics", {})
+                            )
                         )
                         if isinstance(result.get("error"), str):
                             eval_error = result.get("error")
                         if result.get("expected_behavior"):
                             eval_expected = result["expected_behavior"]
                         break
+                else:
+                    derivation_path = "none"
 
                 # Prefer per-item operational metrics when present.
                 cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
@@ -978,6 +1037,10 @@ class HybridAPIEvaluator(BaseEvaluator):
                         latency_ms=latency,
                         error=eval_error
                         or (execute_error if isinstance(execute_error, str) else None),
+                        metadata={
+                            "evaluation_mode": "evaluated",
+                            "accuracy_derivation_path": derivation_path,
+                        },
                     )
                 )
 
@@ -987,13 +1050,20 @@ class HybridAPIEvaluator(BaseEvaluator):
             raise
         except Exception as e:
             logger.warning(f"Evaluate call failed, using execute-only: {e}")
-            return self._process_execute_only_response(batch, inputs, execute_response)
+            return self._process_execute_only_response(
+                batch,
+                inputs,
+                execute_response,
+                evaluation_mode="evaluate_fallback",
+            )
 
     def _process_execute_only_response(
         self,
         batch: list[Any],
         inputs: list[dict[str, Any]],
         response: Any,  # HybridExecuteResponse
+        *,
+        evaluation_mode: str = "execute_only",
     ) -> list[HybridExampleResult]:
         """Process response when no evaluation is available."""
         results: list[HybridExampleResult] = []
@@ -1014,8 +1084,10 @@ class HybridAPIEvaluator(BaseEvaluator):
             if output_data is None and "output_id" in output_item:
                 output_data = {"output_id": output_item["output_id"]}
             error = output_item.get("error")
-            per_example_metrics = self._normalize_example_metrics(
-                output_item.get("metrics", {})
+            per_example_metrics, derivation_path = (
+                self._normalize_example_metrics_with_path(
+                    output_item.get("metrics", {})
+                )
             )
             cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
             latency = self._coerce_metric(
@@ -1031,19 +1103,187 @@ class HybridAPIEvaluator(BaseEvaluator):
                     cost_usd=cost,
                     latency_ms=latency,
                     error=error if isinstance(error, str) else None,
+                    metadata={
+                        "evaluation_mode": evaluation_mode,
+                        "accuracy_derivation_path": derivation_path,
+                    },
                 )
             )
 
         return results
 
-    def _compute_aggregated_metrics(
+    def _build_comparability_info(
+        self,
+        results: list[HybridExampleResult],
+        metric_counts: dict[str, int],
+        *,
+        primary_objective: str = "accuracy",
+    ) -> dict[str, Any]:
+        """Build comparability metadata from per-example results."""
+        total_examples = len(results)
+        mode = self._get_comparability_mode()
+        if total_examples <= 0:
+            return ComparabilityInfo(
+                primary_objective=primary_objective,
+                warning_codes=["MCI-001"],
+                ranking_eligible=False,
+            ).to_dict()
+
+        successful_results = [result for result in results if result.success]
+        evaluation_modes = {
+            str(result.metadata.get("evaluation_mode", "unknown"))
+            for result in successful_results
+        }
+        if not evaluation_modes:
+            evaluation_mode = "unknown"
+        elif len(evaluation_modes) == 1:
+            evaluation_mode = next(iter(evaluation_modes))
+        else:
+            evaluation_mode = "mixed"
+
+        examples_with_primary_metric = 0
+        missing_example_ids: list[str] = []
+        derivation_paths: list[str] = []
+        split_key_sets: set[tuple[str, ...]] = set()
+
+        for result in results:
+            if not result.success:
+                missing_example_ids.append(result.example_id)
+                continue
+
+            derivation_path = str(
+                result.metadata.get("accuracy_derivation_path", "none")
+            ).strip()
+            if not derivation_path or derivation_path == "none":
+                _, derivation_path = self._derive_accuracy_with_path(result.metrics)
+
+            split_keys = tuple(
+                sorted(k for k in result.metrics.keys() if k.endswith("_accuracy"))
+            )
+            if split_keys:
+                split_key_sets.add(split_keys)
+
+            primary_metric_value = self._resolve_primary_metric_value(
+                result, primary_objective
+            )
+            if primary_metric_value is not None:
+                examples_with_primary_metric += 1
+                derivation_paths.append(derivation_path or "none")
+            else:
+                missing_example_ids.append(result.example_id)
+
+        coverage_ratio = examples_with_primary_metric / total_examples
+        per_metric_coverage = {
+            metric_name: MetricCoverage(
+                present=count,
+                total=total_examples,
+                ratio=(count / total_examples),
+            )
+            for metric_name, count in metric_counts.items()
+        }
+
+        warning_codes: list[str] = []
+        if examples_with_primary_metric == 0:
+            warning_codes.append("MCI-004")
+        elif coverage_ratio < 1.0:
+            warning_codes.append("MCI-002")
+
+        objective_class = classify_objective(primary_objective)
+        if objective_class == "quality" and evaluation_mode != "evaluated":
+            warning_codes.append("MCI-004")
+
+        non_none_paths = [p for p in derivation_paths if p and p != "none"]
+        if len(set(non_none_paths)) > 1:
+            warning_codes.append("MCI-003")
+        if "split_mean" in non_none_paths:
+            warning_codes.append("MCI-005")
+        if len(split_key_sets) > 1:
+            warning_codes.append("MCI-006")
+        if not all(result.success for result in results):
+            warning_codes.append("MCI-007")
+        warning_codes = list(dict.fromkeys(warning_codes))
+
+        # In warn/strict modes we default to conservative ranking-eligibility.
+        has_full_primary_coverage = (
+            examples_with_primary_metric == total_examples and total_examples > 0
+        )
+        ranking_eligible = has_full_primary_coverage
+        if objective_class == "quality":
+            ranking_eligible = (
+                has_full_primary_coverage and evaluation_mode == "evaluated"
+            )
+        if mode == "legacy":
+            ranking_eligible = True
+
+        dominant_path = "none"
+        if non_none_paths:
+            dominant_path = Counter(non_none_paths).most_common(1)[0][0]
+
+        comparability = ComparabilityInfo(
+            primary_objective=primary_objective,
+            evaluation_mode=evaluation_mode,
+            total_examples=total_examples,
+            examples_with_primary_metric=examples_with_primary_metric,
+            coverage_ratio=coverage_ratio,
+            derivation_path=dominant_path,
+            ranking_eligible=ranking_eligible,
+            warning_codes=warning_codes,
+            per_metric_coverage=per_metric_coverage,
+            missing_example_ids=missing_example_ids,
+        )
+        return comparability.to_dict()
+
+    @staticmethod
+    def _resolve_primary_metric_value(
+        result: HybridExampleResult,
+        primary_objective: str,
+    ) -> float | None:
+        """Resolve primary metric value from per-example quality or operational fields."""
+        if primary_objective in result.metrics:
+            value = result.metrics.get(primary_objective)
+            if value is not None:
+                return float(value)
+
+        lowered = primary_objective.strip().lower()
+        if lowered in {"cost", "total_cost"}:
+            return float(result.cost_usd)
+        if lowered in {"latency", "response_time_ms"}:
+            return float(result.latency_ms)
+        return None
+
+    @staticmethod
+    def _infer_primary_objective(
+        aggregated: dict[str, float],
+        metric_counts: dict[str, int],
+    ) -> str:
+        """Infer objective key used for comparability coverage semantics."""
+        keys = set(aggregated.keys()) | set(metric_counts.keys())
+        for preferred in ("accuracy", "score"):
+            if preferred in keys:
+                return preferred
+
+        accuracy_like = sorted(
+            key for key in keys if isinstance(key, str) and key.endswith("_accuracy")
+        )
+        if accuracy_like:
+            return accuracy_like[0]
+
+        for preferred in ("total_cost", "cost", "latency", "response_time_ms"):
+            if preferred in keys:
+                return preferred
+
+        if keys:
+            return sorted(str(key) for key in keys)[0]
+        return "accuracy"
+
+    def _compute_aggregated_metrics_with_comparability(
         self,
         results: list[HybridExampleResult],
         total_cost: float,
-    ) -> dict[str, float]:
-        """Compute aggregated metrics from example results."""
+    ) -> tuple[dict[str, float], dict[str, Any]]:
+        """Compute aggregated metrics and comparability metadata."""
         if not results:
-            return {}
+            return {}, self._build_comparability_info([], {})
 
         aggregated: dict[str, float] = {
             "cost": total_cost,
@@ -1063,6 +1303,14 @@ class HybridAPIEvaluator(BaseEvaluator):
                     metric_counts[metric_name] = 0
                 metric_sums[metric_name] += value
                 metric_counts[metric_name] += 1
+            if result.success:
+                for metric_name in (
+                    "cost",
+                    "total_cost",
+                    "latency",
+                    "response_time_ms",
+                ):
+                    metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
 
         # Compute means
         for metric_name, total in metric_sums.items():
@@ -1085,6 +1333,23 @@ class HybridAPIEvaluator(BaseEvaluator):
         if "response_time_ms" not in aggregated and "latency" in aggregated:
             aggregated["response_time_ms"] = aggregated["latency"]
 
+        primary_objective = self._infer_primary_objective(aggregated, metric_counts)
+        comparability = self._build_comparability_info(
+            results,
+            metric_counts,
+            primary_objective=primary_objective,
+        )
+        return aggregated, comparability
+
+    def _compute_aggregated_metrics(
+        self,
+        results: list[HybridExampleResult],
+        total_cost: float,
+    ) -> dict[str, float]:
+        """Compute aggregated metrics from example results."""
+        aggregated, _ = self._compute_aggregated_metrics_with_comparability(
+            results, total_cost
+        )
         return aggregated
 
     async def close(self) -> None:

@@ -84,7 +84,7 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
             self,
             session_id: str,
             config: dict[str, Any],
-            score: float,
+            score: float | None,
             metadata: dict[str, Any] | None = None,
             error: str | None = None,
         ) -> None:
@@ -724,7 +724,7 @@ class BackendIntegratedClient:
         self,
         session_id: str,
         config: dict[str, Any],
-        score: float,
+        score: float | None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Compatibility shim for legacy synchronous result submission."""

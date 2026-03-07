@@ -952,6 +952,89 @@ class TestComputeAggregatedMetrics:
         assert agg["accuracy"] == pytest.approx(0.9)
         assert agg["score"] == pytest.approx(0.9)
 
+    def test_comparability_payload_full_coverage(self, ev: HybridAPIEvaluator) -> None:
+        """Comparability metadata is emitted with full coverage details."""
+        results = [
+            HybridExampleResult(
+                input_id="ex1",
+                metrics={"accuracy": 1.0},
+                latency_ms=10,
+                metadata={"evaluation_mode": "evaluated"},
+            ),
+            HybridExampleResult(
+                input_id="ex2",
+                metrics={"accuracy": 0.5},
+                latency_ms=15,
+                metadata={"evaluation_mode": "evaluated"},
+            ),
+        ]
+        _agg, comparability = ev._compute_aggregated_metrics_with_comparability(
+            results, total_cost=0.02
+        )
+
+        assert comparability["total_examples"] == 2
+        assert comparability["examples_with_primary_metric"] == 2
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["ranking_eligible"] is True
+        assert comparability["evaluation_mode"] == "evaluated"
+        assert comparability["per_metric_coverage"]["accuracy"]["ratio"] == pytest.approx(
+            1.0
+        )
+        assert comparability["per_metric_coverage"]["total_cost"]["ratio"] == pytest.approx(
+            1.0
+        )
+
+    def test_comparability_payload_partial_coverage(self, ev: HybridAPIEvaluator) -> None:
+        """Missing primary objective on examples is flagged as partial coverage."""
+        results = [
+            HybridExampleResult(
+                input_id="ex1",
+                metrics={"accuracy": 1.0},
+                metadata={"evaluation_mode": "evaluated"},
+            ),
+            HybridExampleResult(
+                input_id="ex2",
+                metrics={},
+                metadata={"evaluation_mode": "evaluated"},
+            ),
+        ]
+        _agg, comparability = ev._compute_aggregated_metrics_with_comparability(
+            results, total_cost=0.01
+        )
+
+        assert comparability["coverage_ratio"] == pytest.approx(0.5)
+        assert comparability["ranking_eligible"] is False
+        assert "MCI-002" in comparability["warning_codes"]
+
+    def test_comparability_infers_operational_primary_objective(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        """Execute-only operational metrics are rankable when fully covered."""
+        results = [
+            HybridExampleResult(
+                input_id="ex1",
+                metrics={},
+                cost_usd=0.01,
+                latency_ms=12.0,
+                metadata={"evaluation_mode": "execute_only"},
+            ),
+            HybridExampleResult(
+                input_id="ex2",
+                metrics={},
+                cost_usd=0.02,
+                latency_ms=20.0,
+                metadata={"evaluation_mode": "execute_only"},
+            ),
+        ]
+        _agg, comparability = ev._compute_aggregated_metrics_with_comparability(
+            results, total_cost=0.03
+        )
+
+        assert comparability["primary_objective"] == "total_cost"
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["evaluation_mode"] == "execute_only"
+        assert comparability["ranking_eligible"] is True
+
 
 class TestMetricNormalizationHelpers:
     """Coverage for low-level numeric normalization helpers."""

@@ -608,7 +608,7 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) == 0
         assert result.best_config == {}
         assert result.best_metrics == {}
-        assert result.best_score == 0.0
+        assert result.best_score is None
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
@@ -681,6 +681,56 @@ class TestOptimizationOrchestrator:
         assert len(successful_trials) >= 1
         assert len(failed_trials) == 2
         assert result.best_config is not None  # Should find best from successful trials
+
+    def test_create_optimization_result_ranking_summary_counts_failed_trials(
+        self, orchestrator
+    ):
+        """Ranking summary should reflect all recorded trials, not successes only."""
+        successful_trial = TrialResult(
+            trial_id="trial_success",
+            config={"param1": 1},
+            metrics={"accuracy": 0.9},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "comparability": {
+                    "schema_version": "1.0",
+                    "primary_objective": "accuracy",
+                    "evaluation_mode": "evaluated",
+                    "total_examples": 2,
+                    "examples_with_primary_metric": 2,
+                    "coverage_ratio": 1.0,
+                    "derivation_path": "explicit",
+                    "ranking_eligible": True,
+                    "warning_codes": [],
+                    "per_metric_coverage": {
+                        "accuracy": {"present": 2, "total": 2, "ratio": 1.0}
+                    },
+                    "missing_example_ids": [],
+                }
+            },
+        )
+        failed_trial = TrialResult(
+            trial_id="trial_failed",
+            config={"param1": 2},
+            metrics={},
+            status=TrialStatus.FAILED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+            error_message="boom",
+            metadata={},
+        )
+        orchestrator._trials = [successful_trial, failed_trial]
+        orchestrator._status = OptimizationStatus.COMPLETED
+
+        result = orchestrator._create_optimization_result()
+
+        ranking = result.metadata["session_summary"]["ranking"]
+        assert ranking["total_input_trials"] == 2
+        assert ranking["total_successful_trials"] == 1
+        assert ranking["non_successful_count"] == 1
+        assert ranking["eligible_count"] == 1
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
