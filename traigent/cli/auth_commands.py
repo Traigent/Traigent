@@ -526,7 +526,8 @@ class TraigentAuthCLI:
         else:
             console.print("Using password from: [cyan]TRAIGENT_AUTH_PASSWORD[/cyan]")
 
-        assert email is not None  # Guaranteed by logic above
+        if email is None:
+            raise ValueError("Email must be provided")
         return (email, password)
 
     def _display_storage_location(self, storage_location: str | None) -> None:
