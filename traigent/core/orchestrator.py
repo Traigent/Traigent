@@ -2184,9 +2184,8 @@ class OptimizationOrchestrator:
         Returns:
             OptimizationResult with all trial data
         """
-        successful_trials = [t for t in self._trials if t.is_successful]
         selection = select_best_configuration(
-            trials=successful_trials,
+            trials=self._trials,
             primary_objective=self.optimizer.objectives[0],
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
@@ -2202,6 +2201,7 @@ class OptimizationOrchestrator:
         duration = time.time() - self._start_time if self._start_time else 0.0
 
         # Create convergence info
+        successful_trials = [t for t in self._trials if t.is_successful]
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),

@@ -259,6 +259,38 @@ class TestBuildSuccessResult:
         # Should still create result, may not have total_cost in metrics
         assert result.trial_id == "trial_123"
 
+    def test_fallback_comparability_uses_aggregated_metrics_when_examples_empty(
+        self, eval_config
+    ):
+        """Empty example_results should still infer full metric coverage."""
+        eval_result = Mock()
+        eval_result.metrics = {"accuracy": 0.85, "cost": 0.05}
+        eval_result.success_rate = 1.0
+        eval_result.has_errors = False
+        eval_result.outputs = ["output1", "output2"]
+        eval_result.example_results = []
+        eval_result.summary_stats = None
+        eval_result.total_examples = 2
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=2,
+            total_cost=0.05,
+            optuna_trial_id=None,
+        )
+
+        comparability = result.metadata["comparability"]
+        assert comparability["primary_objective"] == "accuracy"
+        assert comparability["evaluation_mode"] == "evaluated"
+        assert comparability["examples_with_primary_metric"] == 2
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["ranking_eligible"] is True
+        assert comparability["per_metric_coverage"]["accuracy"]["present"] == 2
+        assert comparability["warning_codes"] == []
+
 
 class TestBuildPrunedResult:
     """Test build_pruned_result function."""

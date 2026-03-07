@@ -61,7 +61,7 @@ class HybridExampleResult:
         error: Error message if failed
     """
 
-    example_id: str
+    example_id: str = ""
     actual_output: Any = None
     expected_output: Any = None
     metrics: dict[str, float] = field(default_factory=dict)
@@ -69,6 +69,15 @@ class HybridExampleResult:
     latency_ms: float = 0.0
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    input_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize legacy input_id and canonical example_id fields."""
+        resolved_id = self.example_id or self.input_id or ""
+        if not resolved_id:
+            raise ValueError("HybridExampleResult requires example_id or input_id")
+        self.example_id = resolved_id
+        self.input_id = resolved_id
 
     @property
     def success(self) -> bool:
@@ -1139,7 +1148,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         for result in results:
             if not result.success:
-                missing_example_ids.append(result.input_id)
+                missing_example_ids.append(result.example_id)
                 continue
 
             derivation_path = str(
@@ -1161,7 +1170,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 examples_with_primary_metric += 1
                 derivation_paths.append(derivation_path or "none")
             else:
-                missing_example_ids.append(result.input_id)
+                missing_example_ids.append(result.example_id)
 
         coverage_ratio = examples_with_primary_metric / total_examples
         per_metric_coverage = {

@@ -15,6 +15,7 @@ from traigent.api.types import (
 )
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import classify_objective
 
 logger = get_logger(__name__)
 
@@ -37,7 +38,10 @@ def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
         total_examples = len(example_results)
 
     per_metric_counts: dict[str, int] = {}
-    if isinstance(example_results, list) and total_examples > 0:
+    has_detailed_example_results = (
+        isinstance(example_results, list) and len(example_results) > 0
+    )
+    if has_detailed_example_results and total_examples > 0 and example_results:
         for example_result in example_results:
             metrics = getattr(example_result, "metrics", {}) or {}
             if not isinstance(metrics, dict):
@@ -67,21 +71,70 @@ def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
         for metric_name, count in per_metric_counts.items()
     }
 
-    evaluation_mode = (
-        "evaluated"
-        if isinstance(example_results, list) and len(example_results) > 0
-        else "unknown"
-    )
+    primary_objective = "unknown"
+    for preferred in ("accuracy", "score"):
+        if preferred in per_metric_counts:
+            primary_objective = preferred
+            break
+    if primary_objective == "unknown":
+        accuracy_like = sorted(
+            metric_name
+            for metric_name in per_metric_counts
+            if metric_name.endswith("_accuracy")
+        )
+        if accuracy_like:
+            primary_objective = accuracy_like[0]
+    if primary_objective == "unknown":
+        for preferred in ("total_cost", "cost", "latency", "response_time_ms"):
+            if preferred in per_metric_counts:
+                primary_objective = preferred
+                break
+    if primary_objective == "unknown" and per_metric_counts:
+        primary_objective = sorted(per_metric_counts)[0]
 
-    warning_codes = ["MCI-001"] if total_examples <= 0 else ["MCI-004"]
+    if has_detailed_example_results:
+        evaluation_mode = "evaluated"
+    elif per_metric_counts:
+        objective_classes = {
+            classify_objective(metric_name) for metric_name in per_metric_counts
+        }
+        evaluation_mode = (
+            "execute_only" if objective_classes == {"operational"} else "evaluated"
+        )
+    else:
+        evaluation_mode = "unknown"
+
+    examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
+    coverage_ratio = (
+        examples_with_primary_metric / total_examples
+        if total_examples > 0 and examples_with_primary_metric > 0
+        else 0.0
+    )
+    ranking_eligible = (
+        total_examples > 0
+        and examples_with_primary_metric == total_examples
+        and (
+            classify_objective(primary_objective) != "quality"
+            or evaluation_mode == "evaluated"
+        )
+    )
+    if total_examples <= 0:
+        warning_codes = ["MCI-001"]
+    elif examples_with_primary_metric <= 0:
+        warning_codes = ["MCI-004"]
+    elif coverage_ratio < 1.0:
+        warning_codes = ["MCI-002"]
+    else:
+        warning_codes = []
+
     return ComparabilityInfo(
-        primary_objective="unknown",
+        primary_objective=primary_objective,
         evaluation_mode=evaluation_mode,
         total_examples=total_examples,
-        examples_with_primary_metric=0,
-        coverage_ratio=0.0,
+        examples_with_primary_metric=examples_with_primary_metric,
+        coverage_ratio=coverage_ratio,
         derivation_path="none",
-        ranking_eligible=False,
+        ranking_eligible=ranking_eligible,
         warning_codes=warning_codes,
         per_metric_coverage=per_metric_coverage,
         missing_example_ids=[],
