@@ -1,21 +1,24 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Release Review Evidence v2",
+  "title": "Release Review Per-File Artifact",
   "type": "object",
   "additionalProperties": false,
   "allOf": [
     {
       "if": {
         "properties": {
-          "review_type": {
-            "enum": ["primary", "secondary", "tertiary"]
+          "decision": {
+            "const": "approved"
           }
         },
-        "required": ["review_type"]
+        "required": ["decision"]
       },
       "then": {
         "properties": {
-          "tests": {
+          "strengths": {
+            "minItems": 1
+          },
+          "checks_performed": {
             "minItems": 1
           }
         }
@@ -24,25 +27,21 @@
     {
       "if": {
         "properties": {
-          "review_type": {
-            "enum": ["primary", "secondary", "tertiary", "reconciliation"]
+          "decision": {
+            "const": "approved"
+          },
+          "findings": {
+            "maxItems": 0
           }
         },
-        "required": ["review_type"]
+        "required": ["decision", "findings"]
       },
       "then": {
+        "required": ["notes"],
         "properties": {
-          "files_reviewed": {
-            "minItems": 1
-          },
-          "strengths": {
-            "minItems": 1
-          },
-          "checks_performed": {
-            "minItems": 1
-          },
-          "review_summary": {
-            "minLength": 50
+          "notes": {
+            "type": "string",
+            "minLength": 20
           }
         }
       }
@@ -54,14 +53,13 @@
     "review_type",
     "agent_type",
     "reviewer_model",
+    "file",
     "commit_sha",
-    "files_reviewed",
+    "decision",
+    "notes",
     "findings",
     "strengths",
     "checks_performed",
-    "tests",
-    "review_summary",
-    "decision",
     "timestamp_utc"
   ],
   "properties": {
@@ -75,7 +73,7 @@
     },
     "review_type": {
       "type": "string",
-      "enum": ["primary", "secondary", "tertiary", "reconciliation", "captain"]
+      "enum": ["primary", "secondary", "tertiary", "reconciliation"]
     },
     "agent_type": {
       "type": "string",
@@ -85,28 +83,45 @@
       "type": "string",
       "minLength": 1
     },
+    "file": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*//).+"
+    },
+    "angles_reviewed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "security_authz",
+          "correctness_regression",
+          "async_concurrency_performance",
+          "dto_api_contract"
+        ]
+      },
+      "uniqueItems": true
+    },
     "commit_sha": {
       "type": "string",
       "pattern": "^[a-f0-9]{7,40}$"
     },
-    "files_reviewed": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^(?!/)(?!.*\\.\\.)(?!.*//).+"
-      }
+    "decision": {
+      "type": "string",
+      "enum": ["approved", "changes_required", "blocked"]
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 20
     },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "severity", "file", "line", "title", "repro", "status"],
+        "required": ["id", "severity", "line", "title", "repro", "status"],
         "properties": {
           "id": {"type": "string", "minLength": 1},
           "severity": {"type": "string", "enum": ["P0", "P1", "P2", "P3"]},
-          "file": {"type": "string", "minLength": 1},
           "line": {"type": "integer", "minimum": 1},
           "title": {"type": "string", "minLength": 1},
           "repro": {"type": "string", "minLength": 1},
@@ -119,11 +134,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "severity", "file", "line", "title", "description"],
+        "required": ["id", "severity", "line", "title", "description"],
         "properties": {
           "id": {"type": "string", "minLength": 1},
           "severity": {"type": "string", "enum": ["S0", "S1", "S2"]},
-          "file": {"type": "string", "minLength": 1},
           "line": {"type": "integer", "minimum": 1},
           "title": {"type": "string", "minLength": 1},
           "description": {"type": "string", "minLength": 10}
@@ -155,27 +169,6 @@
           "evidence": {"type": "string", "minLength": 10}
         }
       }
-    },
-    "tests": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["command", "exit_code", "summary"],
-        "properties": {
-          "command": {"type": "string", "minLength": 1},
-          "exit_code": {"type": "integer"},
-          "summary": {"type": "string", "minLength": 1}
-        }
-      }
-    },
-    "review_summary": {
-      "type": "string",
-      "minLength": 50
-    },
-    "decision": {
-      "type": "string",
-      "enum": ["approved", "changes_required", "blocked"]
     },
     "timestamp_utc": {
       "type": "string",
