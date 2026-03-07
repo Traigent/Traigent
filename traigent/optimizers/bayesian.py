@@ -295,6 +295,7 @@ class BayesianOptimizer(BaseOptimizer):
         # Random continuous parameters
         for param in self._param_mapping["continuous"]:
             bounds = param["bounds"]
+            value: int | float
             if param.get("is_integer", False):
                 # For integer parameters, sample uniformly from integer range
                 value = int(self._rng.integers(int(bounds[0]), int(bounds[1]) + 1))
