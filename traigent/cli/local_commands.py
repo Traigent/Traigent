@@ -83,7 +83,7 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
                     created_at = str(summary["created_at"])[:10]  # Just the date
                     best_score = (
                         f"{summary['best_score']:.3f}"
-                        if summary["best_score"]
+                        if summary["best_score"] is not None
                         else "N/A"
                     )
                     click.echo(
@@ -171,9 +171,10 @@ def show_session(session_id: str, output_format: str) -> None:
                 click.echo("\n📈 Trial History:")
                 for trial in session.trials[-5:]:  # Show last 5 trials
                     status_icon = "✅" if trial.error is None else "❌"
-                    click.echo(
-                        f"  {status_icon} Trial {trial.trial_id}: {trial.score:.4f}"
+                    score_str = (
+                        f"{trial.score:.4f}" if trial.score is not None else "N/A"
                     )
+                    click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
 
         else:
             # Summary format

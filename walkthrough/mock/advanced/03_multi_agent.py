@@ -6,7 +6,7 @@ Demonstrates two methods for multi-agent parameter grouping:
 2. Explicit AgentDefinition
 
 This mock version uses hardcoded responses - no API keys needed.
-Run with: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python 03_multi_agent.py
+Run with: TRAIGENT_MOCK_LLM=true python 03_multi_agent.py
 """
 
 import asyncio

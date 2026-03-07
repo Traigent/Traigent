@@ -306,6 +306,10 @@ validate_*.py
 .release_review/**/.mypy_cache/
 .release_review/walkthrough_review/
 
+# Client-specific example runs (keep only README)
+examples/bazak/*
+!examples/bazak/README.md
+
 # Post-release fixes workspace
 # Keep core protocol/tracking files versioned for team sharing
 !.post_release_recommendation_fixes/

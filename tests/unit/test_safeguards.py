@@ -377,6 +377,35 @@ class TestDeduplication:
             assert len(filtered) == 3  # All configs allowed
             assert orchestrator.cache_policy_handler.configs_deduplicated == 0
 
+    def test_local_storage_respects_minimization_objective_for_best_score(self):
+        """Local session best score should respect minimize objective direction."""
+        storage = LocalStorageManager(tempfile.mkdtemp())
+        session_id = storage.create_session(
+            function_name="cost_fn",
+            optimization_config={"objectives": ["total_cost"]},
+        )
+
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "a"},
+            score=0.5,
+        )
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "b"},
+            score=0.8,
+        )
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "c"},
+            score=0.3,
+        )
+
+        session = storage.load_session(session_id)
+        assert session is not None
+        assert session.best_score == pytest.approx(0.3)
+        assert session.best_config == {"model": "c"}
+
 
 class TestSafeguardTelemetry:
     """Test safeguards telemetry in optimization results."""

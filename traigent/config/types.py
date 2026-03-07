@@ -194,6 +194,7 @@ class TraigentConfig:
     strict_metrics_nulls: bool = (
         False  # When True, use None instead of 0.0 for missing metrics
     )
+    comparability_mode: Literal["legacy", "warn", "strict"] = "warn"
 
     # Analytics and telemetry settings
     enable_usage_analytics: bool = (
@@ -263,6 +264,7 @@ class TraigentConfig:
             "auto_sync": False,
             "privacy_enabled": False,
             "strict_metrics_nulls": False,
+            "comparability_mode": "warn",
         }
 
         # Add defined parameters (only if not None and not default)
@@ -281,6 +283,7 @@ class TraigentConfig:
             "auto_sync",
             "privacy_enabled",
             "strict_metrics_nulls",
+            "comparability_mode",
         ]:
             value = getattr(self, field_name)
             if value is not None and value != defaults.get(field_name):
@@ -317,6 +320,7 @@ class TraigentConfig:
             "auto_sync",
             "privacy_enabled",
             "strict_metrics_nulls",
+            "comparability_mode",
         }
 
         known_params = {k: v for k, v in config_dict.items() if k in known_fields}
@@ -435,6 +439,13 @@ class TraigentConfig:
         """Whether strict metrics nulls is enabled (use None instead of 0.0 for missing metrics)."""
         return bool(self.strict_metrics_nulls)
 
+    def get_comparability_mode(self) -> Literal["legacy", "warn", "strict"]:
+        """Return metric comparability handling mode."""
+        mode = str(self.comparability_mode or "warn").strip().lower()
+        if mode in {"legacy", "warn", "strict"}:
+            return mode  # type: ignore[return-value]
+        return "warn"
+
     def get_local_storage_path(self) -> str | None:
         """Get the local storage path, checking environment variables if not set."""
         explicit_path = (
@@ -492,6 +503,13 @@ class TraigentConfig:
                 object.__setattr__(self, "_privacy_enforced_by_execution_mode", False)
             else:
                 value = bool(value)
+        elif key == "comparability_mode":
+            mode = str(value or "warn").strip().lower()
+            if mode not in {"legacy", "warn", "strict"}:
+                raise ValueError(
+                    "comparability_mode must be one of: legacy, warn, strict"
+                )
+            value = mode
         elif key == "enable_usage_analytics":
             value = bool(value)
 
@@ -535,6 +553,7 @@ class TraigentConfig:
         - TRAIGENT_AUTO_SYNC: Sets auto-sync preference
         - TRAIGENT_PRIVACY_MODE: Sets privacy mode preference
         - TRAIGENT_STRICT_METRICS_NULLS: Use None instead of 0.0 for missing metrics
+        - TRAIGENT_COMPARABILITY_MODE: one of legacy|warn|strict
 
         Returns:
             TraigentConfig with environment-based settings
@@ -573,5 +592,9 @@ class TraigentConfig:
             "yes",
         ):
             config.strict_metrics_nulls = True
+
+        mode = os.getenv("TRAIGENT_COMPARABILITY_MODE", "").strip().lower()
+        if mode in {"legacy", "warn", "strict"}:
+            config.comparability_mode = mode  # type: ignore[assignment]
 
         return config

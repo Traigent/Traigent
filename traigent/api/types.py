@@ -48,6 +48,55 @@ class TrialStatus(StrEnum):
     PRUNED = "pruned"
 
 
+@dataclass(slots=True)
+class MetricCoverage:
+    """Coverage summary for a single metric across examples."""
+
+    present: int
+    total: int
+    ratio: float
+
+
+@dataclass(slots=True)
+class ComparabilityInfo:
+    """Comparability metadata for ranking-safety decisions."""
+
+    schema_version: str = "1.0"
+    primary_objective: str = "accuracy"
+    evaluation_mode: str = "unknown"
+    total_examples: int = 0
+    examples_with_primary_metric: int = 0
+    coverage_ratio: float = 0.0
+    derivation_path: str = "none"
+    ranking_eligible: bool = False
+    warning_codes: list[str] = field(default_factory=list)
+    per_metric_coverage: dict[str, MetricCoverage] = field(default_factory=dict)
+    missing_example_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-safe dictionary."""
+        return {
+            "schema_version": self.schema_version,
+            "primary_objective": self.primary_objective,
+            "evaluation_mode": self.evaluation_mode,
+            "total_examples": int(self.total_examples),
+            "examples_with_primary_metric": int(self.examples_with_primary_metric),
+            "coverage_ratio": float(self.coverage_ratio),
+            "derivation_path": self.derivation_path,
+            "ranking_eligible": bool(self.ranking_eligible),
+            "warning_codes": list(self.warning_codes),
+            "per_metric_coverage": {
+                metric: {
+                    "present": int(coverage.present),
+                    "total": int(coverage.total),
+                    "ratio": float(coverage.ratio),
+                }
+                for metric, coverage in self.per_metric_coverage.items()
+            },
+            "missing_example_ids": list(self.missing_example_ids),
+        }
+
+
 # Type alias for optimization stop reasons
 # Using Literal provides type safety and IDE autocompletion
 StopReason = Literal[
@@ -189,7 +238,7 @@ class OptimizationResult:
     Attributes:
         trials: List of all trial results from the optimization.
         best_config: The configuration that achieved the best score.
-        best_score: The best objective score achieved.
+        best_score: The best objective score achieved (None when no eligible trial).
         optimization_id: Unique identifier for this optimization run.
         duration: Total wall-clock time in seconds.
         convergence_info: Dictionary with convergence statistics.
@@ -216,7 +265,7 @@ class OptimizationResult:
 
     trials: list[TrialResult]
     best_config: dict[str, Any]
-    best_score: float
+    best_score: float | None
     optimization_id: str
     duration: float
     convergence_info: dict[str, Any]

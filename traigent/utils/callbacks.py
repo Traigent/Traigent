@@ -179,7 +179,10 @@ class ProgressBarCallback(OptimizationCallback):
             print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
         else:
             print("✅ Optimization complete!")
-        print(f"🏆 Best score: {result.best_score:.3f}")
+        best_score_str = (
+            f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
+        )
+        print(f"🏆 Best score: {best_score_str}")
         print(f"⏱️  Total time: {result.duration:.1f}s")
         print(f"📈 Success rate: {result.success_rate:.1%}")
 
@@ -231,9 +234,12 @@ class LoggingCallback(OptimizationCallback):
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Called when optimization completes."""
+        best_score_str = (
+            f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
+        )
         self._log(
             f"Optimization complete: "
-            f"best_score={result.best_score:.3f}, "
+            f"best_score={best_score_str}, "
             f"success_rate={result.success_rate:.1%}, "
             f"duration={result.duration:.1f}s"
         )

@@ -339,7 +339,7 @@ class BackendSessionManager:
             self._optimizer.objectives[0] if self._optimizer.objectives else "score"
         )
 
-        score = trial_result.get_metric(primary_objective, 0.0)
+        score = trial_result.get_metric(primary_objective)
         trial_metadata = build_backend_metadata(
             trial_result,
             primary_objective,
@@ -369,7 +369,10 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return
 
-        sanitized_score = float(score) if score is not None else 0.0
+        sanitized_score = float(score) if score is not None else None
+        metadata_payload = dict(metadata)
+        if score is None:
+            metadata_payload["primary_objective_missing"] = True
 
         # Always record locally so analytics remain available even without backend.
         try:
@@ -377,7 +380,7 @@ class BackendSessionManager:
                 session_id=session_id,
                 config=trial_result.config,
                 score=sanitized_score,
-                metadata=dict(metadata),
+                metadata=metadata_payload,
             )
         except Exception as exc:
             logger.debug(
