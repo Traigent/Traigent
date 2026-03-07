@@ -279,11 +279,6 @@ class PasswordAuthHandler:
                 perform_login, operation_name="backend_authentication"
             )
         except InvalidCredentialsError:
-            if self._is_dev_mode_enabled():
-                logger.warning(
-                    "Dev mode enabled - returning mock tokens despite invalid credentials"
-                )
-                return self._build_dev_token_payload(credentials)
             raise
         except Exception as exc:
             if self._is_dev_mode_enabled():
@@ -304,7 +299,7 @@ class PasswordAuthHandler:
         user_id = (credentials or {}).get("user_id") or f"dev-{uuid.uuid4()}"
         dev_key_suffix = "".join(
             secrets.choice(
-                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"  # pragma: allowlist secret
             )
             for _ in range(61)
         )

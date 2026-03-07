@@ -40,7 +40,7 @@ class TestOIDCAuthProviderInitialization:
         """Create valid OIDC settings."""
         return {
             "client_id": "test-client-id",
-            "client_secret": "test-client-secret",
+            "client_secret": "test-client-secret",  # pragma: allowlist secret
             "issuer": "https://issuer.example.com",
             "jwks_uri": "https://issuer.example.com/.well-known/jwks.json",
             "authorization_endpoint": "https://issuer.example.com/authorize",
@@ -58,7 +58,7 @@ class TestOIDCAuthProviderInitialization:
         provider = OIDCAuthProvider(valid_settings)
 
         assert provider.client_id == "test-client-id"
-        assert provider.client_secret == "test-client-secret"
+        assert provider.client_secret == "test-client-secret"  # pragma: allowlist secret
         assert provider.issuer == "https://issuer.example.com"
         assert provider.jwks_uri == "https://issuer.example.com/.well-known/jwks.json"
         assert provider.allowed_algorithms == ["RS256"]
@@ -214,7 +214,7 @@ class TestOIDCAuthProviderAuthentication:
         """Create valid OIDC settings."""
         return {
             "client_id": "test-client-id",
-            "client_secret": "test-client-secret",
+            "client_secret": "test-client-secret",  # pragma: allowlist secret
             "issuer": "https://issuer.example.com",
             "jwks_uri": "https://issuer.example.com/.well-known/jwks.json",
         }
@@ -750,6 +750,30 @@ class TestOIDCAuthProviderAccessToken:
         claims = provider.verify_access_token("invalid.access.token")
 
         assert claims is None
+
+    @patch("traigent.security.auth.oidc.PyJWKClient")
+    @patch("traigent.security.auth.oidc.jwt")
+    def test_verify_access_token_uses_configured_algorithms(
+        self,
+        mock_jwt: MagicMock,
+        mock_jwks_client_class: MagicMock,
+        valid_settings: dict[str, str],
+        mock_signing_key: MagicMock,
+        valid_access_claims: dict[str, any],
+    ) -> None:
+        """Access token verification should honor allowed_algorithms."""
+        from traigent.security.auth.oidc import OIDCAuthProvider
+
+        mock_jwks_client = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+        mock_jwks_client_class.return_value = mock_jwks_client
+        mock_jwt.decode.return_value = valid_access_claims
+
+        valid_settings["allowed_algorithms"] = ["ES256"]
+        provider = OIDCAuthProvider(valid_settings)
+        provider.verify_access_token("valid.access.token")
+
+        assert mock_jwt.decode.call_args.kwargs["algorithms"] == ["ES256"]
 
 
 class TestOIDCAuthProviderTokenRevocation:

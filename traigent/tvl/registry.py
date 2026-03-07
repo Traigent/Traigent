@@ -42,6 +42,8 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
+from packaging.version import InvalidVersion, Version
+
 # Optional YAML support
 try:
     import yaml
@@ -485,24 +487,36 @@ class FileRegistryResolver:
             if item_value is None:
                 continue
 
-            # String comparison (works for semver-like versions)
             try:
+                lhs, rhs = self._coerce_comparison_operands(item_value, value)
                 if op == ">=":
-                    if str(item_value) >= value:
+                    if lhs >= rhs:
                         result.append(item)
                 elif op == "<=":
-                    if str(item_value) <= value:
+                    if lhs <= rhs:
                         result.append(item)
                 elif op == ">":
-                    if str(item_value) > value:
+                    if lhs > rhs:
                         result.append(item)
                 elif op == "<":
-                    if str(item_value) < value:
+                    if lhs < rhs:
                         result.append(item)
             except (TypeError, ValueError):
                 continue
 
         return result
+
+    @staticmethod
+    def _coerce_comparison_operands(
+        item_value: Any, value: str
+    ) -> tuple[Version | str, Version | str]:
+        """Prefer semantic version comparison when both values are version-like."""
+        item_text = str(item_value)
+        value_text = str(value)
+        try:
+            return Version(item_text), Version(value_text)
+        except InvalidVersion:
+            return item_text, value_text
 
     def _extract_values(self, items: list[dict[str, Any]]) -> list[Any]:
         """Extract values from registry items.

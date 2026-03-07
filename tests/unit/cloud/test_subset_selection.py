@@ -1,5 +1,6 @@
 """Tests for smart dataset subset selection algorithms."""
 
+import random
 from unittest.mock import patch
 
 import pytest
@@ -246,6 +247,22 @@ class TestRepresentativeSampling:
         # Each category should have roughly 5 examples (20/4 categories)
         for count in output_counts.values():
             assert 3 <= count <= 7  # Allow some variance
+
+    @pytest.mark.asyncio
+    async def test_representative_sampling_does_not_mutate_global_rng(
+        self, sample_dataset
+    ):
+        """Representative sampling should use its own RNG, not the module global."""
+        random.seed(123)
+        expected_next = random.random()
+
+        random.seed(123)
+        sampler = RepresentativeSampling(random_seed=456)
+        await sampler.select_subset(
+            sample_dataset, target_size=4, balance_outputs=True
+        )
+
+        assert random.random() == expected_next
 
 
 class TestHighConfidenceSampling:

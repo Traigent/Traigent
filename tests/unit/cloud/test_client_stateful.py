@@ -59,7 +59,7 @@ async def cloud_client(mock_session):
                         "created_by": "user-123",
                         "owner_scope": ["optimize"],
                         "credential_source": "test-suite",
-                        "owner_api_key_preview": "tg_test_preview",
+                        "owner_api_key_preview": "tg_test_preview",  # pragma: allowlist secret
                     }
                 )
                 mock_auth_mgr.return_value = mock_auth_instance
@@ -433,6 +433,7 @@ class TestSerialization:
                 "metadata": {"test": True},
             },
             "should_continue": True,
+            "stop_reason": None,
             "session_status": "active",
         }
 
@@ -443,6 +444,48 @@ class TestSerialization:
         assert len(response.suggestion.dataset_subset.indices) == 3
         assert response.suggestion.priority == 2
         assert response.should_continue is True
+        assert response.stop_reason is None
+
+    def test_deserialize_finalization_response_prefers_top_level_stop_reason(
+        self, cloud_client
+    ):
+        """Test deserializing finalization response with explicit stop_reason."""
+        data = {
+            "session_id": "session-123",
+            "best_config": {"temperature": 0.7},
+            "best_metrics": {"accuracy": 0.91},
+            "total_trials": 3,
+            "successful_trials": 3,
+            "total_duration": 1.2,
+            "cost_savings": 0.0,
+            "stop_reason": "max_trials_reached",
+            "metadata": {"stop_reason": "finalized"},
+        }
+
+        response = cloud_client._deserialize_finalization_response(data)
+
+        assert response.session_id == "session-123"
+        assert response.stop_reason == "max_trials_reached"
+
+    def test_deserialize_finalization_response_falls_back_to_metadata_stop_reason(
+        self, cloud_client
+    ):
+        """Test deserializing finalization response with legacy metadata stop_reason."""
+        data = {
+            "session_id": "session-123",
+            "best_config": {"temperature": 0.7},
+            "best_metrics": {"accuracy": 0.91},
+            "total_trials": 3,
+            "successful_trials": 3,
+            "total_duration": 1.2,
+            "cost_savings": 0.0,
+            "metadata": {"stop_reason": "search_complete"},
+        }
+
+        response = cloud_client._deserialize_finalization_response(data)
+
+        assert response.session_id == "session-123"
+        assert response.stop_reason == "search_complete"
 
 
 class TestErrorHandling:
@@ -489,7 +532,7 @@ class TestErrorHandling:
 
         cloud_client._session_owners["session-123"] = {
             "owner_user_id": "owner-007",
-            "owner_api_key_preview": "tg_owner_preview",
+            "owner_api_key_preview": "tg_owner_preview",  # pragma: allowlist secret
         }
 
         mock_response = Mock()
@@ -513,7 +556,7 @@ class TestErrorHandling:
 
         cloud_client._session_owners["session-123"] = {
             "owner_user_id": "owner-007",
-            "owner_api_key_preview": "tg_owner_preview",
+            "owner_api_key_preview": "tg_owner_preview",  # pragma: allowlist secret
         }
 
         mock_response = Mock()

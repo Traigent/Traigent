@@ -14,11 +14,16 @@ from pathlib import Path
 
 from traigent.config_generator.types import AutoConfigResult
 
-# Base directory for path containment checks (S2083).
-# Defaults to CWD and can be narrowed via env var for testing / CI.
-_SAFE_BASE_DIR = os.path.realpath(
-    os.environ.get("TRAIGENT_CONFIG_BASE_DIR", os.getcwd())
-)
+# Optional base directory override for path containment checks (S2083).
+# If unset, the current working directory is treated as the trusted base.
+_SAFE_BASE_DIR = os.environ.get("TRAIGENT_CONFIG_BASE_DIR")
+
+
+def _get_safe_base_dir() -> Path:
+    """Return the trusted base directory for source file edits."""
+    if _SAFE_BASE_DIR:
+        return Path(_SAFE_BASE_DIR).resolve()
+    return Path.cwd().resolve()
 
 
 def _sanitize_source_path(file_path: Path) -> Path:
@@ -31,14 +36,13 @@ def _sanitize_source_path(file_path: Path) -> Path:
     from the validated canonical string — not from the original argument.
     """
     safe = Path(file_path).resolve()
-    base = Path(_SAFE_BASE_DIR).resolve()
+    base = _get_safe_base_dir()
     try:
         safe.relative_to(base)
     except ValueError as exc:
         raise ValueError(
             f"Path '{safe}' is outside the allowed base directory '{base}'"
         ) from exc
-
     if not safe.is_file():
         raise ValueError(f"Not a file: {safe}")
     if safe.suffix != ".py":

@@ -343,12 +343,68 @@ class HTTPTransport:
         # Use request timeout if specified
         timeout_s = request.timeout_ms / 1000.0 if request.timeout_ms > 0 else None
 
-        data = await self._request(
-            "POST",
-            self.EXECUTE_PATH,
-            json_data=request.to_dict(),
-            timeout_override=timeout_s,
-        )
+        request_payload = request.to_dict()
+        try:
+            data = await self._request(
+                "POST",
+                self.EXECUTE_PATH,
+                json_data=request_payload,
+                timeout_override=timeout_s,
+            )
+        except TransportError as exc:
+            # Legacy compatibility: some deployed services still require
+            # `inputs` with `input_id` instead of `examples` with `example_id`.
+            response_body = (exc.response_body or "").lower()
+            is_legacy_shape_error = (
+                exc.status_code == 400
+                and "missing required fields" in response_body
+                and "inputs" in response_body
+            )
+            if not is_legacy_shape_error:
+                raise
+
+            legacy_inputs: list[dict[str, Any]] = []
+            for item in request.examples:
+                if not isinstance(item, dict):
+                    legacy_inputs.append({"input_id": str(item)})
+                    continue
+
+                example_id = item.get("example_id")
+                payload_data = item.get("data")
+
+                input_id = example_id
+                if isinstance(payload_data, dict):
+                    input_id = (
+                        payload_data.get("input_id")
+                        or payload_data.get("example_id")
+                        or example_id
+                    )
+
+                legacy_inputs.append({"input_id": str(input_id or "")})
+
+            legacy_payload: dict[str, Any] = {
+                "request_id": request.request_id,
+                "tunable_id": request.tunable_id,
+                "benchmark_id": request.benchmark_id,
+                "config": request.config,
+                "inputs": legacy_inputs,
+            }
+            if request.session_id is not None:
+                legacy_payload["session_id"] = request.session_id
+            if request.timeout_ms is not None:
+                legacy_payload["timeout_ms"] = request.timeout_ms
+
+            logger.info(
+                "Execute request falling back to legacy payload format "
+                "(inputs/input_id) for compatibility"
+            )
+            data = await self._request(
+                "POST",
+                self.EXECUTE_PATH,
+                json_data=legacy_payload,
+                timeout_override=timeout_s,
+            )
+
         return HybridExecuteResponse.from_dict(data)
 
     async def evaluate(

@@ -457,11 +457,11 @@ class LocalStorageManager:
 
         try:
             path_obj = Path(export_path).expanduser()
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
             base_dir = (
                 path_obj.parent if path_obj.is_absolute() else Path.cwd().resolve()
             )
             path_obj = validate_path(path_obj, base_dir, must_exist=False)
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
 
             # Convert session to dict for JSON serialization
             session_data = asdict(session)
