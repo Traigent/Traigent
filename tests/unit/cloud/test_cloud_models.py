@@ -190,12 +190,14 @@ class TestSessionRequests:
         response = NextTrialResponse(
             suggestion=suggestion,
             should_continue=True,
+            stop_reason=None,
             session_status=OptimizationSessionStatus.ACTIVE,
         )
 
         assert response.should_continue
         assert response.suggestion.config["temperature"] == 0.5
         assert response.reason is None
+        assert response.stop_reason is None
 
 
 class TestAgentModels:
@@ -321,10 +323,12 @@ class TestOptimizationFinalization:
             successful_trials=48,
             total_duration=3600.0,
             cost_savings=0.65,
+            stop_reason="max_trials_reached",
         )
 
         assert response.best_config["temperature"] == 0.7
         assert response.best_metrics["accuracy"] == 0.96
         assert response.successful_trials == 48
         assert response.cost_savings == 0.65
+        assert response.stop_reason == "max_trials_reached"
         assert response.convergence_history is None

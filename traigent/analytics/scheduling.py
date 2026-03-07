@@ -87,7 +87,7 @@ class SchedulingPolicy:
 class SmartScheduler:
     """Intelligent job scheduler with cost optimization.
 
-    Thread-safe: All mutable state access is protected by a lock.
+    Critical shared-state mutations are protected by a lock.
     """
 
     def __init__(self, policy: SchedulingPolicy | None = None) -> None:
@@ -163,7 +163,8 @@ class SmartScheduler:
                 )
             )
 
-        self.schedule_windows = windows
+        with self._lock:
+            self.schedule_windows = windows
         return windows
 
     def schedule_jobs(
@@ -307,22 +308,19 @@ class SmartScheduler:
 
     def execute_job(self, job_id: str) -> bool:
         """Execute a scheduled job."""
-        if job_id not in self.running_jobs and job_id not in [
-            j.job_id for j in self.job_queue
-        ]:
-            logger.error(f"Job {job_id} not found")
-            return False
+        with self._lock:
+            if job_id in self.running_jobs:
+                logger.error(f"Job {job_id} already running")
+                return False
 
-        # Find the job
-        job = next((j for j in self.job_queue if j.job_id == job_id), None)
-        if not job:
-            logger.error(f"Job {job_id} not in queue")
-            return False
+            job = next((j for j in self.job_queue if j.job_id == job_id), None)
+            if not job:
+                logger.error(f"Job {job_id} not in queue")
+                return False
 
-        # Move to running
-        self.job_queue.remove(job)
-        self.running_jobs[job_id] = job
-        job.status = "running"
+            self.job_queue.remove(job)
+            self.running_jobs[job_id] = job
+            job.status = "running"
 
         logger.info(f"Started executing job {job_id}")
         return True
@@ -331,35 +329,38 @@ class SmartScheduler:
         self, job_id: str, actual_cost: float, success: bool = True
     ) -> bool:
         """Mark a job as completed."""
-        if job_id not in self.running_jobs:
-            logger.error(f"Job {job_id} not running")
-            return False
+        with self._lock:
+            job = self.running_jobs.pop(job_id, None)
+            if job is None:
+                job = next((j for j in self.job_queue if j.job_id == job_id), None)
+                if job is None:
+                    logger.error(f"Job {job_id} not running")
+                    return False
+                self.job_queue.remove(job)
 
-        job = self.running_jobs.pop(job_id)
-        job.completed_at = datetime.now(UTC)
-        job.actual_cost = actual_cost
-        job.status = "completed" if success else "failed"
+            job.completed_at = datetime.now(UTC)
+            job.actual_cost = actual_cost
+            job.status = "completed" if success else "failed"
 
-        self.completed_jobs.append(job)
-        self.cost_history.append((job.completed_at, actual_cost))
+            self.completed_jobs.append(job)
+            self.cost_history.append((job.completed_at, actual_cost))
 
-        # Enforce memory limits on completed_jobs and cost_history
-        if len(self.completed_jobs) > MAX_OPTIMIZATION_HISTORY_SIZE:
-            items_to_keep = int(
-                MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
-            )
-            self.completed_jobs = self.completed_jobs[-items_to_keep:]
-        if len(self.cost_history) > MAX_OPTIMIZATION_HISTORY_SIZE:
-            items_to_keep = int(
-                MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
-            )
-            self.cost_history = self.cost_history[-items_to_keep:]
+            if len(self.completed_jobs) > MAX_OPTIMIZATION_HISTORY_SIZE:
+                items_to_keep = int(
+                    MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+                )
+                self.completed_jobs = self.completed_jobs[-items_to_keep:]
+            if len(self.cost_history) > MAX_OPTIMIZATION_HISTORY_SIZE:
+                items_to_keep = int(
+                    MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+                )
+                self.cost_history = self.cost_history[-items_to_keep:]
 
-        # Log performance
-        if job.scheduled_time is not None:
-            actual_duration = job.completed_at - job.scheduled_time
-        else:
-            actual_duration = job.estimated_duration
+            if job.scheduled_time is not None:
+                actual_duration = job.completed_at - job.scheduled_time
+            else:
+                actual_duration = job.estimated_duration
+
         cost_variance = (
             (actual_cost - job.estimated_cost) / job.estimated_cost * 100
             if job.estimated_cost > 0

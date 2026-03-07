@@ -223,9 +223,10 @@ class TokenManager:
 
         def _finalize(fut: asyncio.Task[None]) -> None:
             try:
+                if fut.cancelled():
+                    logger.debug("Token refresh task cancelled")
+                    return
                 fut.result()
-            except asyncio.CancelledError:  # pragma: no cover - cancellation path
-                logger.debug("Token refresh task cancelled")
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("❌ Background token refresh failed", exc_info=exc)
             finally:

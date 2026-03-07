@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -65,7 +66,7 @@ class _AsyncBool:
 class AuthMode(Enum):
     """Authentication modes supported by unified auth system."""
 
-    API_KEY = "api_key"
+    API_KEY = "api_key"  # pragma: allowlist secret
     JWT_TOKEN = "jwt_token"
     OAUTH2 = "oauth2"
     SERVICE_TO_SERVICE = "service_to_service"
@@ -878,7 +879,10 @@ class AuthManager:
         Returns:
             Dictionary of authentication headers
         """
-        if not await self.is_authenticated():
+        auth_state = self.is_authenticated()
+        if inspect.isawaitable(auth_state):
+            auth_state = await auth_state
+        if not bool(auth_state):
             auth_result = await self.authenticate()
             if not auth_result.success or self._credentials is None:
                 self._authenticated = False
