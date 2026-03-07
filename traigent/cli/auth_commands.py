@@ -25,10 +25,25 @@ try:
 except ImportError:
     keyring = None
     KEYRING_AVAILABLE = False
+
+# Try to import aiohttp for exception handling
+try:
+    import aiohttp
+
+    # Network errors to catch: OSError covers most, aiohttp.ClientError for async HTTP
+    NETWORK_ERRORS: tuple[type[Exception], ...] = (OSError, aiohttp.ClientError)
+except ImportError:
+    aiohttp = None  # type: ignore[assignment]
+    NETWORK_ERRORS = (OSError,)
+
 from rich.prompt import Prompt
 from rich.table import Table
 
-from traigent.cloud.auth import AuthManager
+from traigent.cloud.auth import (
+    AuthenticationError,
+    AuthManager,
+    InvalidCredentialsError,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.logging import get_logger
 
@@ -40,6 +55,15 @@ TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
 KEYRING_SERVICE = "traigent-sdk"
 KEYRING_ACCOUNT = "default"
+BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
+
+# Storage location identifiers
+STORAGE_KEYRING = "keyring"
+STORAGE_FILE = "file"
+
+# Common user-facing messages (avoid duplication per SonarCloud S1192)
+MSG_CHECK_NETWORK = "Please check your network connection and try again.\n"
+MSG_RUN_LOGIN_AGAIN = "Please run [cyan]traigent auth login[/cyan] again.\n"
 
 
 class TraigentAuthCLI:
@@ -77,19 +101,19 @@ class TraigentAuthCLI:
                 with open(self.credentials_file) as f:
                     data = json.load(f)
                     return dict(data)
-            except Exception as e:
+            except (json.JSONDecodeError, OSError) as e:
                 logger.debug(f"Failed to load credentials file: {e}")
 
         return None
 
-    def _save_credentials(self, credentials: dict[str, Any]) -> bool:
+    def _save_credentials(self, credentials: dict[str, Any]) -> str | None:
         """Save credentials securely.
 
         Args:
             credentials: Credentials to save
 
         Returns:
-            True if saved successfully
+            Storage location string if saved successfully, None if failed
         """
         # Try keyring first (most secure) if available
         if KEYRING_AVAILABLE and keyring is not None:
@@ -98,7 +122,7 @@ class TraigentAuthCLI:
                     KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials)
                 )
                 logger.debug("Credentials saved to keyring")
-                return True
+                return STORAGE_KEYRING
             except Exception as e:
                 logger.debug(f"Keyring save failed, using file: {e}")
 
@@ -113,10 +137,119 @@ class TraigentAuthCLI:
             # Ensure file has restricted permissions
             self.credentials_file.chmod(0o600)
             logger.debug(f"Credentials saved to {self.credentials_file}")
-            return True
-        except Exception as e:
+            return STORAGE_FILE
+        except OSError as e:
             logger.error(f"Failed to save credentials: {e}")
+            return None
+
+    def _save_api_key_to_env_file(
+        self, api_key: str, env_path: Path | None = None
+    ) -> bool:
+        """Save API key to .env file.
+
+        Args:
+            api_key: The API key to save
+            env_path: Path to .env file (defaults to cwd/.env)
+
+        Returns:
+            True if saved successfully
+        """
+        if env_path is None:
+            env_path = Path.cwd() / ".env"
+
+        try:
+            # Read existing content
+            existing_lines: list[str] = []
+
+            if env_path.exists():
+                with open(env_path) as f:
+                    for line in f:
+                        # Check if this line sets TRAIGENT_API_KEY (not commented)
+                        stripped = line.strip()
+                        if stripped.startswith("TRAIGENT_API_KEY="):
+                            # Comment out the old key
+                            existing_lines.append(
+                                f"# {line.rstrip()} # replaced by traigent auth login\n"
+                            )
+                        else:
+                            existing_lines.append(line)
+
+            # Add new API key
+            if not existing_lines or not existing_lines[-1].endswith("\n"):
+                existing_lines.append("\n")
+            existing_lines.append(f"TRAIGENT_API_KEY={api_key}\n")
+
+            # Write back with restrictive permissions
+            with open(env_path, "w") as f:
+                f.writelines(existing_lines)
+
+            # Set restrictive permissions (user read/write only)
+            env_path.chmod(0o600)
+            logger.debug(f"API key saved to {env_path}")
+            return True
+
+        except OSError as e:
+            logger.error(f"Failed to save API key to .env: {e}")
             return False
+
+    async def _validate_api_key(
+        self, api_key: str, verbose: bool = False
+    ) -> dict[str, Any] | None:
+        """Validate an API key against the backend.
+
+        Args:
+            api_key: The API key to validate
+            verbose: If True, print debug information
+
+        Returns:
+            Key metadata dict if valid, None if invalid
+        """
+        import aiohttp
+
+        url = f"{self.backend_api_url}/keys/validate"
+        headers = {"X-API-Key": api_key}
+
+        if verbose:
+            masked_key = (
+                f"{api_key[:10]}...{api_key[-4:]}" if len(api_key) > 14 else "***"
+            )
+            console.print(f"[dim]POST {url}[/dim]")
+            console.print(f"[dim]X-API-Key: {masked_key}[/dim]")
+
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.post(url, headers=headers) as response:
+                    response_text = await response.text()
+
+                    if verbose:
+                        console.print(f"[dim]Response status: {response.status}[/dim]")
+                        # Show first 200 chars of response for debugging
+                        preview = (
+                            response_text[:200]
+                            if len(response_text) > 200
+                            else response_text
+                        )
+                        console.print(f"[dim]Response: {preview}[/dim]")
+
+                    if response.status == 200:
+                        try:
+                            data = json.loads(response_text)
+                            # Response format: {"valid": true, "data": {...key_metadata...}}
+                            if isinstance(data, dict) and data.get("valid"):
+                                return dict(data.get("data", {}))
+                            return None
+                        except ValueError:
+                            # ValueError covers JSONDecodeError (its subclass)
+                            return None
+                    # 401 = invalid key, 400 = missing key, 429 = rate limited
+                    return None
+        except (TimeoutError, aiohttp.ClientError) as e:
+            logger.debug(f"API key validation failed: {e}")
+            if verbose:
+                console.print(f"[dim]Connection error: {e}[/dim]")
+            return None
 
     def _clear_credentials(self) -> bool:
         """Clear stored credentials.
@@ -141,7 +274,7 @@ class TraigentAuthCLI:
             try:
                 self.credentials_file.unlink()
                 logger.debug("Cleared credentials file")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
 
@@ -160,7 +293,8 @@ class TraigentAuthCLI:
             Authentication tokens
 
         Raises:
-            Exception: If authentication fails
+            AuthenticationError: If authentication fails due to HTTP/protocol errors
+            InvalidCredentialsError: If credentials are rejected by the backend
         """
         import aiohttp
 
@@ -179,7 +313,7 @@ class TraigentAuthCLI:
 
                 # Show response details on failure
                 if response.status != 200:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     safe_headers = {
                         k: v
@@ -188,35 +322,39 @@ class TraigentAuthCLI:
                     }
                     console.print(f"[red]Headers: {safe_headers}[/red]")
                     console.print(f"[red]Body: {response_text}[/red]")
-                    raise Exception(
+                    raise AuthenticationError(
                         f"Authentication failed (HTTP {response.status})"
                     ) from None
 
                 try:
                     login_data = json.loads(response_text)
                 except json.JSONDecodeError:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(f"[red]Status Code: {response.status}[/red]")
                     console.print(f"[red]Body (not JSON): {response_text}[/red]")
-                    raise Exception("Invalid JSON response from backend") from None
+                    raise AuthenticationError(
+                        "Invalid JSON response from backend"
+                    ) from None
 
                 if not login_data.get("success"):
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
                     error_msg = login_data.get("error", "Unknown error")
-                    raise Exception(f"Authentication failed: {error_msg}") from None
+                    raise InvalidCredentialsError(
+                        f"Authentication failed: {error_msg}"
+                    ) from None
 
                 token_data = login_data.get("data", {})
                 jwt_token = token_data.get("access_token")
 
                 if not jwt_token:
-                    console.print("\n[red]--- Backend Response ---[/red]")
+                    console.print(BACKEND_RESPONSE_HEADER)
                     console.print(
                         f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
                     )
-                    raise Exception("No access_token in response") from None
+                    raise AuthenticationError("No access_token in response") from None
 
                 # Show truncated token
                 console.print("[green]✓ JWT Token received[/green]")
@@ -224,13 +362,23 @@ class TraigentAuthCLI:
         # Step 2: Create API key using JWT token
         api_key = None
         api_key_url = f"{self.backend_api_url}/keys"
+
+        # Generate a unique key name to avoid conflicts
+        import platform
+        from datetime import datetime
+
+        hostname = platform.node() or "unknown"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        key_name = f"Traigent SDK CLI ({hostname[:20]} {timestamp})"
+
         console.print(f"\n[dim]POST {api_key_url}[/dim]")
+        console.print(f"[dim]Creating API key: {key_name}[/dim]")
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 api_key_url,
                 json={
-                    "key_name": "Traigent SDK CLI",
+                    "key_name": key_name,
                 },
                 headers={
                     "Authorization": f"Bearer {jwt_token}",
@@ -252,6 +400,11 @@ class TraigentAuthCLI:
                         console.print(
                             f"[yellow]⚠️ Could not parse API key: {e}[/yellow]"
                         )
+                elif response.status == 409:
+                    # Key name conflict - shouldn't happen with unique names, but handle it
+                    console.print(
+                        "[yellow]⚠️ API key name conflict (409). Try again.[/yellow]"
+                    )
                 else:
                     console.print("\n[yellow]--- API Key Response ---[/yellow]")
                     console.print(f"[yellow]Status Code: {response.status}[/yellow]")
@@ -273,6 +426,159 @@ class TraigentAuthCLI:
             "backend_url": self.backend_url,
         }
 
+    async def _check_stored_api_key(self) -> bool:
+        """Check if stored API key is valid.
+
+        Returns:
+            True if valid stored credentials found (already authenticated)
+        """
+        existing_creds = self._load_stored_credentials()
+        if not existing_creds or not existing_creds.get("api_key"):
+            return False
+
+        console.print("[dim]Checking stored API key...[/dim]")
+        user_info = await self._validate_api_key(
+            existing_creds["api_key"], verbose=True
+        )
+
+        if user_info is not None:
+            console.print("[green]✅ Already authenticated with valid API key[/green]")
+            email_display = user_info.get("email") or existing_creds.get(
+                "user", {}
+            ).get("email")
+            if email_display:
+                console.print(f"User: [cyan]{email_display}[/cyan]")
+            console.print(
+                "\nTo re-authenticate, first run [cyan]traigent auth logout[/cyan]\n"
+            )
+            return True
+
+        # API key is invalid, clear it
+        console.print(
+            "[yellow]⚠️ Stored API key is no longer valid, proceeding with login...[/yellow]\n"
+        )
+        self._clear_credentials()
+        return False
+
+    async def _check_env_api_key(self) -> bool:
+        """Check if TRAIGENT_API_KEY environment variable is valid.
+
+        Returns:
+            True if valid env API key found (already authenticated)
+        """
+        env_api_key = os.environ.get("TRAIGENT_API_KEY")
+        if not env_api_key:
+            return False
+
+        console.print("[dim]Found TRAIGENT_API_KEY in environment, validating...[/dim]")
+        user_info = await self._validate_api_key(env_api_key, verbose=True)
+
+        if user_info is not None:
+            console.print(
+                "[green]✅ Valid API key found in TRAIGENT_API_KEY environment variable[/green]"
+            )
+            email_display = user_info.get("email")
+            if email_display:
+                console.print(f"User: [cyan]{email_display}[/cyan]")
+            console.print(
+                "\nYou're already authenticated via environment variable.\n"
+                "To use a different account, unset TRAIGENT_API_KEY and run login again.\n"
+            )
+            return True
+
+        console.print(
+            "[yellow]⚠️ TRAIGENT_API_KEY in environment is invalid, proceeding with login...[/yellow]\n"
+        )
+        return False
+
+    def _get_user_credentials(
+        self, email: str | None, non_interactive: bool
+    ) -> tuple[str, str] | None:
+        """Get email and password from user.
+
+        Returns:
+            Tuple of (email, password) or None if failed in non-interactive mode
+        """
+        # Get email from arg, env var, or prompt
+        if not email:
+            email = os.environ.get("TRAIGENT_AUTH_EMAIL")
+        if not email:
+            if non_interactive:
+                console.print(
+                    "[red]Email required. Use --email or set TRAIGENT_AUTH_EMAIL[/red]"
+                )
+                return None
+            email = Prompt.ask("Email")
+        else:
+            console.print(f"Using email: [cyan]{email}[/cyan]")
+
+        # Get password from env var or prompt
+        password = os.environ.get("TRAIGENT_AUTH_PASSWORD")
+        if not password:
+            if non_interactive:
+                console.print(
+                    "[red]Password required. Set TRAIGENT_AUTH_PASSWORD[/red]"
+                )
+                return None
+            from getpass import getpass
+
+            password = getpass("Password: ")
+        else:
+            console.print("Using password from: [cyan]TRAIGENT_AUTH_PASSWORD[/cyan]")
+
+        if email is None:
+            raise ValueError("Email must be provided")
+        return (email, password)
+
+    def _display_storage_location(self, storage_location: str | None) -> None:
+        """Display where credentials are stored."""
+        if storage_location == STORAGE_KEYRING:
+            console.print("\n[bold]Credentials stored in:[/bold] System Keyring")
+            import platform
+
+            system = platform.system()
+            if system == "Darwin":
+                console.print(
+                    "  [dim]View in: Keychain Access app → search 'traigent-sdk'[/dim]"
+                )
+                console.print(
+                    "  [dim]Or run:[/dim] [cyan]security find-generic-password -s traigent-sdk -a default -w | python -m json.tool[/cyan]"
+                )
+            elif system == "Windows":
+                console.print(
+                    "  [dim]View in: Control Panel → Credential Manager → 'traigent-sdk'[/dim]"
+                )
+            else:
+                console.print(
+                    "  [dim]View in: Seahorse/KWallet → search 'traigent-sdk'[/dim]"
+                )
+        elif storage_location == STORAGE_FILE:
+            console.print(
+                f"\n[bold]Credentials stored in:[/bold] [cyan]{self.credentials_file}[/cyan]"
+            )
+            console.print(
+                f"  [dim]View with:[/dim] [cyan]cat {self.credentials_file}[/cyan]"
+            )
+        else:
+            console.print("\n[yellow]⚠️ Could not save credentials to storage[/yellow]")
+
+    def _offer_env_file_save(self, api_key: str, non_interactive: bool) -> None:
+        """Offer to save API key to .env file."""
+        if non_interactive:
+            return
+
+        env_path = Path.cwd() / ".env"
+        save_to_env = Prompt.ask(
+            f"\nSave API key to [cyan]{env_path}[/cyan] for easy access?",
+            choices=["y", "n"],
+            default="y",
+        )
+        if save_to_env.lower() == "y":
+            if self._save_api_key_to_env_file(api_key, env_path):
+                console.print(f"[green]✅ API key added to {env_path}[/green]")
+            else:
+                console.print(f"[yellow]⚠️ Could not save to {env_path}[/yellow]")
+
     async def login(
         self, email: str | None = None, non_interactive: bool = False
     ) -> bool:
@@ -288,70 +594,75 @@ class TraigentAuthCLI:
         console.print("\n[bold blue]🔐 Traigent Authentication[/bold blue]")
         console.print(f"Authenticating with: [cyan]{self.backend_url}[/cyan]\n")
 
-        # Get email from arg, env var, or prompt
-        if not email:
-            email = os.environ.get("TRAIGENT_AUTH_EMAIL")
-        if not email:
-            if non_interactive:
-                console.print(
-                    "[red]Email required. Use --email or set TRAIGENT_AUTH_EMAIL[/red]"
-                )
-                return False
-            email = Prompt.ask("Email")
-        else:
-            console.print(f"Using email: [cyan]{email}[/cyan]")
-
-        # Get password from env var or prompt
-        password = os.environ.get("TRAIGENT_AUTH_PASSWORD")
-        if not password:
-            if non_interactive:
-                console.print(
-                    "[red]Password required. Set TRAIGENT_AUTH_PASSWORD[/red]"
-                )
-                return False
-            from getpass import getpass
-
-            password = getpass("Password: ")
-        else:
-            console.print("Using password from: [cyan]TRAIGENT_AUTH_PASSWORD[/cyan]")
-
-        try:
-            # Authenticate
-            console.print("\n[yellow]Authenticating...[/yellow]")
-            credentials = await self._authenticate_with_backend(
-                email, password  # type: ignore[arg-type]
-            )
-
-            # Store credentials
-            self._save_credentials(credentials)
-
-            # Success message
-            user = credentials.get("user", {})
-            console.print(
-                f"\n[green]✅ Successfully authenticated as {user.get('email', email)}[/green]"
-            )
-
-            if credentials.get("api_key"):
-                console.print("[green]✅ API key generated and stored securely[/green]")
-            else:
-                console.print(
-                    "[yellow]⚠️  Using JWT token (API key generation not available)[/yellow]"
-                )
-
-            console.print(f"\nCredentials stored in: [cyan]{self.config_dir}[/cyan]")
-            console.print(
-                "You can now use Traigent SDK with backend tracking enabled.\n"
-            )
-
+        # Check existing authentication methods
+        if await self._check_stored_api_key():
+            return True
+        if await self._check_env_api_key():
             return True
 
-        except Exception as e:
+        # Get user credentials
+        creds = self._get_user_credentials(email, non_interactive)
+        if creds is None:
+            return False
+        email, password = creds
+
+        try:
+            # Authenticate with backend
+            console.print("\n[yellow]Authenticating...[/yellow]")
+            credentials = await self._authenticate_with_backend(email, password)
+
+            # Store and display results
+            storage_location = self._save_credentials(credentials)
+            self._display_login_success(credentials, email, storage_location)
+
+            # Offer to save API key to .env file
+            if credentials.get("api_key"):
+                self._offer_env_file_save(credentials["api_key"], non_interactive)
+
+            console.print(
+                "\nYou can now use Traigent SDK with backend tracking enabled.\n"
+            )
+            return True
+
+        except AuthenticationError as e:
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
             console.print(
                 "If you don't have an account, visit: https://traigent.ai/signup\n"
             )
             return False
+        except TimeoutError as e:
+            console.print(f"\n[red]❌ Connection timed out: {e}[/red]")
+            console.print("\nThe backend server took too long to respond.")
+            console.print(MSG_CHECK_NETWORK)
+            return False
+        except NETWORK_ERRORS as e:
+            error_type = type(e).__name__
+            console.print(f"\n[red]❌ Connection error ({error_type}): {e}[/red]")
+            console.print("\nCould not connect to the authentication server.")
+            console.print(MSG_CHECK_NETWORK)
+            return False
+
+    def _display_login_success(
+        self,
+        credentials: dict[str, Any],
+        email: str,
+        storage_location: str | None,
+    ) -> None:
+        """Display success message after login."""
+        user = credentials.get("user", {})
+        console.print(
+            f"\n[green]✅ Successfully authenticated as {user.get('email', email)}[/green]"
+        )
+
+        if credentials.get("api_key"):
+            console.print("[green]✅ API key generated and stored securely[/green]")
+        else:
+            console.print(
+                "[yellow]⚠️  Using JWT token (API key generation not available)[/yellow]"
+            )
+
+        self._display_storage_location(storage_location)
 
     async def logout(self) -> bool:
         """Logout and clear stored credentials.
@@ -436,6 +747,51 @@ class TraigentAuthCLI:
 
         return True
 
+    def _display_refresh_failure(self, refresh_result: Any) -> None:
+        """Display detailed refresh failure information."""
+        console.print("[red]❌ Refresh failed[/red]")
+        if refresh_result.error_message:
+            console.print(f"[yellow]Reason:[/yellow] {refresh_result.error_message}")
+        if refresh_result.status:
+            console.print(f"[yellow]Status:[/yellow] {refresh_result.status.value}")
+        if refresh_result.retry_after:
+            console.print(
+                f"[yellow]Retry after:[/yellow] {refresh_result.retry_after:.1f}s"
+            )
+        console.print(
+            "\nPlease run [cyan]traigent auth login[/cyan] to re-authenticate.\n"
+        )
+
+    async def _perform_token_refresh(self, creds: dict[str, Any]) -> bool:
+        """Perform the actual token refresh operation.
+
+        Returns:
+            True if refresh successful
+        """
+        refresh_result = await self.auth_manager.refresh_authentication()
+
+        if not refresh_result:
+            self._display_refresh_failure(refresh_result)
+            return False
+
+        # Get the new token from auth manager
+        auth_headers = await self.auth_manager.get_auth_headers()
+
+        if "Authorization" not in auth_headers:
+            console.print("[red]❌ No token received after refresh[/red]")
+            console.print(
+                "[dim]Auth headers returned without Authorization header[/dim]"
+            )
+            return False
+
+        # Extract and store new JWT token
+        jwt_token = auth_headers["Authorization"].replace("Bearer ", "")
+        creds["jwt_token"] = jwt_token
+        self._save_credentials(creds)
+
+        console.print("[green]✅ Authentication refreshed successfully[/green]\n")
+        return True
+
     async def refresh(self) -> bool:
         """Refresh authentication tokens.
 
@@ -444,54 +800,43 @@ class TraigentAuthCLI:
         """
         console.print("\n[bold blue]🔄 Refreshing Authentication[/bold blue]")
 
-        # Load current credentials
+        # Load and validate current credentials
         creds = self._load_stored_credentials()
         if not creds:
             console.print("[red]❌ No credentials to refresh[/red]")
             console.print("Run [cyan]traigent auth login[/cyan] first.\n")
             return False
 
-        # If using API key, no refresh needed
+        # API keys don't need refresh
         if creds.get("api_key"):
             console.print("[green]✅ Using API key (no refresh needed)[/green]")
             return True
 
-        # Refresh JWT token
+        # Check for refresh token
         if not creds.get("refresh_token"):
             console.print("[red]❌ No refresh token available[/red]")
-            console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
+            console.print(MSG_RUN_LOGIN_AGAIN)
             return False
 
         try:
-            # Use SecureAuthManager for refresh with resilient client
-            refresh_success = await self.auth_manager.refresh_authentication()
-
-            if refresh_success:
-                # Get the new token from auth manager
-                auth_headers = await self.auth_manager.get_auth_headers()
-
-                if "Authorization" in auth_headers:
-                    # Extract new JWT token
-                    jwt_token = auth_headers["Authorization"].replace("Bearer ", "")
-
-                    # Update stored credentials
-                    creds["jwt_token"] = jwt_token
-                    self._save_credentials(creds)
-
-                    console.print(
-                        "[green]✅ Authentication refreshed successfully[/green]\n"
-                    )
-                    return True
-                else:
-                    console.print("[red]❌ No token received after refresh[/red]")
-                    return False
-            else:
-                console.print("[red]❌ Refresh failed[/red]")
-                return False
-
-        except Exception as e:
+            return await self._perform_token_refresh(creds)
+        except AuthenticationError as e:
             console.print(f"[red]❌ Refresh failed: {e}[/red]")
-            console.print("Please run [cyan]traigent auth login[/cyan] again.\n")
+            console.print(MSG_RUN_LOGIN_AGAIN)
+            return False
+        except ValueError as e:
+            console.print(f"[red]❌ Refresh failed (invalid data): {e}[/red]")
+            console.print(MSG_RUN_LOGIN_AGAIN)
+            return False
+        except TimeoutError as e:
+            console.print(f"[red]❌ Connection timed out: {e}[/red]")
+            console.print("\nThe backend server took too long to respond.")
+            console.print(MSG_CHECK_NETWORK)
+            return False
+        except NETWORK_ERRORS as e:
+            error_type = type(e).__name__
+            console.print(f"[red]❌ Refresh failed ({error_type}): {e}[/red]")
+            console.print(MSG_RUN_LOGIN_AGAIN)
             return False
 
     def configure(self) -> bool:
@@ -536,8 +881,13 @@ class TraigentAuthCLI:
         elif auth_method == "2":
             api_key = Prompt.ask("Enter API Key", password=True)
             credentials = {"api_key": api_key, "backend_url": current_backend}
-            if self._save_credentials(credentials):
-                console.print("[green]✅ API key stored securely[/green]\n")
+            storage_location = self._save_credentials(credentials)
+            if storage_location:
+                console.print("[green]✅ API key stored securely[/green]")
+                if storage_location == STORAGE_KEYRING:
+                    console.print("[dim]Location: System Keyring[/dim]\n")
+                else:
+                    console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
             else:
                 console.print("[red]❌ Failed to store API key[/red]\n")
         else:
@@ -695,35 +1045,50 @@ def whoami(key: str) -> None:
             )
             return False
 
-        url = f"{backend_api_url}/user/me"
+        url = f"{backend_api_url}/keys/validate"
         headers = {"X-API-Key": key}
 
         try:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as session:
-                async with session.get(url, headers=headers) as response:
+                async with session.post(url, headers=headers) as response:
                     if response.status == 200:
                         try:
                             data = await response.json(content_type=None)
                         except Exception:
                             data = {}
-                        user = data.get("data", {}) if isinstance(data, dict) else {}
 
-                        table = Table(show_header=False, box=None)
-                        table.add_column("Field", style="cyan")
-                        table.add_column("Value")
+                        # Response format: {"valid": true, "data": {...key_metadata...}}
+                        if isinstance(data, dict) and data.get("valid"):
+                            key_data = data.get("data", {})
 
-                        table.add_row("Status", "[green]✅ Valid[/green]")
-                        table.add_row("Category", "authenticated")
-                        table.add_row("HTTP", "200")
-                        table.add_row("Email", user.get("email", "Unknown"))
-                        table.add_row("Name", user.get("name", "Unknown"))
-                        table.add_row("Organization", user.get("organization", "N/A"))
+                            table = Table(show_header=False, box=None)
+                            table.add_column("Field", style="cyan")
+                            table.add_column("Value")
 
-                        console.print(table)
-                        console.print()
-                        return True
+                            table.add_row("Status", "[green]✅ Valid[/green]")
+                            table.add_row("Category", "authenticated")
+                            table.add_row("HTTP", "200")
+                            table.add_row(
+                                "Key Name", key_data.get("key_name", "Unknown")
+                            )
+                            table.add_row(
+                                "User ID", str(key_data.get("user_id", "Unknown"))
+                            )
+                            table.add_row(
+                                "Created",
+                                key_data.get("created_at", "Unknown"),
+                            )
+
+                            console.print(table)
+                            console.print()
+                            return True
+                        else:
+                            console.print("[red]❌ Invalid API key[/red]")
+                            console.print("[yellow]Category:[/yellow] authentication")
+                            console.print()
+                            return False
 
                     body_preview = (
                         (await response.text()).strip().replace("\n", " ")[:220]
