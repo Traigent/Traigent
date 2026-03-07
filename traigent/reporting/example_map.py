@@ -172,7 +172,7 @@ def _normalize_example_item(item: Any, *, source: str) -> dict[str, Any]:
 
 def _fallback_example_content_map_schema() -> dict[str, Any]:
     return {
-        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "Example Content Map Schema",
         "type": "object",
         "properties": {
