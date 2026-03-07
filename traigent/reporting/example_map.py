@@ -25,7 +25,7 @@ def build_example_content_map(
     path = Path(dataset_path)
     examples = _load_examples(path)
     identifier = (
-        dataset_identifier if dataset_identifier is not None else str(dataset_path)
+        dataset_identifier if dataset_identifier is not None else str(path.resolve())
     )
     dataset_hash = compute_dataset_hash(identifier)
     example_map: dict[str, Any] = {}
@@ -36,9 +36,9 @@ def build_example_content_map(
             "example_num": index + 1,
             "input": example["input"],
             "expected_output": example["expected_output"],
+            # Keep stored entries aligned with fingerprint canonicalization.
+            "metadata": example["metadata"],
         }
-        if example.get("metadata"):
-            payload["metadata"] = example["metadata"]
         example_map[example_id] = payload
 
     return {
@@ -80,6 +80,8 @@ def validate_example_content_map(payload: dict[str, Any]) -> list[str]:
             schema=schema,
             format_checker=jsonschema.FormatChecker(),
         )
+    except jsonschema.SchemaError as exc:
+        return [f"Schema definition error: {exc.message}"]
     except jsonschema.ValidationError as exc:
         return [str(exc)]
     return []
@@ -157,7 +159,16 @@ def _normalize_example_item(item: Any, *, source: str) -> dict[str, Any]:
         raise ValidationError(
             f"Dataset entry missing required 'output' or 'expected_output' field: {source}"
         )
-    expected_output = item.get("output", item.get("expected_output"))
+    has_output = "output" in item
+    has_expected_output = "expected_output" in item
+    output_value = item.get("output")
+    expected_output_value = item.get("expected_output")
+    if has_output and has_expected_output and output_value != expected_output_value:
+        raise ValidationError(
+            "Dataset entry has conflicting 'output' and 'expected_output' values: "
+            f"{source}"
+        )
+    expected_output = output_value if has_output else expected_output_value
     metadata = {
         key: value
         for key, value in item.items()

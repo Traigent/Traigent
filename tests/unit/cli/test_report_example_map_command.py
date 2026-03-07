@@ -9,6 +9,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
+from traigent.reporting.example_map import build_example_content_map
 
 
 def test_report_example_map_command_generates_output(tmp_path: Path):
@@ -67,3 +68,33 @@ def test_report_example_map_command_fails_on_invalid_dataset(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "missing required 'input' field" in result.output.lower()
+
+
+def test_report_example_map_command_defaults_to_resolved_dataset_path(
+    tmp_path: Path, monkeypatch
+):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        json.dumps({"input": {"q": "hello"}, "output": "world"}) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "example_map.json"
+
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    with patch("traigent.cli.main.WORKSPACE_ROOT", tmp_path):
+        result = runner.invoke(
+            cli,
+            [
+                "report-example-map",
+                "--dataset",
+                "dataset.jsonl",
+                "--output",
+                "example_map.json",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    expected_payload = build_example_content_map(dataset)
+    assert payload["example_map"] == expected_payload["example_map"]

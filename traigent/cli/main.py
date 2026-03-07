@@ -646,7 +646,7 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
     default=None,
     help=(
         "Identifier used for stable example_id generation. "
-        "Defaults to the dataset argument exactly as passed."
+        "Defaults to the resolved absolute dataset path."
     ),
 )
 @click.option(
@@ -683,7 +683,7 @@ def report_example_map(
         resolved_output = _resolve_workspace_path(output_candidate, "Output file")
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
-        effective_identifier = dataset_identifier or dataset_path
+        effective_identifier = dataset_identifier or str(resolved_dataset)
         payload = build_example_content_map(
             resolved_dataset,
             dataset_identifier=effective_identifier,
