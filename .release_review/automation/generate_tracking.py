@@ -189,6 +189,78 @@ def artifact_covers_requirement(
     }
 
 
+def _force_rereview_requested(file_path: str, force_patterns: list[str]) -> bool:
+    return bool(force_patterns) and _matches_any(file_path, force_patterns)
+
+
+def _source_release_id(previous_run_dir: Path) -> str:
+    manifest_path = previous_run_dir / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    return str(manifest.get("release_id") or previous_run_dir.name)
+
+
+def _record_reused_artifact_coverage(
+    *,
+    pending: list[str],
+    force_patterns: list[str],
+    required_roles: set[str],
+    required_angles: set[str],
+    coverage: dict[str, dict[str, set[str]]],
+    reuse_rows: list[dict[str, object]],
+    source_release_id: str,
+    artifact_path: Path,
+    payload: dict[str, object],
+) -> None:
+    commit_sha = str(payload.get("commit_sha") or "").strip()
+    for file_path in pending:
+        if _force_rereview_requested(file_path, force_patterns):
+            continue
+        if not git_file_unchanged_since(commit_sha, file_path):
+            continue
+        for role in required_roles:
+            covered_angles = artifact_covers_requirement(
+                payload,
+                file_path=file_path,
+                required_role=role,
+                required_angles=required_angles,
+            )
+            new_angles = covered_angles - coverage[file_path][role]
+            if not new_angles:
+                continue
+            coverage[file_path][role].update(new_angles)
+            reuse_rows.append(
+                {
+                    "file": file_path,
+                    "review_type": role,
+                    "angles_reused": sorted(new_angles),
+                    "source_run_id": source_release_id,
+                    "source_artifact": str(artifact_path),
+                    "commit_sha": commit_sha,
+                }
+            )
+
+
+def _partition_pending_files(
+    *,
+    pending: list[str],
+    force_patterns: list[str],
+    required_roles: set[str],
+    required_angles: set[str],
+    coverage: dict[str, dict[str, set[str]]],
+) -> tuple[list[str], list[str]]:
+    skipped: list[str] = []
+    remaining: list[str] = []
+    for file_path in pending:
+        if _force_rereview_requested(file_path, force_patterns):
+            remaining.append(file_path)
+            continue
+        if all(required_angles.issubset(coverage[file_path][role]) for role in required_roles):
+            skipped.append(file_path)
+        else:
+            remaining.append(file_path)
+    return sorted(remaining), sorted(skipped)
+
+
 def build_reuse_plan(
     runs_root: Path,
     current_release_id: str,
@@ -220,59 +292,31 @@ def build_reuse_plan(
     reuse_rows: list[dict[str, object]] = []
 
     for previous_run_dir in iter_previous_run_dirs(runs_root, current_release_id):
-        manifest_path = previous_run_dir / "run_manifest.json"
-        manifest = json.loads(manifest_path.read_text())
-        source_release_id = str(manifest.get("release_id") or previous_run_dir.name)
+        source_release_id = _source_release_id(previous_run_dir)
         for artifact_path in sorted((previous_run_dir / "file_reviews").rglob("*.json")):
             payload = json.loads(artifact_path.read_text())
             if not isinstance(payload, dict):
                 continue
-            commit_sha = str(payload.get("commit_sha") or "").strip()
-            for file_path in pending:
-                if force_patterns and _matches_any(file_path, force_patterns):
-                    continue
-                if not git_file_unchanged_since(commit_sha, file_path):
-                    continue
-                for role in required_roles:
-                    covered_angles = artifact_covers_requirement(
-                        payload,
-                        file_path=file_path,
-                        required_role=role,
-                        required_angles=required_angles,
-                    )
-                    if not covered_angles:
-                        continue
-                    prior_angles = set(coverage[file_path][role])
-                    new_angles = covered_angles - prior_angles
-                    if not new_angles:
-                        continue
-                    coverage[file_path][role].update(new_angles)
-                    reuse_rows.append(
-                        {
-                            "file": file_path,
-                            "review_type": role,
-                            "angles_reused": sorted(new_angles),
-                            "source_run_id": source_release_id,
-                            "source_artifact": str(artifact_path),
-                            "commit_sha": commit_sha,
-                        }
-                    )
+            _record_reused_artifact_coverage(
+                pending=pending,
+                force_patterns=force_patterns,
+                required_roles=required_roles,
+                required_angles=required_angles,
+                coverage=coverage,
+                reuse_rows=reuse_rows,
+                source_release_id=source_release_id,
+                artifact_path=artifact_path,
+                payload=payload,
+            )
 
-    skipped = []
-    remaining = []
-    for file_path in pending:
-        if force_patterns and _matches_any(file_path, force_patterns):
-            remaining.append(file_path)
-            continue
-        is_complete = all(
-            required_angles.issubset(coverage[file_path][role]) for role in required_roles
-        )
-        if is_complete:
-            skipped.append(file_path)
-        else:
-            remaining.append(file_path)
-
-    return sorted(remaining), sorted(skipped), reuse_rows
+    remaining, skipped = _partition_pending_files(
+        pending=pending,
+        force_patterns=force_patterns,
+        required_roles=required_roles,
+        required_angles=required_angles,
+        coverage=coverage,
+    )
+    return remaining, skipped, reuse_rows
 
 
 def filter_review_scope_files(changed_files: list[str]) -> list[str]:
@@ -332,6 +376,26 @@ def resolve_run_dir(output_root: str, release_id: str) -> tuple[Path, Path]:
     except ValueError as exc:
         raise ValueError("resolved run directory escapes output root") from exc
     return root, run_dir
+
+
+def resolve_inventory_path(run_dir: Path, filename: str) -> Path:
+    inventories_dir = (run_dir / "inventories").resolve()
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ValueError("inventory filename must not include directory components")
+    target = (inventories_dir / candidate).resolve()
+    try:
+        target.relative_to(inventories_dir)
+    except ValueError as exc:
+        raise ValueError("resolved inventory path escapes inventories directory") from exc
+    return target
+
+
+def write_inventory_text(run_dir: Path, filename: str, content: str) -> Path:
+    target = resolve_inventory_path(run_dir, filename)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    return target
 
 
 def render_tracking_board(
@@ -413,20 +477,28 @@ def write_inventories(run_dir: Path, base_branch: str) -> list[str]:
     )
 
     src_files = sorted(src_files)
-    (inventories / "src_files.txt").write_text(
-        "\n".join(src_files) + ("\n" if src_files else "")
+    write_inventory_text(
+        run_dir,
+        "src_files.txt",
+        "\n".join(src_files) + ("\n" if src_files else ""),
     )
-    (inventories / "tests_files.txt").write_text(
-        "\n".join(test_files) + ("\n" if test_files else "")
+    write_inventory_text(
+        run_dir,
+        "tests_files.txt",
+        "\n".join(test_files) + ("\n" if test_files else ""),
     )
 
     changed_files = git_changed_files(base_branch)
     review_scope_files = filter_review_scope_files(changed_files)
-    (inventories / "changed_files.txt").write_text(
-        "\n".join(sorted(changed_files)) + ("\n" if changed_files else "")
+    write_inventory_text(
+        run_dir,
+        "changed_files.txt",
+        "\n".join(sorted(changed_files)) + ("\n" if changed_files else ""),
     )
-    (inventories / "review_scope_files.txt").write_text(
-        "\n".join(review_scope_files) + ("\n" if review_scope_files else "")
+    write_inventory_text(
+        run_dir,
+        "review_scope_files.txt",
+        "\n".join(review_scope_files) + ("\n" if review_scope_files else ""),
     )
     return review_scope_files
 
@@ -504,15 +576,20 @@ def main() -> int:
         review_mode_config,
         args.force_rereview,
     )
-    inventories_dir = run_dir / "inventories"
-    (inventories_dir / "review_pending_files.txt").write_text(
-        "\n".join(pending_files) + ("\n" if pending_files else "")
+    write_inventory_text(
+        run_dir,
+        "review_pending_files.txt",
+        "\n".join(pending_files) + ("\n" if pending_files else ""),
     )
-    (inventories_dir / "review_skipped_files.txt").write_text(
-        "\n".join(skipped_files) + ("\n" if skipped_files else "")
+    write_inventory_text(
+        run_dir,
+        "review_skipped_files.txt",
+        "\n".join(skipped_files) + ("\n" if skipped_files else ""),
     )
-    (inventories_dir / "reused_file_review_artifacts.json").write_text(
-        json.dumps(reuse_rows, indent=2) + "\n"
+    write_inventory_text(
+        run_dir,
+        "reused_file_review_artifacts.json",
+        json.dumps(reuse_rows, indent=2) + "\n",
     )
     write_run_manifest(
         run_dir=run_dir,

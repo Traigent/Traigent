@@ -122,7 +122,31 @@ class ExampleRunner:
 
         return issues
 
-    def run_examples(self, pattern: str, validate_structure: bool = True) -> bool:
+    def _report_structure_issues(
+        self, example: Path, *, validate_structure: bool
+    ) -> None:
+        if not validate_structure:
+            return
+        issues = self.validate_example_structure(example)
+        if issues:
+            print(f"⚠️  Structure issues in {example.name}: {', '.join(issues)}")
+
+    @staticmethod
+    def _status_for_result(result: Dict[str, Any]) -> str:
+        return "✅" if result["success"] else "❌"
+
+    def _print_failure_details(self, result: Dict[str, Any]) -> None:
+        if result["success"] or not self.verbose:
+            return
+        print(f"   Return code: {result.get('return_code', 'unknown')}")
+        if result["error"]:
+            print(f"   Error: {result['error'][:200]}...")
+        if result["output"]:
+            print(f"   Output: {result['output'][:200]}...")
+
+    def run_examples(
+        self, pattern: str, validate_structure: bool = True, timeout: int = 60
+    ) -> bool:
         """Run all examples matching the pattern."""
         examples = self.discover_examples(pattern)
 
@@ -135,29 +159,17 @@ class ExampleRunner:
         success_count = 0
 
         for example in examples:
-            if validate_structure:
-                issues = self.validate_example_structure(example)
-                if issues:
-                    print(f"⚠️  Structure issues in {example.name}: {', '.join(issues)}")
-
-            result = self.run_example(example)
+            self._report_structure_issues(
+                example, validate_structure=validate_structure
+            )
+            result = self.run_example(example, timeout=timeout)
             self.results.append(result)
+            success_count += int(result["success"])
 
-            if result["success"]:
-                status = "✅"
-                success_count += 1
-            else:
-                status = "❌"
-
+            status = self._status_for_result(result)
             duration_str = f"{result['duration']:.1f}s"
             print(f"{status} {example.name} ({duration_str})")
-
-            if not result["success"] and self.verbose:
-                print(f"   Return code: {result.get('return_code', 'unknown')}")
-                if result["error"]:
-                    print(f"   Error: {result['error'][:200]}...")
-                if result["output"]:
-                    print(f"   Output: {result['output'][:200]}...")
+            self._print_failure_details(result)
 
         return success_count == len(examples)
 
@@ -237,7 +249,9 @@ def main():
     print("-" * 40)
 
     success = runner.run_examples(
-        args.pattern, validate_structure=not args.no_structure_validation
+        args.pattern,
+        validate_structure=not args.no_structure_validation,
+        timeout=args.timeout,
     )
 
     print("\n" + runner.generate_report())
