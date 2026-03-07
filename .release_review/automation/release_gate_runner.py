@@ -283,12 +283,14 @@ def ensure_run_workspace(run_dir: Path, release_id: str, base_branch: str) -> No
     gate_results = run_dir / "gate_results"
     inventories = run_dir / "inventories"
     components = run_dir / "components"
+    file_reviews = run_dir / "file_reviews"
     waivers = run_dir / "waivers"
     logs = run_dir / "logs"
 
     gate_results.mkdir(parents=True, exist_ok=True)
     inventories.mkdir(parents=True, exist_ok=True)
     components.mkdir(parents=True, exist_ok=True)
+    file_reviews.mkdir(parents=True, exist_ok=True)
     waivers.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
 
@@ -298,7 +300,7 @@ def ensure_run_workspace(run_dir: Path, release_id: str, base_branch: str) -> No
             "release_id": release_id,
             "base_branch": base_branch,
             "created_at_utc": utc_now(),
-            "protocol_version": 2,
+            "protocol_version": 3,
         }
         manifest.write_text(json.dumps(manifest_payload, indent=2) + "\n")
 

@@ -328,9 +328,7 @@ def _run_single_optimization(
     try:
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
-            func.optimize(**optimize_kwargs)
-        )
+        result = asyncio.run(func.optimize(**optimize_kwargs))
         _display_optimization_result(
             func_name, result, persistence, algorithm, max_trials
         )

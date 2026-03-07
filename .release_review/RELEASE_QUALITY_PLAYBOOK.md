@@ -36,6 +36,7 @@ Major SDK releases need stronger guarantees across:
 | Dependency review | `pip-audit --progress-spinner off --desc` | gate logs + summary | Known vuln without accepted waiver |
 | CodeQL | CI-native (`release-gate/codeql`) | code scanning results | Failed required check |
 | Protocol consistency | `python3 .release_review/automation/validate_release_review_consistency.py` | check log | Any deprecated protocol usage |
+| Peer-review completeness | `python3 .release_review/automation/build_release_verdict.py --release-id <RELEASE_ID>` | `gate_results/verdict.json` (`failed_required_reviews`) | Missing primary/secondary/tertiary/reconciliation evidence, non-approved peer decisions, same-family P0/P1 reviewers, missing per-file 4-angle coverage, missing per-file artifact matrix (`file + role + agent`), or low-substance artifacts (missing strengths/checks/review summary/notes) |
 
 Run all local gates with:
 
@@ -56,15 +57,45 @@ For each approved component and gate, keep:
   - `Resolved`
   - `Accepted risk` (with owner + ticket)
   - `Blocked release`
+- Per-file review proof:
+  - each in-scope changed file appears in `files_reviewed[]` for primary, secondary, tertiary, and reconciliation evidence.
+  - each in-scope changed file has artifacts under `.release_review/runs/<release_id>/file_reviews/` for required lanes:
+    - `primary/codex_cli`
+    - `secondary/claude_cli`
+    - `tertiary/codex_cli` (or `tertiary/copilot_cli`)
+    - `reconciliation/codex_cli`
+  - each component/file artifact includes positive findings (`strengths[]`) and explicit checks (`checks_performed[]`) to support meta-analysis of both strengths and defects.
 
-## AI Prompt Pack (Advisory Layer)
+## AI Prompt Pack (Required for READY)
 
 Use prompt templates under `.release_review/prompts/`.
 
-- `captain_system.md`
-- `primary_reviewer.md`
-- `secondary_adversarial_reviewer.md`
-- `reconciliation.md`
+- `codex_cli__captain.md`
+- `codex_cli__primary.md`
+- `claude_cli__secondary.md`
+- `codex_cli__tertiary.md`
+- `copilot_cli__tertiary.md`
+- `codex_cli__reconciliation.md`
+
+`READY` states require completed evidence from this peer-review flow for every component.
+
+## Cost-Controlled Source Waves
+
+Use source-wave mode when the per-file review matrix is too slow or expensive to execute as one
+monolithic batch.
+
+- Canonical source inventory: `.release_review/inventories/source_files.txt`
+- Canonical wave definitions: `.release_review/components.yml`
+- Ordered execution plan: `.release_review/PRIORITY_REVIEW_WAVES.md`
+- Coverage verifier: `python3 .release_review/automation/verify_source_wave_coverage.py`
+
+Rules:
+
+- The wave plan is a batching strategy, not a weaker readiness bar.
+- Every file in the source inventory must appear in exactly one wave inventory.
+- Every wave still requires the same primary, secondary, tertiary, and reconciliation coverage.
+- Completing only the first few waves is useful for risk triage, but it is never enough for
+  `READY`.
 
 ## Suggested Rollout
 

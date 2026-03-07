@@ -8,8 +8,9 @@ import asyncio
 import inspect
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -346,10 +347,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
-        if self._aio_session:
-            await self._aio_session.close()
-            self._aio_session = None
+        await self.close()
         return False
+
+    async def close(self) -> None:
+        """Close and discard the shared HTTP session."""
+        await self._close_http_session()
 
     async def _ensure_session(self):
         """Ensure session exists with current auth headers.
@@ -398,20 +401,31 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session after failures."""
+        await self._close_http_session(reason=reason)
 
+    async def _close_http_session(self, reason: str | None = None) -> None:
+        """Best-effort close for the shared HTTP session."""
         if not self._aio_session:
             return
 
         session = self._aio_session
         if session is None:
             return
-        if session.__class__.__module__.startswith("unittest.mock"):
-            return
         self._aio_session = None
+
+        close_method = getattr(session, "close", None)
+        if not callable(close_method):
+            return
+
         try:
-            if _session_is_closed(session):
+            if not session.__class__.__module__.startswith(
+                "unittest.mock"
+            ) and _session_is_closed(session):
                 return
-            await session.close()
+
+            close_result = close_method()
+            if inspect.isawaitable(close_result):
+                await close_result
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.debug(
                 "Error closing cloud session%s: %s",
@@ -590,6 +604,8 @@ class TraigentCloudClient(BaseTraigentClient):
         objectives: list[str],
         max_trials: int = 50,
         target_cost_reduction: float = 0.65,
+        *,
+        local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
         """Run optimization using Traigent Cloud Service.
 
@@ -600,6 +616,7 @@ class TraigentCloudClient(BaseTraigentClient):
             objectives: Optimization objectives
             max_trials: Maximum optimization trials
             target_cost_reduction: Target cost reduction (0.0-1.0)
+            local_function: Callable to use for local fallback optimization.
 
         Returns:
             CloudOptimizationResult with optimization results
@@ -676,7 +693,12 @@ class TraigentCloudClient(BaseTraigentClient):
             if self.enable_fallback:
                 logger.info("Falling back to local optimization")
                 return await self._fallback_optimization(
-                    function_name, dataset, configuration_space, objectives, max_trials
+                    function_name,
+                    dataset,
+                    configuration_space,
+                    objectives,
+                    max_trials,
+                    local_function=local_function,
                 )
             else:
                 raise CloudServiceError(f"Cloud optimization failed: {e}") from None
@@ -743,35 +765,99 @@ class TraigentCloudClient(BaseTraigentClient):
         configuration_space: dict[str, Any],
         objectives: list[str],
         max_trials: int,
+        *,
+        local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
         """Fallback to local optimization when cloud service unavailable."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
         from traigent.evaluators.local import LocalEvaluator
         from traigent.optimizers.registry import get_optimizer
 
-        # Use random optimizer for fallback (faster than grid)
-        fallback_max_trials = min(max_trials, 20)
+        def _as_dict(value: Any) -> dict[str, Any]:
+            if isinstance(value, Mapping):
+                return {str(k): v for k, v in value.items()}
+            return {}
+
+        def _as_metrics(value: Any) -> dict[str, float]:
+            if not isinstance(value, Mapping):
+                return {}
+            metrics: dict[str, float] = {}
+            for key, raw in value.items():
+                try:
+                    metrics[str(key)] = float(raw)
+                except (TypeError, ValueError):
+                    continue
+            return metrics
+
+        def _resolve_local_function() -> Callable[..., Any]:
+            if callable(local_function):
+                return local_function
+
+            module_name, separator, attr_path = function_name.rpartition(".")
+            if not separator:
+                raise CloudServiceError(
+                    "Local fallback requires local_function when function_name "
+                    "is not an importable dotted path"
+                )
+
+            try:
+                resolved: Any = import_module(module_name)
+                for attr in attr_path.split("."):
+                    resolved = getattr(resolved, attr)
+            except (ImportError, AttributeError) as exc:
+                raise CloudServiceError(
+                    f"Unable to resolve local fallback function '{function_name}'"
+                ) from exc
+
+            if not callable(resolved):
+                raise CloudServiceError(
+                    f"Resolved fallback target '{function_name}' is not callable"
+                )
+
+            return cast(Callable[..., Any], resolved)
+
+        # Use random optimizer for fallback (faster than grid).
+        fallback_max_trials = max(1, min(max_trials, 20))
+        fallback_function = _resolve_local_function()
         optimizer = get_optimizer(
             "random",
             configuration_space,
             objectives,
             max_trials=fallback_max_trials,
         )
-        evaluator = LocalEvaluator()
+        evaluator = LocalEvaluator(metrics=objectives)
 
         # Run local optimization
         start_time = time.time()
-        optimization_result = await optimizer.optimize(  # type: ignore[attr-defined]
-            configuration_space=configuration_space,
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
             evaluator=evaluator,
-            dataset=dataset,
+            max_trials=fallback_max_trials,
             objectives=objectives,
-            max_trials=fallback_max_trials,  # Limit trials for fallback
         )
+        optimization_result = await orchestrator.optimize(
+            func=fallback_function,
+            dataset=dataset,
+            function_name=function_name,
+        )
+        best_config = _as_dict(getattr(optimization_result, "best_config", {}))
+        best_metrics = _as_metrics(getattr(optimization_result, "best_metrics", {}))
+        if not best_metrics and objectives:
+            best_score_raw = getattr(optimization_result, "best_score", None)
+            if best_score_raw is None:
+                best_metrics = {}
+            else:
+                try:
+                    best_metrics = {objectives[0]: float(best_score_raw)}
+                except (TypeError, ValueError):
+                    best_metrics = {}
+        trials = getattr(optimization_result, "trials", [])
+        trials_count = len(trials) if isinstance(trials, list) else 0
 
         return CloudOptimizationResult(
-            best_config=optimization_result.best_config,
-            best_metrics=optimization_result.best_metrics,
-            trials_count=len(optimization_result.trials),
+            best_config=best_config,
+            best_metrics=best_metrics,
+            trials_count=trials_count,
             cost_reduction=0.0,  # No cost reduction in Edge Analytics mode
             optimization_time=time.time() - start_time,
             subset_used=False,
@@ -1293,6 +1379,7 @@ class TraigentCloudClient(BaseTraigentClient):
             suggestion=suggestion,
             should_continue=data["should_continue"],
             reason=data.get("reason"),
+            stop_reason=data.get("stop_reason"),
             session_status=OptimizationSessionStatus(
                 data.get("session_status", "active")
             ),
@@ -1334,6 +1421,8 @@ class TraigentCloudClient(BaseTraigentClient):
             successful_trials=data["successful_trials"],
             total_duration=data["total_duration"],
             cost_savings=data["cost_savings"],
+            stop_reason=data.get("stop_reason")
+            or (data.get("metadata", {}) or {}).get("stop_reason"),
             convergence_history=data.get("convergence_history"),
             full_history=(
                 [

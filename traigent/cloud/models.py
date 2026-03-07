@@ -205,6 +205,7 @@ class NextTrialResponse:
     suggestion: TrialSuggestion | None
     should_continue: bool
     reason: str | None = None
+    stop_reason: str | None = None
     session_status: OptimizationSessionStatus = OptimizationSessionStatus.ACTIVE
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -229,6 +230,7 @@ class OptimizationFinalizationResponse:
     successful_trials: int
     total_duration: float
     cost_savings: float
+    stop_reason: str | None = None
     convergence_history: list[dict[str, Any]] | None = None
     full_history: list[TrialResultSubmission] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

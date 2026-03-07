@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -218,11 +218,11 @@ class TestLangfuseClientInit:
         """Test initialization with explicit keys."""
         client = LangfuseClient(
             public_key="pk-test",
-            secret_key="sk-test",
+            secret_key="sk-test",  # pragma: allowlist secret
             host="https://custom.langfuse.com",
         )
         assert client.public_key == "pk-test"
-        assert client.secret_key == "sk-test"
+        assert client.secret_key == "sk-test"  # pragma: allowlist secret
         assert client.host == "https://custom.langfuse.com"
 
     def test_init_from_environment(self, monkeypatch):
@@ -233,7 +233,7 @@ class TestLangfuseClientInit:
 
         client = LangfuseClient()
         assert client.public_key == "pk-env"
-        assert client.secret_key == "sk-env"
+        assert client.secret_key == "sk-env"  # pragma: allowlist secret
         assert client.host == "https://env.langfuse.com"
 
     def test_init_allows_missing_keys(self, monkeypatch):
@@ -902,6 +902,32 @@ class TestLangfuseClientAsync:
         with patch.object(client, "get_trace_async", return_value=None):
             result = await client.get_trace_metrics_async("nonexistent")
             assert result is None
+
+    @pytest.mark.asyncio
+    async def test_wait_for_trace_async_avoids_deprecated_get_event_loop(
+        self, client
+    ):
+        """wait_for_trace_async should use the running loop, not get_event_loop."""
+        with (
+            patch(
+                "asyncio.get_event_loop",
+                side_effect=AssertionError("deprecated API should not be used"),
+            ),
+            patch.object(
+                client, "get_trace_async", new=AsyncMock(return_value={"id": "trace-1"})
+            ),
+            patch.object(
+                client,
+                "get_observations_for_trace_async",
+                new=AsyncMock(return_value=[MagicMock()]),
+            ),
+        ):
+            assert (
+                await client.wait_for_trace_async(
+                    "trace-1", timeout_seconds=0.1, poll_interval=0.0
+                )
+                is True
+            )
 
 
 class TestLangfuseClientSDK:

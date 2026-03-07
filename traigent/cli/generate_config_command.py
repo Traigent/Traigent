@@ -7,6 +7,7 @@ Python source file using preset heuristics and optional LLM enrichment.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import click
@@ -231,17 +232,17 @@ def _output_tvl(result, path: Path):
         )
         raise SystemExit(1) from None
 
-    spec = result.to_tvl_spec(module_name=path.stem)
-    tvl_path = path.with_suffix(".tvl.yml").resolve()
-    base_dir = Path.cwd().resolve()
+    safe_source = path.resolve()
+    base_dir = Path(os.environ.get("TRAIGENT_CONFIG_BASE_DIR", Path.cwd())).resolve()
     try:
-        tvl_path.relative_to(base_dir)
-    except ValueError:
-        click.echo(
-            f"Error: output path {tvl_path} is outside the working directory.",
-            err=True,
-        )
-        raise SystemExit(1) from None
+        safe_source.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(
+            f"Path '{safe_source}' is outside the allowed base directory '{base_dir}'"
+        ) from exc
+
+    spec = result.to_tvl_spec(module_name=safe_source.stem)
+    tvl_path = safe_source.with_suffix(".tvl.yml")
     tvl_path.write_text(yaml.dump(spec, default_flow_style=False, sort_keys=False))
     click.echo(f"TVL spec written to: {tvl_path}")
 

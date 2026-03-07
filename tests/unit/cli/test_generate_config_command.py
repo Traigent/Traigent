@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
-from traigent.cli.generate_config_command import generate_config
+from traigent.cli.generate_config_command import _output_tvl, generate_config
 from traigent.config_generator.types import (
     AutoConfigResult,
     BenchmarkSpec,
@@ -183,9 +184,12 @@ class TestGenerateConfigCLI:
         result = runner.invoke(generate_config, ["/nonexistent/path.py"])
         assert result.exit_code != 0
 
-    def test_tvl_output(self, tmp_path: Path) -> None:
+    def test_tvl_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         source_file = tmp_path / "agent.py"
         source_file.write_text(SAMPLE_SOURCE)
+        monkeypatch.chdir(tmp_path)
 
         with patch(
             "traigent.config_generator.generate_config",
@@ -200,9 +204,25 @@ class TestGenerateConfigCLI:
             content = tvl_file.read_text()
             assert "temperature" in content
 
-    def test_apply_decorator(self, tmp_path: Path) -> None:
+    def test_tvl_output_rejects_path_outside_working_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        safe_dir = tmp_path / "safe"
+        safe_dir.mkdir()
         source_file = tmp_path / "agent.py"
         source_file.write_text(SAMPLE_SOURCE)
+
+        monkeypatch.chdir(safe_dir)
+
+        with pytest.raises(ValueError, match="outside the allowed base directory"):
+            _output_tvl(_make_result(), source_file)
+
+    def test_apply_decorator(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source_file = tmp_path / "agent.py"
+        source_file.write_text(SAMPLE_SOURCE)
+        monkeypatch.chdir(tmp_path)
 
         with patch(
             "traigent.config_generator.generate_config",
@@ -223,9 +243,12 @@ class TestGenerateConfigCLI:
             modified = source_file.read_text()
             assert "@traigent.optimize(" in modified
 
-    def test_apply_no_backup(self, tmp_path: Path) -> None:
+    def test_apply_no_backup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         source_file = tmp_path / "agent.py"
         source_file.write_text(SAMPLE_SOURCE)
+        monkeypatch.chdir(tmp_path)
 
         with patch(
             "traigent.config_generator.generate_config",

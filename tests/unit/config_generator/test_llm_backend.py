@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -110,3 +111,35 @@ class TestLiteLLMBackend:
     def test_default_model(self) -> None:
         backend = LiteLLMBackend()
         assert backend._model == "gpt-4o-mini"
+
+    def test_cost_tracking_is_thread_safe(self) -> None:
+        """Concurrent completions should preserve call and cost accounting."""
+        backend = LiteLLMBackend(budget_usd=1.0)
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 100
+        mock_usage.completion_tokens = 50
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "thread-safe"
+
+        mock_response = MagicMock()
+        mock_response.usage = mock_usage
+        mock_response.choices = [mock_choice]
+
+        barrier = threading.Barrier(2)
+
+        def _complete() -> None:
+            barrier.wait()
+            backend.complete("prompt")
+
+        with patch("litellm.completion", return_value=mock_response):
+            threads = [threading.Thread(target=_complete) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        expected_cost = 2 * ((100 * 0.00000015) + (50 * 0.0000006))
+        assert backend.calls_made == 2
+        assert backend.total_cost_usd == pytest.approx(expected_cost)

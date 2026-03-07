@@ -400,8 +400,13 @@ def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
         if not isinstance(tvar_type, str):
             issues.append(f"TVAR '{name}' missing required 'type' string")
         else:
+            normalized_type = normalize_tvar_type(tvar_type)
             valid_types = {"float", "int", "str", "bool", "categorical", "registry"}
-            if tvar_type.lower() not in valid_types:
+            if tvar_type.lower() not in valid_types and normalized_type not in {
+                "enum",
+                "tuple",
+                "callable",
+            }:
                 issues.append(
                     f"TVAR '{name}' has invalid type '{tvar_type}'. "
                     f"Valid: {valid_types}"

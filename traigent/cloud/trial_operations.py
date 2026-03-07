@@ -7,6 +7,7 @@ for optimization experiments.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -336,18 +337,29 @@ class TrialOperations:
         try:
             # Check if there's a running event loop
             try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running loop, use new one
-                loop = None
+                asyncio.get_running_loop()  # Raises RuntimeError if no loop running
+                # Loop is running (e.g., in Jupyter, async frameworks).
+                # CRITICAL: run_coroutine_threadsafe().result() DEADLOCKS if called
+                # from the same thread as the running loop — the loop cannot process
+                # the scheduled coroutine while blocked on .result().
+                #
+                # Solution: execute in a separate thread with its own event loop.
 
-            if loop:
-                # We're in an async context - schedule on existing loop
-                # Using run_coroutine_threadsafe prevents deadlocks
-                future = asyncio.run_coroutine_threadsafe(_register_async(), loop)
-                return future.result(timeout=60)
-            else:
-                # No async context, run directly
+                def _run_in_new_loop() -> bool:
+                    """Run the async function in a fresh event loop."""
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_register_async())
+                    finally:
+                        new_loop.close()
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result(timeout=60)
+
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run()
                 return asyncio.run(_register_async())
         except Exception:
             logger.exception(

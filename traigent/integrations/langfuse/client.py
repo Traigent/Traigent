@@ -551,8 +551,9 @@ class LangfuseClient:
         """Async version of wait_for_trace."""
         import asyncio
 
-        start = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start < timeout_seconds:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        while loop.time() - start < timeout_seconds:
             trace = await self.get_trace_async(trace_id)
             if trace:
                 obs = await self.get_observations_for_trace_async(trace_id)

@@ -179,6 +179,33 @@ class TestFileRegistryResolver:
 
         assert result == ["v2", "v3"]
 
+    def test_filter_by_comparison_uses_semantic_versions(self, tmp_path: Path) -> None:
+        """Comparison filters should not use raw lexicographic ordering."""
+        registry_dir = tmp_path / "registries"
+        registry_dir.mkdir()
+
+        registry_file = registry_dir / "models.yaml"
+        registry_file.write_text(
+            yaml.dump(
+                {
+                    "items": [
+                        {"id": "v2", "version": "2.0"},
+                        {"id": "v10", "version": "10.0"},
+                        {"id": "v11", "version": "11.0"},
+                    ]
+                }
+            )
+        )
+
+        resolver = FileRegistryResolver(registry_dir)
+
+        assert resolver.resolve("models", filter_expr="version >= '2.0'") == [
+            "v2",
+            "v10",
+            "v11",
+        ]
+        assert resolver.resolve("models", filter_expr="version < '2.0'") == []
+
     def test_filter_by_in_expression(self, tmp_path: Path) -> None:
         """Test filtering by 'in' expression."""
         registry_dir = tmp_path / "registries"
@@ -574,6 +601,25 @@ class TestDictRegistryResolver:
 
         result = resolver.resolve("versions", filter_expr="rank < '3'")
         assert result == ["v1", "v2"]
+
+    def test_filter_with_semantic_versions(self) -> None:
+        """Semantic version comparison should work for multi-digit versions."""
+        resolver = DictRegistryResolver(
+            {
+                "versions": [
+                    {"id": "v2", "version": "2.0"},
+                    {"id": "v10", "version": "10.0"},
+                    {"id": "v11", "version": "11.0"},
+                ],
+            }
+        )
+
+        assert resolver.resolve("versions", filter_expr="version >= '2.0'") == [
+            "v2",
+            "v10",
+            "v11",
+        ]
+        assert resolver.resolve("versions", filter_expr="version < '2.0'") == []
 
 
 class TestBooleanFilterLogic:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import os
 import sys
 import threading
@@ -176,7 +177,7 @@ class OptimizedFunction:
         config_param: str | None = None,
         auto_override_frameworks: bool = False,
         framework_targets: list[str] | None = None,
-        execution_mode: str = "cloud",
+        execution_mode: str = "edge_analytics",
         local_storage_path: str | None = None,
         minimal_logging: bool = True,
         custom_evaluator: Callable[..., Any] | None = None,
@@ -1737,6 +1738,9 @@ class OptimizedFunction:
         from traigent.api.types import TrialResult, TrialStatus
         from traigent.cloud.client import CloudOptimizationResult, TraigentCloudClient
 
+        async def _resolve_awaitable(value: Any) -> Any:
+            return await value if inspect.isawaitable(value) else value
+
         # Initialize cloud client if not already done
         if self._cloud_client is None:
             self._cloud_client = TraigentCloudClient(enable_fallback=True)
@@ -1760,21 +1764,85 @@ class OptimizedFunction:
             # Set the configuration space context for framework overrides
             with ConfigurationSpaceContext(effective_config_space):
                 # Run cloud optimization
-                cloud_result: CloudOptimizationResult = await client.optimize_function(
+                cloud_candidate = await client.optimize_function(
                     function_name=self.func.__name__,
                     dataset=dataset,
                     configuration_space=effective_config_space,
                     objectives=self.objectives,
                     max_trials=max_trials if max_trials is not None else 50,
+                    local_function=self.func,
                 )
+                cloud_result: CloudOptimizationResult = cast(
+                    CloudOptimizationResult,
+                    await _resolve_awaitable(cloud_candidate),
+                )
+
+            best_config_raw = await _resolve_awaitable(
+                getattr(cloud_result, "best_config", {})
+            )
+            best_config = (
+                best_config_raw.copy() if isinstance(best_config_raw, dict) else {}
+            )
+
+            best_metrics_raw = await _resolve_awaitable(
+                getattr(cloud_result, "best_metrics", {})
+            )
+            best_metrics: dict[str, float] = {}
+            if isinstance(best_metrics_raw, dict):
+                for key, raw_value in best_metrics_raw.items():
+                    try:
+                        best_metrics[str(key)] = float(raw_value)
+                    except (TypeError, ValueError):
+                        continue
+
+            trials_count_raw = await _resolve_awaitable(
+                getattr(cloud_result, "trials_count", 0)
+            )
+            try:
+                trials_count = int(trials_count_raw)
+            except (TypeError, ValueError):
+                trials_count = 0
+
+            cost_reduction_raw = await _resolve_awaitable(
+                getattr(cloud_result, "cost_reduction", 0.0)
+            )
+            try:
+                cost_reduction = float(cost_reduction_raw)
+            except (TypeError, ValueError):
+                cost_reduction = 0.0
+
+            optimization_time_raw = await _resolve_awaitable(
+                getattr(cloud_result, "optimization_time", 0.0)
+            )
+            try:
+                optimization_time = float(optimization_time_raw)
+            except (TypeError, ValueError):
+                optimization_time = 0.0
+
+            subset_used_raw = await _resolve_awaitable(
+                getattr(cloud_result, "subset_used", False)
+            )
+            subset_used = bool(subset_used_raw)
+
+            subset_size_raw = await _resolve_awaitable(
+                getattr(cloud_result, "subset_size", None)
+            )
+            subset_size = subset_size_raw if isinstance(subset_size_raw, int) else None
+            primary_objective = self.objectives[0] if self.objectives else None
+            if primary_objective and primary_objective in best_metrics:
+                best_score = best_metrics[primary_objective]
+            elif best_metrics:
+                best_score = next(iter(best_metrics.values()))
+            else:
+                best_score = 0.0
 
             # Convert cloud result to standard OptimizationResult
             mock_trial = TrialResult(
                 trial_id="cloud_best",
-                config=cloud_result.best_config,
-                metrics=cloud_result.best_metrics,
+                config=best_config,
+                metrics=best_metrics,
                 status=TrialStatus.COMPLETED,
-                duration=cloud_result.optimization_time,
+                duration=optimization_time,
                 timestamp=datetime.now(UTC),
                 metadata={},
             )
@@ -1783,14 +1851,10 @@ class OptimizedFunction:
 
             result = OptimizationResult(
                 trials=[mock_trial],  # Cloud service doesn't expose all trials
-                best_config=cloud_result.best_config,
-                best_score=(
-                    max(cloud_result.best_metrics.values())
-                    if cloud_result.best_metrics
-                    else 0.0
-                ),
+                best_config=best_config,
+                best_score=best_score,
                 optimization_id=f"cloud_{int(time.time())}",
-                duration=cloud_result.optimization_time,
+                duration=optimization_time,
                 convergence_info={},
                 status=OptimizationStatus.COMPLETED,
                 objectives=self.objectives,
@@ -1798,10 +1862,10 @@ class OptimizedFunction:
                 timestamp=datetime.now(UTC),
                 metadata={
                     "cloud_service": True,
-                    "cost_reduction": cloud_result.cost_reduction,
-                    "subset_used": cloud_result.subset_used,
-                    "subset_size": cloud_result.subset_size,
-                    "trials_count": cloud_result.trials_count,
+                    "cost_reduction": cost_reduction,
+                    "subset_used": subset_used,
+                    "subset_size": subset_size,
+                    "trials_count": trials_count,
                 },
             )
 
@@ -1816,8 +1880,9 @@ class OptimizedFunction:
                 self._setup_function_wrapper()
 
             logger.info(
-                f"Cloud optimization completed: {cloud_result.trials_count} trials, "
-                f"{cloud_result.cost_reduction * 100:.1f}% cost reduction"
+                "Cloud optimization completed: %s trials, %.1f%% cost reduction",
+                trials_count,
+                cost_reduction * 100,
             )
 
             return result

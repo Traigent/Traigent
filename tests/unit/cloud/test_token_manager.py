@@ -329,6 +329,19 @@ class TestScheduleRefresh:
             except asyncio.CancelledError:
                 pass
 
+    @pytest.mark.asyncio
+    async def test_set_refresh_task_clears_cancelled_task(self, token_manager):
+        """Cancelled refresh tasks should clear the tracked task reference."""
+        task = asyncio.create_task(asyncio.sleep(10))
+        token_manager._set_refresh_task(task)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        await asyncio.sleep(0)
+        assert token_manager.refresh_task is None
+
 
 class TestRefreshAccessToken:
     """Test refresh_access_token method."""
@@ -374,7 +387,7 @@ class TestRefreshAccessToken:
         """Test refresh with API_KEY mode returns success (no refresh needed)."""
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="placeholder_key",
+            api_key="placeholder_key",  # pragma: allowlist secret
             refresh_token="placeholder",  # Has refresh token but mode is API_KEY
         )
         token_manager.set_callbacks(
@@ -515,7 +528,7 @@ class TestBuildCredentialsFromTokenData:
         token_data = {
             "access_token": "access_token_placeholder",
             "expires_in": 3600,
-            "api_key": "placeholder_key",
+            "api_key": "placeholder_key",  # pragma: allowlist secret
         }
         token_manager.set_callbacks(
             get_credentials=lambda: None,
@@ -526,7 +539,7 @@ class TestBuildCredentialsFromTokenData:
 
         credentials = token_manager.build_credentials_from_token_data(token_data)
 
-        assert credentials.api_key == "placeholder_key"
+        assert credentials.api_key == "placeholder_key"  # pragma: allowlist secret
         set_key_fn.assert_called_once()
 
 
