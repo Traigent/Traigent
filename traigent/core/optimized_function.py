@@ -1463,7 +1463,7 @@ class OptimizedFunction:
 
         logger.info(
             f"Optimization completed: {len(result.trials)} trials, "
-            f"best score: {result.best_score:.4f}"
+            f"best score: {'N/A' if result.best_score is None else f'{result.best_score:.4f}'}"
         )
 
         # Show upgrade hints after optimization completion (Edge Analytics mode only)
@@ -1939,7 +1939,7 @@ class OptimizedFunction:
         return OptimizationResult(
             trials=[],
             best_config=best_config,
-            best_score=0.0,
+            best_score=None,
             optimization_id=f"no_trials_{int(time.time())}",
             duration=0.0,
             convergence_info={},

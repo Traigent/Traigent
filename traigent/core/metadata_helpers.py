@@ -283,6 +283,10 @@ def build_backend_metadata(
     mode_enum = traigent_config.execution_mode_enum
     _add_summary_stats(trial_metadata, trial_result, mode_enum)
 
+    comparability_payload = trial_result.metadata.get("comparability")
+    if isinstance(comparability_payload, dict):
+        trial_metadata["comparability"] = comparability_payload
+
     privacy_on = getattr(traigent_config, "privacy_enabled", False) or (
         mode_enum is ExecutionMode.PRIVACY
     )

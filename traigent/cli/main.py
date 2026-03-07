@@ -158,7 +158,10 @@ def _display_optimization_result(
     max_trials: int,
 ) -> None:
     """Display and save the optimization result for a single function."""
-    console.print(f"✅ Best score: [green]{result.best_score:.3f}[/green]")
+    best_score_str = (
+        f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
+    )
+    console.print(f"✅ Best score: [green]{best_score_str}[/green]")
     console.print(f"   Best config: {result.best_config}")
     console.print(f"   Total trials: {len(result.trials)}")
     console.print(f"   Successful trials: {len(result.successful_trials)}")
@@ -194,7 +197,7 @@ def _display_optimization_summary(
 
         table.add_row(
             func_name,
-            f"{result.best_score:.3f}",
+            (f"{result.best_score:.3f}" if result.best_score is not None else "N/A"),
             config_str,
             str(len(result.trials)),
         )
@@ -636,6 +639,13 @@ def _format_metric_value(value: Any) -> str:
     return str(value)
 
 
+def _format_best_score(value: Any) -> str:
+    """Format best score with null-safe fallback."""
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    return "N/A"
+
+
 def _format_diff_colored(diff: float, fmt: str = ".4f") -> str:
     """Format a numeric diff with color coding (green=positive, red=negative)."""
     if diff > 0:
@@ -656,7 +666,7 @@ def _print_result_summary(result: Any) -> None:
     summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
     summary_table.add_row(_MSG_TOTAL_TRIALS, str(len(result.trials)))
     summary_table.add_row("Successful Trials", str(len(result.successful_trials or [])))
-    summary_table.add_row(_MSG_BEST_SCORE, f"{result.best_score:.4f}")
+    summary_table.add_row(_MSG_BEST_SCORE, _format_best_score(result.best_score))
     summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
     if hasattr(result, "duration") and result.duration:
         summary_table.add_row("Duration", f"{result.duration:.1f}s")
@@ -724,12 +734,16 @@ def _build_comparison_summary_table(r1: Any, r2: Any, name1: str, name2: str) ->
     table.add_column("Δ", justify="right")
 
     # Best score
-    score_diff = r2.best_score - r1.best_score
+    if r1.best_score is not None and r2.best_score is not None:
+        score_diff = r2.best_score - r1.best_score
+        diff_col = _format_diff_colored(score_diff)
+    else:
+        diff_col = "N/A"
     table.add_row(
         _MSG_BEST_SCORE,
-        f"{r1.best_score:.4f}",
-        f"{r2.best_score:.4f}",
-        _format_diff_colored(score_diff),
+        _format_best_score(r1.best_score),
+        _format_best_score(r2.best_score),
+        diff_col,
     )
 
     # Trials count
@@ -906,11 +920,12 @@ def results_list(storage_dir: str) -> None:
     table.add_column("Date", style="dim")
 
     for result_info in all_results:
+        best_score = result_info.get("best_score")
         table.add_row(
             result_info["name"],
             result_info["function_name"],
             result_info["algorithm"],
-            f"{result_info['best_score']:.3f}",
+            (f"{best_score:.3f}" if isinstance(best_score, (int, float)) else "N/A"),
             str(result_info["total_trials"]),
             f"{result_info.get('success_rate', 0):.1%}",
             result_info.get("created_at", "").split("T")[0],  # Just date part
