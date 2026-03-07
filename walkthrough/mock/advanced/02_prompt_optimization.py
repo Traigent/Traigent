@@ -7,7 +7,7 @@ Demonstrates:
 - Using factory methods with prompt tuning
 
 This mock version uses hardcoded responses - no API keys needed.
-Run with: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python 02_prompt_optimization.py
+Run with: TRAIGENT_MOCK_LLM=true python 02_prompt_optimization.py
 """
 
 import asyncio
