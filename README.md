@@ -595,6 +595,10 @@ traigent optimize path/to/module.py -a grid -n 10
 traigent validate path/to/dataset.jsonl -o accuracy -o cost
 traigent validate_config config.json
 
+# Generate local-only example-content map for FE report enrichment
+# (contains input/output locally; never sent to backend unless you upload it manually)
+traigent report-example-map --dataset data/qa_dataset.jsonl --output report_example_map.json
+
 # Manage and visualize results
 traigent results
 traigent plot <result_name> -p progress
