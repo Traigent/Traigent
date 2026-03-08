@@ -95,6 +95,7 @@ API key resolution order is:
 2. `TRAIGENT_API_KEY`
 
 For a real backend session smoke run, use `npm run smoke:hybrid-live` after setting `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus `TRAIGENT_API_KEY`.
+For full local-vs-hybrid live LangChain runs with `TRAIGENT_OFFLINE_MODE=false`, use `npm run report:langchain-e2e:online -- --env-file ../Traigent/walkthrough/examples/real/.env --max-trials 2 --dataset-size 2`. That command delegates to the neutral cross-SDK harness in `../traigent-cross-sdk-benchmarks`.
 Hybrid `optimizationStrategy` options stay camelCase in JS and are serialized to snake_case on the backend request.
 
 ## Hybrid v1 Limits

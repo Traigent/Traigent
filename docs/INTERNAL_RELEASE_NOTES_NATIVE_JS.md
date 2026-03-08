@@ -28,6 +28,7 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 ## Cross-SDK Validation
 
 - Python-owned oracle fixtures validate deterministic grid, conditional grid, seeded random, conditional random, and budget cutoff behavior.
+- The new LangChain E2E parity lane runs the same fixture-backed chain in JS and Python from the neutral harness repo `../traigent-cross-sdk-benchmarks` and writes comparison reports under `../traigent-cross-sdk-benchmarks/tmp/langchain-e2e/`.
 - JS reports async optimization scheduling against Python with a shared synthetic workload.
 - The lightweight Python oracle exporter is stdlib-only; full Python Bayesian oracle parity remains deferred in this environment.
 
@@ -48,6 +49,8 @@ This release extends the native JS optimization surface in `@traigent/sdk` beyon
 ```bash
 npm test
 npm run test:cross-sdk
+npm run report:langchain-e2e
+npm run report:langchain-e2e:online -- --env-file ../Traigent/walkthrough/examples/real/.env --max-trials 2 --dataset-size 2
 npm run smoke:example
 npm run smoke:hybrid-live
 npm run benchmark:cross-sdk
@@ -56,3 +59,4 @@ npm pack --dry-run
 ```
 
 `smoke:hybrid-live` requires `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus `TRAIGENT_API_KEY`.
+`report:langchain-e2e:online` forces `TRAIGENT_OFFLINE_MODE=false`, prefers OpenRouter when `OPENROUTER_API_KEY` is present, otherwise uses OpenAI, and reports native plus hybrid runs to the backend.

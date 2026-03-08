@@ -225,12 +225,18 @@ Internal validation:
 ```bash
 npm test
 npm run test:cross-sdk
+npm run report:langchain-e2e
+npm run report:langchain-e2e:online -- --env-file ../Traigent/walkthrough/examples/real/.env --max-trials 2 --dataset-size 2
 npm run smoke:example
 npm run smoke:hybrid-live
 npm run benchmark:cross-sdk
 npm run build
 npm pack --dry-run
 ```
+
+The LangChain cross-SDK harness now lives in the neutral sibling repo `../traigent-cross-sdk-benchmarks`. The `report:langchain-e2e*` scripts in this repo delegate to that neutral runner location while still building and using the local JS SDK worktree.
+
+The online LangChain report lane forces `TRAIGENT_OFFLINE_MODE=false` for both native and hybrid runs, uses the walkthrough real env file by default, and sends native trial summaries plus hybrid sessions to the backend so they are visible through the backend session APIs.
 
 See [docs/NATIVE_JS_PARITY_MATRIX.md](./docs/NATIVE_JS_PARITY_MATRIX.md) and [docs/CROSS_SDK_VALIDATION.md](./docs/CROSS_SDK_VALIDATION.md) for the current parity and methodology.
 
