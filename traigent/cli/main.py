@@ -627,6 +627,93 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             console.print(obj_result.get_feedback())
 
 
+@cli.command(name="report-example-map")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to source dataset (.jsonl or .json)",
+)
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(),
+    help="Output file path for example-content map JSON",
+)
+@click.option(
+    "--dataset-identifier",
+    default=None,
+    help=(
+        "Identifier used for stable example_id generation. "
+        "Defaults to the resolved absolute dataset path."
+    ),
+)
+@click.option(
+    "--validate-schema/--no-validate-schema",
+    default=True,
+    show_default=True,
+    help="Validate generated map against example_content_map_schema",
+)
+def report_example_map(
+    dataset_path: str,
+    output_path: str,
+    dataset_identifier: str | None,
+    validate_schema: bool,
+) -> None:
+    """Generate local-only example-content map for report enrichment."""
+    from traigent.reporting.example_map import (
+        build_example_content_map,
+        validate_example_content_map,
+    )
+
+    try:
+        dataset_candidate = Path(dataset_path)
+        if not dataset_candidate.is_absolute():
+            dataset_candidate = Path.cwd() / dataset_candidate
+        resolved_dataset = _resolve_workspace_path(
+            dataset_candidate,
+            "Dataset file",
+            must_exist=True,
+        )
+
+        output_candidate = Path(output_path)
+        if not output_candidate.is_absolute():
+            output_candidate = Path.cwd() / output_candidate
+        resolved_output = _resolve_workspace_path(output_candidate, "Output file")
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+
+        effective_identifier = dataset_identifier or str(resolved_dataset)
+        payload = build_example_content_map(
+            resolved_dataset,
+            dataset_identifier=effective_identifier,
+        )
+        if validate_schema:
+            errors = validate_example_content_map(payload)
+            if errors:
+                raise click.ClickException(
+                    f"Generated map failed schema validation: {errors[0]}"
+                )
+
+        serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        safe_write_text(resolved_output, serialized, WORKSPACE_ROOT)
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    console.print("\n[bold green]Example map generated successfully[/bold green]")
+    console.print(f"Dataset: {resolved_dataset}")
+    console.print(f"Output: {resolved_output}")
+    console.print(f"Schema version: {payload['schema_version']}")
+    console.print(f"Dataset fingerprint: {payload['dataset_fingerprint']}")
+    console.print(f"Examples mapped: {len(payload['example_map'])}")
+    console.print(
+        "[dim]Local-only flow: generated file stays client-side unless you share it.[/dim]"
+    )
+
+
 # -----------------------------------------------------------------------------
 # Helper functions for results commands (reduces cognitive complexity - S3776)
 # -----------------------------------------------------------------------------
