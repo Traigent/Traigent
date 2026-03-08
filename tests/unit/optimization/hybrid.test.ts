@@ -120,6 +120,7 @@ describe('hybrid optimize()', () => {
           suggestion: null,
           should_continue: false,
           reason: 'Max trials reached',
+          stop_reason: 'max_trials_reached',
           session_status: 'completed',
         }),
       )
@@ -132,6 +133,7 @@ describe('hybrid optimize()', () => {
           successful_trials: 1,
           total_duration: 0.2,
           cost_savings: 0.1,
+          stop_reason: 'max_trials_reached',
           metadata: { finalized_by: 'backend' },
         }),
       );
@@ -182,7 +184,7 @@ describe('hybrid optimize()', () => {
     expect(result.trials).toHaveLength(1);
     expect(result.totalCostUsd).toBeCloseTo(0.2, 10);
     expect(result.metadata).toMatchObject({
-      backendReason: 'Max trials reached',
+      backendReason: 'max_trials_reached',
       optimizationStrategy: { algorithm: 'optuna' },
       finalization: { finalized_by: 'backend' },
     });
@@ -253,12 +255,14 @@ describe('hybrid optimize()', () => {
           suggestion: null,
           should_continue: false,
           reason: 'search complete',
+          stop_reason: 'search_complete',
           session_status: 'completed',
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse(200, {
           session_id: 'session-metadata',
+          stop_reason: 'search_complete',
           metadata: { finalized_by: 'backend' },
         }),
       );
@@ -316,6 +320,56 @@ describe('hybrid optimize()', () => {
       headers: expect.objectContaining({
         Authorization: 'Bearer env-key',
       }),
+    });
+  });
+
+  it('falls back to finalization stop_reason when next-trial omits it', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          session_id: 'session-finalize-stop',
+          status: 'active',
+          optimization_strategy: { algorithm: 'optuna' },
+          metadata: {},
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: null,
+          should_continue: false,
+          session_status: 'completed',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: 'session-finalize-stop',
+          stop_reason: 'max_trials_reached',
+          metadata: { finalized_by: 'backend' },
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(['gpt-4o-mini']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    const result = await wrapped.optimize({
+      mode: 'hybrid',
+      algorithm: 'optuna',
+      maxTrials: 1,
+      backendUrl: 'http://localhost:5000',
+      apiKey: 'key',
+    });
+
+    expect(result.stopReason).toBe('maxTrials');
+    expect(result.metadata).toMatchObject({
+      backendReason: 'max_trials_reached',
+      finalization: { finalized_by: 'backend' },
     });
   });
 
