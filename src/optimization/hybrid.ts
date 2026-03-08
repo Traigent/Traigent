@@ -71,6 +71,7 @@ interface HybridNextTrialResponse {
   suggestion: HybridSessionSuggestionPayload | null;
   should_continue: boolean;
   reason?: string | null;
+  stop_reason?: string | null;
   session_status?: string;
   metadata?: Record<string, unknown>;
 }
@@ -83,6 +84,7 @@ interface HybridFinalizationResponse {
   successful_trials?: number;
   total_duration?: number;
   cost_savings?: number;
+  stop_reason?: string | null;
   convergence_history?: unknown[];
   full_history?: unknown[];
   metadata?: Record<string, unknown>;
@@ -301,7 +303,10 @@ function normalizeBackendStopReason(
   trialCount: number,
   maxTrials: number,
 ): OptimizationResult['stopReason'] {
-  const normalized = context.backendReason?.trim().toLowerCase();
+  const normalized = context.backendReason
+    ?.trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
 
   if (normalized) {
     if (normalized.includes('cancel')) return 'cancelled';
@@ -337,6 +342,19 @@ function normalizeBackendStopReason(
   }
 
   return trialCount >= maxTrials ? 'maxTrials' : 'completed';
+}
+
+function resolveBackendStopReason(
+  value: string | null | undefined,
+  fallback: string | null | undefined,
+): string | undefined {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+  if (typeof fallback === 'string' && fallback.trim().length > 0) {
+    return fallback;
+  }
+  return undefined;
 }
 
 function updateTotalCost(
@@ -1085,7 +1103,10 @@ export async function runHybridOptimization(
       );
 
       if (!nextResponse.should_continue || !nextResponse.suggestion) {
-        backendReason = nextResponse.reason ?? undefined;
+        backendReason = resolveBackendStopReason(
+          nextResponse.stop_reason,
+          nextResponse.reason,
+        );
         stopReason = normalizeBackendStopReason(
           {
             backendReason,
@@ -1155,6 +1176,20 @@ export async function runHybridOptimization(
     if (sessionId) {
       try {
         finalization = await client.finalizeSession(sessionId, undefined);
+        backendReason = resolveBackendStopReason(
+          finalization.stop_reason,
+          backendReason,
+        );
+        if ((!stopReason || stopReason === 'completed') && backendReason) {
+          stopReason = normalizeBackendStopReason(
+            {
+              backendReason,
+              failedTrialStopReason,
+            },
+            previousResults.length,
+            options.maxTrials,
+          );
+        }
       } catch (error) {
         finalizationError = toErrorMessage(error);
         if (!stopReason) {
