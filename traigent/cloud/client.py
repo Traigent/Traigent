@@ -8,7 +8,7 @@ import asyncio
 import inspect
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, NoReturn, cast
@@ -38,6 +38,7 @@ from .models import (
     OptimizationSessionStatus,
     SessionCreationRequest,
     SessionCreationResponse,
+    SessionObjectiveDefinition,
     TrialResultSubmission,
     TrialSuggestion,
 )
@@ -1052,9 +1053,15 @@ class TraigentCloudClient(BaseTraigentClient):
         self,
         request_or_function_name,
         configuration_space: dict[str, Any] | None = None,
-        objectives: list[str] | None = None,
+        objectives: (
+            Sequence[str | SessionObjectiveDefinition | dict[str, Any]] | None
+        ) = None,
         dataset_metadata: dict[str, Any] | None = None,
         max_trials: int = 50,
+        budget: dict[str, Any] | None = None,
+        constraints: dict[str, Any] | None = None,
+        default_config: dict[str, Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         user_id: str | None = None,
         billing_tier: str = "standard",
@@ -1080,9 +1087,7 @@ class TraigentCloudClient(BaseTraigentClient):
         await self._ensure_session()
 
         # Handle both calling patterns: with SessionCreationRequest object or separate params
-        if hasattr(request_or_function_name, "function_name") and not isinstance(
-            request_or_function_name, str
-        ):
+        if isinstance(request_or_function_name, SessionCreationRequest):
             # It's a SessionCreationRequest object
             request = request_or_function_name
         else:
@@ -1093,6 +1098,10 @@ class TraigentCloudClient(BaseTraigentClient):
                 objectives=objectives,
                 dataset_metadata=dataset_metadata,
                 max_trials=max_trials,
+                budget=budget,
+                constraints=constraints,
+                default_config=default_config,
+                promotion_policy=promotion_policy,
                 optimization_strategy=optimization_strategy,
                 user_id=user_id,
                 billing_tier=billing_tier,
@@ -1315,10 +1324,13 @@ class TraigentCloudClient(BaseTraigentClient):
         """Serialize session creation request."""
         metadata = self._ensure_owner_metadata(request.metadata)
         request.metadata = metadata
-        return {
+        payload: dict[str, Any] = {
             "function_name": request.function_name,
             "configuration_space": request.configuration_space,
-            "objectives": request.objectives,
+            "objectives": [
+                self._serialize_session_objective(objective)
+                for objective in (request.objectives or [])
+            ],
             "dataset_metadata": request.dataset_metadata,
             "max_trials": request.max_trials,
             "optimization_strategy": request.optimization_strategy,
@@ -1326,6 +1338,43 @@ class TraigentCloudClient(BaseTraigentClient):
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        if request.budget is not None:
+            payload["budget"] = request.budget
+        if request.constraints is not None:
+            payload["constraints"] = request.constraints
+        if request.default_config is not None:
+            payload["default_config"] = request.default_config
+        if request.promotion_policy is not None:
+            payload["promotion_policy"] = request.promotion_policy
+        return payload
+
+    @staticmethod
+    def _serialize_session_objective(
+        objective: str | SessionObjectiveDefinition | dict[str, Any],
+    ) -> str | dict[str, Any]:
+        """Serialize a typed objective while preserving string shorthand."""
+        if isinstance(objective, str):
+            return objective
+        if isinstance(objective, SessionObjectiveDefinition):
+            payload: dict[str, Any] = {
+                "metric": objective.metric,
+            }
+            if objective.band is not None:
+                payload["band"] = dict(objective.band)
+                if objective.test is not None:
+                    payload["test"] = objective.test
+                if objective.alpha is not None:
+                    payload["alpha"] = objective.alpha
+            elif objective.direction is not None:
+                payload["direction"] = objective.direction
+            if objective.weight is not None:
+                payload["weight"] = objective.weight
+            return payload
+        if isinstance(objective, dict):
+            return dict(objective)
+        raise TypeError(
+            "Session objectives must be strings, dicts, or SessionObjectiveDefinition objects"
+        )
 
     def _deserialize_session_response(
         self, data: dict[str, Any]
@@ -1523,6 +1572,15 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
+        if self._aio_session is None:
+            auth_result_candidate: Any = self.auth.authenticate_with_result()
+            if inspect.isawaitable(auth_result_candidate):
+                auth_result = await auth_result_candidate
+            else:
+                auth_result = auth_result_candidate
+            if not auth_result.success:
+                raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
+
         await self._ensure_session()
 
         # Default objectives
@@ -1641,6 +1699,8 @@ class TraigentCloudClient(BaseTraigentClient):
                         f"Failed to execute agent: HTTP {response.status}: {error_text}"
                     )
 
+        except CloudServiceError:
+            raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_execute network error")
             raise CloudServiceError(f"Network error executing agent: {e}") from None
