@@ -1,26 +1,26 @@
 #!/usr/bin/env node
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from "node:url";
 
-import { optimize, param } from '../dist/index.js';
+import { optimize, param } from "../dist/index.js";
 
 export async function runExample() {
   const evaluatePrompt = optimize({
     configurationSpace: {
-      model: param.enum(['cheap', 'accurate']),
+      model: param.enum(["cheap", "accurate"]),
       temperature: param.float({
         min: 0,
         max: 0.5,
         step: 0.5,
-        scale: 'linear',
+        scale: "linear",
       }),
     },
-    objectives: ['accuracy', 'cost'],
+    objectives: ["accuracy", "cost"],
     budget: {
       maxCostUsd: 2,
     },
     evaluation: {
-      data: [{ id: 'row-1' }, { id: 'row-2' }],
+      data: [{ id: "row-1" }, { id: "row-2" }],
     },
   })(async (trialConfig) => {
     const model = String(trialConfig.config.model);
@@ -28,9 +28,9 @@ export async function runExample() {
 
     return {
       metrics: {
-        accuracy: model === 'accurate' && temperature === 0 ? 0.96 : 0.72,
-        cost: model === 'accurate' ? 0.4 : 0.1,
-        latency: model === 'accurate' ? 1.2 : 0.6,
+        accuracy: model === "accurate" && temperature === 0 ? 0.96 : 0.72,
+        cost: model === "accurate" ? 0.4 : 0.1,
+        latency: model === "accurate" ? 1.2 : 0.6,
       },
       metadata: {
         evaluatedRows: trialConfig.dataset_subset.total,
@@ -39,7 +39,8 @@ export async function runExample() {
   });
 
   return evaluatePrompt.optimize({
-    algorithm: 'grid',
+    mode: "native",
+    algorithm: "grid",
     maxTrials: 10,
   });
 }

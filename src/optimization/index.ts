@@ -5,15 +5,21 @@ export {
   toHybridConfigSpace,
   normalizeOptimizationSpec,
 } from './spec.js';
+export { loadTvlSpec, parseTvlSpec } from './tvl.js';
 
 export type {
+  BandTarget,
+  BandedObjectiveDefinition,
   BuiltInObjectiveName,
+  ChanceConstraintDefinition,
+  DerivedConstraintDefinition,
   EvaluationSpec,
   FloatParamDefinition,
   HybridOptimizeOptions,
   HybridConfigSpace,
   HybridTunableDefinition,
   IntParamDefinition,
+  LoadedTvlOptimizationSpec,
   NativeOptimizedFunction,
   NativeOptimizeOptions,
   NativeTrialFunctionResult,
@@ -21,8 +27,11 @@ export type {
   ObjectiveDefinition,
   ObjectiveDirection,
   ObjectiveInput,
+  OptimizationExecutionSpec,
   OptimizeOptions,
   OptimizationBudget,
+  OptimizationConstraints,
+  PromotionPolicy,
   OptimizationResult,
   OptimizationSpec,
   OptimizationTrialRecord,
@@ -30,4 +39,6 @@ export type {
   ParameterConditionValue,
   ParameterDefinition,
   ParamScale,
+  StructuralConstraintDefinition,
+  TvlLoadOptions,
 } from './types.js';

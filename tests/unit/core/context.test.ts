@@ -1,9 +1,10 @@
 /**
  * Unit tests for TrialContext.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   TrialContext,
+  TrialCancelledError,
   TrialContextError,
   getTrialConfig,
   getTrialParam,
@@ -126,6 +127,21 @@ describe('TrialContext', () => {
 
     it('should return undefined when not in context', () => {
       expect(TrialContext.getTrialNumber()).toBeUndefined();
+    });
+  });
+
+  describe('cancellation helpers', () => {
+    it('should expose abort signal state and throw when cancelled', async () => {
+      const controller = new AbortController();
+      const config = createMockConfig();
+
+      await TrialContext.run(config, async () => {
+        expect(TrialContext.getAbortSignal()).toBe(controller.signal);
+        expect(TrialContext.isCancelled()).toBe(false);
+        controller.abort();
+        expect(TrialContext.isCancelled()).toBe(true);
+        expect(() => TrialContext.checkCancellation()).toThrow(TrialCancelledError);
+      }, controller.signal);
     });
   });
 });

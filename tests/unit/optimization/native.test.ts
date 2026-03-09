@@ -1,17 +1,21 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
-import { ValidationError } from '../../../src/core/errors.js';
+import { ValidationError } from "../../../src/core/errors.js";
+import { runNativeOptimization } from "../../../src/optimization/native.js";
+import { normalizeOptimizationSpec } from "../../../src/optimization/spec.js";
 import {
   TrialContext,
+  getOptimizationSpec,
   getTrialConfig,
   getTrialParam,
   optimize,
   param,
-} from '../../../src/index.js';
+} from "../../../src/index.js";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -29,13 +33,13 @@ function branin(x: number, y: number): number {
   return a * (y - b * x ** 2 + c * x - r) ** 2 + s * (1 - t) * Math.cos(x) + s;
 }
 
-describe('native optimize()', () => {
-  it('runs grid optimization and selects the best config from built-in objectives', async () => {
+describe("native optimize()", () => {
+  it("runs grid optimization and selects the best config from built-in objectives", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['cheap', 'best']),
+        model: param.enum(["cheap", "best"]),
       },
-      objectives: ['accuracy', 'cost'],
+      objectives: ["accuracy", "cost"],
       evaluation: {
         data: [{ id: 1 }, { id: 2 }],
       },
@@ -43,8 +47,8 @@ describe('native optimize()', () => {
       const model = trialConfig.config.model;
       return {
         metrics: {
-          accuracy: model === 'best' ? 0.95 : 0.6,
-          cost: model === 'best' ? 0.8 : 0.1,
+          accuracy: model === "best" ? 0.95 : 0.6,
+          cost: model === "best" ? 0.8 : 0.1,
         },
         metadata: {
           total: trialConfig.dataset_subset.total,
@@ -53,69 +57,73 @@ describe('native optimize()', () => {
     });
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 10,
     });
 
-    expect(result.bestConfig).toEqual({ model: 'cheap' });
+    expect(result.bestConfig).toEqual({ model: "cheap" });
     expect(result.bestMetrics).toEqual({ accuracy: 0.6, cost: 0.1 });
     expect(result.trials).toHaveLength(2);
-    expect(result.stopReason).toBe('completed');
+    expect(result.stopReason).toBe("completed");
     expect(result.totalCostUsd).toBeCloseTo(0.9, 10);
   });
 
-  it('uses explicit objective objects for custom metrics', async () => {
+  it("uses explicit objective objects for custom metrics", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        prompt: param.enum(['short', 'long']),
+        prompt: param.enum(["short", "long"]),
       },
-      objectives: [{ metric: 'quality_score', direction: 'maximize' }],
+      objectives: [{ metric: "quality_score", direction: "maximize" }],
       evaluation: {
         data: [{ id: 1 }],
       },
     })(async (trialConfig) => ({
       metrics: {
-        quality_score: trialConfig.config.prompt === 'long' ? 0.9 : 0.5,
+        quality_score: trialConfig.config.prompt === "long" ? 0.9 : 0.5,
       },
     }));
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 10,
     });
 
-    expect(result.bestConfig).toEqual({ prompt: 'long' });
+    expect(result.bestConfig).toEqual({ prompt: "long" });
     expect(result.bestMetrics).toEqual({ quality_score: 0.9 });
   });
 
-  it('produces deterministic random sampling when randomSeed is fixed', async () => {
+  it("produces deterministic random sampling when randomSeed is fixed", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a', 'b', 'c']),
+        model: param.enum(["a", "b", "c"]),
         retries: param.int({ min: 0, max: 2 }),
       },
-      objectives: ['cost'],
+      objectives: ["cost"],
       evaluation: {
         data: [{ id: 1 }],
       },
     })(async (trialConfig) => ({
       metrics: {
         cost:
-          trialConfig.config.model === 'a'
+          trialConfig.config.model === "a"
             ? 0.1
-            : trialConfig.config.model === 'b'
+            : trialConfig.config.model === "b"
               ? 0.2
               : 0.3,
       },
     }));
 
     const first = await wrapped.optimize({
-      algorithm: 'random',
+      mode: "native",
+      algorithm: "random",
       maxTrials: 5,
       randomSeed: 42,
     });
     const second = await wrapped.optimize({
-      algorithm: 'random',
+      mode: "native",
+      algorithm: "random",
       maxTrials: 5,
       randomSeed: 42,
     });
@@ -125,17 +133,17 @@ describe('native optimize()', () => {
     );
   });
 
-  it('supports log-scaled float grid search', async () => {
+  it("supports log-scaled float grid search", async () => {
     const wrapped = optimize({
       configurationSpace: {
         learning_rate: param.float({
           min: 0.00001,
           max: 0.1,
-          scale: 'log',
+          scale: "log",
           step: 10,
         }),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -146,26 +154,23 @@ describe('native optimize()', () => {
     }));
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 10,
     });
 
     expect(result.trials.map((trial) => trial.config.learning_rate)).toEqual([
-      0.00001,
-      0.0001,
-      0.001,
-      0.01,
-      0.1,
+      0.00001, 0.0001, 0.001, 0.01, 0.1,
     ]);
-    expect(result.stopReason).toBe('completed');
+    expect(result.stopReason).toBe("completed");
   });
 
-  it('requires step for float grid search', async () => {
+  it("requires step for float grid search", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        temperature: param.float({ min: 0, max: 1, scale: 'linear' }),
+        temperature: param.float({ min: 0, max: 1, scale: "linear" }),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -177,18 +182,19 @@ describe('native optimize()', () => {
 
     await expect(
       wrapped.optimize({
-        algorithm: 'grid',
+        mode: "native",
+        algorithm: "grid",
         maxTrials: 2,
       }),
     ).rejects.toThrow(/float parameters to define step/i);
   });
 
-  it('throws when budget.maxCostUsd is used without numeric metrics.cost', async () => {
+  it("throws when budget.maxCostUsd is used without numeric metrics.cost", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a']),
+        model: param.enum(["a"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       budget: {
         maxCostUsd: 1,
       },
@@ -203,7 +209,8 @@ describe('native optimize()', () => {
 
     await expect(
       wrapped.optimize({
-        algorithm: 'grid',
+        mode: "native",
+        algorithm: "grid",
         maxTrials: 1,
       }),
     ).rejects.toThrow(
@@ -211,31 +218,32 @@ describe('native optimize()', () => {
     );
   });
 
-  it('throws when optimize() is called on a wrapped function that does not return trial metrics', async () => {
+  it("throws when optimize() is called on a wrapped function that does not return trial metrics", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a']),
+        model: param.enum(["a"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
-    })(async () => 'not-a-trial-result');
+    })(async () => "not-a-trial-result");
 
     await expect(
       wrapped.optimize({
-        algorithm: 'grid',
+        mode: "native",
+        algorithm: "grid",
         maxTrials: 1,
       }),
     ).rejects.toThrow(ValidationError);
   });
 
-  it('stops early when the accumulated cost budget is reached', async () => {
+  it("stops early when the accumulated cost budget is reached", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a', 'b', 'c']),
+        model: param.enum(["a", "b", "c"]),
       },
-      objectives: ['cost'],
+      objectives: ["cost"],
       budget: {
         maxCostUsd: 0.25,
       },
@@ -245,30 +253,31 @@ describe('native optimize()', () => {
     })(async (trialConfig) => ({
       metrics: {
         cost:
-          trialConfig.config.model === 'a'
+          trialConfig.config.model === "a"
             ? 0.1
-            : trialConfig.config.model === 'b'
+            : trialConfig.config.model === "b"
               ? 0.2
               : 0.3,
       },
     }));
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 10,
     });
 
-    expect(result.stopReason).toBe('budget');
+    expect(result.stopReason).toBe("budget");
     expect(result.trials).toHaveLength(2);
     expect(result.totalCostUsd).toBeCloseTo(0.3, 10);
   });
 
-  it('returns a timeout stop reason when a trial exceeds timeoutMs', async () => {
+  it("returns a timeout stop reason when a trial exceeds timeoutMs", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['slow']),
+        model: param.enum(["slow"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -282,46 +291,48 @@ describe('native optimize()', () => {
     });
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 1,
       timeoutMs: 10,
     });
 
-    expect(result.stopReason).toBe('timeout');
+    expect(result.stopReason).toBe("timeout");
     expect(result.errorMessage).toMatch(/timeout/i);
     expect(result.trials).toHaveLength(0);
   });
 
-  it('returns an error stop reason when the trial function throws', async () => {
+  it("returns an error stop reason when the trial function throws", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a']),
+        model: param.enum(["a"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
     })(async () => {
-      throw new Error('boom');
+      throw new Error("boom");
     });
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 1,
     });
 
-    expect(result.stopReason).toBe('error');
-    expect(result.errorMessage).toContain('boom');
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("boom");
     expect(result.trials).toHaveLength(0);
   });
 
-  it('supports sequential bayesian optimization for smooth objectives', async () => {
+  it("supports sequential bayesian optimization for smooth objectives", async () => {
     const wrapped = optimize({
       configurationSpace: {
         x: param.float({ min: -5, max: 10 }),
         y: param.float({ min: 0, max: 15 }),
       },
-      objectives: [{ metric: 'score', direction: 'maximize' }],
+      objectives: [{ metric: "score", direction: "maximize" }],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -336,13 +347,14 @@ describe('native optimize()', () => {
     });
 
     const result = await wrapped.optimize({
-      algorithm: 'bayesian',
+      mode: "native",
+      algorithm: "bayesian",
       maxTrials: 24,
       randomSeed: 7,
     });
 
     expect(result.trials).toHaveLength(24);
-    expect(result.stopReason).toBe('maxTrials');
+    expect(result.stopReason).toBe("maxTrials");
     expect(Number(result.bestConfig?.x)).toBeGreaterThanOrEqual(-5);
     expect(Number(result.bestConfig?.x)).toBeLessThanOrEqual(10);
     expect(Number(result.bestConfig?.y)).toBeGreaterThanOrEqual(0);
@@ -350,154 +362,26 @@ describe('native optimize()', () => {
     expect(Number(result.bestMetrics?.score)).toBeGreaterThan(-5);
   });
 
-  it('applies conditional parameter defaults during grid search', async () => {
+  it("rejects conditional parameters in native optimization mode", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['gpt-3.5', 'gpt-4']),
+        model: param.enum(["gpt-3.5", "gpt-4"]),
         max_tokens: param.int({
           min: 256,
           max: 768,
           step: 256,
-          conditions: { model: 'gpt-4' },
+          conditions: { model: "gpt-4" },
           default: 512,
         }),
         temperature: param.float({
           min: 0.1,
           max: 0.5,
           step: 0.2,
-          conditions: { model: 'gpt-3.5' },
+          conditions: { model: "gpt-3.5" },
           default: 0.3,
         }),
       },
-      objectives: ['accuracy'],
-      evaluation: {
-        data: [{ id: 1 }],
-      },
-    })(async (trialConfig) => ({
-      metrics: {
-        accuracy:
-          trialConfig.config.model === 'gpt-4'
-            ? Number(trialConfig.config.max_tokens) / 1000
-            : Number(trialConfig.config.temperature),
-      },
-    }));
-
-    const result = await wrapped.optimize({
-      algorithm: 'grid',
-      maxTrials: 10,
-    });
-
-    expect(result.trials.map((trial) => trial.config)).toEqual([
-      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.1 },
-      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.3 },
-      { model: 'gpt-3.5', max_tokens: 512, temperature: 0.5 },
-      { model: 'gpt-4', max_tokens: 256, temperature: 0.3 },
-      { model: 'gpt-4', max_tokens: 512, temperature: 0.3 },
-      { model: 'gpt-4', max_tokens: 768, temperature: 0.3 },
-    ]);
-    expect(result.bestConfig).toEqual({
-      model: 'gpt-4',
-      max_tokens: 768,
-      temperature: 0.3,
-    });
-  });
-
-  it('preserves conditional activation rules in deterministic random search', async () => {
-    const wrapped = optimize({
-      configurationSpace: {
-        model: param.enum(['gpt-3.5', 'gpt-4']),
-        max_tokens: param.int({
-          min: 256,
-          max: 768,
-          step: 256,
-          conditions: { model: 'gpt-4' },
-          default: 512,
-        }),
-      },
-      objectives: ['accuracy'],
-      evaluation: {
-        data: [{ id: 1 }],
-      },
-    })(async (trialConfig) => ({
-      metrics: {
-        accuracy:
-          trialConfig.config.model === 'gpt-4'
-            ? Number(trialConfig.config.max_tokens)
-            : 1,
-      },
-    }));
-
-    const first = await wrapped.optimize({
-      algorithm: 'random',
-      maxTrials: 6,
-      randomSeed: 7,
-    });
-    const second = await wrapped.optimize({
-      algorithm: 'random',
-      maxTrials: 6,
-      randomSeed: 7,
-    });
-
-    expect(first.trials.map((trial) => trial.config)).toEqual(
-      second.trials.map((trial) => trial.config),
-    );
-
-    for (const trial of first.trials) {
-      if (trial.config.model === 'gpt-4') {
-        expect([256, 512, 768]).toContain(trial.config.max_tokens);
-      } else {
-        expect(trial.config.max_tokens).toBe(512);
-      }
-    }
-  });
-
-  it('keeps conditional parameters valid during bayesian optimization', async () => {
-    const wrapped = optimize({
-      configurationSpace: {
-        model: param.enum(['cheap', 'best']),
-        temperature: param.float({
-          min: 0.1,
-          max: 0.9,
-          step: 0.2,
-          conditions: { model: 'cheap' },
-          default: 0.3,
-        }),
-      },
-      objectives: ['accuracy'],
-      evaluation: {
-        data: [{ id: 1 }],
-      },
-    })(async (trialConfig) => ({
-      metrics: {
-        accuracy:
-          trialConfig.config.model === 'best'
-            ? 1
-            : 0.5 + Number(trialConfig.config.temperature) / 10,
-      },
-    }));
-
-    const result = await wrapped.optimize({
-      algorithm: 'bayesian',
-      maxTrials: 8,
-      randomSeed: 5,
-    });
-
-    expect(result.stopReason).toBe('completed');
-    for (const trial of result.trials) {
-      if (trial.config.model === 'best') {
-        expect(trial.config.temperature).toBe(0.3);
-      } else {
-        expect([0.1, 0.3, 0.5, 0.7, 0.9]).toContain(trial.config.temperature);
-      }
-    }
-  });
-
-  it('rejects bayesian trialConcurrency > 1', async () => {
-    const wrapped = optimize({
-      configurationSpace: {
-        x: param.float({ min: 0, max: 1 }),
-      },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -509,27 +393,112 @@ describe('native optimize()', () => {
 
     await expect(
       wrapped.optimize({
-        algorithm: 'bayesian',
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 10,
+      }),
+    ).rejects.toThrow(/does not support conditional parameter "max_tokens"/i);
+  });
+
+  it("rejects weighted objectives in native optimization mode", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "best"]),
+      },
+      objectives: [{ metric: "quality", direction: "maximize", weight: 2 }],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        quality: 1,
+      },
+    }));
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "bayesian",
+        maxTrials: 8,
+        randomSeed: 5,
+      }),
+    ).rejects.toThrow(/does not support weighted objective "quality"/i);
+  });
+
+  it("rejects hybrid-only budgets and constraints in native optimization mode", async () => {
+    const constrained = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "best"]),
+      },
+      objectives: ["accuracy"],
+      budget: {
+        maxTrials: 4,
+        maxWallclockMs: 5_000,
+      },
+      constraints: {
+        structural: [
+          {
+            require: 'params.model == "cheap"',
+          },
+        ],
+      },
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    await expect(
+      constrained.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 2,
+      }),
+    ).rejects.toThrow(/does not support structural or derived constraints/i);
+  });
+
+  it("rejects bayesian trialConcurrency > 1", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        x: param.float({ min: 0, max: 1 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "bayesian",
         maxTrials: 4,
         trialConcurrency: 2,
       }),
     ).rejects.toThrow(/does not support trialConcurrency > 1/i);
   });
 
-  it('preserves TrialContext isolation across concurrent trials', async () => {
+  it("preserves TrialContext isolation across concurrent trials", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a', 'b', 'c', 'd']),
+        model: param.enum(["a", "b", "c", "d"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
     })(async (trialConfig) => {
-      const before = getTrialParam('model');
-      await delay(trialConfig.config.model === 'a' ? 20 : 5);
+      const before = getTrialParam("model");
+      await delay(trialConfig.config.model === "a" ? 20 : 5);
       const currentConfig = getTrialConfig();
-      const after = getTrialParam('model');
+      const after = getTrialParam("model");
       return {
         metrics: {
           accuracy: before === after ? 1 : 0,
@@ -544,12 +513,13 @@ describe('native optimize()', () => {
     });
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 4,
       trialConcurrency: 4,
     });
 
-    expect(result.stopReason).toBe('completed');
+    expect(result.stopReason).toBe("completed");
     for (const trial of result.trials) {
       expect(trial.metrics.accuracy).toBe(1);
       expect(trial.metadata).toMatchObject({
@@ -560,14 +530,14 @@ describe('native optimize()', () => {
     }
   });
 
-  it('supports checkpoint/resume with the same final result as an uninterrupted run', async () => {
-    const checkpointDir = await mkdtemp(join(tmpdir(), 'traigent-checkpoint-'));
+  it("supports checkpoint/resume with the same final result as an uninterrupted run", async () => {
+    const checkpointDir = await mkdtemp(join(tmpdir(), "traigent-checkpoint-"));
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a', 'b', 'c']),
+        model: param.enum(["a", "b", "c"]),
         retries: param.int({ min: 0, max: 2 }),
       },
-      objectives: ['accuracy', 'cost'],
+      objectives: ["accuracy", "cost"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -577,8 +547,8 @@ describe('native optimize()', () => {
         metrics: {
           accuracy:
             Number(trialConfig.config.retries) * 0.2 +
-            (trialConfig.config.model === 'c' ? 0.6 : 0.3),
-          cost: trialConfig.config.model === 'c' ? 0.5 : 0.1,
+            (trialConfig.config.model === "c" ? 0.6 : 0.3),
+          cost: trialConfig.config.model === "c" ? 0.5 : 0.1,
         },
       };
     });
@@ -587,31 +557,34 @@ describe('native optimize()', () => {
     setTimeout(() => controller.abort(), 35);
 
     const partial = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 9,
       signal: controller.signal,
       checkpoint: {
-        key: 'resume-grid',
+        key: "resume-grid",
         dir: checkpointDir,
       },
     });
 
     const resumed = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 9,
       checkpoint: {
-        key: 'resume-grid',
+        key: "resume-grid",
         dir: checkpointDir,
         resume: true,
       },
     });
 
     const uninterrupted = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 9,
     });
 
-    expect(partial.stopReason).toBe('cancelled');
+    expect(partial.stopReason).toBe("cancelled");
     expect(partial.trials.length).toBeGreaterThan(0);
     expect(resumed.bestConfig).toEqual(uninterrupted.bestConfig);
     expect(resumed.bestMetrics).toEqual(uninterrupted.bestMetrics);
@@ -623,12 +596,12 @@ describe('native optimize()', () => {
     await rm(checkpointDir, { recursive: true, force: true });
   });
 
-  it('stops with plateau when improvements stay below the configured threshold', async () => {
+  it("stops with plateau when improvements stay below the configured threshold", async () => {
     const wrapped = optimize({
       configurationSpace: {
-        model: param.enum(['a', 'b', 'c', 'd', 'e']),
+        model: param.enum(["a", "b", "c", "d", "e"]),
       },
-      objectives: ['accuracy'],
+      objectives: ["accuracy"],
       evaluation: {
         data: [{ id: 1 }],
       },
@@ -639,7 +612,8 @@ describe('native optimize()', () => {
     }));
 
     const result = await wrapped.optimize({
-      algorithm: 'grid',
+      mode: "native",
+      algorithm: "grid",
       maxTrials: 5,
       plateau: {
         window: 2,
@@ -647,7 +621,584 @@ describe('native optimize()', () => {
       },
     });
 
-    expect(result.stopReason).toBe('plateau');
+    expect(result.stopReason).toBe("plateau");
     expect(result.trials).toHaveLength(3);
+  });
+
+  it("rejects empty evaluation datasets", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+      }),
+    ).rejects.toThrow(/evaluation data to be a non-empty array/i);
+  });
+
+  it("rejects invalid native optimize() runtime options", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    await expect(
+      runNativeOptimization(
+        async () => ({
+          metrics: {
+            accuracy: 1,
+          },
+        }),
+        getOptimizationSpec(wrapped)!,
+        {
+        mode: "hybrid" as never,
+        algorithm: "grid",
+        maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/native mode only accepts mode: "native"/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        randomSeed: -1,
+      }),
+    ).rejects.toThrow(/randomSeed must be a non-negative integer/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        timeoutMs: 0,
+      }),
+    ).rejects.toThrow(/timeoutMs must be a positive integer/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        trialConcurrency: 0,
+      }),
+    ).rejects.toThrow(/trialConcurrency must be a positive integer/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        plateau: {
+          window: 0,
+          minImprovement: 0,
+        },
+      }),
+    ).rejects.toThrow(/plateau\.window must be a positive integer/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        plateau: {
+          window: 1,
+          minImprovement: -0.1,
+        },
+      }),
+    ).rejects.toThrow(/plateau\.minImprovement must be a finite number >= 0/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        checkpoint: {
+          key: "",
+        },
+      }),
+    ).rejects.toThrow(/checkpoint\.key must be non-empty/i);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+        checkpoint: {
+          key: "ok",
+          dir: "",
+        },
+      }),
+    ).rejects.toThrow(/checkpoint\.dir must be non-empty/i);
+  });
+
+  it("stops bayesian search with plateau when objective improvements flatten out", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        x: param.float({ min: 0, max: 1 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      mode: "native",
+      algorithm: "bayesian",
+      maxTrials: 10,
+      randomSeed: 3,
+      plateau: {
+        window: 2,
+        minImprovement: 0.01,
+      },
+    });
+
+    expect(result.stopReason).toBe("plateau");
+    expect(result.trials.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("merges defaultConfig into native trial configs and supports banded objectives", async () => {
+    const seenTemperatures: number[] = [];
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "accurate"]),
+      },
+      objectives: [
+        {
+          metric: "response_length",
+          band: { low: 120, high: 180 },
+        },
+      ],
+      defaultConfig: {
+        temperature: 0.7,
+      },
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => {
+      seenTemperatures.push(Number(trialConfig.config.temperature));
+      return {
+        metrics: {
+          response_length: trialConfig.config.model === "accurate" ? 150 : 90,
+        },
+      };
+    });
+
+    const result = await wrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 2,
+    });
+
+    expect(seenTemperatures).toEqual([0.7, 0.7]);
+    expect(result.bestConfig).toEqual({
+      temperature: 0.7,
+      model: "accurate",
+    });
+  });
+
+  it("supports conditional sampling paths when runNativeOptimization() is invoked directly", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["cheap", "accurate"]),
+        maxTokens: param.int({
+          min: 64,
+          max: 128,
+          step: 64,
+          conditions: { model: "accurate" },
+          default: 64,
+        }),
+        temperature: param.float({
+          min: 0.1,
+          max: 0.3,
+          step: 0.2,
+          conditions: { model: "cheap" },
+          default: 0.1,
+        }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        loadData: async () => [{ id: 1 }, { id: 2 }],
+      },
+    });
+
+    const result = await runNativeOptimization(
+      async (trialConfig) => ({
+        metrics: {
+          accuracy:
+            trialConfig.config.model === "accurate" &&
+            trialConfig.config.maxTokens === 128
+              ? 1
+              : 0.5,
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 10,
+      },
+    );
+
+    expect(result.trials.map((trial) => trial.config)).toEqual([
+      { model: "cheap", maxTokens: 64, temperature: 0.1 },
+      { model: "cheap", maxTokens: 64, temperature: 0.3 },
+      { model: "accurate", maxTokens: 64, temperature: 0.1 },
+      { model: "accurate", maxTokens: 128, temperature: 0.1 },
+    ]);
+    expect(result.bestConfig).toEqual({
+      model: "accurate",
+      maxTokens: 128,
+      temperature: 0.1,
+    });
+  });
+
+  it("covers random conditional sampling and exhausts a discrete space without duplicates", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["cheap", "accurate"]),
+        retries: param.int({ min: 0, max: 1, step: 1 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const result = await runNativeOptimization(
+      async (trialConfig) => ({
+        metrics: {
+          accuracy:
+            trialConfig.config.model === "accurate" &&
+            trialConfig.config.retries === 1
+              ? 1
+              : 0.2,
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "random",
+        maxTrials: 10,
+        randomSeed: 5,
+      },
+    );
+
+    expect(result.trials).toHaveLength(4);
+    expect(
+      new Set(result.trials.map((trial) => JSON.stringify(trial.config))).size,
+    ).toBe(4);
+    expect(result.stopReason).toBe("completed");
+  });
+
+  it("rejects invalid metrics returned from a trial function", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () =>
+          ({
+            metrics: {
+              accuracy: Number.NaN,
+            },
+          }) as never,
+        spec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/trial metrics are invalid/i);
+  });
+
+  it("returns cancelled immediately when the optimization signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a", "b"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const result = await runNativeOptimization(
+      async () => ({
+        metrics: {
+          accuracy: 1,
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 2,
+        signal: controller.signal,
+      },
+    );
+
+    expect(result.stopReason).toBe("cancelled");
+    expect(result.errorMessage).toMatch(/cancelled/i);
+    expect(result.trials).toHaveLength(0);
+  });
+
+  it("rejects incompatible checkpoint state during resume", async () => {
+    const checkpointDir = await mkdtemp(join(tmpdir(), "traigent-native-checkpoint-"));
+    const checkpointKey = "native-grid";
+    const checkpointPath = join(
+      checkpointDir,
+      `${createHash("sha256").update(checkpointKey).digest("hex")}.json`,
+    );
+
+    await writeFile(
+      checkpointPath,
+      JSON.stringify({
+        version: 1,
+        algorithm: "grid",
+        specHash: "wrong",
+        optionsHash: "wrong",
+        experimentRunId: "native_resume",
+        completedTrials: [],
+        totalCostUsd: 0,
+      }),
+      "utf8",
+    );
+
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () => ({
+          metrics: {
+            accuracy: 1,
+          },
+        }),
+        spec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          checkpoint: {
+            key: checkpointKey,
+            dir: checkpointDir,
+            resume: true,
+          },
+        },
+      ),
+    ).rejects.toThrow(/checkpoint does not match/i);
+
+    await rm(checkpointDir, { recursive: true, force: true });
+  });
+
+  it("stops bayesian search on budget and on discrete exhaustiveness", async () => {
+    const budgetSpec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["cheap", "accurate"]),
+        temperature: param.float({ min: 0.1, max: 0.9 }),
+      },
+      objectives: ["accuracy"],
+      budget: {
+        maxCostUsd: 0.11,
+      },
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const budgetResult = await runNativeOptimization(
+      async (trialConfig) => ({
+        metrics: {
+          accuracy: trialConfig.config.model === "accurate" ? 0.9 : 0.5,
+          cost: trialConfig.config.model === "accurate" ? 0.2 : 0.1,
+        },
+      }),
+      budgetSpec,
+      {
+        mode: "native",
+        algorithm: "bayesian",
+        maxTrials: 8,
+        randomSeed: 3,
+      },
+    );
+
+    expect(budgetResult.stopReason).toBe("budget");
+
+    const exhaustiveSpec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["cheap", "accurate"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const exhaustiveResult = await runNativeOptimization(
+      async (trialConfig) => ({
+        metrics: {
+          accuracy: trialConfig.config.model === "accurate" ? 1 : 0.5,
+        },
+      }),
+      exhaustiveSpec,
+      {
+        mode: "native",
+        algorithm: "bayesian",
+        maxTrials: 8,
+        randomSeed: 1,
+      },
+    );
+
+    expect(exhaustiveResult.stopReason).toBe("completed");
+    expect(exhaustiveResult.trials).toHaveLength(2);
+  });
+
+  it("resumes bayesian search from checkpointed sampler state", async () => {
+    const checkpointDir = await mkdtemp(join(tmpdir(), "traigent-bayes-checkpoint-"));
+    const controller = new AbortController();
+    let seen = 0;
+
+    const wrapped = optimize({
+      configurationSpace: {
+        x: param.float({ min: 0.1, max: 1 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => {
+      seen += 1;
+      if (seen === 2) {
+        controller.abort();
+      }
+      return {
+        metrics: {
+          accuracy: Number(trialConfig.config.x),
+        },
+      };
+    });
+
+    const first = await wrapped.optimize({
+      mode: "native",
+      algorithm: "bayesian",
+      maxTrials: 5,
+      randomSeed: 4,
+      signal: controller.signal,
+      checkpoint: {
+        key: "bayes-resume",
+        dir: checkpointDir,
+      },
+    });
+
+    expect(first.stopReason).toBe("cancelled");
+
+    const resumed = await wrapped.optimize({
+      mode: "native",
+      algorithm: "bayesian",
+      maxTrials: 5,
+      randomSeed: 4,
+      checkpoint: {
+        key: "bayes-resume",
+        dir: checkpointDir,
+        resume: true,
+      },
+    });
+
+    expect(resumed.trials).toHaveLength(5);
+    await rm(checkpointDir, { recursive: true, force: true });
+  });
+
+  it("handles bayesian cancellation and bayesian trial errors", async () => {
+    const cancelledSignal = new AbortController();
+    cancelledSignal.abort();
+
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const cancelled = await runNativeOptimization(
+      async () => ({
+        metrics: {
+          accuracy: 1,
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "bayesian",
+        maxTrials: 3,
+        signal: cancelledSignal.signal,
+      },
+    );
+
+    expect(cancelled.stopReason).toBe("cancelled");
+
+    const errored = await runNativeOptimization(
+      async () => {
+        throw new Error("bayes boom");
+      },
+      spec,
+      {
+        mode: "native",
+        algorithm: "bayesian",
+        maxTrials: 3,
+      },
+    );
+
+    expect(errored.stopReason).toBe("error");
+    expect(errored.errorMessage).toContain("bayes boom");
   });
 });

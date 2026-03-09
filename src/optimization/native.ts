@@ -691,6 +691,23 @@ function getObjectiveMetric(
   return value;
 }
 
+function objectiveScoreValue(
+  value: number,
+  objective: NormalizedObjectiveDefinition,
+): number {
+  if (objective.kind === 'banded') {
+    if (value < objective.band.low) {
+      return -(objective.band.low - value);
+    }
+    if (value > objective.band.high) {
+      return -(value - objective.band.high);
+    }
+    return 0;
+  }
+
+  return objective.direction === 'minimize' ? -value : value;
+}
+
 function computeSearchScore(
   metrics: Metrics,
   objectives: readonly NormalizedObjectiveDefinition[],
@@ -705,7 +722,7 @@ function computeSearchScore(
         `Trial metrics are missing numeric objective "${objective.metric}".`,
       );
     }
-    const signedValue = objective.direction === 'minimize' ? -value : value;
+    const signedValue = objectiveScoreValue(value, objective);
     weightedTotal += signedValue * objective.weight;
     totalWeight += objective.weight;
   }
@@ -720,7 +737,9 @@ function selectBestTrial(
   if (trials.length === 0) return null;
 
   const ranges = objectives.map((objective) => {
-    const values = trials.map((trial) => getObjectiveMetric(trial, objective));
+    const values = trials.map((trial) =>
+      objectiveScoreValue(getObjectiveMetric(trial, objective), objective),
+    );
     return {
       objective,
       min: Math.min(...values),
@@ -736,17 +755,15 @@ function selectBestTrial(
     let totalWeight = 0;
 
     for (const range of ranges) {
-      const value = getObjectiveMetric(trial, range.objective);
+      const value = objectiveScoreValue(
+        getObjectiveMetric(trial, range.objective),
+        range.objective,
+      );
       let normalized = 1;
 
       if (range.max !== range.min) {
         normalized = (value - range.min) / (range.max - range.min);
       }
-
-      if (range.objective.direction === 'minimize') {
-        normalized = 1 - normalized;
-      }
-
       weightedScore += normalized * range.objective.weight;
       totalWeight += range.objective.weight;
     }
@@ -788,12 +805,16 @@ function createTrialConfig(
   trialNumber: number,
   totalRows: number,
   experimentRunId: string,
+  defaultConfig?: CandidateConfig,
 ): TrialConfig {
   return {
     trial_id: `trial_${trialNumber}_${randomUUID()}`,
     trial_number: trialNumber,
     experiment_run_id: experimentRunId,
-    config,
+    config: {
+      ...(defaultConfig ?? {}),
+      ...config,
+    },
     dataset_subset: {
       indices: Array.from({ length: totalRows }, (_, index) => index),
       total: totalRows,
@@ -1409,6 +1430,7 @@ async function runCandidatePlan(
         trialNumber,
         evaluationRows.length,
         resume.experimentRunId,
+        spec.defaultConfig,
       );
       const promise = executeTrial(
         trialFn,
@@ -1533,6 +1555,7 @@ async function runBayesianPlan(
       trialNumber,
       evaluationRows.length,
       resume.experimentRunId,
+      spec.defaultConfig,
     );
 
     const outcome = await executeTrial(

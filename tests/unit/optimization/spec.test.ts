@@ -9,7 +9,7 @@ import {
   toHybridConfigSpace,
 } from "../../../src/index.js";
 import { ValidationError } from "../../../src/core/errors.js";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,6 +94,36 @@ describe("optimization spec helpers", () => {
         objectives: ["quality"],
       }),
     ).toThrow(ValidationError);
+  });
+
+  it("rejects malformed objective bands and invalid promotion policy settings", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: [
+          {
+            metric: "response_length",
+            band: { low: 1, high: 2, center: 3, tol: 1 } as never,
+          },
+        ],
+      }),
+    ).toThrow(/either low\/high or center\/tol/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          tieBreakers: {
+            accuracy: "sideways" as never,
+          },
+        },
+      }),
+    ).toThrow(/tieBreakers\.accuracy must be "maximize" or "minimize"/i);
   });
 
   it("accepts explicit objective objects for custom metrics", () => {
@@ -263,6 +293,200 @@ describe("optimization spec helpers", () => {
         conditions: { model: "gpt-4" },
         default: 512,
       },
+    );
+  });
+
+  it("rejects invalid ranges, condition values, and conditional defaults", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          temperature: param.float({
+            min: 1,
+            max: 0,
+            step: 0.1,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/require max >= min/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          retries: param.int({
+            min: 0,
+            max: 3,
+            step: 1.5 as never,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/require step to be an integer/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["cheap", "accurate"]),
+          invalid: param.bool({
+            conditions: { model: { nested: true } as never },
+            default: false,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/only support string, number, or boolean equality values/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["cheap", "accurate"]),
+          maxTokens: param.int({
+            min: 64,
+            max: 128,
+            step: 64,
+            conditions: { model: "accurate" },
+            default: 32,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/default must fall within min\/max/i);
+  });
+
+  it("rejects invalid conditional dependency graphs", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          first: param.bool({
+            conditions: { missing: true },
+            default: false,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/unknown dependency "missing"/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          first: param.bool({
+            conditions: { second: true },
+            default: false,
+          }),
+          second: param.bool({
+            conditions: { first: true },
+            default: false,
+          }),
+        },
+        objectives: ["accuracy"],
+      }),
+    ).toThrow(/dependency cycles/i);
+  });
+
+  it("rejects malformed constraints, defaultConfig, and autoLoadBest settings", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        constraints: [] as never,
+      }),
+    ).toThrow(/constraints must be an object/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        defaultConfig: [] as never,
+      }),
+    ).toThrow(/defaultConfig must be an object/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        autoLoadBest: true,
+      })(async () => ({ metrics: { accuracy: 1 } })),
+    ).toThrow(/autoLoadBest requires loadFrom/i);
+  });
+
+  it("normalizes authored spec objects passed directly to getOptimizationSpec()", () => {
+    const spec = {
+      configurationSpace: {
+        mode: param.enum(["safe", "fast"]),
+        useCache: param.bool({
+          conditions: { mode: "safe" },
+          default: false,
+        }),
+      },
+      objectives: [{ metric: "quality", direction: "maximize" as const }],
+    };
+
+    expect(getOptimizationSpec(spec)).toMatchObject({
+      configurationSpace: {
+        useCache: {
+          values: [false, true],
+          conditions: { mode: "safe" },
+          default: false,
+        },
+      },
+    });
+  });
+
+  it("handles missing and malformed auto-loaded configs", async () => {
+    const missingPath = join(tmpdir(), `traigent-missing-${Date.now()}.json`);
+    const missingWrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      defaultConfig: { temperature: 0.5 },
+      autoLoadBest: true,
+      loadFrom: missingPath,
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    expect(missingWrapped.currentConfig()).toEqual({ temperature: 0.5 });
+
+    const dir = await mkdtemp(join(tmpdir(), "traigent-autoload-"));
+    const invalidJsonPath = join(dir, "invalid.json");
+    await writeFile(invalidJsonPath, "{not-json", "utf8");
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        autoLoadBest: true,
+        loadFrom: invalidJsonPath,
+      })(async () => ({ metrics: { accuracy: 1 } })),
+    ).toThrow(/Failed to load best config/i);
+
+    const invalidObjectPath = join(dir, "invalid-object.json");
+    await writeFile(invalidObjectPath, JSON.stringify(["bad"]), "utf8");
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        autoLoadBest: true,
+        loadFrom: invalidObjectPath,
+      })(async () => ({ metrics: { accuracy: 1 } })),
+    ).toThrow(/must be a JSON object/i);
+  });
+
+  it("returns undefined for non-spec inputs and rejects toHybridConfigSpace() without a spec", () => {
+    expect(getOptimizationSpec(null)).toBeUndefined();
+    expect(getOptimizationSpec({ nope: true })).toBeUndefined();
+    expect(() => toHybridConfigSpace({ nope: true })).toThrow(
+      /requires a wrapped function or optimization spec/i,
     );
   });
 

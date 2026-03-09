@@ -45,24 +45,34 @@ export {
   param,
   getOptimizationSpec,
   toHybridConfigSpace,
+  loadTvlSpec,
+  parseTvlSpec,
 } from './optimization/index.js';
 
 export type {
+  BandTarget,
+  BandedObjectiveDefinition,
   BuiltInObjectiveName,
+  ChanceConstraintDefinition,
+  DerivedConstraintDefinition,
   EvaluationSpec,
   FloatParamDefinition,
   HybridOptimizeOptions,
   HybridConfigSpace,
   HybridTunableDefinition,
   IntParamDefinition,
+  LoadedTvlOptimizationSpec,
   NativeOptimizedFunction,
   NativeOptimizeOptions,
   NativeTrialFunctionResult,
   ObjectiveDefinition,
   ObjectiveDirection,
   ObjectiveInput,
+  OptimizationExecutionSpec,
   OptimizeOptions,
   OptimizationBudget,
+  OptimizationConstraints,
+  PromotionPolicy,
   OptimizationResult,
   OptimizationSpec,
   OptimizationTrialRecord,
@@ -70,6 +80,8 @@ export type {
   ParameterConditionValue,
   ParameterDefinition,
   ParamScale,
+  StructuralConstraintDefinition,
+  TvlLoadOptions,
 } from './optimization/index.js';
 
 // DTO exports

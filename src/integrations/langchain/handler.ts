@@ -20,7 +20,7 @@
  */
 import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type { Serialized } from '@langchain/core/load/serializable';
-import type { LLMResult, ChatGeneration, Generation } from '@langchain/core/outputs';
+import type { LLMResult } from '@langchain/core/outputs';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { MeasuresDict } from '../../dtos/measures.js';
 import { prefixMeasures } from '../../dtos/measures.js';

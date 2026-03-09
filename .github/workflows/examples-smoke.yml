@@ -1,0 +1,63 @@
+name: Examples Smoke Test
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "examples/**"
+      - "walkthrough/**"
+      - "scripts/examples/**"
+      - "src/**"
+      - "README.md"
+      - "package.json"
+      - "package-lock.json"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "examples/**"
+      - "walkthrough/**"
+      - "scripts/examples/**"
+      - "src/**"
+      - "README.md"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build SDK
+        run: npm run build:sdk
+
+      - name: Run quickstart example
+        env:
+          TRAIGENT_OFFLINE_MODE: "true"
+        run: node examples/quickstart/01_simple_qa.mjs
+
+      - name: Run example smoke suite
+        env:
+          TRAIGENT_OFFLINE_MODE: "true"
+        run: npm run smoke:examples
+
+      - name: Run walkthrough smoke suite
+        env:
+          TRAIGENT_OFFLINE_MODE: "true"
+        run: npm run smoke:walkthrough
+

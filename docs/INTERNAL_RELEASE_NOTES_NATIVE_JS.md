@@ -1,52 +1,59 @@
-# Internal Release Notes: Native JS Optimization
+# Internal Release Notes: JS Optimization Parity
 
 ## Scope
 
-This release extends the native JS optimization surface in `@traigent/sdk` beyond the phase-1 slice.
+This release aligns the JS SDK more closely with the sibling Python SDK where
+the optimization contract is shared.
 
 ## SDK Changes
 
-- Root exports continue to include `optimize`, `param`, `getOptimizationSpec`, and `toHybridConfigSpace`.
-- Wrapped functions now support native `.optimize({ algorithm, maxTrials, randomSeed, timeoutMs, trialConcurrency, plateau, checkpoint, signal })`.
-- Wrapped functions also support backend-guided `.optimize({ mode: 'hybrid', algorithm: 'optuna', maxTrials, backendUrl, apiKey, timeoutMs, requestTimeoutMs, signal })`.
-- Native optimization currently supports:
-  - Node-only execution
-  - `grid`, `random`, and sequential `bayesian`
-  - log-scale `float` and `int` parameters
-  - conditional parameters with equality conditions and required default fallback
-  - budget enforcement from numeric `metrics.cost`
-  - `stopReason: 'timeout' | 'error' | 'cancelled' | 'plateau'`
-  - wrapper-local `applyBestConfig()` / `currentConfig()`
-- Hybrid optimization currently supports:
-  - local JS trial execution with backend-driven configuration suggestions
-  - backend session orchestration via `/sessions`, `/next-trial`, `/results`, and `/finalize`
-  - env-backed backend discovery through `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` and `TRAIGENT_API_KEY`
-  - snake_case transport serialization for hybrid `optimizationStrategy` keys
-  - backend finalization fallback for `bestConfig` / `bestMetrics`
-  - fast compatibility failure when a backend still exposes the legacy TraiGent `/sessions` contract instead of the typed interactive one
+- Root exports include `optimize`, `param`, `getOptimizationSpec`,
+  `toHybridConfigSpace`, `loadTvlSpec`, and `parseTvlSpec`.
+- Wrapped functions support native
+  `.optimize({ mode: "native", algorithm, maxTrials, randomSeed, timeoutMs, trialConcurrency, plateau, checkpoint, signal })`.
+- Wrapped functions also support backend-guided
+  `.optimize({ algorithm: "optuna", maxTrials, backendUrl, apiKey, timeoutMs, requestTimeoutMs, signal })`.
 
-## Cross-SDK Validation
+## Native Optimization
 
-- Python-owned oracle fixtures validate deterministic grid, conditional grid, seeded random, conditional random, and budget cutoff behavior.
-- JS reports async optimization scheduling against Python with a shared synthetic workload.
-- The lightweight Python oracle exporter is stdlib-only; full Python Bayesian oracle parity remains deferred in this environment.
+- Node-only execution
+- `grid`, `random`, and sequential `bayesian`
+- log-scale `float` and `int` parameters
+- budget enforcement from numeric `metrics.cost`
+- `stopReason: "timeout" | "error" | "cancelled" | "plateau"`
+- wrapper-local `applyBestConfig()` / `currentConfig()`
 
-## Intentional v1 Limits
+## Hybrid Optimization
 
-- `trialConcurrency` is currently limited to `grid` and `random`.
-- Conditional parameters are native-only for now; `toHybridConfigSpace()` rejects them.
-- No native in-process Optuna-family algorithms or example-level concurrency yet.
+- local JS trial execution with backend-driven configuration suggestions
+- backend session orchestration via `/sessions`, `/next-trial`, `/results`, and `/finalize`
+- env-backed backend discovery through `TRAIGENT_BACKEND_URL` /
+  `TRAIGENT_API_URL` and `TRAIGENT_API_KEY`
+- snake_case transport serialization for hybrid `optimizationStrategy` keys
+- backend finalization fallback for `bestConfig` / `bestMetrics`
+- fast compatibility failure when a backend still exposes the legacy TraiGent
+  `/sessions` contract instead of the typed interactive one
+- weighted and banded objectives
+- conditional parameters with default fallbacks
+- structural constraints and derived constraints
+- spec-level `maxTrials`, `maxCostUsd`, and `maxWallclockMs`
+- promotion-policy metadata transport
+
+## Intentional Limits
+
+- `toHybridConfigSpace()` still rejects conditional parameters because the legacy
+  hybrid wire format cannot express them.
+- Promotion policy is currently transport-only metadata. It is parsed and sent,
+  but not behaviorally enforced yet.
+- No native in-process Optuna-family algorithms or example-level concurrency.
 - `budget.maxCostUsd` requires numeric `metrics.cost` on every trial.
-- Hybrid mode rejects weighted objectives, explicit direction overrides that do not match backend inference, conditional parameters, and native-only runtime options.
-- The current local `TraigentBackend` codebase exposes two different session APIs:
-  - `/api/v1/sessions` is still the older TraiGent grid/random contract and is incompatible with JS hybrid Optuna mode.
-  - `/api/v1/hybrid/sessions` is an IRT round-based service and is also not the Optuna-style one-trial-at-a-time contract used by this client.
-- Live backend validation is therefore blocked until the backend publishes the typed interactive session API expected by the JS hybrid client.
+- Hybrid mode still rejects native-only runtime options such as
+  `trialConcurrency`, `plateau`, `checkpoint`, and `randomSeed`.
 
 ## Release Validation
 
 ```bash
-npm test
+npm run ci
 npm run test:cross-sdk
 npm run smoke:example
 npm run smoke:hybrid-live
@@ -55,4 +62,5 @@ npm run build
 npm pack --dry-run
 ```
 
-`smoke:hybrid-live` requires `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus `TRAIGENT_API_KEY`.
+`smoke:hybrid-live` requires `TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL` plus
+`TRAIGENT_API_KEY`.

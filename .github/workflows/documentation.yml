@@ -1,0 +1,46 @@
+name: Documentation Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "docs/**"
+      - "examples/**"
+      - "walkthrough/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "docs/**"
+      - "examples/**"
+      - "walkthrough/**"
+  workflow_dispatch:
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check required docs
+        run: |
+          test -f README.md
+          test -f CONTRIBUTING.md
+          test -f docs/README.md
+          test -f examples/README.md
+          test -f walkthrough/README.md
+
+      - name: Check internal links
+        run: npm run docs:check
+

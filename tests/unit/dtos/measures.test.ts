@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
+  createEmptyMeasures,
   MeasuresDictSchema,
   sanitizeMeasures,
   mergeMeasures,
@@ -125,6 +126,20 @@ describe('sanitizeMeasures()', () => {
     const result = sanitizeMeasures(input, { warn });
     expect(result).toEqual({ valid: 0.5 });
   });
+
+  it('should throw in strict mode for too many keys and non-numeric values', () => {
+    const tooMany: Record<string, number> = {};
+    for (let i = 0; i < MAX_MEASURES_KEYS + 1; i++) {
+      tooMany[`metric_${i}`] = i;
+    }
+
+    expect(() => sanitizeMeasures(tooMany, { strict: true })).toThrow(
+      /truncating/i,
+    );
+    expect(() =>
+      sanitizeMeasures({ accuracy: "bad" } as never, { strict: true }),
+    ).toThrow(/non-numeric measure value/i);
+  });
 });
 
 describe('mergeMeasures()', () => {
@@ -154,6 +169,10 @@ describe('mergeMeasures()', () => {
   it('should return empty dict for no arguments', () => {
     const result = mergeMeasures();
     expect(result).toEqual({});
+  });
+
+  it('should create an empty measures object', () => {
+    expect(createEmptyMeasures()).toEqual({});
   });
 });
 
