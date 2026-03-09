@@ -351,11 +351,37 @@ def my_agent(query: str) -> str:
     return llm.invoke(f"Answer: {query}").content
 ```
 
-<!-- Backend configuration (for Traigent Cloud users - coming soon)
-export TRAIGENT_API_URL=http://localhost:5000/api/v1
-export TRAIGENT_BACKEND_URL=http://localhost:5000
-export TRAIGENT_API_KEY=<api key issued in the Traigent app>
--->
+### ☁️ Traigent Cloud
+
+Connect your SDK to the Traigent cloud to see optimization results in the [portal](https://portal.traigent.ai).
+
+**Quick start (3 steps):**
+
+1. Install the SDK:
+   ```bash
+   pip install -e ".[integrations]"
+   ```
+
+2. Log in:
+   ```bash
+   TRAIGENT_BACKEND_URL=https://api.traigent.ai traigent auth login
+   ```
+
+3. Run your optimization — results appear in the portal automatically:
+   ```bash
+   python playground.py
+   ```
+
+No environment variables needed after login — the SDK picks up stored credentials automatically.
+
+**Credential priority order:**
+
+| Credential  | 1st (highest)              | 2nd                        | 3rd (default)       |
+|-------------|----------------------------|----------------------------|---------------------|
+| API Key     | `TRAIGENT_API_KEY` env var | Stored CLI credentials     | None (local only)   |
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000`    |
+
+> **Tip:** Use env vars for CI/automation. Use `traigent auth login` for local development.
 
 ### Testing Models from Multiple Providers
 
