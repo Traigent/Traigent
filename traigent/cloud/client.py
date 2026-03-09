@@ -347,12 +347,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
-        await self.close()
+        await self.close(_reason="context-exit")
         return False
 
-    async def close(self) -> None:
+    async def close(self, *, _reason: str = "shutdown") -> None:
         """Close and discard the shared HTTP session."""
-        await self._close_http_session()
+        await self._close_http_session(reason=_reason)
 
     async def _ensure_session(self):
         """Ensure session exists with current auth headers.
@@ -426,6 +426,15 @@ class TraigentCloudClient(BaseTraigentClient):
             close_result = close_method()
             if inspect.isawaitable(close_result):
                 await close_result
+            # On shutdown/context-exit paths, give the event loop time to run
+            # the connector's cleanup callbacks (especially for HTTPS/SSL).
+            # Without this, asyncio.run() may tear down the loop before the
+            # underlying TCP transport is fully closed, producing the
+            # "Unclosed client session" ResourceWarning.
+            # Skip the delay on retry/error paths to avoid adding 250ms
+            # on every transient reset.
+            if reason in ("shutdown", "context-exit"):
+                await asyncio.sleep(0.25)
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.debug(
                 "Error closing cloud session%s: %s",

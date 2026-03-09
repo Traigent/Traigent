@@ -86,7 +86,6 @@ from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
-from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.optimization_logger import OptimizationLogger
@@ -1487,15 +1486,20 @@ class OptimizationOrchestrator:
 
         return trial_count, "continue"
 
-    def _submit_usage_analytics(self) -> None:
+    async def _submit_usage_analytics(self) -> None:
         """Submit usage analytics if enabled."""
 
         if not self.traigent_config.enable_usage_analytics:
             return
 
         try:
-            collect_and_submit_analytics(self.traigent_config)
+            from traigent.utils.local_analytics import LocalAnalytics
+
+            analytics = LocalAnalytics(self.traigent_config)
+            await asyncio.wait_for(analytics.submit_usage_stats(), timeout=10.0)
             logger.debug("Analytics submitted after optimization completion")
+        except TimeoutError:
+            logger.debug("Analytics submission timed out")
         except Exception as exc:
             logger.debug("Analytics submission failed: %s", exc)
 
@@ -1832,7 +1836,7 @@ class OptimizationOrchestrator:
             result, session_id, session_summary
         )
 
-        self._submit_usage_analytics()
+        await self._submit_usage_analytics()
 
         # Submit collected workflow traces and graph to backend
         await self._submit_workflow_traces(session_id)
