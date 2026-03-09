@@ -9,6 +9,7 @@ and agent-based remote execution models.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -37,6 +38,18 @@ class TrialStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+@dataclass
+class SessionObjectiveDefinition:
+    """Typed objective definition for interactive cloud sessions."""
+
+    metric: str
+    direction: str | None = None
+    band: dict[str, Any] | None = None
+    test: str | None = None
+    alpha: float | None = None
+    weight: float | None = None
 
 
 @dataclass
@@ -152,9 +165,15 @@ class SessionCreationRequest:
 
     function_name: str | None = None
     configuration_space: dict[str, Any] | None = None
-    objectives: list[str] | None = None
+    objectives: Sequence[str | SessionObjectiveDefinition | dict[str, Any]] | None = (
+        None
+    )
     dataset_metadata: dict[str, Any] | None = None  # Size, type, characteristics
     max_trials: int | None = 10  # Changed default to 10 and allow None
+    budget: dict[str, Any] | None = None
+    constraints: dict[str, Any] | None = None
+    default_config: dict[str, Any] | None = None
+    promotion_policy: dict[str, Any] | None = None
     optimization_strategy: dict[str, Any] | None = None
     user_id: str | None = None
     billing_tier: str = "standard"
@@ -172,6 +191,14 @@ class SessionCreationRequest:
             self.objectives: list[Any] = []
         if self.dataset_metadata is None:
             self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
+        if self.budget is None:
+            self.budget = {}
+        if self.constraints is None:
+            self.constraints = {}
+        if self.default_config is None:
+            self.default_config = {}
+        if self.promotion_policy is None:
+            self.promotion_policy = {}
         # Ensure max_trials is never None
         if self.max_trials is None:
             self.max_trials = 10

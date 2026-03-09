@@ -13,6 +13,7 @@ from traigent.cloud.models import (
     OptimizationSession,
     OptimizationSessionStatus,
     SessionCreationRequest,
+    SessionObjectiveDefinition,
     TrialResultSubmission,
     TrialStatus,
     TrialSuggestion,
@@ -164,12 +165,90 @@ class TestSessionRequests:
             objectives=["accuracy", "cost"],
             dataset_metadata={"size": 1000, "type": "qa"},
             max_trials=100,
+            budget={"max_cost_usd": 5.0},
+            constraints={"derived": [{"require": "metrics.accuracy >= 0.8"}]},
         )
 
         assert request.function_name == "optimize_llm"
         assert request.max_trials == 100
         assert request.billing_tier == "standard"
         assert "temperature" in request.configuration_space
+        assert request.budget == {"max_cost_usd": 5.0}
+        assert request.constraints == {
+            "derived": [{"require": "metrics.accuracy >= 0.8"}]
+        }
+
+    def test_session_creation_request_accepts_typed_objectives(self):
+        request = SessionCreationRequest(
+            function_name="optimize_llm",
+            configuration_space={
+                "model": {"type": "categorical", "choices": ["cheap", "accurate"]},
+                "max_tokens": {
+                    "type": "int",
+                    "low": 64,
+                    "high": 256,
+                    "conditions": {"model": "accurate"},
+                    "default": 64,
+                },
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="accuracy",
+                    direction="maximize",
+                    weight=2.0,
+                ),
+                {"metric": "latency", "direction": "minimize", "weight": 1.0},
+            ],
+            budget={"max_wallclock_ms": 30_000},
+            constraints={
+                "structural": [
+                    {
+                        "when": 'params.model == "accurate"',
+                        "then": "params.max_tokens >= 64",
+                    }
+                ]
+            },
+        )
+
+        assert isinstance(request.objectives[0], SessionObjectiveDefinition)
+        assert request.configuration_space["max_tokens"]["default"] == 64
+        assert request.budget == {"max_wallclock_ms": 30_000}
+        assert request.constraints["structural"][0]["then"] == "params.max_tokens >= 64"
+
+    def test_session_creation_request_accepts_banded_objectives_and_policy(self):
+        request = SessionCreationRequest(
+            function_name="optimize_llm",
+            configuration_space={
+                "retrieval_pair": {
+                    "type": "categorical",
+                    "choices": ["choice_0", "choice_1"],
+                    "value_map": {
+                        "choice_0": ["dense", "rerank"],
+                        "choice_1": ["bm25", "none"],
+                    },
+                }
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="response_length",
+                    band={"low": 120, "high": 180},
+                    test="TOST",
+                    alpha=0.05,
+                    weight=2.0,
+                )
+            ],
+            default_config={"temperature": 0.7},
+            promotion_policy={"dominance": "epsilon_pareto", "alpha": 0.05},
+        )
+
+        objective = request.objectives[0]
+        assert isinstance(objective, SessionObjectiveDefinition)
+        assert objective.band == {"low": 120, "high": 180}
+        assert request.default_config == {"temperature": 0.7}
+        assert request.promotion_policy == {
+            "dominance": "epsilon_pareto",
+            "alpha": 0.05,
+        }
 
     def test_next_trial_response(self):
         """Test next trial response."""
