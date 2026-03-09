@@ -464,7 +464,7 @@ class SessionOperations:
                 or BackendConfig.get_backend_api_url()
             )
             async with session.post(
-                f"{api_base}/sessions/hybrid",
+                f"{api_base}/hybrid/sessions",
                 json={
                     "problem_statement": problem_statement,
                     "search_space": search_space,
@@ -531,7 +531,7 @@ class SessionOperations:
                 or BackendConfig.get_backend_api_url()
             )
             async with session.get(
-                f"{api_base}/sessions/hybrid/{session_id}/status",
+                f"{api_base}/hybrid/sessions/{session_id}/status",
                 headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:
                 if response.status == 200:
@@ -577,7 +577,7 @@ class SessionOperations:
                 or BackendConfig.get_backend_api_url()
             )
             async with session.post(
-                f"{api_base}/sessions/hybrid/{session_id}/finalize",
+                f"{api_base}/hybrid/sessions/{session_id}/finalize",
                 headers=await self.client.auth_manager.auth.get_headers(),
             ) as response:
                 if response.status == 200:

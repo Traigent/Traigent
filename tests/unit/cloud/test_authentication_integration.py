@@ -12,10 +12,7 @@ import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
-from traigent.cloud.models import (
-    AgentExecutionRequest,
-    AgentSpecification,
-)
+from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
 
 class TestFullOptimizationWorkflows:
@@ -168,16 +165,16 @@ class TestFullOptimizationWorkflows:
                             headers = request["headers"]
 
                             # Every request must have authentication header
-                            assert (
-                                "Authorization" in headers
-                            ), f"Request {i} missing Authorization header"
+                            assert "Authorization" in headers, (
+                                f"Request {i} missing Authorization header"
+                            )
                             auth_header = headers["Authorization"]
-                            assert auth_header.startswith(
-                                "Bearer "
-                            ), f"Request {i} malformed auth header"
-                            assert (
-                                api_key in auth_header
-                            ), f"Request {i} missing API key"
+                            assert auth_header.startswith("Bearer "), (
+                                f"Request {i} malformed auth header"
+                            )
+                            assert api_key in auth_header, (
+                                f"Request {i} missing API key"
+                            )
 
                             # Consistent headers across requests
                             if i > 0:
@@ -293,9 +290,9 @@ class TestFullOptimizationWorkflows:
                         assert len(headers_in_retries) == 3
 
                         for i, headers in enumerate(headers_in_retries):
-                            assert (
-                                "Authorization" in headers
-                            ), f"Retry {i} missing auth header"
+                            assert "Authorization" in headers, (
+                                f"Retry {i} missing auth header"
+                            )
                             auth_header = headers["Authorization"]
                             assert api_key in auth_header, f"Retry {i} missing API key"
 
@@ -486,21 +483,21 @@ class TestAgentWorkflows:
                             headers = request["headers"]
 
                             # Every agent request must have authentication
-                            assert (
-                                "Authorization" in headers
-                            ), f"Agent request {i} missing Authorization"
+                            assert "Authorization" in headers, (
+                                f"Agent request {i} missing Authorization"
+                            )
                             auth_header = headers["Authorization"]
-                            assert auth_header.startswith(
-                                "Bearer "
-                            ), f"Agent request {i} malformed auth"
-                            assert (
-                                api_key in auth_header
-                            ), f"Agent request {i} missing API key"
+                            assert auth_header.startswith("Bearer "), (
+                                f"Agent request {i} malformed auth"
+                            )
+                            assert api_key in auth_header, (
+                                f"Agent request {i} missing API key"
+                            )
 
                             # Check for additional agent-specific headers
-                            assert (
-                                "X-Traigent-Client" in headers
-                            ), f"Agent request {i} missing client header"
+                            assert "X-Traigent-Client" in headers, (
+                                f"Agent request {i} missing client header"
+                            )
 
     @pytest.mark.asyncio
     async def test_concurrent_agent_executions_auth_isolation(self):
@@ -598,17 +595,17 @@ class TestAgentWorkflows:
 
             # Should have correct API key
             auth_header = headers.get("Authorization", "")
-            assert (
-                expected_key in auth_header
-            ), f"Client {client_id} missing correct API key"
+            assert expected_key in auth_header, (
+                f"Client {client_id} missing correct API key"
+            )
 
             # Should not have other clients' API keys
             for other_id in range(len(api_keys)):
                 if other_id != client_id:
                     other_key = api_keys[other_id]
-                    assert (
-                        other_key not in auth_header
-                    ), f"Client {client_id} contaminated with key from {other_id}"
+                    assert other_key not in auth_header, (
+                        f"Client {client_id} contaminated with key from {other_id}"
+                    )
 
 
 class TestBackendIntegrationWorkflows:
@@ -637,7 +634,7 @@ class TestBackendIntegrationWorkflows:
 
                 if (
                     method == "POST"
-                    and "/api/v1/sessions/hybrid" in str(url)
+                    and "/api/v1/hybrid/sessions" in str(url)
                     and "/finalize" not in str(url)
                 ):
                     mock_response.status = 201
@@ -652,7 +649,7 @@ class TestBackendIntegrationWorkflows:
                     mock_response.text = AsyncMock(return_value="Created")
                 elif (
                     method == "GET"
-                    and "/api/v1/sessions/hybrid/" in str(url)
+                    and "/api/v1/hybrid/sessions/" in str(url)
                     and "/status" in str(url)
                 ):
                     mock_response.status = 200
@@ -668,7 +665,7 @@ class TestBackendIntegrationWorkflows:
                     mock_response.text = AsyncMock(return_value="OK")
                 elif (
                     method == "POST"
-                    and "/api/v1/sessions/hybrid/" in str(url)
+                    and "/api/v1/hybrid/sessions/" in str(url)
                     and "/finalize" in str(url)
                 ):
                     mock_response.status = 200
@@ -767,15 +764,15 @@ class TestBackendIntegrationWorkflows:
                             # Should have backend-specific headers
                             if "Authorization" in headers:
                                 auth_header = headers["Authorization"]
-                                assert (
-                                    "Bearer" in auth_header
-                                ), f"Backend request {i} malformed Bearer token"
+                                assert "Bearer" in auth_header, (
+                                    f"Backend request {i} malformed Bearer token"
+                                )
 
                             if "X-API-Key" in headers:
                                 api_key_header = headers["X-API-Key"]
-                                assert (
-                                    "backend-api-key-12345" in api_key_header
-                                ), f"Backend request {i} wrong API key"
+                                assert "backend-api-key-12345" in api_key_header, (
+                                    f"Backend request {i} wrong API key"
+                                )
 
     @pytest.mark.asyncio
     async def test_backend_auth_fallback_during_workflow(self):
@@ -997,17 +994,17 @@ class TestMultiClientWorkflows:
             auth_header = headers.get("Authorization", "")
 
             # Should have correct API key
-            assert (
-                expected_key in auth_header
-            ), f"Client {client_name} missing correct API key"
+            assert expected_key in auth_header, (
+                f"Client {client_name} missing correct API key"
+            )
 
             # Should not have other clients' keys
             for other_config in client_configs:
                 if other_config["name"] != client_name:
                     other_key = other_config["api_key"]
-                    assert (
-                        other_key not in auth_header
-                    ), f"Client {client_name} contaminated with {other_config['name']} key"
+                    assert other_key not in auth_header, (
+                        f"Client {client_name} contaminated with {other_config['name']} key"
+                    )
 
     @pytest.mark.asyncio
     async def test_client_authentication_state_transitions(self):
@@ -1118,6 +1115,6 @@ class TestMultiClientWorkflows:
                         # Should not contain both keys
                         has_key_1 = api_key_1 in auth_header
                         has_key_2 = api_key_2 in auth_header
-                        assert not (
-                            has_key_1 and has_key_2
-                        ), "Authentication state mixing detected"
+                        assert not (has_key_1 and has_key_2), (
+                            "Authentication state mixing detected"
+                        )
