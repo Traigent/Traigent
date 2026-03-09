@@ -134,6 +134,27 @@ class CredentialManager:
         return None
 
     @classmethod
+    def get_stored_api_key_only(cls) -> str | None:
+        """Return the stored API key from CLI credentials, or None.
+
+        Unlike :meth:`get_api_key`, this does **not** fall back to JWT tokens
+        or development credentials.  It is safe to call from code paths that
+        must not mix credential types (e.g. ``BackendConfig.get_api_key``).
+        """
+        stored_creds = cls._load_cli_credentials()
+        if stored_creds and stored_creds.get("api_key"):
+            return cast(str, stored_creds["api_key"])
+        return None
+
+    @classmethod
+    def get_stored_backend_url(cls) -> str | None:
+        """Return the stored backend URL from CLI credentials, or None."""
+        stored_creds = cls._load_cli_credentials()
+        if stored_creds and stored_creds.get("backend_url"):
+            return cast(str, stored_creds["backend_url"])
+        return None
+
+    @classmethod
     def _is_development_environment(cls) -> bool:
         """Check if running in development environment.
 

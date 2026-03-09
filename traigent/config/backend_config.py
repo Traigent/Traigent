@@ -100,7 +100,14 @@ class BackendConfig:
 
     @classmethod
     def get_backend_url(cls) -> str:
-        """Get backend origin URL from environment or configuration."""
+        """Get backend origin URL from environment, stored credentials, or default.
+
+        Priority:
+            1. TRAIGENT_BACKEND_URL environment variable
+            2. TRAIGENT_API_URL environment variable (origin extracted)
+            3. Stored CLI credentials (backend_url from ``traigent auth login``)
+            4. Default URL based on TRAIGENT_ENV
+        """
 
         backend_env = os.environ.get("TRAIGENT_BACKEND_URL")
         api_env = os.environ.get("TRAIGENT_API_URL")
@@ -114,6 +121,20 @@ class BackendConfig:
         if api_origin:
             logger.debug("Using TRAIGENT_API_URL origin: %s", api_origin)
             return api_origin
+
+        # Check stored CLI credentials for backend URL
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            raw_url = CredentialManager.get_stored_backend_url()
+            stored_url = cls._normalize_origin(raw_url) if raw_url else None
+            if stored_url:
+                logger.debug(
+                    "Using backend URL from stored CLI credentials: %s", stored_url
+                )
+                return stored_url
+        except (ImportError, Exception):
+            pass
 
         env = os.environ.get("TRAIGENT_ENV", "production").lower()
         if env in ("development", "dev", "local"):
@@ -166,7 +187,11 @@ class BackendConfig:
 
     @classmethod
     def get_api_key(cls) -> str | None:
-        """Get API key from environment.
+        """Get API key from environment or stored CLI credentials.
+
+        Priority:
+            1. TRAIGENT_API_KEY environment variable
+            2. Stored CLI credentials (api_key only, not JWT)
 
         Returns:
             str | None: API key if configured, None otherwise
@@ -178,13 +203,27 @@ class BackendConfig:
             )
             return api_key
 
+        # Fall through to CLI-stored credentials — api_key only, not JWT
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            stored_key = CredentialManager.get_stored_api_key_only()
+            if stored_key:
+                logger.info(
+                    "✅ Using API key from stored CLI credentials (length=%d)",
+                    len(stored_key),
+                )
+                return stored_key
+        except (ImportError, Exception):
+            pass
+
         # Only warn if not in offline mode - offline mode doesn't need API keys
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
             logger.warning(
-                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY). "
-                "For cloud tracking, run `traigent auth login` or export TRAIGENT_API_KEY."
+                "⚠️ No API key found (checked TRAIGENT_API_KEY and stored credentials). "
+                "Run `traigent auth login` or export TRAIGENT_API_KEY."
             )
         return None
 
