@@ -133,7 +133,7 @@ class BackendConfig:
                     "Using backend URL from stored CLI credentials: %s", stored_url
                 )
                 return stored_url
-        except (ImportError, Exception):
+        except Exception:
             pass
 
         env = os.environ.get("TRAIGENT_ENV", "production").lower()
