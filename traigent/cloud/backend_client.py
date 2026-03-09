@@ -403,9 +403,7 @@ class BackendIntegratedClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        await self._reset_http_session("context-exit")
 
     async def _ensure_session(self) -> AioClientSession:
         """Ensure session exists with current auth headers."""
@@ -455,6 +453,15 @@ class BackendIntegratedClient:
             if _session_is_closed(session):
                 return
             await session.close()
+            # On shutdown/context-exit paths, give the event loop time to run
+            # the connector's cleanup callbacks (especially for HTTPS/SSL).
+            # Without this, asyncio.run() may tear down the loop before the
+            # underlying TCP transport is fully closed, producing the
+            # "Unclosed client session" ResourceWarning.
+            # Skip the delay on retry/error paths to avoid adding 250ms
+            # on every transient reset.
+            if reason in ("shutdown", "context-exit"):
+                await asyncio.sleep(0.25)
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.debug(
                 "Error closing backend HTTP session%s: %s",
