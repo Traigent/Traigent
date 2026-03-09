@@ -347,12 +347,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
-        await self._close_http_session(reason="context-exit")
+        await self.close(_reason="context-exit")
         return False
 
-    async def close(self) -> None:
+    async def close(self, *, _reason: str = "shutdown") -> None:
         """Close and discard the shared HTTP session."""
-        await self._close_http_session(reason="shutdown")
+        await self._close_http_session(reason=_reason)
 
     async def _ensure_session(self):
         """Ensure session exists with current auth headers.
