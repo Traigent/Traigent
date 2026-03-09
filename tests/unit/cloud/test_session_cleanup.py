@@ -48,16 +48,16 @@ asyncio.run(main())
             text=True,
             timeout=10,
         )
-        assert result.returncode == 0, (
-            f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
-        )
-        assert "Unclosed client session" not in result.stderr, (
-            f"Got unclosed session warning:\n{result.stderr}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
+        assert (
+            "Unclosed client session" not in result.stderr
+        ), f"Got unclosed session warning:\n{result.stderr}"
 
     @pytest.mark.asyncio
-    async def test_aexit_uses_reset_with_drain(self):
-        """__aexit__ should delegate to _reset_http_session, not direct close."""
+    async def test_aexit_delegates_to_close(self):
+        """__aexit__ should delegate to close() to preserve subclass extensibility."""
         from traigent.cloud.backend_client import BackendIntegratedClient
 
         client = object.__new__(BackendIntegratedClient)
@@ -65,12 +65,10 @@ asyncio.run(main())
         client._session.closed = False
         client._session_lock = asyncio.Lock()
 
-        with patch.object(
-            client, "_reset_http_session", new_callable=AsyncMock
-        ) as mock_reset:
+        with patch.object(client, "close", new_callable=AsyncMock) as mock_close:
             await client.__aexit__(None, None, None)
 
-        mock_reset.assert_awaited_once_with("context-exit")
+        mock_close.assert_awaited_once_with(_reason="context-exit")
 
     @pytest.mark.asyncio
     async def test_reset_skips_drain_on_retry_path(self):
@@ -124,18 +122,16 @@ class TestCloudClientSessionCleanup:
         mock_close.assert_awaited_once_with(reason="shutdown")
 
     @pytest.mark.asyncio
-    async def test_aexit_passes_context_exit_reason(self):
-        """__aexit__ should pass reason='context-exit' to _close_http_session."""
+    async def test_aexit_delegates_to_close(self):
+        """__aexit__ should delegate to close() to preserve subclass extensibility."""
         from traigent.cloud.client import TraigentCloudClient
 
         client = object.__new__(TraigentCloudClient)
 
-        with patch.object(
-            client, "_close_http_session", new_callable=AsyncMock
-        ) as mock_close:
+        with patch.object(client, "close", new_callable=AsyncMock) as mock_close:
             await client.__aexit__(None, None, None)
 
-        mock_close.assert_awaited_once_with(reason="context-exit")
+        mock_close.assert_awaited_once_with(_reason="context-exit")
 
     @pytest.mark.asyncio
     async def test_close_http_session_drains_on_shutdown(self):

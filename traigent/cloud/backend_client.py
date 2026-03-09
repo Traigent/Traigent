@@ -403,7 +403,7 @@ class BackendIntegratedClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
-        await self._reset_http_session("context-exit")
+        await self.close(_reason="context-exit")
 
     async def _ensure_session(self) -> AioClientSession:
         """Ensure session exists with current auth headers."""
@@ -469,10 +469,10 @@ class BackendIntegratedClient:
                 exc,
             )
 
-    async def close(self) -> None:
+    async def close(self, *, _reason: str = "shutdown") -> None:
         """Close any active HTTP session to avoid resource leaks."""
 
-        await self._reset_http_session("shutdown")
+        await self._reset_http_session(_reason)
 
     # === Delegated Operations ===
     # The following methods delegate to the refactored sub-modules
