@@ -1,33 +1,36 @@
-import { randomUUID } from 'node:crypto';
-
-import { TrialCancelledError, TrialContext } from '../core/context.js';
+import { TrialCancelledError, TrialContext } from "../core/context.js";
 import {
   CancelledError,
   TimeoutError,
   ValidationError,
-} from '../core/errors.js';
-import { MetricsSchema, type Metrics, type TrialConfig } from '../dtos/trial.js';
+} from "../core/errors.js";
+import {
+  MetricsSchema,
+  type Metrics,
+  type TrialConfig,
+} from "../dtos/trial.js";
+import { stableValueEquals } from "./stable-value.js";
 import type {
+  BandedObjectiveDefinition,
   HybridOptimizeOptions,
   NativeTrialFunctionResult,
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
-  ObjectiveInput,
+  ObjectiveDefinition,
   OptimizationResult,
   OptimizationSpec,
   OptimizationTrialRecord,
-  ParameterDefinition,
-} from './types.js';
+} from "./types.js";
 
 type NativeTrialFunction = (
   trialConfig: TrialConfig,
 ) => Promise<NativeTrialFunctionResult>;
 
-type TrialFailureStatus = 'timeout' | 'error' | 'cancelled';
+type TrialFailureStatus = "timeout" | "error" | "cancelled";
 
 type TrialOutcome =
   | {
-      status: 'completed';
+      status: "completed";
       record: OptimizationTrialRecord;
     }
   | {
@@ -37,9 +40,23 @@ type TrialOutcome =
     };
 
 interface ValidatedHybridOptimizeOptions extends HybridOptimizeOptions {
+  mode?: "hybrid";
+  algorithm: "optuna";
   backendUrl: string;
   apiKey: string;
   requestTimeoutMs: number;
+}
+
+interface SerializedHybridObjective {
+  metric: string;
+  direction?: "maximize" | "minimize";
+  band?: {
+    low: number;
+    high: number;
+  };
+  test?: "TOST";
+  alpha?: number;
+  weight?: number;
 }
 
 interface HybridSessionCreateResponse {
@@ -95,34 +112,25 @@ interface HybridSubmittedResult {
   trial_id: string;
   metrics: Metrics;
   duration: number;
-  status: 'completed' | 'failed';
+  status: "completed" | "failed";
   error_message: string | null;
   metadata: Record<string, unknown>;
 }
 
 interface HybridStopContext {
   backendReason?: string;
-  failedTrialStopReason?: 'timeout' | 'error';
+  failedTrialStopReason?: "timeout" | "error";
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const MINIMIZE_KEYWORDS = new Set([
-  'cost',
-  'latency',
-  'error',
-  'time',
-  'memory',
-  'loss',
-]);
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toSnakeCaseKey(key: string): string {
   return key
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[-\s]+/g, '_')
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[-\s]+/g, "_")
     .toLowerCase();
 }
 
@@ -172,7 +180,7 @@ async function resolveEvaluationRows(
   if (spec.evaluation?.loadData) return spec.evaluation.loadData();
 
   throw new ValidationError(
-    'optimize() requires spec.evaluation.data or spec.evaluation.loadData.',
+    "optimize() requires spec.evaluation.data or spec.evaluation.loadData.",
   );
 }
 
@@ -202,7 +210,7 @@ async function executeTrial(
         : new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => {
               controller.abort();
-              reject(new TimeoutError('Trial timeout', timeoutMs));
+              reject(new TimeoutError("Trial timeout", timeoutMs));
             }, timeoutMs);
           });
 
@@ -212,7 +220,7 @@ async function executeTrial(
         : new Promise<never>((_, reject) => {
             const onAbort = () => {
               controller.abort();
-              reject(new CancelledError('Optimization cancelled'));
+              reject(new CancelledError("Optimization cancelled"));
             };
 
             if (signal.aborted) {
@@ -220,8 +228,8 @@ async function executeTrial(
               return;
             }
 
-            signal.addEventListener('abort', onAbort, { once: true });
-            listeners.push(() => signal.removeEventListener('abort', onAbort));
+            signal.addEventListener("abort", onAbort, { once: true });
+            listeners.push(() => signal.removeEventListener("abort", onAbort));
           });
 
     const rawResult = await Promise.race(
@@ -231,9 +239,9 @@ async function executeTrial(
       ),
     );
 
-    if (!rawResult || typeof rawResult !== 'object') {
+    if (!rawResult || typeof rawResult !== "object") {
       throw new ValidationError(
-        'optimize() trial function must resolve to an object containing metrics.',
+        "optimize() trial function must resolve to an object containing metrics.",
       );
     }
 
@@ -246,7 +254,7 @@ async function executeTrial(
 
     const duration = normalizeDuration(rawResult, (Date.now() - start) / 1000);
     return {
-      status: 'completed',
+      status: "completed",
       record: {
         trialId: trialConfig.trial_id,
         trialNumber: trialConfig.trial_number,
@@ -262,7 +270,7 @@ async function executeTrial(
     }
     if (error instanceof TimeoutError) {
       return {
-        status: 'timeout',
+        status: "timeout",
         trialNumber: trialConfig.trial_number,
         errorMessage: error.message,
       };
@@ -273,13 +281,13 @@ async function executeTrial(
       controller.signal.aborted
     ) {
       return {
-        status: 'cancelled',
+        status: "cancelled",
         trialNumber: trialConfig.trial_number,
         errorMessage: toErrorMessage(error),
       };
     }
     return {
-      status: 'error',
+      status: "error",
       trialNumber: trialConfig.trial_number,
       errorMessage: toErrorMessage(error),
     };
@@ -293,47 +301,57 @@ async function executeTrial(
   }
 }
 
-function shouldMinimizeMetric(metric: string): boolean {
-  const normalized = metric.toLowerCase();
-  return MINIMIZE_KEYWORDS.has(normalized) || normalized.startsWith('min_');
-}
-
 function normalizeBackendStopReason(
   context: HybridStopContext,
   trialCount: number,
   maxTrials: number,
-): OptimizationResult['stopReason'] {
+): OptimizationResult["stopReason"] {
   const normalized = context.backendReason
     ?.trim()
     .toLowerCase()
-    .replace(/[_-]+/g, ' ');
+    .replace(/[_-]+/g, " ");
 
   if (normalized) {
-    if (normalized.includes('cancel')) return 'cancelled';
-    if (normalized.includes('timeout')) return 'timeout';
-    if (normalized.includes('budget') || normalized.includes('cost')) {
-      return 'budget';
+    const exactMappings: Record<string, OptimizationResult["stopReason"]> = {
+      "budget exhausted": "budget",
+      "max trials reached": "maxTrials",
+      "max wallclock reached": "timeout",
+      "search complete": "completed",
+      finalized: "completed",
+    };
+
+    if (normalized in exactMappings) {
+      return exactMappings[normalized]!;
+    }
+
+    if (normalized.includes("cancel")) return "cancelled";
+    if (normalized.includes("timeout")) return "timeout";
+    if (normalized.includes("wallclock") || normalized.includes("elapsed")) {
+      return "timeout";
+    }
+    if (normalized.includes("budget") || normalized.includes("cost")) {
+      return "budget";
     }
     if (
-      normalized.includes('plateau') ||
-      normalized.includes('converg') ||
-      normalized.includes('stagnat')
+      normalized.includes("plateau") ||
+      normalized.includes("converg") ||
+      normalized.includes("stagnat")
     ) {
-      return 'plateau';
+      return "plateau";
     }
     if (
-      normalized.includes('max trial') ||
-      normalized.includes('trial limit') ||
-      normalized.includes('limit reached')
+      normalized.includes("max trial") ||
+      normalized.includes("trial limit") ||
+      normalized.includes("limit reached")
     ) {
-      return 'maxTrials';
+      return "maxTrials";
     }
     if (
-      normalized.includes('complete') ||
-      normalized.includes('exhaust') ||
-      normalized.includes('no more')
+      normalized.includes("complete") ||
+      normalized.includes("exhaust") ||
+      normalized.includes("no more")
     ) {
-      return 'completed';
+      return "completed";
     }
   }
 
@@ -341,17 +359,17 @@ function normalizeBackendStopReason(
     return context.failedTrialStopReason;
   }
 
-  return trialCount >= maxTrials ? 'maxTrials' : 'completed';
+  return trialCount >= maxTrials ? "maxTrials" : "completed";
 }
 
 function resolveBackendStopReason(
   value: string | null | undefined,
   fallback: string | null | undefined,
 ): string | undefined {
-  if (typeof value === 'string' && value.trim().length > 0) {
+  if (typeof value === "string" && value.trim().length > 0) {
     return value;
   }
-  if (typeof fallback === 'string' && fallback.trim().length > 0) {
+  if (typeof fallback === "string" && fallback.trim().length > 0) {
     return fallback;
   }
   return undefined;
@@ -363,16 +381,16 @@ function updateTotalCost(
   totalCostUsd: number,
 ): number {
   if (spec.budget?.maxCostUsd === undefined) {
-    const trialCost = trial.metrics['cost'];
-    return typeof trialCost === 'number' && Number.isFinite(trialCost)
+    const trialCost = trial.metrics["cost"];
+    return typeof trialCost === "number" && Number.isFinite(trialCost)
       ? totalCostUsd + trialCost
       : totalCostUsd;
   }
 
-  const costMetric = trial.metrics['cost'];
-  if (typeof costMetric !== 'number' || !Number.isFinite(costMetric)) {
+  const costMetric = trial.metrics["cost"];
+  if (typeof costMetric !== "number" || !Number.isFinite(costMetric)) {
     throw new ValidationError(
-      'budget.maxCostUsd requires every trial to return numeric metrics.cost.',
+      "budget.maxCostUsd requires every trial to return numeric metrics.cost.",
     );
   }
 
@@ -384,12 +402,29 @@ function getObjectiveMetric(
   objective: NormalizedObjectiveDefinition,
 ): number {
   const value = trial.metrics[objective.metric];
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new ValidationError(
       `Trial "${trial.trialId}" is missing numeric metric "${objective.metric}".`,
     );
   }
   return value;
+}
+
+export function objectiveScoreValue(
+  value: number,
+  objective: NormalizedObjectiveDefinition,
+): number {
+  if (objective.kind === "banded") {
+    if (value < objective.band.low) {
+      return -(objective.band.low - value);
+    }
+    if (value > objective.band.high) {
+      return -(value - objective.band.high);
+    }
+    return 0;
+  }
+
+  return objective.direction === "minimize" ? -value : value;
 }
 
 function selectBestTrial(
@@ -399,7 +434,9 @@ function selectBestTrial(
   if (trials.length === 0) return null;
 
   const ranges = objectives.map((objective) => {
-    const values = trials.map((trial) => getObjectiveMetric(trial, objective));
+    const values = trials.map((trial) =>
+      objectiveScoreValue(getObjectiveMetric(trial, objective), objective),
+    );
     return {
       objective,
       min: Math.min(...values),
@@ -415,15 +452,14 @@ function selectBestTrial(
     let totalWeight = 0;
 
     for (const range of ranges) {
-      const value = getObjectiveMetric(trial, range.objective);
+      const value = objectiveScoreValue(
+        getObjectiveMetric(trial, range.objective),
+        range.objective,
+      );
       let normalized = 1;
 
       if (range.max !== range.min) {
         normalized = (value - range.min) / (range.max - range.min);
-      }
-
-      if (range.objective.direction === 'minimize') {
-        normalized = 1 - normalized;
       }
 
       weightedScore += normalized * range.objective.weight;
@@ -441,9 +477,9 @@ function selectBestTrial(
 }
 
 export function normalizeBackendApiBase(rawUrl: string): string {
-  if (typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
     throw new ValidationError(
-      'Hybrid optimize() requires backendUrl or TRAIGENT_BACKEND_URL / TRAIGENT_API_URL.',
+      "Hybrid optimize() requires backendUrl or TRAIGENT_BACKEND_URL / TRAIGENT_API_URL.",
     );
   }
 
@@ -456,40 +492,40 @@ export function normalizeBackendApiBase(rawUrl: string): string {
     );
   }
 
-  const pathname = url.pathname.replace(/\/+$/, '');
-  if (pathname === '' || pathname === '/') {
-    url.pathname = '/api/v1';
-  } else if (pathname === '/api/v1') {
-    url.pathname = '/api/v1';
+  const pathname = url.pathname.replace(/\/+$/, "");
+  if (pathname === "" || pathname === "/") {
+    url.pathname = "/api/v1";
+  } else if (pathname === "/api/v1") {
+    url.pathname = "/api/v1";
   } else {
     throw new ValidationError(
-      'Hybrid optimize() backendUrl must be a backend origin or the /api/v1 base URL.',
+      "Hybrid optimize() backendUrl must be a backend origin or the /api/v1 base URL.",
     );
   }
 
-  url.search = '';
-  url.hash = '';
-  return url.toString().replace(/\/$/, '');
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }
 
 function resolveBackendUrl(options: HybridOptimizeOptions): string {
   return (
     options.backendUrl ??
-    process.env['TRAIGENT_BACKEND_URL'] ??
-    process.env['TRAIGENT_API_URL'] ??
-    ''
+    process.env["TRAIGENT_BACKEND_URL"] ??
+    process.env["TRAIGENT_API_URL"] ??
+    ""
   );
 }
 
 function resolveApiKey(options: HybridOptimizeOptions): string {
-  return options.apiKey ?? process.env['TRAIGENT_API_KEY'] ?? '';
+  return options.apiKey ?? process.env["TRAIGENT_API_KEY"] ?? "";
 }
 
 function validateStringOption(
   value: unknown,
   message: string,
 ): asserts value is string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new ValidationError(message);
   }
 }
@@ -497,23 +533,25 @@ function validateStringOption(
 function validateHybridOptimizeOptions(
   options: HybridOptimizeOptions,
 ): ValidatedHybridOptimizeOptions {
-  if (!options || typeof options !== 'object') {
-    throw new ValidationError('optimize() options are required.');
+  if (!options || typeof options !== "object") {
+    throw new ValidationError("optimize() options are required.");
   }
 
-  if (options.mode !== 'hybrid') {
-    throw new ValidationError('Hybrid optimize() requires mode: "hybrid".');
-  }
-
-  if (options.algorithm !== 'optuna') {
+  if (options.mode !== undefined && options.mode !== "hybrid") {
     throw new ValidationError(
-      'Hybrid optimize() only supports algorithm "optuna".',
+      'Hybrid optimize() only supports mode: "hybrid". Use mode: "native" for local execution.',
+    );
+  }
+
+  if (options.algorithm !== "optuna") {
+    throw new ValidationError(
+      'Hybrid optimize() requires algorithm "optuna". Set mode: "native" to use grid, random, or bayesian locally.',
     );
   }
 
   if (!Number.isInteger(options.maxTrials) || options.maxTrials <= 0) {
     throw new ValidationError(
-      'Hybrid optimize() requires maxTrials to be a positive integer.',
+      "Hybrid optimize() requires maxTrials to be a positive integer.",
     );
   }
 
@@ -522,27 +560,31 @@ function validateHybridOptimizeOptions(
     (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
   ) {
     throw new ValidationError(
-      'Hybrid optimize() timeoutMs must be a positive integer when provided.',
+      "Hybrid optimize() timeoutMs must be a positive integer when provided.",
     );
   }
 
   if (
     options.requestTimeoutMs !== undefined &&
-    (!Number.isInteger(options.requestTimeoutMs) || options.requestTimeoutMs <= 0)
+    (!Number.isInteger(options.requestTimeoutMs) ||
+      options.requestTimeoutMs <= 0)
   ) {
     throw new ValidationError(
-      'Hybrid optimize() requestTimeoutMs must be a positive integer when provided.',
+      "Hybrid optimize() requestTimeoutMs must be a positive integer when provided.",
     );
   }
 
   if (options.userId !== undefined) {
-    validateStringOption(options.userId, 'Hybrid optimize() userId must be non-empty.');
+    validateStringOption(
+      options.userId,
+      "Hybrid optimize() userId must be non-empty.",
+    );
   }
 
   if (options.billingTier !== undefined) {
     validateStringOption(
       options.billingTier,
-      'Hybrid optimize() billingTier must be non-empty.',
+      "Hybrid optimize() billingTier must be non-empty.",
     );
   }
 
@@ -551,7 +593,7 @@ function validateHybridOptimizeOptions(
     !isPlainObject(options.optimizationStrategy)
   ) {
     throw new ValidationError(
-      'Hybrid optimize() optimizationStrategy must be an object when provided.',
+      "Hybrid optimize() optimizationStrategy must be an object when provided.",
     );
   }
 
@@ -560,15 +602,15 @@ function validateHybridOptimizeOptions(
     !isPlainObject(options.datasetMetadata)
   ) {
     throw new ValidationError(
-      'Hybrid optimize() datasetMetadata must be an object when provided.',
+      "Hybrid optimize() datasetMetadata must be an object when provided.",
     );
   }
 
   const nativeOnlyKeys = [
-    'trialConcurrency',
-    'plateau',
-    'checkpoint',
-    'randomSeed',
+    "trialConcurrency",
+    "plateau",
+    "checkpoint",
+    "randomSeed",
   ] as const;
   for (const key of nativeOnlyKeys) {
     if (key in (options as unknown as Record<string, unknown>)) {
@@ -578,11 +620,16 @@ function validateHybridOptimizeOptions(
     }
   }
 
-  const backendUrl = normalizeBackendApiBase(resolveBackendUrl(options));
+  const unresolvedBackendUrl = resolveBackendUrl(options);
+  validateStringOption(
+    unresolvedBackendUrl,
+    "Hybrid optimize() requires backendUrl, TRAIGENT_BACKEND_URL, or TRAIGENT_API_URL.",
+  );
+  const backendUrl = normalizeBackendApiBase(unresolvedBackendUrl);
   const apiKey = resolveApiKey(options);
   validateStringOption(
     apiKey,
-    'Hybrid optimize() requires apiKey or TRAIGENT_API_KEY.',
+    "Hybrid optimize() requires apiKey or TRAIGENT_API_KEY.",
   );
 
   return {
@@ -593,77 +640,176 @@ function validateHybridOptimizeOptions(
   };
 }
 
-function ensureHybridObjectiveCompatibility(
+function serializeHybridObjective(
+  objective: ObjectiveDefinition | BandedObjectiveDefinition,
+): SerializedHybridObjective {
+  const serialized: SerializedHybridObjective =
+    "band" in objective
+      ? {
+          metric: objective.metric,
+          band: {
+            low:
+              "low" in objective.band && typeof objective.band.low === "number"
+                ? objective.band.low
+                : Number(objective.band.center) - Number(objective.band.tol),
+            high:
+              "high" in objective.band && typeof objective.band.high === "number"
+                ? objective.band.high
+                : Number(objective.band.center) + Number(objective.band.tol),
+          },
+          test: objective.test ?? "TOST",
+          alpha: objective.alpha,
+        }
+      : {
+          metric: objective.metric,
+          direction: objective.direction,
+        };
+
+  if (objective.weight !== undefined) {
+    serialized.weight = objective.weight;
+  }
+
+  return serialized;
+}
+
+function serializeHybridObjectives(
   specInput: OptimizationSpec,
-): string[] {
-  const metrics: string[] = [];
+): Array<string | SerializedHybridObjective> {
+  const objectives: Array<string | SerializedHybridObjective> = [];
 
   for (const objective of specInput.objectives) {
-    if (typeof objective === 'string') {
-      metrics.push(objective);
+    if (typeof objective === "string") {
+      objectives.push(objective);
       continue;
     }
 
-    if (objective.weight !== undefined) {
-      throw new ValidationError(
-        `Hybrid optimize() does not support weighted objective "${objective.metric}" yet.`,
-      );
-    }
-
-    const inferredDirection = shouldMinimizeMetric(objective.metric)
-      ? 'minimize'
-      : 'maximize';
-
-    if (objective.direction !== inferredDirection) {
-      throw new ValidationError(
-        `Hybrid optimize() only supports explicit objective "${objective.metric}" when direction matches backend inference (${inferredDirection}).`,
-      );
-    }
-
-    metrics.push(objective.metric);
+    objectives.push(serializeHybridObjective(objective));
   }
 
-  return metrics;
+  return objectives;
+}
+
+function serializeSessionBudget(
+  spec: NormalizedOptimizationSpec,
+): Record<string, unknown> | undefined {
+  if (!spec.budget) {
+    return undefined;
+  }
+
+  return serializeSnakeCaseObject(spec.budget) as Record<string, unknown>;
+}
+
+function serializePromotionPolicy(
+  spec: NormalizedOptimizationSpec,
+): Record<string, unknown> | undefined {
+  if (!spec.promotionPolicy) {
+    return undefined;
+  }
+  return serializeSnakeCaseObject(spec.promotionPolicy) as Record<string, unknown>;
+}
+
+function serializeSessionConstraints(
+  spec: NormalizedOptimizationSpec,
+): Record<string, unknown> | undefined {
+  if (!spec.constraints) {
+    return undefined;
+  }
+
+  return serializeSnakeCaseObject(spec.constraints) as Record<string, unknown>;
 }
 
 export function serializeSessionConfigurationSpace(
   spec: NormalizedOptimizationSpec,
 ): Record<string, Record<string, unknown>> {
-  const entries = Object.entries(spec.configurationSpace);
-  if (entries.some(([, definition]) => definition.conditions !== undefined)) {
-    const firstConditional = entries.find(
-      ([, definition]) => definition.conditions !== undefined,
-    )?.[0];
-    throw new ValidationError(
-      `Hybrid optimize() does not support conditional parameter "${firstConditional}" yet.`,
+  const encodeCategoricalChoices = (
+    values: readonly unknown[],
+    defaultValue: unknown,
+  ): Record<string, unknown> => {
+    const requiresEncoding = values.some(
+      (value) => typeof value === "object" && value !== null,
     );
-  }
+    if (!requiresEncoding) {
+      return {
+        choices: [...values],
+        ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+      };
+    }
+
+    const valueMap = Object.fromEntries(
+      values.map((value, index) => [`choice_${index}`, value]),
+    );
+    const encodedChoices = Object.keys(valueMap);
+    const encodedDefault =
+      defaultValue === undefined
+        ? undefined
+        : encodedChoices.find(
+            (choice) => stableValueEquals(valueMap[choice], defaultValue),
+          );
+
+    return {
+      choices: encodedChoices,
+      value_map: valueMap,
+      ...(encodedDefault !== undefined ? { default: encodedDefault } : {}),
+    };
+  };
+
+  const entries = Object.entries(spec.configurationSpace);
 
   return Object.fromEntries(
     entries.map(([name, definition]) => {
       switch (definition.type) {
-        case 'enum':
-          return [name, { type: 'categorical', choices: [...definition.values] }];
-        case 'int':
+        case "enum": {
+          const categorical = encodeCategoricalChoices(
+            definition.values,
+            definition.default,
+          );
           return [
             name,
             {
-              type: 'int',
-              low: definition.min,
-              high: definition.max,
-              ...(definition.step !== undefined ? { step: definition.step } : {}),
-              ...(definition.scale === 'log' ? { log: true } : {}),
+              type: "categorical",
+              ...categorical,
+              ...(definition.conditions !== undefined
+                ? { conditions: { ...definition.conditions } }
+                : {}),
             },
           ];
-        case 'float':
+        }
+        case "int":
           return [
             name,
             {
-              type: 'float',
+              type: "int",
               low: definition.min,
               high: definition.max,
-              ...(definition.step !== undefined ? { step: definition.step } : {}),
-              ...(definition.scale === 'log' ? { log: true } : {}),
+              ...(definition.step !== undefined
+                ? { step: definition.step }
+                : {}),
+              ...(definition.scale === "log" ? { log: true } : {}),
+              ...(definition.conditions !== undefined
+                ? { conditions: { ...definition.conditions } }
+                : {}),
+              ...(definition.default !== undefined
+                ? { default: definition.default }
+                : {}),
+            },
+          ];
+        case "float":
+          return [
+            name,
+            {
+              type: "float",
+              low: definition.min,
+              high: definition.max,
+              ...(definition.step !== undefined
+                ? { step: definition.step }
+                : {}),
+              ...(definition.scale === "log" ? { log: true } : {}),
+              ...(definition.conditions !== undefined
+                ? { conditions: { ...definition.conditions } }
+                : {}),
+              ...(definition.default !== undefined
+                ? { default: definition.default }
+                : {}),
             },
           ];
         default:
@@ -679,6 +825,7 @@ function createTrialConfigFromSuggestion(
   suggestion: HybridSessionSuggestionPayload,
   totalRows: number,
   experimentRunId: string,
+  defaultConfig?: Record<string, unknown>,
 ): TrialConfig {
   if (!Array.isArray(suggestion.dataset_subset?.indices)) {
     throw new ValidationError(
@@ -698,7 +845,10 @@ function createTrialConfigFromSuggestion(
     trial_id: suggestion.trial_id,
     trial_number: suggestion.trial_number,
     experiment_run_id: experimentRunId,
-    config: { ...suggestion.config },
+    config: {
+      ...(defaultConfig ?? {}),
+      ...suggestion.config,
+    },
     dataset_subset: {
       indices: [...suggestion.dataset_subset.indices],
       total: totalRows,
@@ -723,13 +873,13 @@ function buildSubmittedResult(
   trialId: string,
   outcome: TrialOutcome,
 ): HybridSubmittedResult {
-  if (outcome.status === 'completed') {
+  if (outcome.status === "completed") {
     return {
       session_id: sessionId,
       trial_id: trialId,
       metrics: outcome.record.metrics,
       duration: outcome.record.duration,
-      status: 'completed',
+      status: "completed",
       error_message: null,
       metadata: outcome.record.metadata ?? {},
     };
@@ -740,12 +890,12 @@ function buildSubmittedResult(
     trial_id: trialId,
     metrics: {},
     duration: 0,
-    status: 'failed',
+    status: "failed",
     error_message: outcome.errorMessage,
     metadata:
-      outcome.status === 'cancelled'
+      outcome.status === "cancelled"
         ? { cancelled: true }
-        : outcome.status === 'timeout'
+        : outcome.status === "timeout"
           ? { timeout: true }
           : {},
   };
@@ -754,7 +904,7 @@ function buildSubmittedResult(
 function finalizeHybridResult(
   spec: NormalizedOptimizationSpec,
   trials: OptimizationTrialRecord[],
-  stopReason: OptimizationResult['stopReason'],
+  stopReason: OptimizationResult["stopReason"],
   totalCostUsd: number,
   sessionId: string | undefined,
   errorMessage: string | undefined,
@@ -771,7 +921,7 @@ function finalizeHybridResult(
     : bestTrial?.config;
 
   return {
-    mode: 'hybrid',
+    mode: "hybrid",
     sessionId,
     bestConfig: bestConfig ?? null,
     bestMetrics: bestMetricsParse.success
@@ -813,23 +963,20 @@ function classifyHybridCompatibilityError(
   status: number,
   errorText: string,
 ): ValidationError | null {
-  if (method !== 'POST' || path !== '/sessions' || status !== 400) {
+  if (method !== "POST" || path !== "/sessions" || status !== 400) {
     return null;
   }
 
   const payload = parseHybridErrorPayload(errorText);
-  const message =
-    payload?.error ??
-    payload?.message ??
-    errorText;
+  const message = payload?.error ?? payload?.message ?? errorText;
 
   if (
     message.includes(
-      'Missing required fields: problem_statement, dataset, search_space, optimization_config',
+      "Missing required fields: problem_statement, dataset, search_space, optimization_config",
     )
   ) {
     return new ValidationError(
-      'Hybrid optimize() is pointed at a legacy TraiGent /sessions API that expects problem_statement, dataset, search_space, and optimization_config. This JS client requires the typed interactive session contract for backend-guided optimization.',
+      "Hybrid optimize() is pointed at a legacy TraiGent /sessions API that expects problem_statement, dataset, search_space, and optimization_config. This JS client requires the typed interactive session contract for backend-guided optimization.",
     );
   }
 
@@ -847,7 +994,7 @@ class HybridSessionClient {
     payload: Record<string, unknown>,
     signal: AbortSignal | undefined,
   ): Promise<HybridSessionCreateResponse> {
-    return this.requestJson<HybridSessionCreateResponse>('POST', '/sessions', {
+    return this.requestJson<HybridSessionCreateResponse>("POST", "/sessions", {
       body: payload,
       signal,
     });
@@ -859,7 +1006,7 @@ class HybridSessionClient {
     signal: AbortSignal | undefined,
   ): Promise<HybridNextTrialResponse> {
     return this.requestJson<HybridNextTrialResponse>(
-      'POST',
+      "POST",
       `/sessions/${sessionId}/next-trial`,
       {
         body: payload,
@@ -873,14 +1020,10 @@ class HybridSessionClient {
     payload: HybridSubmittedResult,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    await this.requestJson(
-      'POST',
-      `/sessions/${sessionId}/results`,
-      {
-        body: payload,
-        signal,
-      },
-    );
+    await this.requestJson("POST", `/sessions/${sessionId}/results`, {
+      body: payload,
+      signal,
+    });
   }
 
   async finalizeSession(
@@ -888,15 +1031,15 @@ class HybridSessionClient {
     signal: AbortSignal | undefined,
   ): Promise<HybridFinalizationResponse> {
     return this.requestJson<HybridFinalizationResponse>(
-      'POST',
+      "POST",
       `/sessions/${sessionId}/finalize`,
       {
         body: {
           session_id: sessionId,
           include_full_history: false,
           metadata: {
-            sdk: 'js',
-            mode: 'hybrid',
+            sdk: "js",
+            mode: "hybrid",
           },
         },
         signal,
@@ -922,10 +1065,12 @@ class HybridSessionClient {
       if (options.signal) {
         const onAbort = () => controller.abort();
         if (options.signal.aborted) {
-          throw new CancelledError('Optimization cancelled');
+          throw new CancelledError("Optimization cancelled");
         }
-        options.signal.addEventListener('abort', onAbort, { once: true });
-        listeners.push(() => options.signal?.removeEventListener('abort', onAbort));
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        listeners.push(() =>
+          options.signal?.removeEventListener("abort", onAbort),
+        );
       }
 
       timeoutId = setTimeout(() => {
@@ -937,9 +1082,10 @@ class HybridSessionClient {
         method,
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body:
+          options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: controller.signal,
       })) as HybridFetchResponse;
 
@@ -955,7 +1101,7 @@ class HybridSessionClient {
           throw compatibilityError;
         }
         throw new Error(
-          `Hybrid optimize() request failed (${method} ${path}) with HTTP ${response.status}: ${errorText || 'No response body'}`,
+          `Hybrid optimize() request failed (${method} ${path}) with HTTP ${response.status}: ${errorText || "No response body"}`,
         );
       }
 
@@ -978,9 +1124,9 @@ class HybridSessionClient {
 
       if (
         options.signal?.aborted ||
-        (error instanceof Error && error.name === 'AbortError')
+        (error instanceof Error && error.name === "AbortError")
       ) {
-        throw new CancelledError('Optimization cancelled');
+        throw new CancelledError("Optimization cancelled");
       }
 
       throw error;
@@ -1007,26 +1153,29 @@ export async function runHybridOptimization(
 
   if (!Array.isArray(evaluationRows) || evaluationRows.length === 0) {
     throw new ValidationError(
-      'optimize() requires evaluation data to be a non-empty array.',
+      "optimize() requires evaluation data to be a non-empty array.",
     );
   }
 
-  const objectiveMetrics = ensureHybridObjectiveCompatibility(specInput);
+  const objectives = serializeHybridObjectives(specInput);
   const configurationSpace = serializeSessionConfigurationSpace(spec);
+  const budget = serializeSessionBudget(spec);
+  const constraints = serializeSessionConstraints(spec);
+  const promotionPolicy = serializePromotionPolicy(spec);
 
-  if (options.datasetMetadata?.['size'] !== undefined) {
+  if (options.datasetMetadata?.["size"] !== undefined) {
     if (
-      typeof options.datasetMetadata['size'] !== 'number' ||
-      !Number.isFinite(options.datasetMetadata['size']) ||
-      options.datasetMetadata['size'] <= 0
+      typeof options.datasetMetadata["size"] !== "number" ||
+      !Number.isFinite(options.datasetMetadata["size"]) ||
+      options.datasetMetadata["size"] <= 0
     ) {
       throw new ValidationError(
-        'Hybrid optimize() datasetMetadata.size must be a positive number when provided.',
+        "Hybrid optimize() datasetMetadata.size must be a positive number when provided.",
       );
     }
-    if (options.datasetMetadata['size'] !== evaluationRows.length) {
+    if (options.datasetMetadata["size"] !== evaluationRows.length) {
       throw new ValidationError(
-        'Hybrid optimize() datasetMetadata.size must match the loaded evaluation dataset size.',
+        "Hybrid optimize() datasetMetadata.size must match the loaded evaluation dataset size.",
       );
     }
   }
@@ -1041,10 +1190,10 @@ export async function runHybridOptimization(
   let totalCostUsd = 0;
   let sessionId: string | undefined;
   let backendReason: string | undefined;
-  let failedTrialStopReason: 'timeout' | 'error' | undefined;
+  let failedTrialStopReason: "timeout" | "error" | undefined;
   let finalization: HybridFinalizationResponse | undefined;
   let finalizationError: string | undefined;
-  let stopReason: OptimizationResult['stopReason'] | undefined;
+  let stopReason: OptimizationResult["stopReason"] | undefined;
   let errorMessage: string | undefined;
   let optimizationStrategyMetadata: Record<string, unknown> | undefined;
 
@@ -1054,26 +1203,29 @@ export async function runHybridOptimization(
         function_name:
           functionName && functionName.length > 0
             ? functionName
-            : 'anonymous_js_trial',
+            : "anonymous_js_trial",
         configuration_space: configurationSpace,
-        objectives: objectiveMetrics,
+        objectives,
         dataset_metadata: {
           size: evaluationRows.length,
           ...(options.datasetMetadata ?? {}),
         },
         max_trials: options.maxTrials,
+        ...(budget ? { budget } : {}),
+        ...(constraints ? { constraints } : {}),
+        ...(promotionPolicy ? { promotion_policy: promotionPolicy } : {}),
+        ...(spec.defaultConfig ? { default_config: { ...spec.defaultConfig } } : {}),
         optimization_strategy: {
-          algorithm: 'optuna',
-          ...(serializeSnakeCaseObject(options.optimizationStrategy ?? {}) as Record<
-            string,
-            unknown
-          >),
+          algorithm: "optuna",
+          ...(serializeSnakeCaseObject(
+            options.optimizationStrategy ?? {},
+          ) as Record<string, unknown>),
         },
         user_id: options.userId,
-        billing_tier: options.billingTier ?? 'standard',
+        billing_tier: options.billingTier ?? "standard",
         metadata: {
-          sdk: 'js',
-          mode: 'hybrid',
+          sdk: "js",
+          mode: "hybrid",
         },
       },
       options.signal,
@@ -1084,8 +1236,8 @@ export async function runHybridOptimization(
 
     while (stopReason === undefined) {
       if (options.signal?.aborted) {
-        stopReason = 'cancelled';
-        errorMessage = 'Optimization cancelled';
+        stopReason = "cancelled";
+        errorMessage = "Optimization cancelled";
         break;
       }
 
@@ -1122,6 +1274,7 @@ export async function runHybridOptimization(
         nextResponse.suggestion,
         evaluationRows.length,
         sessionId,
+        spec.defaultConfig,
       );
       const outcome = await executeTrial(
         trialFn,
@@ -1135,25 +1288,25 @@ export async function runHybridOptimization(
         outcome,
       );
 
-      if (outcome.status === 'completed') {
+      if (outcome.status === "completed") {
         totalCostUsd = updateTotalCost(spec, outcome.record, totalCostUsd);
         completedTrials.push(outcome.record);
         failedTrialStopReason = undefined;
-      } else if (outcome.status === 'timeout' || outcome.status === 'error') {
+      } else if (outcome.status === "timeout" || outcome.status === "error") {
         failedTrialStopReason = outcome.status;
       } else {
-        stopReason = 'cancelled';
+        stopReason = "cancelled";
         errorMessage = outcome.errorMessage;
       }
 
       await client.submitResult(
         sessionId,
         submission,
-        outcome.status === 'cancelled' ? undefined : options.signal,
+        outcome.status === "cancelled" ? undefined : options.signal,
       );
       previousResults.push(submission);
 
-      if (stopReason === 'cancelled') {
+      if (stopReason === "cancelled") {
         break;
       }
     }
@@ -1162,14 +1315,17 @@ export async function runHybridOptimization(
       throw error;
     }
 
-    if (error instanceof CancelledError || error instanceof TrialCancelledError) {
-      stopReason = 'cancelled';
+    if (
+      error instanceof CancelledError ||
+      error instanceof TrialCancelledError
+    ) {
+      stopReason = "cancelled";
       errorMessage = toErrorMessage(error);
     } else if (error instanceof TimeoutError) {
-      stopReason = 'timeout';
+      stopReason = "timeout";
       errorMessage = error.message;
     } else {
-      stopReason = 'error';
+      stopReason = "error";
       errorMessage = toErrorMessage(error);
     }
   } finally {
@@ -1180,7 +1336,7 @@ export async function runHybridOptimization(
           finalization.stop_reason,
           backendReason,
         );
-        if ((!stopReason || stopReason === 'completed') && backendReason) {
+        if ((!stopReason || stopReason === "completed") && backendReason) {
           stopReason = normalizeBackendStopReason(
             {
               backendReason,
@@ -1193,7 +1349,7 @@ export async function runHybridOptimization(
       } catch (error) {
         finalizationError = toErrorMessage(error);
         if (!stopReason) {
-          stopReason = error instanceof TimeoutError ? 'timeout' : 'error';
+          stopReason = error instanceof TimeoutError ? "timeout" : "error";
           errorMessage = finalizationError;
         }
       }
@@ -1203,7 +1359,7 @@ export async function runHybridOptimization(
   return finalizeHybridResult(
     spec,
     completedTrials,
-    stopReason ?? 'completed',
+    stopReason ?? "completed",
     totalCostUsd,
     sessionId,
     errorMessage,

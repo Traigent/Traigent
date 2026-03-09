@@ -1,9 +1,13 @@
-import { ValidationError } from '../core/errors.js';
-import type { TrialConfig } from '../dtos/trial.js';
-import { runHybridOptimization } from './hybrid.js';
-import { runNativeOptimization } from './native.js';
+import { existsSync, readFileSync } from "node:fs";
+
+import { ValidationError } from "../core/errors.js";
+import type { TrialConfig } from "../dtos/trial.js";
+import { runHybridOptimization } from "./hybrid.js";
+import { runNativeOptimization } from "./native.js";
+import { stableValueKey } from "./stable-value.js";
 import type {
   BuiltInObjectiveName,
+  DerivedConstraintDefinition,
   EnumParamDefinition,
   FloatParamDefinition,
   HybridOptimizeOptions,
@@ -11,27 +15,30 @@ import type {
   IntParamDefinition,
   NativeOptimizedFunction,
   NativeTrialFunctionResult,
+  NativeOptimizeOptions,
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
-  ObjectiveDefinition,
   ObjectiveInput,
   OptimizeOptions,
+  PromotionPolicy,
+  OptimizationConstraints,
   OptimizationResult,
   OptimizationSpec,
   ParameterConditions,
   ParameterConditionValue,
   ParameterDefinition,
-} from './types.js';
+  StructuralConstraintDefinition,
+} from "./types.js";
 
-const OPTIMIZATION_SPEC = Symbol.for('traigent.optimizationSpec');
+const OPTIMIZATION_SPEC = Symbol.for("traigent.optimizationSpec");
 
 const BUILT_IN_OBJECTIVES: Record<
   BuiltInObjectiveName,
   NormalizedObjectiveDefinition
 > = {
-  accuracy: { metric: 'accuracy', direction: 'maximize', weight: 1 },
-  cost: { metric: 'cost', direction: 'minimize', weight: 1 },
-  latency: { metric: 'latency', direction: 'minimize', weight: 1 },
+  accuracy: { kind: "standard", metric: "accuracy", direction: "maximize", weight: 1 },
+  cost: { kind: "standard", metric: "cost", direction: "minimize", weight: 1 },
+  latency: { kind: "standard", metric: "latency", direction: "minimize", weight: 1 },
 };
 
 type AnyFunction = (...args: any[]) => any;
@@ -42,33 +49,408 @@ type NativeTrialFunction = (
 function isHybridOptimizeOptions(
   options: OptimizeOptions,
 ): options is HybridOptimizeOptions {
-  return options.mode === 'hybrid';
+  return options.mode !== "native";
+}
+
+function validateNativeOptimizationCompatibility(
+  spec: NormalizedOptimizationSpec,
+): void {
+  for (const objective of spec.objectives) {
+    if (objective.weight !== 1) {
+      throw new ValidationError(
+        `Native optimize() does not support weighted objective "${objective.metric}". Use mode: "hybrid".`,
+      );
+    }
+  }
+
+  for (const [name, definition] of Object.entries(spec.configurationSpace)) {
+    if (definition.conditions !== undefined) {
+      throw new ValidationError(
+        `Native optimize() does not support conditional parameter "${name}" in optimization mode. Use mode: "hybrid".`,
+      );
+    }
+  }
+
+  if (spec.constraints) {
+    const hasStructural = (spec.constraints.structural?.length ?? 0) > 0;
+    const hasDerived = (spec.constraints.derived?.length ?? 0) > 0;
+    if (hasStructural || hasDerived) {
+      throw new ValidationError(
+        "Native optimize() does not support structural or derived constraints. Use mode: \"hybrid\".",
+      );
+    }
+  }
+
+  if (spec.budget?.maxTrials !== undefined) {
+    throw new ValidationError(
+      "Native optimize() does not support budget.maxTrials on the spec. Use optimize({ maxTrials }) for native mode or mode: \"hybrid\".",
+    );
+  }
+
+  if (spec.budget?.maxWallclockMs !== undefined) {
+    throw new ValidationError(
+      "Native optimize() does not support budget.maxWallclockMs on the spec. Use optimize({ timeoutMs }) for native mode or mode: \"hybrid\".",
+    );
+  }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function isConditionValue(value: unknown): value is ParameterConditionValue {
   return (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
   );
 }
 
 function normalizeWeight(weight: unknown): number {
   if (weight === undefined) return 1;
-  if (typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0) {
-    throw new ValidationError('Objective weights must be positive finite numbers.');
+  if (typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0) {
+    throw new ValidationError(
+      "Objective weights must be positive finite numbers.",
+    );
   }
   return weight;
+}
+
+function valuesContain(values: readonly unknown[], expected: unknown): boolean {
+  const expectedKey = stableValueKey(expected);
+  return values.some((value) => stableValueKey(value) === expectedKey);
+}
+
+function normalizeBandTarget(
+  band: unknown,
+  field: string,
+): { low: number; high: number } {
+  if (!isPlainObject(band)) {
+    throw new ValidationError(`${field} must be an object.`);
+  }
+
+  const hasBounds = band["low"] !== undefined || band["high"] !== undefined;
+  const hasCenterTol = band["center"] !== undefined || band["tol"] !== undefined;
+
+  if (hasBounds && hasCenterTol) {
+    throw new ValidationError(
+      `${field} must provide either low/high or center/tol, not both.`,
+    );
+  }
+
+  if (hasBounds) {
+    if (
+      typeof band["low"] !== "number" ||
+      !Number.isFinite(band["low"]) ||
+      typeof band["high"] !== "number" ||
+      !Number.isFinite(band["high"])
+    ) {
+      throw new ValidationError(`${field}.low and ${field}.high must be finite numbers.`);
+    }
+    if (band["low"] >= band["high"]) {
+      throw new ValidationError(`${field}.low must be less than ${field}.high.`);
+    }
+    return {
+      low: band["low"],
+      high: band["high"],
+    };
+  }
+
+  if (
+    typeof band["center"] !== "number" ||
+    !Number.isFinite(band["center"]) ||
+    typeof band["tol"] !== "number" ||
+    !Number.isFinite(band["tol"]) ||
+    band["tol"] <= 0
+  ) {
+    throw new ValidationError(
+      `${field}.center and ${field}.tol must be finite numbers and tol must be positive.`,
+    );
+  }
+
+  return {
+    low: band["center"] - band["tol"],
+    high: band["center"] + band["tol"],
+  };
+}
+
+function normalizePromotionPolicy(
+  policy: unknown,
+): PromotionPolicy | undefined {
+  if (policy === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(policy)) {
+    throw new ValidationError("promotionPolicy must be an object when provided.");
+  }
+
+  const normalized: PromotionPolicy = {};
+
+  if (policy["dominance"] !== undefined) {
+    if (policy["dominance"] !== "epsilon_pareto") {
+      throw new ValidationError(
+        'promotionPolicy.dominance must be "epsilon_pareto" when provided.',
+      );
+    }
+    normalized.dominance = "epsilon_pareto";
+  }
+
+  if (policy["alpha"] !== undefined) {
+    if (
+      typeof policy["alpha"] !== "number" ||
+      !Number.isFinite(policy["alpha"]) ||
+      policy["alpha"] <= 0 ||
+      policy["alpha"] >= 1
+    ) {
+      throw new ValidationError("promotionPolicy.alpha must be in (0, 1).");
+    }
+    normalized.alpha = policy["alpha"];
+  }
+
+  if (policy["adjust"] !== undefined) {
+    if (policy["adjust"] !== "none" && policy["adjust"] !== "BH") {
+      throw new ValidationError('promotionPolicy.adjust must be "none" or "BH".');
+    }
+    normalized.adjust = policy["adjust"];
+  }
+
+  if (policy["minEffect"] !== undefined) {
+    if (!isPlainObject(policy["minEffect"])) {
+      throw new ValidationError("promotionPolicy.minEffect must be an object.");
+    }
+    normalized.minEffect = Object.fromEntries(
+      Object.entries(policy["minEffect"]).map(([metric, value]) => {
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+          throw new ValidationError(
+            `promotionPolicy.minEffect.${metric} must be a non-negative finite number.`,
+          );
+        }
+        return [metric, value];
+      }),
+    );
+  }
+
+  if (policy["chanceConstraints"] !== undefined) {
+    if (!Array.isArray(policy["chanceConstraints"])) {
+      throw new ValidationError("promotionPolicy.chanceConstraints must be an array.");
+    }
+    normalized.chanceConstraints = policy["chanceConstraints"].map((entry, index) => {
+      if (!isPlainObject(entry)) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}] must be an object.`,
+        );
+      }
+      if (typeof entry["name"] !== "string" || entry["name"].trim().length === 0) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].name must be a non-empty string.`,
+        );
+      }
+      if (
+        typeof entry["threshold"] !== "number" ||
+        !Number.isFinite(entry["threshold"]) ||
+        entry["threshold"] < 0 ||
+        entry["threshold"] > 1
+      ) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].threshold must be in [0, 1].`,
+        );
+      }
+      if (
+        typeof entry["confidence"] !== "number" ||
+        !Number.isFinite(entry["confidence"]) ||
+        entry["confidence"] <= 0 ||
+        entry["confidence"] >= 1
+      ) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].confidence must be in (0, 1).`,
+        );
+      }
+      return {
+        name: entry["name"].trim(),
+        threshold: entry["threshold"],
+        confidence: entry["confidence"],
+      };
+    });
+  }
+
+  if (policy["tieBreakers"] !== undefined) {
+    if (!isPlainObject(policy["tieBreakers"])) {
+      throw new ValidationError("promotionPolicy.tieBreakers must be an object.");
+    }
+    normalized.tieBreakers = Object.fromEntries(
+      Object.entries(policy["tieBreakers"]).map(([metric, direction]) => {
+        if (direction !== "maximize" && direction !== "minimize") {
+          throw new ValidationError(
+            `promotionPolicy.tieBreakers.${metric} must be "maximize" or "minimize".`,
+          );
+        }
+        return [metric, direction];
+      }),
+    );
+  }
+
+  return Object.keys(normalized).length === 0 ? undefined : normalized;
+}
+
+function normalizeConstraintMessage(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ValidationError(`${field} must be a non-empty string when provided.`);
+  }
+  return value.trim();
+}
+
+function normalizeConstraintId(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ValidationError(`${field} must be a non-empty string when provided.`);
+  }
+  return value.trim();
+}
+
+function normalizeExpression(
+  value: unknown,
+  field: string,
+): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ValidationError(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function normalizeStructuralConstraint(
+  entry: unknown,
+  index: number,
+): StructuralConstraintDefinition {
+  if (!isPlainObject(entry)) {
+    throw new ValidationError(
+      `constraints.structural[${index}] must be an object.`,
+    );
+  }
+
+  const hasRequire = entry["require"] !== undefined;
+  const hasWhen = entry["when"] !== undefined;
+  const hasThen = entry["then"] !== undefined;
+
+  if (hasRequire) {
+    if (hasWhen || hasThen) {
+      throw new ValidationError(
+        `constraints.structural[${index}] cannot mix require with when/then.`,
+      );
+    }
+
+    return {
+      id: normalizeConstraintId(entry["id"], `constraints.structural[${index}].id`),
+      require: normalizeExpression(
+        entry["require"],
+        `constraints.structural[${index}].require`,
+      ),
+      errorMessage: normalizeConstraintMessage(
+        entry["errorMessage"],
+        `constraints.structural[${index}].errorMessage`,
+      ),
+    };
+  }
+
+  if (!hasWhen || !hasThen) {
+    throw new ValidationError(
+      `constraints.structural[${index}] must provide either require or both when and then.`,
+    );
+  }
+
+  return {
+    id: normalizeConstraintId(entry["id"], `constraints.structural[${index}].id`),
+    when: normalizeExpression(
+      entry["when"],
+      `constraints.structural[${index}].when`,
+    ),
+    then: normalizeExpression(
+      entry["then"],
+      `constraints.structural[${index}].then`,
+    ),
+    errorMessage: normalizeConstraintMessage(
+      entry["errorMessage"],
+      `constraints.structural[${index}].errorMessage`,
+    ),
+  };
+}
+
+function normalizeDerivedConstraint(
+  entry: unknown,
+  index: number,
+): DerivedConstraintDefinition {
+  if (!isPlainObject(entry)) {
+    throw new ValidationError(`constraints.derived[${index}] must be an object.`);
+  }
+
+  return {
+    id: normalizeConstraintId(entry["id"], `constraints.derived[${index}].id`),
+    require: normalizeExpression(
+      entry["require"],
+      `constraints.derived[${index}].require`,
+    ),
+    errorMessage: normalizeConstraintMessage(
+      entry["errorMessage"],
+      `constraints.derived[${index}].errorMessage`,
+    ),
+  };
+}
+
+function normalizeConstraints(
+  constraints: unknown,
+): OptimizationConstraints | undefined {
+  if (constraints === undefined) {
+    return undefined;
+  }
+
+  if (!isPlainObject(constraints)) {
+    throw new ValidationError("constraints must be an object when provided.");
+  }
+
+  const structuralRaw = constraints["structural"];
+  const derivedRaw = constraints["derived"];
+
+  const structural =
+    structuralRaw === undefined
+      ? undefined
+      : Array.isArray(structuralRaw)
+        ? structuralRaw.map(normalizeStructuralConstraint)
+        : (() => {
+            throw new ValidationError("constraints.structural must be an array when provided.");
+          })();
+
+  const derived =
+    derivedRaw === undefined
+      ? undefined
+      : Array.isArray(derivedRaw)
+        ? derivedRaw.map(normalizeDerivedConstraint)
+        : (() => {
+            throw new ValidationError("constraints.derived must be an array when provided.");
+          })();
+
+  if ((structural?.length ?? 0) === 0 && (derived?.length ?? 0) === 0) {
+    throw new ValidationError(
+      "constraints must include at least one structural or derived constraint.",
+    );
+  }
+
+  return {
+    ...(structural ? { structural } : {}),
+    ...(derived ? { derived } : {}),
+  };
 }
 
 function normalizeObjective(
   objective: ObjectiveInput,
 ): NormalizedObjectiveDefinition {
-  if (typeof objective === 'string') {
+  if (typeof objective === "string") {
     const builtIn = BUILT_IN_OBJECTIVES[objective as BuiltInObjectiveName];
     if (!builtIn) {
       throw new ValidationError(
@@ -78,20 +460,51 @@ function normalizeObjective(
     return builtIn;
   }
 
-  if (!objective || typeof objective !== 'object') {
-    throw new ValidationError('Objectives must be strings or objects.');
+  if (!objective || typeof objective !== "object") {
+    throw new ValidationError("Objectives must be strings or objects.");
   }
 
   if (
-    typeof objective.metric !== 'string' ||
+    typeof objective.metric !== "string" ||
     objective.metric.trim().length === 0
   ) {
-    throw new ValidationError('Objective objects require a non-empty metric.');
+    throw new ValidationError("Objective objects require a non-empty metric.");
+  }
+
+  if ("band" in objective) {
+    const band = normalizeBandTarget(
+      objective.band,
+      `Objective "${objective.metric}" band`,
+    );
+    if (objective.test !== undefined && objective.test !== "TOST") {
+      throw new ValidationError(
+        `Objective "${objective.metric}" band.test must be "TOST" when provided.`,
+      );
+    }
+    if (
+      objective.alpha !== undefined &&
+      (typeof objective.alpha !== "number" ||
+        !Number.isFinite(objective.alpha) ||
+        objective.alpha <= 0 ||
+        objective.alpha >= 1)
+    ) {
+      throw new ValidationError(
+        `Objective "${objective.metric}" band.alpha must be in (0, 1).`,
+      );
+    }
+    return {
+      kind: "banded",
+      metric: objective.metric,
+      band,
+      bandTest: "TOST",
+      bandAlpha: objective.alpha ?? 0.05,
+      weight: normalizeWeight(objective.weight),
+    };
   }
 
   if (
-    objective.direction !== 'maximize' &&
-    objective.direction !== 'minimize'
+    objective.direction !== "maximize" &&
+    objective.direction !== "minimize"
   ) {
     throw new ValidationError(
       `Objective "${objective.metric}" must declare direction "maximize" or "minimize".`,
@@ -99,6 +512,7 @@ function normalizeObjective(
   }
 
   return {
+    kind: "standard",
     metric: objective.metric,
     direction: objective.direction,
     weight: normalizeWeight(objective.weight),
@@ -140,27 +554,30 @@ function normalizeConditions(
   return Object.fromEntries(normalizedEntries);
 }
 
-function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefinition>(
-  name: string,
-  kind: T['type'],
-  definition: T,
-): T {
+function normalizeRangeDefinition<
+  T extends FloatParamDefinition | IntParamDefinition,
+>(name: string, kind: T["type"], definition: T): T {
   if (!Number.isFinite(definition.min) || !Number.isFinite(definition.max)) {
-    throw new ValidationError(`${kind} parameters require finite min/max values.`);
+    throw new ValidationError(
+      `${kind} parameters require finite min/max values.`,
+    );
   }
   if (definition.max < definition.min) {
     throw new ValidationError(`${kind} parameters require max >= min.`);
   }
   if (
     definition.scale !== undefined &&
-    definition.scale !== 'linear' &&
-    definition.scale !== 'log'
+    definition.scale !== "linear" &&
+    definition.scale !== "log"
   ) {
     throw new ValidationError(
       `${kind} parameters only support scale "linear" or "log".`,
     );
   }
-  if (definition.scale === 'log' && (definition.min <= 0 || definition.max <= 0)) {
+  if (
+    definition.scale === "log" &&
+    (definition.min <= 0 || definition.max <= 0)
+  ) {
     throw new ValidationError(
       `${kind} parameters with scale "log" require min/max > 0.`,
     );
@@ -171,10 +588,12 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
         `${kind} parameters require step to be a positive finite number.`,
       );
     }
-    if (kind === 'int' && !Number.isInteger(definition.step)) {
-      throw new ValidationError('int parameters require step to be an integer.');
+    if (kind === "int" && !Number.isInteger(definition.step)) {
+      throw new ValidationError(
+        "int parameters require step to be an integer.",
+      );
     }
-    if (definition.scale === 'log' && definition.step <= 1) {
+    if (definition.scale === "log" && definition.step <= 1) {
       throw new ValidationError(
         `${kind} parameters with scale "log" require step to be greater than 1 when provided.`,
       );
@@ -184,7 +603,7 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
   return {
     ...definition,
     conditions: normalizeConditions(name, definition.conditions),
-    scale: definition.scale ?? 'linear',
+    scale: definition.scale ?? "linear",
   };
 }
 
@@ -192,27 +611,29 @@ function normalizeParameterDefinition(
   name: string,
   definition: ParameterDefinition,
 ): ParameterDefinition {
-  if (!definition || typeof definition !== 'object') {
-    throw new ValidationError('Parameter definitions must be objects.');
+  if (!definition || typeof definition !== "object") {
+    throw new ValidationError("Parameter definitions must be objects.");
   }
 
   switch (definition.type) {
-    case 'enum':
+    case "enum":
       if (!Array.isArray(definition.values) || definition.values.length === 0) {
-        throw new ValidationError('enum parameters require a non-empty values array.');
+        throw new ValidationError(
+          "enum parameters require a non-empty values array.",
+        );
       }
       return {
-        type: 'enum',
+        type: "enum",
         values: [...definition.values],
         conditions: normalizeConditions(name, definition.conditions),
         default: definition.default,
       } satisfies EnumParamDefinition;
-    case 'float':
-      return normalizeRangeDefinition(name, 'float', definition);
-    case 'int':
-      return normalizeRangeDefinition(name, 'int', definition);
+    case "float":
+      return normalizeRangeDefinition(name, "float", definition);
+    case "int":
+      return normalizeRangeDefinition(name, "int", definition);
     default:
-      throw new ValidationError('Unsupported parameter definition type.');
+      throw new ValidationError("Unsupported parameter definition type.");
   }
 }
 
@@ -236,16 +657,16 @@ function validateConditionalDefault(
   }
 
   switch (definition.type) {
-    case 'enum':
-      if (!definition.values.includes(definition.default)) {
+    case "enum":
+      if (!valuesContain(definition.values, definition.default)) {
         throw new ValidationError(
           `Conditional enum parameter "${name}" default must be one of its values.`,
         );
       }
       return;
-    case 'int':
+    case "int":
       if (
-        typeof definition.default !== 'number' ||
+        typeof definition.default !== "number" ||
         !Number.isInteger(definition.default)
       ) {
         throw new ValidationError(
@@ -261,9 +682,9 @@ function validateConditionalDefault(
         );
       }
       return;
-    case 'float':
+    case "float":
       if (
-        typeof definition.default !== 'number' ||
+        typeof definition.default !== "number" ||
         !Number.isFinite(definition.default)
       ) {
         throw new ValidationError(
@@ -326,15 +747,123 @@ function validateConditionalDependencies(
   }
 }
 
+function normalizeBudget(
+  budget: OptimizationSpec["budget"],
+): OptimizationSpec["budget"] {
+  if (budget === undefined) {
+    return undefined;
+  }
+
+  const normalized = { ...budget };
+
+  if (
+    normalized.maxCostUsd !== undefined &&
+    (typeof normalized.maxCostUsd !== "number" ||
+      !Number.isFinite(normalized.maxCostUsd) ||
+      normalized.maxCostUsd <= 0)
+  ) {
+    throw new ValidationError("budget.maxCostUsd must be a positive number.");
+  }
+
+  if (
+    normalized.maxTrials !== undefined &&
+    (!Number.isInteger(normalized.maxTrials) || normalized.maxTrials <= 0)
+  ) {
+    throw new ValidationError("budget.maxTrials must be a positive integer.");
+  }
+
+  if (
+    normalized.maxWallclockMs !== undefined &&
+    (!Number.isInteger(normalized.maxWallclockMs) ||
+      normalized.maxWallclockMs <= 0)
+  ) {
+    throw new ValidationError(
+      "budget.maxWallclockMs must be a positive integer.",
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeDefaultConfig(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new ValidationError("defaultConfig must be an object when provided.");
+  }
+  return { ...value };
+}
+
+function resolveAutoLoadedConfig(
+  spec: OptimizationSpec,
+): Record<string, unknown> | undefined {
+  if (!spec.autoLoadBest) {
+    return undefined;
+  }
+  if (typeof spec.loadFrom !== "string" || spec.loadFrom.trim().length === 0) {
+    throw new ValidationError(
+      "autoLoadBest requires loadFrom to be a non-empty path.",
+    );
+  }
+  if (!existsSync(spec.loadFrom)) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(spec.loadFrom, "utf8"));
+  } catch (error) {
+    throw new ValidationError(
+      `Failed to load best config from "${spec.loadFrom}": ${String(error)}`,
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    throw new ValidationError(
+      `Loaded config from "${spec.loadFrom}" must be a JSON object.`,
+    );
+  }
+  return { ...parsed };
+}
+
+function mergeConfig(
+  baseConfig: Record<string, unknown> | undefined,
+  overrideConfig: TrialConfig["config"] | null | undefined,
+): TrialConfig["config"] | undefined {
+  if (!baseConfig && !overrideConfig) {
+    return undefined;
+  }
+  return {
+    ...(baseConfig ?? {}),
+    ...(overrideConfig ?? {}),
+  };
+}
+
+function mergeOptimizeOptions(
+  spec: NormalizedOptimizationSpec,
+  options: OptimizeOptions,
+): OptimizeOptions {
+  if (!spec.execution) {
+    return options;
+  }
+
+  const merged = { ...spec.execution, ...options } as Record<string, unknown>;
+  if (merged["mode"] === "native") {
+    return merged as unknown as NativeOptimizeOptions;
+  }
+  return merged as unknown as HybridOptimizeOptions;
+}
+
 export function normalizeOptimizationSpec(
   spec: OptimizationSpec,
 ): NormalizedOptimizationSpec {
-  if (!spec || typeof spec !== 'object') {
-    throw new ValidationError('Optimization spec must be an object.');
+  if (!spec || typeof spec !== "object") {
+    throw new ValidationError("Optimization spec must be an object.");
   }
 
   if (!isPlainObject(spec.configurationSpace)) {
-    throw new ValidationError('Optimization spec requires configurationSpace.');
+    throw new ValidationError("Optimization spec requires configurationSpace.");
   }
 
   const configurationSpace = Object.fromEntries(
@@ -346,7 +875,7 @@ export function normalizeOptimizationSpec(
 
   if (Object.keys(configurationSpace).length === 0) {
     throw new ValidationError(
-      'Optimization spec requires at least one configuration parameter.',
+      "Optimization spec requires at least one configuration parameter.",
     );
   }
 
@@ -354,34 +883,35 @@ export function normalizeOptimizationSpec(
 
   if (!Array.isArray(spec.objectives) || spec.objectives.length === 0) {
     throw new ValidationError(
-      'Optimization spec requires at least one objective.',
+      "Optimization spec requires at least one objective.",
     );
   }
 
   const objectives = spec.objectives.map(normalizeObjective);
-
-  if (
-    spec.budget?.maxCostUsd !== undefined &&
-    (typeof spec.budget.maxCostUsd !== 'number' ||
-      !Number.isFinite(spec.budget.maxCostUsd) ||
-      spec.budget.maxCostUsd <= 0)
-  ) {
-    throw new ValidationError('budget.maxCostUsd must be a positive number.');
-  }
+  const budget = normalizeBudget(spec.budget);
+  const constraints = normalizeConstraints(spec.constraints);
+  const defaultConfig = normalizeDefaultConfig(spec.defaultConfig);
+  const promotionPolicy = normalizePromotionPolicy(spec.promotionPolicy);
 
   if (
     spec.evaluation?.data !== undefined &&
     spec.evaluation?.loadData !== undefined
   ) {
     throw new ValidationError(
-      'Use either evaluation.data or evaluation.loadData, not both.',
+      "Use either evaluation.data or evaluation.loadData, not both.",
     );
   }
 
   return {
     configurationSpace,
     objectives,
-    budget: spec.budget,
+    budget,
+    constraints,
+    defaultConfig,
+    promotionPolicy,
+    execution: spec.execution,
+    autoLoadBest: spec.autoLoadBest,
+    loadFrom: spec.loadFrom,
     evaluation: spec.evaluation,
   };
 }
@@ -402,38 +932,47 @@ function defineHiddenProperty(
 export const param = {
   enum(
     values: readonly (string | number | boolean)[],
-    options?: Omit<EnumParamDefinition, 'type' | 'values'>,
+    options?: Omit<EnumParamDefinition, "type" | "values">,
   ): EnumParamDefinition {
-    return normalizeParameterDefinition('parameter', {
-      type: 'enum',
+    return normalizeParameterDefinition("parameter", {
+      type: "enum",
       values,
       ...options,
     }) as EnumParamDefinition;
   },
-  float(definition: Omit<FloatParamDefinition, 'type'>): FloatParamDefinition {
-    return normalizeParameterDefinition('parameter', {
-      type: 'float',
+  float(definition: Omit<FloatParamDefinition, "type">): FloatParamDefinition {
+    return normalizeParameterDefinition("parameter", {
+      type: "float",
       ...definition,
     }) as FloatParamDefinition;
   },
-  int(definition: Omit<IntParamDefinition, 'type'>): IntParamDefinition {
-    return normalizeParameterDefinition('parameter', {
-      type: 'int',
+  int(definition: Omit<IntParamDefinition, "type">): IntParamDefinition {
+    return normalizeParameterDefinition("parameter", {
+      type: "int",
       ...definition,
     }) as IntParamDefinition;
+  },
+  bool(
+    options?: Omit<EnumParamDefinition<boolean>, "type" | "values">,
+  ): EnumParamDefinition<boolean> {
+    return normalizeParameterDefinition("parameter", {
+      type: "enum",
+      values: [false, true],
+      ...options,
+    }) as EnumParamDefinition<boolean>;
   },
 };
 
 export function getOptimizationSpec(
   target: unknown,
 ): NormalizedOptimizationSpec | undefined {
-  if (typeof target === 'function') {
-    return (target as unknown as Record<PropertyKey, NormalizedOptimizationSpec>)[
-      OPTIMIZATION_SPEC
-    ];
+  if (typeof target === "function") {
+    return (
+      target as unknown as Record<PropertyKey, NormalizedOptimizationSpec>
+    )[OPTIMIZATION_SPEC];
   }
 
-  if (isPlainObject(target) && 'configurationSpace' in target) {
+  if (isPlainObject(target) && "configurationSpace" in target) {
     return normalizeOptimizationSpec(target as unknown as OptimizationSpec);
   }
 
@@ -444,45 +983,51 @@ export function toHybridConfigSpace(target: unknown): HybridConfigSpace {
   const spec = getOptimizationSpec(target);
   if (!spec) {
     throw new ValidationError(
-      'toHybridConfigSpace() requires a wrapped function or optimization spec.',
+      "toHybridConfigSpace() requires a wrapped function or optimization spec.",
     );
   }
 
   return {
-    tunables: Object.entries(spec.configurationSpace).map(([name, definition]) => {
-      if (definition.conditions) {
-        throw new ValidationError(
-          `toHybridConfigSpace() does not support conditional parameter "${name}" yet.`,
-        );
-      }
-      switch (definition.type) {
-        case 'enum':
-          return {
-            name,
-            type: 'enum',
-            domain: { values: [...definition.values] },
-          };
-        case 'float':
-          return {
-            name,
-            type: 'float',
-            domain: { range: [definition.min, definition.max] as [number, number] },
-            scale: definition.scale,
-          };
-        case 'int':
-          return {
-            name,
-            type: 'int',
-            domain: { range: [definition.min, definition.max] as [number, number] },
-            scale: definition.scale,
-          };
-        default:
+    tunables: Object.entries(spec.configurationSpace).map(
+      ([name, definition]) => {
+        if (definition.conditions) {
           throw new ValidationError(
-            `Unsupported parameter type for "${name}" in hybrid config space.`,
+            `toHybridConfigSpace() does not support conditional parameter "${name}" yet.`,
           );
-      }
-    }),
-    constraints: {},
+        }
+        switch (definition.type) {
+          case "enum":
+            return {
+              name,
+              type: "enum",
+              domain: { values: [...definition.values] },
+            };
+          case "float":
+            return {
+              name,
+              type: "float",
+              domain: {
+                range: [definition.min, definition.max] as [number, number],
+              },
+              scale: definition.scale,
+            };
+          case "int":
+            return {
+              name,
+              type: "int",
+              domain: {
+                range: [definition.min, definition.max] as [number, number],
+              },
+              scale: definition.scale,
+            };
+          default:
+            throw new ValidationError(
+              `Unsupported parameter type for "${name}" in hybrid config space.`,
+            );
+        }
+      },
+    ),
+    constraints: spec.constraints ?? {},
   };
 }
 
@@ -491,44 +1036,47 @@ export function optimize(specInput: OptimizationSpec) {
 
   return function <T extends AnyFunction>(fn: T): NativeOptimizedFunction<T> {
     const target = fn as NativeOptimizedFunction<T>;
-    let appliedConfig: TrialConfig['config'] | undefined;
+    let appliedConfig: TrialConfig["config"] | undefined = mergeConfig(
+      spec.defaultConfig,
+      resolveAutoLoadedConfig(specInput),
+    );
     defineHiddenProperty(target, OPTIMIZATION_SPEC, spec);
 
     defineHiddenProperty(
       target,
-      'optimize',
+      "optimize",
       async (options: OptimizeOptions) => {
-        if (isHybridOptimizeOptions(options)) {
+        const resolvedOptions = mergeOptimizeOptions(spec, options);
+        if (isHybridOptimizeOptions(resolvedOptions)) {
           return runHybridOptimization(
             target as unknown as NativeTrialFunction,
             spec,
             specInput,
-            options,
+            resolvedOptions as HybridOptimizeOptions,
             fn.name,
           );
         }
 
+        validateNativeOptimizationCompatibility(spec);
         return runNativeOptimization(
           target as unknown as NativeTrialFunction,
           spec,
-          options,
+          resolvedOptions as NativeOptimizeOptions,
         );
       },
     );
 
     defineHiddenProperty(
       target,
-      'applyBestConfig',
+      "applyBestConfig",
       (result: OptimizationResult) => {
-        appliedConfig = result.bestConfig ? { ...result.bestConfig } : undefined;
+        appliedConfig = mergeConfig(spec.defaultConfig, result.bestConfig);
         return appliedConfig ? { ...appliedConfig } : undefined;
       },
     );
 
-    defineHiddenProperty(
-      target,
-      'currentConfig',
-      () => (appliedConfig ? { ...appliedConfig } : undefined),
+    defineHiddenProperty(target, "currentConfig", () =>
+      appliedConfig ? { ...appliedConfig } : undefined,
     );
 
     return target;
