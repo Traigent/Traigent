@@ -306,7 +306,10 @@ class TraigentAuthCLI:
             async with session.post(
                 login_url,
                 json={"email": email, "password": password},
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "Traigent-SDK-CLI/1.0",
+                },
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 response_text = await response.text()
@@ -379,10 +382,19 @@ class TraigentAuthCLI:
                 api_key_url,
                 json={
                     "key_name": key_name,
+                    "permissions": [
+                        "read",
+                        "write",
+                        "experiment.read",
+                        "experiment.write",
+                        "session.read",
+                        "session.write",
+                    ],
                 },
                 headers={
                     "Authorization": f"Bearer {jwt_token}",
                     "Content-Type": "application/json",
+                    "User-Agent": "Traigent-SDK-CLI/1.0",
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
