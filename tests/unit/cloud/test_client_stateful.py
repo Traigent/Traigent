@@ -9,6 +9,7 @@ import pytest_asyncio
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     OptimizationSessionStatus,
+    SessionObjectiveDefinition,
     TrialResultSubmission,
     TrialStatus,
 )
@@ -120,6 +121,153 @@ class TestSessionCreation:
         assert submitted_payload["metadata"]["owner_user_id"] == "user-123"
         assert submitted_payload["metadata"]["owner_api_key_id"] == "key-789"
         assert submitted_payload["metadata"]["created_by"] == "user-123"
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_serializes_typed_objectives_and_conditionals(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-123",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "model": {"type": "categorical", "choices": ["cheap", "accurate"]},
+                "max_tokens": {
+                    "type": "int",
+                    "low": 64,
+                    "high": 256,
+                    "conditions": {"model": "accurate"},
+                    "default": 64,
+                },
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="accuracy",
+                    direction="maximize",
+                    weight=2.0,
+                ),
+                {"metric": "latency", "direction": "minimize", "weight": 1.0},
+            ],
+            dataset_metadata={"size": 100},
+            max_trials=12,
+            budget={"max_cost_usd": 2.0},
+            constraints={
+                "derived": [{"require": "metrics.accuracy >= 0.8"}],
+            },
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["objectives"] == [
+            {"metric": "accuracy", "direction": "maximize", "weight": 2.0},
+            {"metric": "latency", "direction": "minimize", "weight": 1.0},
+        ]
+        assert submitted_payload["budget"] == {"max_cost_usd": 2.0}
+        assert submitted_payload["constraints"] == {
+            "derived": [{"require": "metrics.accuracy >= 0.8"}]
+        }
+        assert submitted_payload["configuration_space"]["max_tokens"] == {
+            "type": "int",
+            "low": 64,
+            "high": 256,
+            "conditions": {"model": "accurate"},
+            "default": 64,
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_serializes_banded_objectives_and_policy(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-456",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "retrieval_pair": {
+                    "type": "categorical",
+                    "choices": ["choice_0", "choice_1"],
+                    "value_map": {
+                        "choice_0": ["dense", "rerank"],
+                        "choice_1": ["bm25", "none"],
+                    },
+                },
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="response_length",
+                    band={"low": 120, "high": 180},
+                    test="TOST",
+                    alpha=0.05,
+                    weight=2.0,
+                ),
+            ],
+            dataset_metadata={"size": 100},
+            max_trials=4,
+            default_config={"temperature": 0.7},
+            promotion_policy={"dominance": "epsilon_pareto", "alpha": 0.05},
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["objectives"] == [
+            {
+                "metric": "response_length",
+                "band": {"low": 120, "high": 180},
+                "test": "TOST",
+                "alpha": 0.05,
+                "weight": 2.0,
+            }
+        ]
+        assert submitted_payload["default_config"] == {"temperature": 0.7}
+        assert submitted_payload["promotion_policy"] == {
+            "dominance": "epsilon_pareto",
+            "alpha": 0.05,
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_omits_optional_session_fields_when_absent(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-789",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={"temperature": {"type": "float", "low": 0.0, "high": 1.0}},
+            objectives=["accuracy"],
+            dataset_metadata={"size": 100},
+            max_trials=3,
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert "budget" not in submitted_payload
+        assert "constraints" not in submitted_payload
+        assert "default_config" not in submitted_payload
+        assert "promotion_policy" not in submitted_payload
 
     @pytest.mark.asyncio
     async def test_create_session_no_client_session(self, cloud_client):

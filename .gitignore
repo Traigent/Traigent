@@ -454,3 +454,11 @@ DISCUSSIONS_RECOUNT_*.md
 AutoCoder_orders.txt
 old_discussions_*/
 paper_experiments/
+
+# Nexxen demo resources (client-specific, not for version control)
+examples/nexxen/
+examples/datasets/nexxen/
+examples/nexxen.zip
+
+# Local helper scripts
+walkthrough/run_with_env.sh
