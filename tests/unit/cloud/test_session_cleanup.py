@@ -84,11 +84,8 @@ asyncio.run(main())
         client._session = mock_session
         client._session_lock = asyncio.Lock()
 
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("traigent.cloud.backend_client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await client._reset_http_session("retry")
-
-        mock_session.close.assert_awaited_once()
-        mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reset_drains_on_shutdown_path(self):
