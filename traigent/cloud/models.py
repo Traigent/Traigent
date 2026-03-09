@@ -51,6 +51,21 @@ class SessionObjectiveDefinition:
     alpha: float | None = None
     weight: float | None = None
 
+    def __post_init__(self) -> None:
+        """Validate mutually exclusive objective modes."""
+        if self.band is not None and self.direction is not None:
+            raise ValueError(
+                "SessionObjectiveDefinition: 'band' and 'direction' are mutually exclusive."
+            )
+        if self.band is None and self.direction is None:
+            raise ValueError(
+                "SessionObjectiveDefinition: one of 'band' or 'direction' must be provided."
+            )
+        if (self.test is not None or self.alpha is not None) and self.band is None:
+            raise ValueError(
+                "SessionObjectiveDefinition: 'test' and 'alpha' require 'band' to be set."
+            )
+
 
 @dataclass
 class OptimizationRequest:
@@ -191,14 +206,6 @@ class SessionCreationRequest:
             self.objectives: list[Any] = []
         if self.dataset_metadata is None:
             self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
-        if self.budget is None:
-            self.budget = {}
-        if self.constraints is None:
-            self.constraints = {}
-        if self.default_config is None:
-            self.default_config = {}
-        if self.promotion_policy is None:
-            self.promotion_policy = {}
         # Ensure max_trials is never None
         if self.max_trials is None:
             self.max_trials = 10

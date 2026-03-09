@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import pytest
+
 from traigent.cloud.models import (
     AgentOptimizationRequest,
     AgentOptimizationStatus,
@@ -249,6 +251,36 @@ class TestSessionRequests:
             "dominance": "epsilon_pareto",
             "alpha": 0.05,
         }
+
+    def test_session_creation_request_preserves_optional_fields_as_none(self):
+        request = SessionCreationRequest(
+            function_name="optimize_llm",
+            configuration_space={"temperature": (0.0, 1.0)},
+            objectives=["accuracy"],
+        )
+
+        assert request.budget is None
+        assert request.constraints is None
+        assert request.default_config is None
+        assert request.promotion_policy is None
+
+    def test_session_objective_definition_rejects_invalid_combinations(self):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            SessionObjectiveDefinition(
+                metric="accuracy",
+                direction="maximize",
+                band={"low": 0.8, "high": 1.0},
+            )
+
+        with pytest.raises(ValueError, match="must be provided"):
+            SessionObjectiveDefinition(metric="accuracy")
+
+        with pytest.raises(ValueError, match="require 'band'"):
+            SessionObjectiveDefinition(
+                metric="response_length",
+                direction="minimize",
+                test="TOST",
+            )
 
     def test_next_trial_response(self):
         """Test next trial response."""

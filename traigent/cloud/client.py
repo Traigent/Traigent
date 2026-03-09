@@ -1315,7 +1315,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """Serialize session creation request."""
         metadata = self._ensure_owner_metadata(request.metadata)
         request.metadata = metadata
-        return {
+        payload: dict[str, Any] = {
             "function_name": request.function_name,
             "configuration_space": request.configuration_space,
             "objectives": [
@@ -1324,15 +1324,20 @@ class TraigentCloudClient(BaseTraigentClient):
             ],
             "dataset_metadata": request.dataset_metadata,
             "max_trials": request.max_trials,
-            "budget": request.budget,
-            "constraints": request.constraints,
-            "default_config": request.default_config,
-            "promotion_policy": request.promotion_policy,
             "optimization_strategy": request.optimization_strategy,
             "user_id": request.user_id,
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        if request.budget is not None:
+            payload["budget"] = request.budget
+        if request.constraints is not None:
+            payload["constraints"] = request.constraints
+        if request.default_config is not None:
+            payload["default_config"] = request.default_config
+        if request.promotion_policy is not None:
+            payload["promotion_policy"] = request.promotion_policy
+        return payload
 
     @staticmethod
     def _serialize_session_objective(
@@ -1558,16 +1563,13 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
-        key_getter = getattr(self.auth, "_get_api_key_for_internal_use", None)
-        key_validator = getattr(self.auth, "_validate_key_format", None)
-        if callable(key_getter) and callable(key_validator):
-            api_key = key_getter()
-            if inspect.isawaitable(api_key):
-                api_key = await api_key
-            is_valid = key_validator(api_key)
-            if inspect.isawaitable(is_valid):
-                is_valid = await is_valid
-            if api_key is not None and not bool(is_valid):
+        if self._aio_session is None:
+            auth_result_candidate: Any = self.auth.authenticate_with_result()
+            if inspect.isawaitable(auth_result_candidate):
+                auth_result = await auth_result_candidate
+            else:
+                auth_result = auth_result_candidate
+            if not auth_result.success:
                 raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
 
         await self._ensure_session()

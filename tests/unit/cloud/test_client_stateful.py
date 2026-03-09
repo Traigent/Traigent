@@ -241,6 +241,35 @@ class TestSessionCreation:
         }
 
     @pytest.mark.asyncio
+    async def test_create_optimization_session_omits_optional_session_fields_when_absent(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-789",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={"temperature": {"type": "float", "low": 0.0, "high": 1.0}},
+            objectives=["accuracy"],
+            dataset_metadata={"size": 100},
+            max_trials=3,
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert "budget" not in submitted_payload
+        assert "constraints" not in submitted_payload
+        assert "default_config" not in submitted_payload
+        assert "promotion_policy" not in submitted_payload
+
+    @pytest.mark.asyncio
     async def test_create_session_no_client_session(self, cloud_client):
         """Test session creation without initialized client session."""
         cloud_client._session = None

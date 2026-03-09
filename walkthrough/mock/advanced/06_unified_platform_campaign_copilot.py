@@ -21,6 +21,7 @@ Optional workflow graph export:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import random
 from pathlib import Path
@@ -374,7 +375,9 @@ def operational_efficiency_metric(output: str, expected: str) -> float:
     if "identity_signal_missing" in output_lower:
         score -= 0.1
 
-    random.seed(hash(output + expected) % 2**32)
+    seed_input = f"{output}|{expected}".encode("utf-8")
+    seed = int.from_bytes(hashlib.sha256(seed_input).digest()[:4], "little")
+    random.seed(seed)
     score += random.uniform(0.0, 0.05)
     return min(score, 1.0)
 
