@@ -163,7 +163,12 @@ class TestFullOptimizationWorkflow:
 
             # Verify results
             assert len(result.trials) == 5
-            assert result.best_score is None or result.best_score >= 0
+            if result.best_score is None:
+                session_summary = result.metadata.get("session_summary", {})
+                assert session_summary.get("reason_code") == "NO_RANKING_ELIGIBLE_TRIALS"
+                assert result.best_config == {}
+            else:
+                assert result.best_score >= 0
             assert result.algorithm == "RandomSearchOptimizer"
 
             # Should have tried different configurations
