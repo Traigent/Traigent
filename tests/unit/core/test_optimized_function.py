@@ -743,6 +743,7 @@ class TestOptimizedFunction:
             config_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
             max_trials=3,
             eval_dataset=sample_dataset,
         )

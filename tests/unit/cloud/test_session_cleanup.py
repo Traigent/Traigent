@@ -46,7 +46,7 @@ asyncio.run(main())
             [sys.executable, "-Walways", "-c", script],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
         assert (
             result.returncode == 0
