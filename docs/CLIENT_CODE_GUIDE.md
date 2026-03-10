@@ -184,6 +184,7 @@ Example:
 ```ts
 import {
   autoWrapFrameworkTargets,
+  describeFrameworkAutoOverride,
   optimize,
   param,
 } from '@traigent/sdk';
@@ -207,6 +208,8 @@ const agent = optimize({
     scoringFunction: () => 1,
   },
 })(async (input) => wrapped.chatModel.invoke(input));
+
+console.log(describeFrameworkAutoOverride(undefined, true));
 ```
 
 ### Native mode rules

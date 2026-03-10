@@ -96,6 +96,10 @@ export {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
 } from './integrations/auto-wrap.js';
+export {
+  getRegisteredFrameworkTargets,
+  describeFrameworkAutoOverride,
+} from './integrations/registry.js';
 export { createTraigentOpenAI } from './integrations/openai/index.js';
 export { withTraigentModel } from './integrations/langchain/index.js';
 export { withTraigent } from './integrations/vercel-ai/index.js';

@@ -14,6 +14,15 @@ export type RepetitionAggregationStrategy =
   | 'max';
 export type FrameworkTarget = 'openai' | 'langchain' | 'vercel-ai';
 
+export interface FrameworkAutoOverrideStatus {
+  autoOverrideFrameworks: boolean;
+  requestedTargets?: readonly FrameworkTarget[];
+  activeTargets: readonly FrameworkTarget[];
+  selectedTargets: readonly FrameworkTarget[];
+  enabled: boolean;
+  reason: string;
+}
+
 export interface SeamlessResolution {
   path: 'framework' | 'pretransformed' | 'runtime';
   reason: string;

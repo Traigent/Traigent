@@ -1,4 +1,7 @@
-import type { FrameworkTarget } from '../optimization/types.js';
+import type {
+  FrameworkAutoOverrideStatus,
+  FrameworkTarget,
+} from '../optimization/types.js';
 
 const activeFrameworkTargets = new Set<FrameworkTarget>();
 
@@ -24,6 +27,65 @@ export function resolveRegisteredFrameworkTargets(
   }
 
   return targets.filter((target) => activeFrameworkTargets.has(target));
+}
+
+export function describeFrameworkAutoOverride(
+  targets: readonly FrameworkTarget[] | undefined,
+  autoOverrideFrameworks = true,
+): FrameworkAutoOverrideStatus {
+  const activeTargets = getRegisteredFrameworkTargets();
+  const requestedTargets = targets ? [...targets] : undefined;
+  const selectedTargets = autoOverrideFrameworks
+    ? resolveRegisteredFrameworkTargets(targets)
+    : [];
+
+  if (!autoOverrideFrameworks) {
+    return {
+      autoOverrideFrameworks,
+      requestedTargets,
+      activeTargets,
+      selectedTargets,
+      enabled: false,
+      reason:
+        'Framework auto-override is disabled for this seamless configuration.',
+    };
+  }
+
+  if (activeTargets.length === 0) {
+    return {
+      autoOverrideFrameworks,
+      requestedTargets,
+      activeTargets,
+      selectedTargets,
+      enabled: false,
+      reason:
+        'No wrapped framework targets are currently registered for seamless interception.',
+    };
+  }
+
+  if (requestedTargets && selectedTargets.length === 0) {
+    return {
+      autoOverrideFrameworks,
+      requestedTargets,
+      activeTargets,
+      selectedTargets,
+      enabled: false,
+      reason:
+        'None of the requested framework targets are currently registered.',
+    };
+  }
+
+  return {
+    autoOverrideFrameworks,
+    requestedTargets,
+    activeTargets,
+    selectedTargets,
+    enabled: selectedTargets.length > 0,
+    reason:
+      requestedTargets && requestedTargets.length > 0
+        ? 'Using the requested registered framework targets for seamless interception.'
+        : 'Using all active registered framework targets for seamless interception.',
+  };
 }
 
 export function clearRegisteredFrameworkTargets(): void {

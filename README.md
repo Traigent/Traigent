@@ -170,6 +170,7 @@ of calling each wrapper manually:
 ```ts
 import {
   autoWrapFrameworkTargets,
+  describeFrameworkAutoOverride,
   optimize,
   param,
 } from '@traigent/sdk';
@@ -178,6 +179,8 @@ const { openaiClient, chatModel } = autoWrapFrameworkTargets({
   openaiClient,
   chatModel,
 });
+
+console.log(describeFrameworkAutoOverride(undefined, true));
 ```
 
 For hardcoded local tuned variables, the recommended path is:

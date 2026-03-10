@@ -2,6 +2,7 @@
 
 import {
   autoWrapFrameworkTargets,
+  describeFrameworkAutoOverride,
   optimize,
   param,
 } from '../../../dist/index.js';
@@ -53,6 +54,7 @@ askQuestion.applyBestConfig(result);
 console.log(
   JSON.stringify(
     {
+      frameworkAutoOverride: describeFrameworkAutoOverride(undefined, true),
       seamlessResolution: askQuestion.seamlessResolution(),
       bestConfig: result.bestConfig,
       bestMetrics: result.bestMetrics,
