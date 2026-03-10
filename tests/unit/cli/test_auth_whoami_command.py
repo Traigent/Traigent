@@ -59,6 +59,9 @@ class _FakeSession:
         assert self._response is not None
         return self._response
 
+    def post(self, url: str, headers: dict[str, str]) -> _FakeResponse:
+        return self.get(url, headers)
+
 
 def _install_fake_aiohttp(
     monkeypatch: pytest.MonkeyPatch,
@@ -97,6 +100,7 @@ def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
         response=_FakeResponse(
             status=200,
             json_payload={
+                "valid": True,
                 "data": {
                     "email": "dev@traigent.ai",
                     "name": "Dev User",

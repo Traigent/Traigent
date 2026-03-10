@@ -103,6 +103,10 @@ class TestPrivacyCompliance:
             "objectives",
             "dataset_metadata",
             "max_trials",
+            "budget",
+            "constraints",
+            "default_config",
+            "promotion_policy",
             "optimization_strategy",
             "user_id",
             "billing_tier",
@@ -271,7 +275,7 @@ class TestPrivacyCompliance:
             bad_request.dataset = Dataset(
                 [
                     EvaluationExample(
-                        input_data={"secret": "data"}, expected_output="output"
+                        input_data={"secret": "data"}, expected_output="output"  # pragma: allowlist secret
                     )
                 ]
             )
