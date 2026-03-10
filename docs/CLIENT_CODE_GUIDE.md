@@ -212,6 +212,12 @@ const agent = optimize({
 console.log(describeFrameworkAutoOverride(undefined, true));
 ```
 
+Identity note:
+
+- OpenAI clients are wrapped in place
+- LangChain and Vercel AI targets return wrapped objects
+- all wrapper paths are idempotent, so repeated wrapping is safe
+
 ### Native mode rules
 
 - Built-in objective strings are limited to `accuracy`, `cost`, and `latency`.

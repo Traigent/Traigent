@@ -130,4 +130,37 @@ describe('autoWrapFrameworkTarget(s)', () => {
       }),
     );
   });
+
+  it('documents referential behavior: OpenAI is in-place, LangChain/Vercel return wrapped objects', () => {
+    const openaiClient = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({ usage: {} })),
+        },
+      },
+    };
+    const langchainModel = {
+      modelName: 'gpt-4o-mini',
+      bind: vi.fn(() => ({
+        invoke: vi.fn(async () => 'ok'),
+      })),
+      async invoke() {
+        return 'fallback';
+      },
+    };
+    const vercelModel = {
+      specificationVersion: 'v1',
+      provider: 'openai',
+      modelId: 'gpt-4o-mini',
+      defaultObjectGenerationMode: 'json',
+      supportedUrls: {},
+      async doGenerate() {
+        return { usage: {} };
+      },
+    };
+
+    expect(autoWrapFrameworkTarget(openaiClient)).toBe(openaiClient);
+    expect(autoWrapFrameworkTarget(langchainModel)).not.toBe(langchainModel);
+    expect(autoWrapFrameworkTarget(vercelModel as never)).not.toBe(vercelModel);
+  });
 });

@@ -183,6 +183,12 @@ const { openaiClient, chatModel } = autoWrapFrameworkTargets({
 console.log(describeFrameworkAutoOverride(undefined, true));
 ```
 
+Identity note:
+
+- OpenAI wrapping is in-place, so the wrapped client keeps the same object identity
+- LangChain and Vercel AI wrapping return wrapped objects
+- all three paths are idempotent, so repeated wrapping is safe
+
 For hardcoded local tuned variables, the recommended path is:
 
 ```bash

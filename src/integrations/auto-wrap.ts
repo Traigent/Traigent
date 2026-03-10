@@ -33,6 +33,9 @@ function isLangChainModelLike(value: unknown): boolean {
     return false;
   }
 
+  // This is intentionally pragmatic rather than exact runtime branding.
+  // The goal is low-friction wrapping for common LangChain-style models, and
+  // the worst case is an extra Proxy wrapper on a compatible-looking object.
   const hasMethod =
     typeof value['invoke'] === 'function' ||
     typeof value['stream'] === 'function' ||
@@ -58,6 +61,15 @@ function isVercelLanguageModelLike(value: unknown): boolean {
   );
 }
 
+/**
+ * Wrap a supported framework target for seamless interception.
+ *
+ * Important identity note:
+ * - OpenAI clients are wrapped in place and preserve referential equality
+ * - LangChain and Vercel AI targets return wrapped proxy/middleware objects
+ *
+ * All wrapper paths are idempotent, so calling this repeatedly is safe.
+ */
 export function autoWrapFrameworkTarget<T>(value: T): T {
   if (isOpenAIClientLike(value)) {
     return createTraigentOpenAI(value as Parameters<typeof createTraigentOpenAI>[0]) as T;
@@ -74,6 +86,10 @@ export function autoWrapFrameworkTarget<T>(value: T): T {
   return value;
 }
 
+/**
+ * Auto-wrap supported framework targets in an array, a plain object map, or a
+ * single direct framework object.
+ */
 export function autoWrapFrameworkTargets<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((entry) => autoWrapFrameworkTarget(entry)) as T;
