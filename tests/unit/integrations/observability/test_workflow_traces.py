@@ -9,6 +9,7 @@ Tests for Traigent workflow traces with LangGraph visualization support.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -954,6 +955,41 @@ class TestEdgeCases:
         assert results[0] == "config_0"
         assert results[1] == "config_1"
         assert results[2] == "config_2"
+
+    @pytest.mark.asyncio
+    async def test_tracker_async_task_isolation(self) -> None:
+        """ContextVars should isolate trace state across concurrent asyncio tasks."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auto_send=False,
+        )
+
+        async def run_task(task_id: int) -> tuple[str | None, str | None, int, str]:
+            with tracker.trace_trial(f"config_{task_id}") as ctx:
+                tracker.add_span(
+                    span_id=f"span_{task_id}",
+                    span_name=f"node_{task_id}",
+                    span_type=SpanType.NODE,
+                    start_time=datetime.now(UTC),
+                )
+                await asyncio.sleep(0)
+                return (
+                    tracker._current_config_run_id,
+                    tracker._current_trace_id,
+                    len(tracker._spans),
+                    ctx["configuration_run_id"] or "",
+                )
+
+        results = await asyncio.gather(*(run_task(i) for i in range(3)))
+
+        for index, (config_run_id, trace_id, span_count, context_run_id) in enumerate(results):
+            assert config_run_id == f"config_{index}"
+            assert context_run_id == f"config_{index}"
+            assert trace_id is not None
+            assert span_count == 1
+
+        assert tracker._current_config_run_id is None
+        assert tracker._current_trace_id is None
 
     def test_span_with_datetime_start_time(self) -> None:
         """Test adding span with datetime object for start_time."""
