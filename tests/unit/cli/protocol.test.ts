@@ -1,7 +1,7 @@
 /**
  * Unit tests for CLI protocol types and functions.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   PROTOCOL_VERSION,
   MIN_PROTOCOL_VERSION,

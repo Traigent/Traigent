@@ -113,7 +113,7 @@ let rl: ReturnType<typeof createInterface> | null = null;
  * Backpressure state for stdout writes.
  * When stdout buffer is full, we queue writes and pause input.
  */
-let writeQueue: string[] = [];
+const writeQueue: string[] = [];
 let draining = false;
 
 /** Parsed CLI arguments */

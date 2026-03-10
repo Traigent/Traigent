@@ -1,10 +1,14 @@
 /**
- * MeasuresDict validation - mirrors Python SDK's traigent/cloud/dtos.py MeasuresDict.
+ * MeasuresDict validation for metric-value maps.
  *
- * Enforces:
- * - Max 50 keys (prevent unbounded memory)
+ * This aligns with the canonical TraigentSchema value contracts used in
+ * execution/metric_submission_schema.json and
+ * evaluation/configuration_run_schema.json:
+ * - Max 50 keys
  * - Python identifier keys (^[a-zA-Z_][a-zA-Z0-9_]*$)
- * - Numeric values only (number or null)
+ * - Finite numeric values only (number or null)
+ *
+ * It does not model measure catalog definitions from measures/measure_schema.json.
  */
 import { z } from 'zod';
 
@@ -24,7 +28,7 @@ export const MeasureKeySchema = z.string().regex(MEASURE_KEY_PATTERN, {
 /**
  * Zod schema for a single measure value.
  */
-export const MeasureValueSchema = z.number().nullable();
+export const MeasureValueSchema = z.number().finite().nullable();
 
 /**
  * Zod schema for MeasuresDict with all validations.
@@ -55,7 +59,7 @@ function handleValidationError(
  * Check if a value is a valid measure value (number or null).
  */
 function isValidMeasureValue(value: unknown): value is number | null {
-  return value === null || (typeof value === 'number' && !Number.isNaN(value));
+  return value === null || (typeof value === 'number' && Number.isFinite(value));
 }
 
 /**

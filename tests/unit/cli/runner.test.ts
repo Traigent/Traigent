@@ -5,7 +5,7 @@
  * and a main() function that's hard to test directly. We focus on testing
  * the exported helper functions and protocol handling logic.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // We need to test the functions that can be imported
 // Since runner.ts has side effects, we'll test the protocol integration
@@ -391,9 +391,9 @@ describe('Runner Integration Tests', () => {
       });
 
       expect(sanitized.valid).toBe(1.0);
-      // Note: The implementation allows Infinity values (only NaN is filtered)
-      expect(sanitized['inf_value']).toBe(Infinity);
-      expect(sanitized['neg_inf_value']).toBe(-Infinity);
+      expect(sanitized['inf_value']).toBeUndefined();
+      expect(sanitized['neg_inf_value']).toBeUndefined();
+      expect(warnings.length).toBeGreaterThan(0);
     });
   });
 

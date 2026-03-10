@@ -58,6 +58,12 @@ describe('MeasuresDictSchema', () => {
     const result = MeasuresDictSchema.safeParse(measures);
     expect(result.success).toBe(false);
   });
+
+  it('should reject infinite values', () => {
+    const measures = { accuracy: Number.POSITIVE_INFINITY };
+    const result = MeasuresDictSchema.safeParse(measures);
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('sanitizeMeasures()', () => {
@@ -144,6 +150,16 @@ describe('sanitizeMeasures()', () => {
     const input = { valid: 0.5, invalid: NaN };
     const result = sanitizeMeasures(input, { warn });
     expect(result).toEqual({ valid: 0.5 });
+  });
+
+  it('should filter out infinite values', () => {
+    const warn = vi.fn();
+    const input = { valid: 0.5, invalid: Number.POSITIVE_INFINITY };
+    const result = sanitizeMeasures(input, { warn });
+    expect(result).toEqual({ valid: 0.5 });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Non-numeric measure value')
+    );
   });
 });
 

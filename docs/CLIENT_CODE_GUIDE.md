@@ -1,21 +1,21 @@
 # Client Code Guide
 
-This guide describes the current JavaScript and TypeScript integration surface for `@traigent/sdk`.
+This guide describes the current JavaScript and TypeScript integration surface for `@traigent/sdk` in this checkout.
 
 ## Choose a Flow
 
-Use the SDK in one of two current ways:
+Use the SDK in one of two supported ways:
 
 | Flow | When to use it | Main APIs |
 | --- | --- | --- |
 | Hybrid mode authoring | Your app exposes Traigent-compatible HTTP routes and needs a code-defined config space | `optimize`, `param`, `toHybridConfigSpace`, `TrialContext`, `getTrialParam`, `getTrialConfig` |
-| Native Node optimization | Your optimization loop should run in-process in Node | `optimize`, `param`, `wrapped.optimize(...)` |
+| Native Node optimization | Your optimization loop should run in-process in Node | `optimize`, `param`, `wrapped.optimize(...)`, `applyBestConfig()` |
 
-The older Python-orchestrated bridge flow still exists, but it is now documented as a legacy reference in [docs/REAL_MODE_SEQUENCE_FLOW.md](./REAL_MODE_SEQUENCE_FLOW.md).
+This repo does not implement backend-guided `execution.mode = 'hybrid'`. The older Python-orchestrated bridge flow still exists, but it is documented as a legacy reference in [REAL_MODE_SEQUENCE_FLOW.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/REAL_MODE_SEQUENCE_FLOW.md).
 
 ## Flow 1: Hybrid Mode Authoring
 
-In hybrid mode, the SDK is responsible for authoring the spec and exposing runtime config access. Your service is still responsible for HTTP routes, validation, dispatch, and error shaping.
+In hybrid mode authoring, the SDK defines the spec and exposes runtime config access. Your service still owns the HTTP routes, validation, dispatch, and error shaping.
 
 ### What you write
 
@@ -42,6 +42,12 @@ export const childAgeSpec = optimize({
     max_retries: param.int({ min: 0, max: 3, scale: 'linear' }),
   },
   objectives: ['accuracy', 'cost'],
+  execution: {
+    contract: 'trial',
+  },
+  evaluation: {
+    data: [{ id: 1 }],
+  },
 })(async () => ({
   metrics: {
     accuracy: 0,
@@ -72,37 +78,34 @@ export async function executeCapability(body: {
     const model = getTrialParam('model', 'gpt-4o-mini');
     const temperature = getTrialParam('temperature', 0.2);
 
-    return {
-      model,
-      temperature,
-    };
+    return { model, temperature };
   });
 }
 ```
 
-### Hybrid mode rules
+### Hybrid authoring rules
 
-- Keep `configurationSpace`, `objectives`, `budget`, and `evaluation` in camelCase.
+- Keep `configurationSpace`, `objectives`, `budget`, `evaluation`, `injection`, and `execution` in camelCase.
 - Keep your existing hybrid wire contract unchanged by serializing with `toHybridConfigSpace()`.
 - Resolve runtime config with `getTrialParam()` and `getTrialConfig()` inside the execution path, not in top-level route handlers.
 - If you temporarily support both code-defined specs and JSON config files, choose one source at startup and fail fast when they disagree.
 
 ## Flow 2: Native Node Optimization
 
-In native mode, the wrapped function is the trial function and `.optimize(...)` runs the optimizer directly in Node.
+In native mode, the primary JS contract is a plain agent function plus an `evaluation` block. The SDK owns dataset iteration, output scoring, metric aggregation, and optimization.
 
 ### What you write
 
 1. A spec with `optimize(...)`.
-2. A trial function that accepts `TrialConfig`.
+2. A plain agent function returning output.
 3. An evaluation dataset supplied via `evaluation.data` or `evaluation.loadData`.
 
 ### Minimal example
 
 ```ts
-import { optimize, param } from '@traigent/sdk';
+import { getTrialParam, optimize, param } from '@traigent/sdk';
 
-const runTrial = optimize({
+const answerQuestion = optimize({
   configurationSpace: {
     model: param.enum(['cheap', 'accurate']),
     temperature: param.float({ min: 0, max: 0.5, step: 0.5, scale: 'linear' }),
@@ -111,24 +114,33 @@ const runTrial = optimize({
   budget: {
     maxCostUsd: 1,
   },
-  evaluation: {
-    data: [{ id: 'a' }, { id: 'b' }],
+  execution: {
+    maxTotalExamples: 100,
+    repsPerTrial: 3,
+    repsAggregation: 'median',
   },
-})(async (trialConfig) => {
-  const model = String(trialConfig.config.model);
-
-  return {
-    metrics: {
-      accuracy: model === 'accurate' ? 0.95 : 0.7,
-      cost: model === 'accurate' ? 0.4 : 0.1,
+  evaluation: {
+    data: [
+      { input: 'What is 2+2?', output: '4' },
+      { input: 'What is the capital of France?', output: 'Paris' },
+    ],
+    scoringFunction: (output, expectedOutput) =>
+      output === expectedOutput ? 1 : 0,
+    metricFunctions: {
+      cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
+        row.input.includes('capital') ? 0.2 : 0.1,
     },
-    metadata: {
-      evaluatedRows: trialConfig.dataset_subset.total,
-    },
-  };
+  },
+})(async (question: string) => {
+  const model = String(getTrialParam('model', 'cheap'));
+  return model === 'accurate'
+    ? question.includes('capital')
+      ? 'Paris'
+      : '4'
+    : 'unknown';
 });
 
-const result = await runTrial.optimize({
+const result = await answerQuestion.optimize({
   algorithm: 'grid',
   maxTrials: 12,
   randomSeed: 42,
@@ -136,33 +148,100 @@ const result = await runTrial.optimize({
   trialConcurrency: 2,
 });
 
-runTrial.applyBestConfig(result);
-console.log(runTrial.currentConfig());
+answerQuestion.applyBestConfig(result);
+console.log(await answerQuestion('What is 2+2?'));
+console.log(answerQuestion.currentConfig());
+```
+
+### Injection modes
+
+- `context`:
+  - default mode
+  - use `getTrialParam()` / `getTrialConfig()` in the wrapped function
+- `parameter`:
+  - the SDK calls your function as `agentFn(input, config?)`
+  - use this when you want explicit tuned-variable flow in user code
+- `seamless`:
+  - first-class through framework wrappers for OpenAI, LangChain, and Vercel AI
+  - the fastest framework path is now:
+    - `autoWrapFrameworkTarget(...)` for one client/model
+    - `autoWrapFrameworkTargets({ ... })` for a small object map of supported targets
+  - also supported for hardcoded local tuned variables through:
+    - `traigent migrate seamless`
+    - `@traigent/sdk/babel-plugin-seamless`
+    - an experimental runtime rewrite fallback for self-contained plain Node functions
+  - defaults `autoOverrideFrameworks` to `true`, so all active wrapped targets
+    are eligible unless you narrow them with `frameworkTargets`
+  - fail-closed semantics:
+    - the codemod reports rejected patterns and will not modify blocked files
+    - the Babel plugin throws instead of emitting a partial transform
+  - `frameworkTargets` is still useful when you want to constrain seamless interception to specific SDKs
+  - set `autoOverrideFrameworks: false` when you want seamless to ignore active
+    wrapped SDK targets and rely only on transformed code paths
+
+Example:
+
+```ts
+import {
+  autoWrapFrameworkTargets,
+  optimize,
+  param,
+} from '@traigent/sdk';
+
+const wrapped = autoWrapFrameworkTargets({
+  openaiClient,
+  chatModel,
+});
+
+const agent = optimize({
+  configurationSpace: {
+    model: param.enum(['gpt-4o-mini', 'gpt-4o']),
+    temperature: param.float({ min: 0, max: 1, step: 0.2, scale: 'linear' }),
+  },
+  objectives: ['accuracy'],
+  injection: {
+    mode: 'seamless',
+  },
+  evaluation: {
+    data: [{ input: 'hello', output: 'ok' }],
+    scoringFunction: () => 1,
+  },
+})(async (input) => wrapped.chatModel.invoke(input));
 ```
 
 ### Native mode rules
 
-- The wrapped function must return `{ metrics, metadata?, duration? }`.
 - Built-in objective strings are limited to `accuracy`, `cost`, and `latency`.
 - Any other objective must use `{ metric, direction, weight? }`.
-- `budget.maxCostUsd` only works when every trial returns numeric `metrics.cost`.
+- `budget.maxCostUsd` only works when trials produce numeric `metrics.total_cost` or `metrics.cost`.
+- `execution.maxTotalExamples` caps the total number of evaluated examples across all trials.
+- `execution.repsPerTrial` and `execution.repsAggregation` provide repetition-based stability for noisy evaluations.
+- `execution.contract = 'trial'` still supports the old low-level trial-function style, but it is deprecated and documented as advanced-only.
 
-## Parameter and Objective Reference
+### Advanced low-level trial contract
 
-### Parameters
-
-```ts
-param.enum(['gpt-4o-mini', 'gpt-4o']);
-param.float({ min: 0, max: 1, scale: 'linear', step: 0.25 });
-param.int({ min: 0, max: 3, scale: 'linear', step: 1 });
-```
-
-### Objectives
+If you intentionally want to manage metrics yourself, you can still opt into the old contract:
 
 ```ts
-objectives: ['accuracy', 'cost'];
-objectives: [{ metric: 'quality_score', direction: 'maximize' }];
+const runTrial = optimize({
+  configurationSpace: {
+    model: param.enum(['cheap', 'accurate']),
+  },
+  objectives: ['accuracy'],
+  execution: {
+    contract: 'trial',
+  },
+  evaluation: {
+    data: [{ id: 1 }],
+  },
+})(async (trialConfig) => ({
+  metrics: {
+    accuracy: trialConfig.config.model === 'accurate' ? 1 : 0.5,
+  },
+}));
 ```
+
+Treat that as an advanced compatibility path, not the primary JS usage model.
 
 ## Runtime Access Rules
 
@@ -171,25 +250,46 @@ objectives: [{ metric: 'quality_score', direction: 'maximize' }];
 Use them only when a trial context is active:
 
 - inside `TrialContext.run(...)`
-- inside a native `.optimize(...)` trial
-- inside host-managed capability logic that has already bound the synthetic `TrialConfig`
+- inside a native `.optimize(...)` run
+- during normal calls after `applyBestConfig()` when using context-based injection
+- inside host-managed capability logic that has already bound a synthetic `TrialConfig`
 
-Do not introduce a second global context mechanism for config lookup.
+Do not introduce a second global config mechanism for JS.
 
-## Current v1 Limits
+## Current Checkout Limits
 
 - Native optimization supports `grid`, `random`, and sequential `bayesian`.
 - Native optimization is Node-only.
-- `budget.maxCostUsd` still depends on numeric `metrics.cost`.
+- `budget.maxCostUsd` still depends on numeric `metrics.total_cost` or `metrics.cost`.
+- Cost-aware wrappers record `input_cost`, `output_cost`, `total_cost`, and `cost` in runtime metrics.
 - Log-scale grid search requires a multiplicative `step > 1`.
-- `trialConcurrency` is currently supported for `grid` and `random` only.
-- Worker pools, Optuna-family optimizers, example-level concurrency, and hybrid API orchestration are not part of this v1 surface.
+- `trialConcurrency` is supported for `grid` and `random` only.
+- `execution.mode = 'hybrid'` is not implemented in this branch.
+- `seamless` prefers explicit rewrite tooling over runtime magic:
+  - use framework wrappers for SDK-mediated params
+  - use the codemod or Babel plugin for hardcoded locals
+  - treat runtime rewriting as experimental
+  - inspect `wrapped.seamlessResolution()` when you need to confirm which path was actually selected
+- Native JS supports `defaultConfig`, callback-based `constraints`, and callback-based `safetyConstraints`.
+- TVL loading is supported for a focused native subset:
+  - typed `tvars`
+  - banded objectives
+  - structural and derived constraints compiled through a parsed safe-expression subset
+  - exploration strategy/budget mapping
+  - promotion-policy parsing
+  - `parseTvlSpec()` and `loadTvlSpec()` expose `nativeCompatibility` so the
+    supported vs reduced-semantics native envelope is explicit in the artifact
+- Promotion policy is partially enforced in this checkout: native best-trial
+  selection honors `minEffect` and `tieBreakers`, uses statistical promotion
+  when both trials expose per-objective metric samples, and `chanceConstraints`
+  reject trials when they have explicit `{successes, trials}` counts or binary
+  metric samples. Native results/trials now expose bounded `promotionDecision`
+  reports, but full Python promotion-gate lifecycle parity is still deferred.
+- Python's safety preset/statistical layer and backend-guided Optuna orchestration are not part of this checkout.
 
 ## Legacy Bridge Flow
 
 If you still need the Python-to-Node bridge:
 
 - Use the CLI runner with `npx traigent-js --module ./dist/trial.js --function runTrial`
-- Treat [docs/REAL_MODE_SEQUENCE_FLOW.md](./REAL_MODE_SEQUENCE_FLOW.md) and the Mermaid diagrams as bridge-only reference material
-
-That flow is no longer the primary entry point for the current JS-native or hybrid authoring APIs.
+- Treat [REAL_MODE_SEQUENCE_FLOW.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/REAL_MODE_SEQUENCE_FLOW.md) and the Mermaid diagrams as bridge-only reference material

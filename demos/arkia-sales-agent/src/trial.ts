@@ -30,9 +30,16 @@
  *   )
  */
 
-import { type TrialConfig } from '@traigent/sdk';
+import {
+  optimize,
+  param,
+  type NativeOptimizeOptions,
+  type OptimizationResult,
+  type OptimizationSpec,
+  type TrialConfig,
+} from '@traigent/sdk';
 import { runSalesAgent, CONFIGURATION_SPACE, type AgentConfig } from './agent.js';
-import { getDatasetSubset, getDatasetStats } from './dataset.js';
+import { SALES_DATASET, getDatasetSubset, getDatasetStats } from './dataset.js';
 
 /**
  * Result type expected by the CLI runner.
@@ -42,6 +49,54 @@ interface TrialResult {
   duration?: number;
   metadata?: Record<string, unknown>;
   error?: string;
+}
+
+const DEFAULT_DEMO_DATASET_SIZE = 10;
+const DEFAULT_MAX_COST_USD = 5;
+const DEFAULT_MAX_TRIALS = 12;
+
+function hashStringToSeed(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash === 0 ? 1 : hash;
+}
+
+export function deriveDeterministicSeed(config: TrialConfig['config']): number {
+  return hashStringToSeed(
+    JSON.stringify({
+      model: config.model,
+      temperature: config.temperature,
+      system_prompt: config.system_prompt,
+      memory_turns: config.memory_turns,
+      tool_set: config.tool_set,
+    }),
+  );
+}
+
+export function resolveDemoDatasetSize(): number {
+  const requested = Number(process.env.ARKIA_DEMO_DATASET_SIZE ?? DEFAULT_DEMO_DATASET_SIZE);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return Math.min(DEFAULT_DEMO_DATASET_SIZE, SALES_DATASET.length);
+  }
+  return Math.max(1, Math.min(SALES_DATASET.length, Math.floor(requested)));
+}
+
+function resolveMaxCostUsd(): number {
+  const requested = Number(process.env.ARKIA_MAX_COST_USD ?? DEFAULT_MAX_COST_USD);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return DEFAULT_MAX_COST_USD;
+  }
+  return requested;
+}
+
+function resolveMaxTrials(): number {
+  const requested = Number(process.env.ARKIA_MAX_TRIALS ?? DEFAULT_MAX_TRIALS);
+  if (!Number.isInteger(requested) || requested <= 0) {
+    return DEFAULT_MAX_TRIALS;
+  }
+  return requested;
 }
 
 /**
@@ -133,6 +188,10 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
     system_prompt: (config.system_prompt as AgentConfig['system_prompt']) ?? 'consultative',
     memory_turns: (config.memory_turns as number) ?? 5,
     tool_set: (config.tool_set as AgentConfig['tool_set']) ?? 'standard',
+    random_seed:
+      typeof config.random_seed === 'number'
+        ? config.random_seed
+        : deriveDeterministicSeed(config),
   };
 
   // Validate configuration before running
@@ -257,8 +316,71 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
   }
 }
 
+function assertNumericMetric(
+  metrics: TrialResult['metrics'],
+  name: string,
+): void {
+  if (typeof metrics[name] !== 'number' || !Number.isFinite(metrics[name])) {
+    throw new Error(`Arkia optimization trial requires numeric metric "${name}".`);
+  }
+}
+
+async function runNativeArkiaTrial(trialConfig: TrialConfig) {
+  const result = await runTrial(trialConfig);
+  if (result.error) {
+    throw new Error(result.error);
+  }
+
+  assertNumericMetric(result.metrics, 'margin_efficiency');
+  assertNumericMetric(result.metrics, 'conversion_score');
+  assertNumericMetric(result.metrics, 'cost');
+
+  return {
+    metrics: result.metrics,
+    metadata: result.metadata,
+    duration:
+      typeof result.duration === 'number' ? result.duration / 1000 : undefined,
+  };
+}
+
+export const arkiaOptimizationSpec: OptimizationSpec = {
+  configurationSpace: {
+    model: param.enum(CONFIGURATION_SPACE.model),
+    temperature: param.enum(CONFIGURATION_SPACE.temperature),
+    system_prompt: param.enum(CONFIGURATION_SPACE.system_prompt),
+    memory_turns: param.enum(CONFIGURATION_SPACE.memory_turns),
+    tool_set: param.enum(CONFIGURATION_SPACE.tool_set),
+  },
+  objectives: [
+    { metric: 'margin_efficiency', direction: 'maximize', weight: 2 },
+    { metric: 'conversion_score', direction: 'maximize', weight: 1 },
+    { metric: 'cost', direction: 'minimize', weight: 1 },
+  ] as const,
+  budget: {
+    maxCostUsd: resolveMaxCostUsd(),
+  },
+  evaluation: {
+    loadData: async () => SALES_DATASET.slice(0, resolveDemoDatasetSize()),
+  },
+};
+
+export const optimizeArkiaSalesAgent = optimize(arkiaOptimizationSpec)(
+  runNativeArkiaTrial,
+);
+
+export async function runArkiaOptimization(
+  options: Partial<NativeOptimizeOptions> = {},
+): Promise<OptimizationResult> {
+  return optimizeArkiaSalesAgent.optimize({
+    algorithm: 'random',
+    maxTrials: resolveMaxTrials(),
+    randomSeed: 7,
+    ...options,
+  });
+}
+
 // Default export for CLI runner compatibility
 export default runTrial;
 
 // Also export dataset stats for debugging
-export { getDatasetStats };
+export { getDatasetStats, runNativeArkiaTrial };

@@ -1,6 +1,11 @@
 /**
- * Trial DTOs with Zod validation schemas.
- * These mirror the Python SDK's traigent/cloud/dtos.py structures.
+ * Trial/runtime DTOs with Zod validation schemas.
+ *
+ * These match the JS/Python SDK bridge/runtime contract and align where
+ * possible with canonical TraigentSchema value constraints (for example the
+ * metric-value dictionary rules), but TrialConfig and TrialResultPayload are
+ * SDK runtime transport objects rather than 1:1 copies of persisted platform
+ * schemas such as configuration_run or hybrid_session.
  */
 import { z } from 'zod';
 
@@ -98,7 +103,7 @@ export const MetricsSchema = z.record(
   z.string().regex(/^[a-zA-Z_]\w*$/, {
     message: 'Metric keys must be valid Python identifiers',
   }),
-  z.number().nullable()
+  z.number().finite().nullable()
 );
 
 export type Metrics = z.infer<typeof MetricsSchema>;

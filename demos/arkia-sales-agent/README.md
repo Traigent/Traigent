@@ -21,12 +21,12 @@ Traigent optimization demo for a travel sales agent inspired by [Mastra.ai](http
 ```
 arkia-sales-agent/
 ├── src/
-│   ├── agent.ts          # MOCK agent (simulates LLM, no real API calls)
+│   ├── agent.ts          # MOCK agent + per-example batch scoring
 │   ├── tools.ts          # Travel agent tools (flight search, booking, etc.)
 │   ├── mastra-agent.ts   # Reference: REAL Mastra.ai patterns (not used)
 │   ├── dataset.ts        # Curated sales conversations (Hebrew + English)
-│   ├── trial.ts          # Entry point for Python orchestrator
-│   └── standalone.ts     # Local demo runner
+│   ├── trial.ts          # Shared trial logic + native optimize() wrapper
+│   └── standalone.ts     # Local SDK-driven optimization demo
 ├── run_with_python.py    # Python orchestrator with @traigent.optimize
 ├── dataset.jsonl         # Dataset for Python optimizer
 └── package.json
@@ -71,7 +71,7 @@ arkia-sales-agent/
 | Local demo (`npm run dev`) | ~2 seconds | Free (mock) |
 | Python optimization (24 trials) | ~5 minutes | Free (mock) |
 
-### Local Demo (No API keys needed)
+### Local Demo (Traigent JS SDK chooses the configs)
 
 ```bash
 cd demos/arkia-sales-agent
@@ -80,7 +80,13 @@ npm run build
 npm run dev
 ```
 
-### With Python Orchestrator
+What this now does:
+
+- evaluates the current default Arkia config on a demo subset
+- runs `optimize(...).optimize(...)` from the JS SDK over the Arkia search space
+- replays the best config so you can compare baseline vs optimizer-selected config
+
+### With Python Orchestrator / Bridge
 
 ```bash
 cd demos/arkia-sales-agent
@@ -90,32 +96,30 @@ TRAIGENT_COST_APPROVED=true python run_with_python.py
 
 ## Sample Output
 
-Running `npm run dev` produces:
+Running `npm run dev` now produces a baseline-vs-optimizer summary:
 
 ```
 **********************************************************************
-*  ARKIA SALES AGENT - LOCAL DEMO
-*  Margin Optimization Demonstration
+*  ARKIA SALES AGENT - TRAIGENT JS SDK DEMO
+*  SDK selects configurations; Arkia code scores each chosen config.
 **********************************************************************
 
 Dataset Statistics:
   Total examples: 20
-  By intent: { flight_inquiry: 7, price_negotiation: 4, booking_intent: 4, support: 3, complaint: 2 }
+  Demo subset: 10
 
 ======================================================================
-COMPARISON: OpenAI SOTA vs OpenAI Optimized vs Groq
+RUNNING TRAIGENT NATIVE OPTIMIZATION
 ======================================================================
+Trials run: 12
+Stop reason: maxTrials
+Optimizer best config: {"model":"gpt-4o-mini","temperature":0.3,"system_prompt":"consultative","memory_turns":5,"tool_set":"standard"}
 
-                      GPT-4o      GPT-4o-mini   Groq 70B    Groq 8B
-----------------------------------------------------------------------
-Conversion:           99.3%        88.5%          98.4%        68.6%
-Cost:                 $0.04543    $0.00161      $0.00528    $0.00036
-Latency (avg):        437ms         244ms          82ms         30ms
-Margin Efficiency:    0.02          0.55           0.19         1.90
-----------------------------------------------------------------------
-
-[WINNER] Groq Llama 8B has the best margin efficiency: 1.90
-         8588% better than GPT-4o SOTA!
+Baseline vs Best:
+  Conversion: 72.0% -> 88.0%
+  Margin efficiency: 0.08 -> 0.61
+  Total cost: $0.012400 -> $0.001920
+  Avg latency: 410ms -> 230ms
 ```
 
 ## Metrics
@@ -149,7 +153,11 @@ This demo includes simulated variance to model real LLM behavior:
 - Token counts have slight randomness
 - Latency varies ±20%
 
-**Results may differ between runs.** For reproducible results, set `random_seed` in the agent configuration:
+For local optimization runs, `trial.ts` derives a deterministic seed from the
+chosen config unless you pass `random_seed` explicitly. That keeps the mock
+optimizer examples reproducible while preserving real-mode behavior.
+
+You can still set `random_seed` in the agent configuration directly:
 
 ```typescript
 const config: AgentConfig = {

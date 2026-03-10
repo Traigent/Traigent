@@ -1,0 +1,20 @@
+{"input": {"text": "This product is absolutely amazing! Best purchase ever!"}, "output": "positive"}
+{"input": {"text": "I love this service, highly recommend to everyone!"}, "output": "positive"}
+{"input": {"text": "Exceeded my expectations, will definitely buy again."}, "output": "positive"}
+{"input": {"text": "Perfect quality and fast shipping. 5 stars!"}, "output": "positive"}
+{"input": {"text": "Great value for money, very satisfied customer."}, "output": "positive"}
+{"input": {"text": "Complete waste of money, don't buy this."}, "output": "negative"}
+{"input": {"text": "Terrible experience, worst customer service ever."}, "output": "negative"}
+{"input": {"text": "Product broke after one day. Very disappointed."}, "output": "negative"}
+{"input": {"text": "Horrible quality, nothing like the pictures showed."}, "output": "negative"}
+{"input": {"text": "Never ordering from here again. Total scam."}, "output": "negative"}
+{"input": {"text": "It's okay, nothing special but gets the job done."}, "output": "neutral"}
+{"input": {"text": "Not bad, not great. Average experience overall."}, "output": "neutral"}
+{"input": {"text": "Frustrating setup but eventually worked fine."}, "output": "neutral"}
+{"input": {"text": "Good product but overpriced for what you get."}, "output": "neutral"}
+{"input": {"text": "Would have been better with more features."}, "output": "neutral"}
+{"input": {"text": "Mixed feelings. Some parts great, others not so much."}, "output": "neutral"}
+{"input": {"text": "It works as advertised, nothing more nothing less."}, "output": "neutral"}
+{"input": {"text": "Decent quality but shipping took forever."}, "output": "neutral"}
+{"input": {"text": "Happy with the purchase but expected faster delivery."}, "output": "neutral"}
+{"input": {"text": "The product is fine but customer support was slow."}, "output": "neutral"}

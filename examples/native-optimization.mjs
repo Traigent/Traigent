@@ -2,43 +2,49 @@
 
 import { fileURLToPath } from 'node:url';
 
-import { optimize, param } from '../dist/index.js';
+import { getTrialParam, optimize, param } from '../dist/index.js';
+
+const rows = [
+  { input: 'What is 2+2?', output: '4' },
+  { input: 'What is the capital of France?', output: 'Paris' },
+];
+
+const answerQuestion = optimize({
+  configurationSpace: {
+    model: param.enum(['cheap', 'accurate']),
+    temperature: param.float({
+      min: 0,
+      max: 0.5,
+      step: 0.5,
+      scale: 'linear',
+    }),
+  },
+  objectives: ['accuracy', 'cost'],
+  budget: {
+    maxCostUsd: 2,
+  },
+  evaluation: {
+    data: rows,
+    scoringFunction: (output, expectedOutput) =>
+      output === expectedOutput ? 1 : 0,
+    metricFunctions: {
+      cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
+        row.input.includes('capital') ? 0.2 : 0.1,
+    },
+  },
+})(async (question) => {
+  const model = String(getTrialParam('model', 'cheap'));
+  const temperature = Number(getTrialParam('temperature', 0));
+
+  if (model === 'accurate' && temperature === 0) {
+    return question.includes('capital') ? 'Paris' : '4';
+  }
+
+  return 'unknown';
+});
 
 export async function runExample() {
-  const evaluatePrompt = optimize({
-    configurationSpace: {
-      model: param.enum(['cheap', 'accurate']),
-      temperature: param.float({
-        min: 0,
-        max: 0.5,
-        step: 0.5,
-        scale: 'linear',
-      }),
-    },
-    objectives: ['accuracy', 'cost'],
-    budget: {
-      maxCostUsd: 2,
-    },
-    evaluation: {
-      data: [{ id: 'row-1' }, { id: 'row-2' }],
-    },
-  })(async (trialConfig) => {
-    const model = String(trialConfig.config.model);
-    const temperature = Number(trialConfig.config.temperature ?? 0);
-
-    return {
-      metrics: {
-        accuracy: model === 'accurate' && temperature === 0 ? 0.96 : 0.72,
-        cost: model === 'accurate' ? 0.4 : 0.1,
-        latency: model === 'accurate' ? 1.2 : 0.6,
-      },
-      metadata: {
-        evaluatedRows: trialConfig.dataset_subset.total,
-      },
-    };
-  });
-
-  return evaluatePrompt.optimize({
+  return answerQuestion.optimize({
     algorithm: 'grid',
     maxTrials: 10,
   });
