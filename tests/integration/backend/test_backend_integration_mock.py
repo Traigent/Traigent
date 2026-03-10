@@ -26,7 +26,7 @@ class TestBackendIntegrationMocked:
     def backend_client(self, backend_config):
         """Create backend client instance."""
         return BackendIntegratedClient(
-            api_key="tg_" + "a" * 61,  # Valid 64-char format
+            api_key="tg_" + "a" * 61,  # Valid 64-char format  # pragma: allowlist secret
             backend_config=backend_config,
             enable_fallback=True,
         )
@@ -214,9 +214,11 @@ class TestBackendIntegrationMocked:
 
             # Capture the actual request sent
             request_data = None
+            request_url = None
 
             def capture_request(*args, **kwargs):
-                nonlocal request_data
+                nonlocal request_data, request_url
+                request_url = args[0] if args else kwargs.get("url")
                 request_data = kwargs.get("json", {})
                 # Return the mock_post_context, not mock_response directly
                 mock_post_context = AsyncMock()
@@ -245,10 +247,15 @@ class TestBackendIntegrationMocked:
                     )
                 )
 
-            # Verify request structure for session endpoint
-            # Note: optimization_config is used locally for session info but not sent in the request
+            # Verify request structure for hybrid session endpoint
+            assert request_url == "http://localhost:5000/api/v1/hybrid/sessions"
             assert request_data is not None
             assert "problem_statement" in request_data
             assert request_data["problem_statement"] == "test_function"
             assert "search_space" in request_data
+            assert "optimization_config" in request_data
+            assert request_data["optimization_config"] == {
+                "objectives": ["maximize"],
+                "max_trials": 10,
+            }
             assert "metadata" in request_data

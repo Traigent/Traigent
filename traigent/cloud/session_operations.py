@@ -468,6 +468,7 @@ class SessionOperations:
                 json={
                     "problem_statement": problem_statement,
                     "search_space": search_space,
+                    "optimization_config": optimization_config,
                     "metadata": metadata,
                 },
                 headers=await self.client.auth_manager.auth.get_headers(),
