@@ -415,6 +415,8 @@ class TestBackendIntegratedClientCore:
             assert "headers" in post_kwargs
             headers = post_kwargs["headers"]
             assert "X-API-Key" in headers or "Authorization" in headers
+            post_url = mock_aiohttp_session.post.call_args[0][0]
+            assert post_url == "http://test.backend.com/api/v1/hybrid/sessions"
 
             # Reset mock
             mock_aiohttp_session.post.reset_mock()
@@ -427,6 +429,11 @@ class TestBackendIntegratedClientCore:
             assert mock_aiohttp_session.get.called
             get_kwargs = mock_aiohttp_session.get.call_args[1]
             assert "headers" in get_kwargs
+            get_url = mock_aiohttp_session.get.call_args[0][0]
+            assert (
+                get_url
+                == "http://test.backend.com/api/v1/hybrid/sessions/session-789/status"
+            )
 
             # Reset mock and setup for finalize
             mock_aiohttp_session.post.reset_mock()
@@ -459,6 +466,11 @@ class TestBackendIntegratedClientCore:
             assert mock_aiohttp_session.post.called
             post_kwargs = mock_aiohttp_session.post.call_args[1]
             assert "headers" in post_kwargs
+            post_url = mock_aiohttp_session.post.call_args[0][0]
+            assert (
+                post_url
+                == "http://test.backend.com/api/v1/hybrid/sessions/session-789/finalize"
+            )
 
     @pytest.mark.asyncio
     async def test_backend_client_ensure_session_with_fallback(self):
