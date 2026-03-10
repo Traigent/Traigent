@@ -44,6 +44,19 @@ __version__ = get_version()
 __author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
 
+# Multi-agent workflow cost tracking (DTO hardening)
+from traigent.admin import (
+    EnterpriseAdminClient,
+    EnterpriseAdminConfig,
+    SSOProviderType,
+    TenantDTO,
+    TenantListResponse,
+    TenantMembershipDTO,
+    TenantMembershipListResponse,
+    TenantMembershipRole,
+    TenantMembershipStatus,
+    TenantSSOConfigDTO,
+)
 from traigent.api.config_space import ConfigSpace
 
 # TVL constraint system
@@ -109,8 +122,6 @@ from traigent.api.validation_protocol import (
 from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
-
-# Multi-agent workflow cost tracking (DTO hardening)
 from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
 from traigent.cloud.dtos import MeasuresDict
 
@@ -123,6 +134,67 @@ from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
+from traigent.evaluation import (
+    AnnotationQueueDTO,
+    AnnotationQueueItemDTO,
+    AnnotationQueueItemListResponse,
+    AnnotationQueueItemStatus,
+    AnnotationQueueListResponse,
+    AnnotationQueueStatus,
+    BackfillResultDTO,
+    EvaluationClient,
+    EvaluationConfig,
+    EvaluationTargetRefDTO,
+    EvaluationTargetType,
+    EvaluatorDefinitionDTO,
+    EvaluatorListResponse,
+    EvaluatorRunDTO,
+    EvaluatorRunListResponse,
+    EvaluatorRunStatus,
+    JudgeConfigDTO,
+    MeasureValueType,
+    ScoreRecordDTO,
+    ScoreRecordListResponse,
+    ScoreSource,
+)
+from traigent.observability import (
+    CorrelationIds,
+    ObservabilityClient,
+    ObservabilityConfig,
+    ObservationDTO,
+    ObservationRecord,
+    ObservationType,
+    ObserveContext,
+    PaginationInfo,
+    SessionDTO,
+    SessionListResponse,
+    SessionRecord,
+    ThumbRating,
+    TraceCollaborationState,
+    TraceCommentRecord,
+    TraceCommentsResponse,
+    TraceDTO,
+    TraceFeedbackRecord,
+    TraceFeedbackResponse,
+    TraceFeedbackSummary,
+    TraceListResponse,
+    TraceObservationsResponse,
+    TraceRecord,
+    get_default_observability_client,
+    observe,
+    set_default_observability_client,
+)
+from traigent.prompts import (
+    ChatPromptMessage,
+    PromptDetail,
+    PromptListResponse,
+    PromptManagementClient,
+    PromptManagementConfig,
+    PromptSummary,
+    PromptType,
+    PromptVersionRecord,
+    ResolvedPrompt,
+)
 from traigent.utils.callbacks import (
     LoggingCallback,
     ProgressBarCallback,
@@ -213,9 +285,40 @@ __all__ = [
     # Thread context helpers
     "copy_context_to_thread",
     # Multi-agent workflow cost tracking (DTO hardening)
+    "EnterpriseAdminClient",
+    "EnterpriseAdminConfig",
     "AgentCostBreakdown",
     "WorkflowCostSummary",
     "MeasuresDict",
+    "SSOProviderType",
+    "TenantDTO",
+    "TenantListResponse",
+    "TenantMembershipDTO",
+    "TenantMembershipListResponse",
+    "TenantMembershipRole",
+    "TenantMembershipStatus",
+    "TenantSSOConfigDTO",
+    "EvaluationClient",
+    "EvaluationConfig",
+    "AnnotationQueueDTO",
+    "AnnotationQueueItemDTO",
+    "AnnotationQueueItemListResponse",
+    "AnnotationQueueItemStatus",
+    "AnnotationQueueListResponse",
+    "AnnotationQueueStatus",
+    "BackfillResultDTO",
+    "EvaluationTargetRefDTO",
+    "EvaluationTargetType",
+    "EvaluatorDefinitionDTO",
+    "EvaluatorListResponse",
+    "EvaluatorRunDTO",
+    "EvaluatorRunListResponse",
+    "EvaluatorRunStatus",
+    "JudgeConfigDTO",
+    "MeasureValueType",
+    "ScoreRecordDTO",
+    "ScoreRecordListResponse",
+    "ScoreSource",
     "TraigentMetadata",
     "is_traigent_metadata",
     # Exceptions and warnings
@@ -248,6 +351,40 @@ __all__ = [
     "max_tokens_constraint",
     "PlotGenerator",
     "create_quick_plot",
+    "CorrelationIds",
+    "ObserveContext",
+    "ObservabilityClient",
+    "ObservabilityConfig",
+    "ObservationDTO",
+    "ObservationRecord",
+    "ObservationType",
+    "PaginationInfo",
+    "SessionListResponse",
+    "SessionRecord",
+    "SessionDTO",
+    "ThumbRating",
+    "TraceCollaborationState",
+    "TraceCommentRecord",
+    "TraceCommentsResponse",
+    "TraceDTO",
+    "TraceFeedbackRecord",
+    "TraceFeedbackResponse",
+    "TraceFeedbackSummary",
+    "TraceListResponse",
+    "TraceObservationsResponse",
+    "TraceRecord",
+    "get_default_observability_client",
+    "observe",
+    "set_default_observability_client",
+    "PromptManagementClient",
+    "PromptManagementConfig",
+    "PromptType",
+    "ChatPromptMessage",
+    "PromptSummary",
+    "PromptDetail",
+    "PromptVersionRecord",
+    "PromptListResponse",
+    "ResolvedPrompt",
     # Result types
     "OptimizationResult",
     "TrialResult",
