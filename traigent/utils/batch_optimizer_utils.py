@@ -8,7 +8,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.metrics import MetricsEvaluationResult
@@ -217,11 +217,17 @@ class BatchOptimizationHelper:
 
             # Evaluate all results
             expected_outputs = [ex.expected_output for ex in dataset.examples]
-            evaluation_result = await evaluator.evaluate(
-                all_invocation_results, expected_outputs, dataset  # type: ignore[arg-type]
+            evaluator_impl: Any = evaluator
+            evaluation_result = cast(
+                MetricsEvaluationResult,
+                await evaluator_impl.evaluate(
+                    all_invocation_results,
+                    expected_outputs,
+                    dataset,
+                ),
             )
 
-            return evaluation_result  # type: ignore[return-value]
+            return evaluation_result
 
         except Exception as e:
             logger.error(f"Configuration evaluation failed: {e}")

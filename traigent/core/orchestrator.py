@@ -1467,10 +1467,12 @@ class OptimizationOrchestrator:
         ceilings = self._allocate_trial_ceilings(trial_descriptors)
 
         # Phase 7: Schedule and run trials
-        scheduled_configs, scheduled_optuna_ids, results = (
-            await self._schedule_and_run_parallel_trials(
-                func, trial_descriptors, ceilings, session_id, trial_count
-            )
+        (
+            scheduled_configs,
+            scheduled_optuna_ids,
+            results,
+        ) = await self._schedule_and_run_parallel_trials(
+            func, trial_descriptors, ceilings, session_id, trial_count
         )
 
         if not results:

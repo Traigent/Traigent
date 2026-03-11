@@ -407,7 +407,7 @@ class CostEnforcer:
 
         if self._check_approval_token():
             logger.info(
-                f"Cost approved via token file " f"(limit: ${self.config.limit:.2f})"
+                f"Cost approved via token file (limit: ${self.config.limit:.2f})"
             )
             return True
 
@@ -817,7 +817,7 @@ Options:
             )
         elif pct >= self.config.warning_threshold and not self._warning_emitted:
             logger.info(
-                f"Cost at {pct*100:.0f}% of limit: "
+                f"Cost at {pct * 100:.0f}% of limit: "
                 f"${self._accumulated_cost:.2f} / ${self.config.limit:.2f}"
             )
             self._warning_emitted = True

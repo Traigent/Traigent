@@ -131,8 +131,7 @@ class ModelCache:
                     entry = file_entry
                     self._cache[key] = entry
                     logger.debug(
-                        f"File cache hit for {key} "
-                        f"(age: {entry.age_seconds():.0f}s)"
+                        f"File cache hit for {key} (age: {entry.age_seconds():.0f}s)"
                     )
                     return entry.data
 

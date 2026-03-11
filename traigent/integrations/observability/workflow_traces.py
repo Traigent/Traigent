@@ -1063,9 +1063,8 @@ class WorkflowTracesTracker:
             auto_send: Automatically send spans at end of trial context
             batch_size: Number of spans to batch before sending
         """
-        self.backend_url = backend_url or os.environ.get(
-            "TRAIGENT_BACKEND_URL", "http://localhost:5000"
-        )
+        resolved_backend_url = backend_url or os.environ.get("TRAIGENT_BACKEND_URL")
+        self.backend_url: str = resolved_backend_url or "http://localhost:5000"
         self.auth_token = (
             auth_token
             or os.environ.get("TRAIGENT_API_KEY")
@@ -1075,7 +1074,8 @@ class WorkflowTracesTracker:
         self.batch_size = batch_size
 
         self.client = WorkflowTracesClient(
-            self.backend_url, self.auth_token  # type: ignore[arg-type]
+            self.backend_url,
+            self.auth_token,
         )
 
         # ContextVar-based storage for trial context.

@@ -134,6 +134,16 @@ from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
+from traigent.core_metrics import (
+    CoreEntityCountsDTO,
+    CoreExperimentTrendDTO,
+    CoreMetricsClient,
+    CoreMetricsConfig,
+    CoreMetricsOverviewDTO,
+    DailyCountPointDTO,
+    FineTuningExportDTO,
+    MeasureAggregateSummaryDTO,
+)
 from traigent.evaluation import (
     AnnotationQueueDTO,
     AnnotationQueueItemDTO,
@@ -183,6 +193,12 @@ from traigent.observability import (
     get_default_observability_client,
     observe,
     set_default_observability_client,
+)
+from traigent.projects import (
+    ProjectDTO,
+    ProjectListResponse,
+    ProjectManagementClient,
+    ProjectManagementConfig,
 )
 from traigent.prompts import (
     ChatPromptMessage,
@@ -290,6 +306,14 @@ __all__ = [
     "AgentCostBreakdown",
     "WorkflowCostSummary",
     "MeasuresDict",
+    "CoreMetricsClient",
+    "CoreMetricsConfig",
+    "CoreEntityCountsDTO",
+    "CoreExperimentTrendDTO",
+    "CoreMetricsOverviewDTO",
+    "DailyCountPointDTO",
+    "FineTuningExportDTO",
+    "MeasureAggregateSummaryDTO",
     "SSOProviderType",
     "TenantDTO",
     "TenantListResponse",

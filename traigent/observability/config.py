@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from traigent.config.backend_config import BackendConfig
+from traigent.config.project import PROJECT_ENV_VAR, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME
 
 MAX_BATCH_SIZE = 10_000
@@ -21,6 +22,7 @@ class ObservabilityConfig:
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
     tenant_id: str | None = field(default_factory=lambda: os.getenv(TENANT_ENV_VAR))
+    project_id: str | None = field(default_factory=lambda: os.getenv(PROJECT_ENV_VAR))
     api_path: str = "/api/v1beta/observability"
     batch_size: int = 100
     max_buffer_age: float = 5.0
@@ -29,8 +31,9 @@ class ObservabilityConfig:
     request_timeout: float = 10.0
     enable_atexit_flush: bool = True
     default_environment: str | None = field(
-        default_factory=lambda: os.getenv("TRAIGENT_ENVIRONMENT")
-        or os.getenv("ENVIRONMENT")
+        default_factory=lambda: (
+            os.getenv("TRAIGENT_ENVIRONMENT") or os.getenv("ENVIRONMENT")
+        )
     )
     default_release: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_RELEASE")
@@ -39,7 +42,7 @@ class ObservabilityConfig:
 
     def __post_init__(self) -> None:
         self.backend_origin = self.backend_origin.rstrip("/")
-        self.api_path = "/" + self.api_path.strip("/")
+        self.api_path = scope_api_path(self.api_path, self.project_id)
         if self.batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
         if self.batch_size > MAX_BATCH_SIZE:

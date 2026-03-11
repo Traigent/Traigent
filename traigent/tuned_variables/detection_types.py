@@ -201,6 +201,6 @@ class DetectionResult:
                 config[c.name] = c.suggested_range.to_parameter_range()
             else:
                 raise ValueError(
-                    "format must be 'normalized' or 'ranges', " f"got {format!r}"
+                    f"format must be 'normalized' or 'ranges', got {format!r}"
                 )
         return config

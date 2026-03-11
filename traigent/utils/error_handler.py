@@ -106,8 +106,9 @@ class ErrorHandler:
             "handler": "handle_api_key_error",
         },
         "Connection refused": {
-            "check": lambda e: "Connection refused" in str(e)
-            or "Failed to connect" in str(e),
+            "check": lambda e: (
+                "Connection refused" in str(e) or "Failed to connect" in str(e)
+            ),
             "handler": "handle_connection_error",
         },
         "Permission denied": {

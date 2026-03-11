@@ -1,4 +1,4 @@
-"""Configuration for the Traigent prompt management client."""
+"""Configuration for tenant-scoped core metrics and export requests."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ MAX_TIMEOUT_SECONDS = 600.0
 
 
 @dataclass
-class PromptManagementConfig:
-    """Configuration for SDK-side prompt management requests."""
+class CoreMetricsConfig:
+    """Configuration for SDK-side core metrics and export requests."""
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
     tenant_id: str | None = field(default_factory=lambda: os.getenv(TENANT_ENV_VAR))
     project_id: str | None = field(default_factory=lambda: os.getenv(PROJECT_ENV_VAR))
-    api_path: str = "/api/v1beta/prompts"
+    api_path: str = "/api/v1beta"
     request_timeout: float = 10.0
     extra_headers: dict[str, str] = field(default_factory=dict)
 
@@ -37,7 +37,7 @@ class PromptManagementConfig:
     def build_headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "traigent-prompts/0.1",
+            "User-Agent": "traigent-core-metrics/0.1",
             **self.extra_headers,
         }
         if self.api_key:

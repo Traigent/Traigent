@@ -272,8 +272,7 @@ class AgentLifecycleManager:
         if missed >= self._max_missed_heartbeats:
             info.is_alive = False
             logger.error(
-                f"Session {session_id} marked as dead after "
-                f"{missed} missed heartbeats"
+                f"Session {session_id} marked as dead after {missed} missed heartbeats"
             )
 
     def get_session_info(self, session_id: str) -> SessionInfo | None:

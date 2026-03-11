@@ -307,8 +307,7 @@ def _output_table(result):
 
     if result.llm_calls_made > 0:
         click.echo(
-            f"\nLLM: {result.llm_calls_made} calls, "
-            f"${result.llm_cost_usd:.4f} spent"
+            f"\nLLM: {result.llm_calls_made} calls, ${result.llm_cost_usd:.4f} spent"
         )
 
     click.echo()
