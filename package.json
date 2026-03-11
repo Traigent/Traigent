@@ -49,6 +49,7 @@
     "dev": "tsup --watch",
     "smoke:example": "npm run build:sdk && node examples/native-optimization.mjs",
     "smoke:hybrid-live": "npm run build:sdk && node scripts/run-hybrid-live-smoke.mjs",
+    "demo:online-showcase": "bash scripts/demo/run_interactive_online_showcase.sh",
     "smoke:examples": "bash examples/test_all_examples.sh",
     "smoke:walkthrough": "bash walkthrough/test_all_examples.sh",
     "docs:check": "node scripts/documentation/check-links.mjs",
