@@ -19,6 +19,9 @@ class ObservabilityConfig:
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
+    tenant_id: str | None = field(
+        default_factory=lambda: os.getenv("TRAIGENT_TENANT_ID")
+    )
     api_path: str = "/api/v1beta/observability"
     batch_size: int = 100
     max_buffer_age: float = 5.0
@@ -81,4 +84,6 @@ class ObservabilityConfig:
         }
         if self.api_key:
             headers["X-API-Key"] = self.api_key
+        if self.tenant_id:
+            headers["X-Tenant-Id"] = self.tenant_id
         return headers
