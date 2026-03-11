@@ -12,6 +12,10 @@ from traigent.core_metrics.dtos import (
     CoreExperimentTrendDTO,
     CoreMetricsOverviewDTO,
     FineTuningExportDTO,
+    FineTuningManifestDTO,
+    ProjectAnalyticsSummaryDTO,
+    ProjectAnalyticsTrendDTO,
+    ProjectMeasureDistributionDTO,
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -39,6 +43,54 @@ class CoreMetricsClient:
         payload = self._request_json("GET", "/core-metrics/overview")
         return CoreMetricsOverviewDTO.from_dict(
             self._unwrap_data(payload, "core metrics overview")
+        )
+
+    def get_analytics_summary(self, *, days: int = 30) -> ProjectAnalyticsSummaryDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path("/analytics/summary", days=days),
+        )
+        return ProjectAnalyticsSummaryDTO.from_dict(
+            self._unwrap_data(payload, "analytics summary")
+        )
+
+    def get_run_volume_trend(
+        self,
+        *,
+        experiment_id: str | None = None,
+        days: int = 30,
+        bucket: str | None = None,
+    ) -> ProjectAnalyticsTrendDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/trends/run-volume",
+                experiment_id=experiment_id,
+                days=days,
+                bucket=bucket,
+            ),
+        )
+        return ProjectAnalyticsTrendDTO.from_dict(
+            self._unwrap_data(payload, "run-volume trend")
+        )
+
+    def get_measure_distribution(
+        self,
+        measure_key: str,
+        *,
+        experiment_id: str | None = None,
+        bins: int = 10,
+    ) -> ProjectMeasureDistributionDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                f"/analytics/distributions/measures/{quote(measure_key, safe='')}",
+                experiment_id=experiment_id,
+                bins=bins,
+            ),
+        )
+        return ProjectMeasureDistributionDTO.from_dict(
+            self._unwrap_data(payload, "measure distribution")
         )
 
     def get_experiment_trend(self, experiment_id: str) -> CoreExperimentTrendDTO:
@@ -73,6 +125,28 @@ class CoreMetricsClient:
             or DEFAULT_EXPORT_CONTENT_TYPE,
         )
 
+    def export_fine_tuning_manifest(
+        self,
+        *,
+        experiment_id: str | None = None,
+        experiment_run_id: str | None = None,
+        limit: int = 1000,
+        include_content: bool = False,
+    ) -> FineTuningManifestDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/exports/fine-tuning.manifest",
+                experiment_id=experiment_id,
+                experiment_run_id=experiment_run_id,
+                limit=limit,
+                include_content=str(include_content).lower(),
+            ),
+        )
+        return FineTuningManifestDTO.from_dict(
+            self._unwrap_data(payload, "fine-tuning manifest")
+        )
+
     def _request_json(
         self,
         method: str,
@@ -80,10 +154,12 @@ class CoreMetricsClient:
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._request_sender_override is not None:
-            return cast(
-                dict[str, Any],
-                self._request_sender_override(method, path, payload, "json"),
-            )
+            response = self._request_sender_override(method, path, payload, "json")
+            if not isinstance(response, dict):
+                raise ClientError(
+                    "Custom request sender must return a dict for JSON requests"
+                )
+            return cast(dict[str, Any], response)
         return self._request_json_sync(method, path, payload)
 
     def _request_text(
@@ -93,10 +169,17 @@ class CoreMetricsClient:
         payload: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, str]]:
         if self._request_sender_override is not None:
-            return cast(
-                tuple[str, dict[str, str]],
-                self._request_sender_override(method, path, payload, "text"),
-            )
+            response = self._request_sender_override(method, path, payload, "text")
+            if (
+                not isinstance(response, tuple)
+                or len(response) != 2
+                or not isinstance(response[0], str)
+                or not isinstance(response[1], dict)
+            ):
+                raise ClientError(
+                    "Custom request sender must return a (str, dict[str, str]) tuple for text requests"
+                )
+            return cast(tuple[str, dict[str, str]], response)
         return self._request_text_sync(method, path, payload)
 
     def _request_json_sync(

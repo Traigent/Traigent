@@ -6,7 +6,11 @@ import pytest
 
 import traigent.core_metrics.client as client_module
 from traigent.core_metrics import CoreMetricsClient, CoreMetricsConfig
-from traigent.utils.exceptions import AuthenticationError, TraigentConnectionError
+from traigent.utils.exceptions import (
+    AuthenticationError,
+    ClientError,
+    TraigentConnectionError,
+)
 
 
 def test_core_metrics_client_reads_overview_and_trend() -> None:
@@ -75,6 +79,141 @@ def test_core_metrics_client_reads_overview_and_trend() -> None:
     assert trend.experiment_name == "Support Experiment"
 
 
+def test_core_metrics_client_reads_project_analytics_shapes() -> None:
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request_sender(
+        method: str,
+        path: str,
+        payload: dict | None,
+        response_kind: str = "json",
+    ):
+        calls.append((method, path, payload, response_kind))
+        if path == "/analytics/summary?days=7":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-11T10:15:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "range_days": 7,
+                    "entity_counts": {
+                        "agents": 2,
+                        "benchmarks": 1,
+                        "measures": 3,
+                        "experiments": 4,
+                        "experiment_runs": 5,
+                        "configuration_runs": 6,
+                    },
+                    "status_breakdowns": {
+                        "experiments": {"running": 1},
+                        "experiment_runs": {"completed": 5},
+                        "configuration_runs": {"completed": 6},
+                    },
+                    "usage_summary": {
+                        "experiment_runs": 5,
+                        "configuration_runs": 6,
+                        "total_cost_usd": 1.25,
+                        "avg_cost_usd": 0.25,
+                        "total_tokens": 1234,
+                        "avg_latency_ms": 120.5,
+                        "p95_latency_ms": 210.0,
+                    },
+                    "measure_summaries": [
+                        {
+                            "measure_key": "accuracy",
+                            "measure_id": "measure_accuracy",
+                            "label": "Accuracy",
+                            "value_type": "numeric",
+                            "sample_count": 6,
+                            "mean": 0.91,
+                            "min": 0.84,
+                            "max": 0.97,
+                            "privacy_classification": "aggregate_safe",
+                        }
+                    ],
+                }
+            }
+        if path == "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-11T10:15:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "metric_id": "run_volume",
+                    "experiment_id": "exp_1",
+                    "range_days": 7,
+                    "requested_bucket": "day",
+                    "resolved_bucket": "day",
+                    "series": [
+                        {
+                            "series_key": "experiment_runs",
+                            "label": "Experiment runs",
+                            "unit": "count",
+                            "points": [
+                                {
+                                    "bucket_start": "2026-03-10T00:00:00+00:00",
+                                    "bucket_label": "2026-03-10",
+                                    "value": 3,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        return {
+            "data": {
+                "context": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "generated_at": "2026-03-11T10:15:00Z",
+                    "privacy_classification": "aggregate_safe",
+                },
+                "measure_key": "accuracy",
+                "measure_id": "measure_accuracy",
+                "label": "Accuracy",
+                "experiment_id": "exp_1",
+                "value_type": "numeric",
+                "sample_count": 6,
+                "mean": 0.91,
+                "min": 0.84,
+                "max": 0.97,
+                "bucket_count": 5,
+                "histogram": [
+                    {"lower_bound": 0.8, "upper_bound": 0.84, "count": 1},
+                    {"lower_bound": 0.84, "upper_bound": 0.88, "count": 1},
+                ],
+            }
+        }
+
+    client = CoreMetricsClient(request_sender=request_sender)
+    summary = client.get_analytics_summary(days=7)
+    trend = client.get_run_volume_trend(experiment_id="exp_1", days=7, bucket="day")
+    distribution = client.get_measure_distribution("accuracy", experiment_id="exp_1", bins=5)
+
+    assert calls[0] == ("GET", "/analytics/summary?days=7", None, "json")
+    assert calls[1] == (
+        "GET",
+        "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day",
+        None,
+        "json",
+    )
+    assert calls[2] == (
+        "GET",
+        "/analytics/distributions/measures/accuracy?experiment_id=exp_1&bins=5",
+        None,
+        "json",
+    )
+    assert summary.usage_summary.total_cost_usd == 1.25
+    assert trend.series[0].points[0].value == 3
+    assert distribution.histogram[0].count == 1
+
+
 def test_core_metrics_client_exports_fine_tuning_jsonl() -> None:
     def request_sender(
         method: str,
@@ -100,6 +239,114 @@ def test_core_metrics_client_exports_fine_tuning_jsonl() -> None:
     assert export.filename == "ft-export.jsonl"
     assert export.content_type == "application/x-ndjson"
     assert '"messages"' in export.content
+
+
+def test_core_metrics_client_exports_privacy_safe_manifest() -> None:
+    def request_sender(
+        method: str,
+        path: str,
+        payload: dict | None,
+        response_kind: str = "json",
+    ):
+        assert method == "GET"
+        assert payload is None
+        assert response_kind == "json"
+        assert (
+            path
+            == "/analytics/exports/fine-tuning.manifest?experiment_id=exp_1&limit=25&include_content=false"
+        )
+        return {
+            "data": {
+                "context": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "generated_at": "2026-03-11T10:15:00Z",
+                    "privacy_classification": "manifest_safe",
+                },
+                "export_mode": "manifest",
+                "privacy_mode": True,
+                "include_content": False,
+                "record_count": 1,
+                "records": [
+                    {
+                        "record_id": "config_1",
+                        "experiment_id": "exp_1",
+                        "experiment_run_id": "run_1",
+                        "configuration_run_id": "config_1",
+                        "input_hash": "abc123",
+                        "output_hash": "def456",
+                        "input_ref": "configuration_run:config_1:input",
+                        "output_ref": "configuration_run:config_1:output",
+                        "input_content": None,
+                        "output_content": None,
+                        "materialization": "local_only",
+                        "measure_summary": {"accuracy": 0.91},
+                        "metadata": {"privacy_mode": True},
+                    }
+                ],
+            }
+        }
+
+    client = CoreMetricsClient(request_sender=request_sender)
+    manifest = client.export_fine_tuning_manifest(experiment_id="exp_1", limit=25)
+
+    assert manifest.export_mode == "manifest"
+    assert manifest.privacy_mode is True
+    assert manifest.records[0].input_content is None
+    assert manifest.records[0].input_hash == "abc123"
+
+
+def test_core_metrics_client_validates_custom_request_sender_shapes() -> None:
+    client = CoreMetricsClient(request_sender=lambda *args, **kwargs: [])
+
+    with pytest.raises(ClientError):
+        client.get_analytics_summary()
+
+
+def test_core_metrics_client_surfaces_missing_required_fields() -> None:
+    def request_sender(
+        method: str,
+        path: str,
+        payload: dict | None,
+        response_kind: str = "json",
+    ):
+        assert method == "GET"
+        assert payload is None
+        assert response_kind == "json"
+        assert path == "/analytics/summary?days=30"
+        return {
+            "data": {
+                "range_days": 30,
+                "entity_counts": {
+                    "agents": 1,
+                    "benchmarks": 1,
+                    "measures": 1,
+                    "experiments": 1,
+                    "experiment_runs": 1,
+                    "configuration_runs": 1,
+                },
+                "status_breakdowns": {
+                    "experiments": {},
+                    "experiment_runs": {},
+                    "configuration_runs": {},
+                },
+                "usage_summary": {
+                    "experiment_runs": 1,
+                    "configuration_runs": 1,
+                    "total_cost_usd": 0.1,
+                    "avg_cost_usd": 0.1,
+                    "total_tokens": 10,
+                    "avg_latency_ms": 1.0,
+                    "p95_latency_ms": 1.0,
+                },
+                "measure_summaries": [],
+            }
+        }
+
+    client = CoreMetricsClient(request_sender=request_sender)
+
+    with pytest.raises(KeyError, match="context"):
+        client.get_analytics_summary()
 
 
 def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.MonkeyPatch) -> None:
