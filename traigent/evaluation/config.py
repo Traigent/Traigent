@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from traigent.config.backend_config import BackendConfig
+from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME
 
 MAX_TIMEOUT_SECONDS = 600.0
 
@@ -16,9 +17,7 @@ class EvaluationConfig:
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
-    tenant_id: str | None = field(
-        default_factory=lambda: os.getenv("TRAIGENT_TENANT_ID")
-    )
+    tenant_id: str | None = field(default_factory=lambda: os.getenv(TENANT_ENV_VAR))
     api_path: str = "/api/v1beta"
     measures_api_path: str = "/api/v1/measures"
     request_timeout: float = 10.0
@@ -44,5 +43,5 @@ class EvaluationConfig:
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         if self.tenant_id:
-            headers["X-Tenant-Id"] = self.tenant_id
+            headers[TENANT_HEADER_NAME] = self.tenant_id
         return headers
