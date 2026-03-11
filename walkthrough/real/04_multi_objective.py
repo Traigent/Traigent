@@ -41,13 +41,13 @@ traigent.initialize(execution_mode="edge_analytics")
 DATASETS = Path(__file__).parent.parent / "datasets"
 
 OBJECTIVES = ObjectiveSchema.from_objectives([
-    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.3),
-    ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
-    ObjectiveDefinition("latency", orientation="minimize", weight=0.5),
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
+    ObjectiveDefinition("cost", orientation="minimize", weight=0.1),
+    ObjectiveDefinition("latency", orientation="minimize", weight=0.4),
 ])
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-5.2", "gpt-5-nano", "gpt-5.1"],
-    "prompt": ["v1", "v2"],
+    "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.3],
     "instructions": ["CoT", "direct"],
 }
@@ -82,12 +82,11 @@ def ai_agent_classify_text_sentiment(text: str) -> str:
     )
 
     instructions = config.get("instructions", "direct")
-    prompt_ver = config.get("prompt", "v1")
+    prompt_ver = config.get("prompt", "minimal")
 
-    # v1: minimal, v2: explicit role
-    if prompt_ver == "v2":
+    if prompt_ver == "role_based":
         base = f"You are a sentiment classifier.\nText: {text}\nLabel:"
-    else:  # v1
+    else:  # minimal
         base = f"Classify sentiment:\nText: {text}\nLabel:"
 
     if instructions == "CoT":
@@ -106,7 +105,7 @@ def ai_agent_classify_text_sentiment(text: str) -> str:
 async def main() -> None:
     print("Traigent Example 4: Multi-Objective Optimization")
     print("=" * 50)
-    print("Balancing accuracy (30%), cost (20%), latency (50%).")
+    print("Balancing accuracy, cost, latency.")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
