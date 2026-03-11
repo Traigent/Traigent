@@ -132,6 +132,7 @@ export async function runScenario(id, mode) {
     configurationSpace: scenarioConfigSpace(id),
     objectives: scenarioObjectives(id),
     evaluation: { data: rows },
+    execution: { contract: "trial" },
   })(async (trialConfig) => {
     const selectedRows = subsetRows(rows, trialConfig);
     const outputs = [];

@@ -3,6 +3,12 @@
 This walkthrough mirrors the Python SDK structure with runnable native Node
 examples for this branch.
 
+The walkthrough scenarios intentionally use the advanced low-level
+`execution.contract = "trial"` path so they can stay close to the older
+Python-style optimization walkthroughs. That contract still works in this
+branch, but it is deprecated in favor of the high-level agent contract used by
+the main quickstarts and examples.
+
 ## Layout
 
 - `mock/` - offline walkthrough runs
