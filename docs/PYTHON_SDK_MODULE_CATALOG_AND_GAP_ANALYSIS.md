@@ -7,7 +7,15 @@ This document audits the canonical Python SDK package under:
 It has two purposes:
 
 1. create a complete module-family catalog using a consistent format
-2. compare those Python capabilities to this JS checkout in [`traigent-js`](..)
+2. compare those Python capabilities to the current JS SDK project state
+
+Branch-aware reading guide:
+
+- `matched`: implemented and covered by passing tests or a verified public example
+- `partial`: implemented with bounded semantics and covered, but still behind Python
+- `gap`: the backend/API contract is reachable today and the JS side could implement it now
+- `deferred-backend`: blocked on missing or insufficiently specified backend/protocol support
+- `out-of-scope`: not a current JS SDK target
 
 ## Scope and Counting Method
 
@@ -26,15 +34,39 @@ Each catalog row uses the same fields:
 - `Key Types / APIs`: main public or architectural surfaces
 - `Responsibility`: what this family owns in the Python SDK
 - `File Count`: tracked files under that family
-- `JS Status`: one of:
-  - `matched`: current JS checkout has a comparable feature family
-  - `partial`: JS has some of the capability, but not full parity
-  - `deferred`: Python materially exceeds current JS scope
-  - `out-of-scope`: Python family is operational/platform-side and not a current JS SDK target
+- `Native Status`: current state of this native-first checkout
+- `Hybrid Status`: current state of the hybrid-enabled worktree
+- `Overall JS Status`: project-wide status across both active JS lines
+- `Evidence`: passing tests or verified public examples for `matched` / `partial` rows
+
+## Branch-aware Status Summary
+
+This summary is the planning surface. It distinguishes the native checkout, the
+hybrid worktree, and the overall JS project so the catalog below does not
+collapse two different implementation lines into one label.
+
+| Category | Native Status | Hybrid Status | Overall JS Status | Evidence |
+| --- | --- | --- | --- | --- |
+| `api` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts), [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/spec.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/spec.test.ts), [`../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts) |
+| `config` | `partial` | `partial` | `partial` | Native: [`tests/unit/core/context.test.ts`](../tests/unit/core/context.test.ts), [`tests/unit/seamless/transform.test.ts`](../tests/unit/seamless/transform.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts) |
+| `core` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `optimizers` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts), [`tests/unit/optimization/native-bayesian.test.ts`](../tests/unit/optimization/native-bayesian.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `evaluators` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts) |
+| `integrations` | `partial` | `partial` | `partial` | Native: [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts), [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/integrations/framework-interception.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/framework-interception.test.ts), [`../../traigent-js-hybrid-optuna/tests/unit/integrations/auto-wrap.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/auto-wrap.test.ts) |
+| `hybrid` | `deferred-backend` | `partial` | `partial` | Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `cloud` | `deferred-backend` | `partial` | `partial` | Hybrid session helpers: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `tvl` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/tvl.test.ts`](../tests/unit/optimization/tvl.test.ts), [`tests/unit/optimization/native-promotion.test.ts`](../tests/unit/optimization/native-promotion.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/tvl.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/tvl.test.ts) |
+| `tuned_variables` | `gap` | `gap` | `gap` | No automatic tuned-variable discovery implementation in either JS line today. |
+| `agents` | `gap` | `gap` | `gap` | High-level agent optimization exists, but Python’s broader agent-platform mapping surface still has no JS equivalent. |
+| `config_generator` | `out-of-scope` | `out-of-scope` | `out-of-scope` | Separate product layer, not a current JS SDK target. |
+| `metrics` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/native-cost.test.ts`](../tests/unit/optimization/native-cost.test.ts), [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/integrations/shared.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/shared.test.ts) |
+| `utils` | `partial` | `partial` | `partial` | Distributed across optimization/runtime helper coverage in both branches. |
+| `cli` | `partial` | `partial` | `partial` | Native codemod/build-time seamless CLI exists; bridge/hybrid CLI breadth is still limited. |
+| `security` / `analytics` / `experimental` | `out-of-scope` | `out-of-scope` | `out-of-scope` | Platform-side families are not being mirrored in the JS SDK package. |
 
 ## Functional Catalog
 
-| Category | Label | Description | Key Types / APIs | Responsibility | File Count | JS Status |
+| Category | Label | Description | Key Types / APIs | Responsibility | File Count | Overall JS Status |
 | --- | --- | --- | --- | --- | ---: | --- |
 | `(root)` | Package entrypoints and compatibility surface | Public package exports, versioning, top-level client shim, package metadata | `optimize`, top-level helpers, `traigent_client.py`, `__init__.py` | Defines the Python SDK’s public entry surface and legacy compatibility affordances | 6 | `partial` |
 | `api` | Decorator and public optimization API | High-level decorator surface, config builders, constraints, parameter ranges, public types | `decorators.py`, `functions.py`, `types.py`, `config_space.py` | Owns the user-facing optimization contract | 13 | `partial` |
@@ -43,28 +75,28 @@ Each catalog row uses the same fields:
 | `optimizers` | Search algorithms and optimizer adapters | Grid/random/Bayesian/Optuna/cloud/interactive coordinators, pruners, checkpoints | `grid.py`, `random.py`, `bayesian.py`, `optuna_optimizer.py`, `pruners.py` | Owns search strategy execution | 20 | `partial` |
 | `evaluators` | Dataset evaluation and metrics runtime | Local, JS, hybrid API evaluators; dataset registry; metrics tracking | `local.py`, `js_evaluator.py`, `hybrid_api.py`, `metrics.py` | Owns example-level evaluation loops | 8 | `partial` |
 | `integrations` | Framework, provider, observability, vector-store integrations | LLM plugins, framework overrides, LangChain, PydanticAI, Langfuse, observability, discovery | `framework_override.py`, `langchain/handler.py`, `llms/*`, `observability/*` | Owns ecosystem integration and seamless framework control | 65 | `partial` |
-| `hybrid` | Hybrid transport protocol layer | Discovery, lifecycle, protocol, HTTP/MCP transports | `protocol.py`, `transport.py`, `http_transport.py`, `mcp_transport.py` | Owns hybrid execution transport contracts | 7 | `deferred` |
-| `cloud` | Backend/cloud client and session stack | Backend clients, session/trial operations, auth, billing, sync, DTOs, privacy, subsets | `client.py`, `models.py`, `sessions.py`, `trial_operations.py`, `billing.py` | Owns remote execution and control-plane integration | 35 | `deferred` |
+| `hybrid` | Hybrid transport protocol layer | Discovery, lifecycle, protocol, HTTP/MCP transports | `protocol.py`, `transport.py`, `http_transport.py`, `mcp_transport.py` | Owns hybrid execution transport contracts | 7 | `partial` |
+| `cloud` | Backend/cloud client and session stack | Backend clients, session/trial operations, auth, billing, sync, DTOs, privacy, subsets | `client.py`, `models.py`, `sessions.py`, `trial_operations.py`, `billing.py` | Owns remote execution and control-plane integration | 35 | `partial` |
 | `tvl` | TVL specification system | TVL spec loading, models, validation, objectives, promotion, statistics, CLI | `spec_loader.py`, `models.py`, `promotion_gate.py`, `statistics.py` | Owns the TVL configuration language | 10 | `partial` |
 | `tuned_variables` | Tuned-variable discovery | Detection strategies, discovery, dataflow analysis, typed results | `detector.py`, `discovery.py`, `dataflow_strategy.py` | Owns automatic tuned-variable discovery | 7 | `partial` |
-| `agents` | Agent platform mapping and execution helpers | Config mapping, platform abstractions, agent spec generation, executor | `platforms.py`, `config_mapper.py`, `executor.py` | Owns agent-specific optimization adaptation | 5 | `deferred` |
-| `config_generator` | Config/TVL generation pipeline | Agent classification, benchmark/objective/constraint/tvar recommendation, apply pipeline | `pipeline.py`, `apply.py`, `subsystems/*`, `presets/*` | Owns assisted generation of optimization specs | 18 | `deferred` |
+| `agents` | Agent platform mapping and execution helpers | Config mapping, platform abstractions, agent spec generation, executor | `platforms.py`, `config_mapper.py`, `executor.py` | Owns agent-specific optimization adaptation | 5 | `gap` |
+| `config_generator` | Config/TVL generation pipeline | Agent classification, benchmark/objective/constraint/tvar recommendation, apply pipeline | `pipeline.py`, `apply.py`, `subsystems/*`, `presets/*` | Owns assisted generation of optimization specs | 18 | `out-of-scope` |
 | `metrics` | Metric registry and advanced metric helpers | Agent metrics, content scoring, RAGAS metrics, registry | `registry.py`, `content_scoring.py`, `ragas_metrics.py` | Owns reusable metric families | 5 | `partial` |
 | `utils` | Shared utilities | Cost calculator, persistence, retry, objectives, analytics helpers, diagnostics, logging | `cost_calculator.py`, `persistence.py`, `multi_objective.py`, `validation.py` | Owns reusable cross-cutting helpers | 31 | `partial` |
 | `cli` | CLI workflows | Auth, local commands, tuned-variable detection, config generation, validation, entrypoint | `main.py`, `detect_tvars_command.py`, `generate_config_command.py` | Owns the Python CLI UX | 10 | `partial` |
 | `security` | Enterprise security and auth stack | Headers, JWT, crypto, rate limiting, enterprise policies, auth factors, sessions, tenancy | `jwt_validator.py`, `enterprise.py`, `auth/*`, `session_manager.py` | Owns security controls and enterprise hardening | 22 | `out-of-scope` |
 | `analytics` | Post-run analytics and intelligence | Scheduling, predictive analytics, anomaly detection, meta-learning, cost optimization | `predictive.py`, `anomaly.py`, `meta_learning.py` | Owns analytics beyond core optimization execution | 8 | `out-of-scope` |
-| `bridges` | Cross-runtime bridge layer | JS bridge and process pool plumbing | `js_bridge.py`, `process_pool.py` | Owns Python-to-JS bridge execution | 3 | `deferred` |
-| `invokers` | Invocation abstractions | Base/local/batch/streaming invokers | `base.py`, `local.py`, `batch.py`, `streaming.py` | Owns standardized invocation surfaces | 5 | `deferred` |
+| `bridges` | Cross-runtime bridge layer | JS bridge and process pool plumbing | `js_bridge.py`, `process_pool.py` | Owns Python-to-JS bridge execution | 3 | `out-of-scope` |
+| `invokers` | Invocation abstractions | Base/local/batch/streaming invokers | `base.py`, `local.py`, `batch.py`, `streaming.py` | Owns standardized invocation surfaces | 5 | `out-of-scope` |
 | `storage` | Local persistence storage | Local storage package | `local_storage.py` | Owns on-disk storage helpers | 2 | `partial` |
-| `wrapper` | Wrapper service/server layer | Service/server/errors for wrapper mode | `server.py`, `service.py`, `errors.py` | Owns wrapper-hosted execution surface | 4 | `deferred` |
+| `wrapper` | Wrapper service/server layer | Service/server/errors for wrapper mode | `server.py`, `service.py`, `errors.py` | Owns wrapper-hosted execution surface | 4 | `deferred-backend` |
 | `providers` | Provider validation helpers | Provider validation utilities | `validation.py` | Owns provider-side validation helpers | 2 | `partial` |
-| `plugins` | Plugin registry | Plugin registration and loading | `registry.py` | Owns extensibility registration | 2 | `deferred` |
-| `telemetry` | Telemetry helpers | Optuna metrics telemetry | `optuna_metrics.py` | Owns optimizer telemetry helpers | 2 | `deferred` |
+| `plugins` | Plugin registry | Plugin registration and loading | `registry.py` | Owns extensibility registration | 2 | `out-of-scope` |
+| `telemetry` | Telemetry helpers | Optuna metrics telemetry | `optuna_metrics.py` | Owns optimizer telemetry helpers | 2 | `out-of-scope` |
 | `reporting` | Reporting helpers | Example map reporting | `example_map.py` | Owns reporting outputs | 2 | `partial` |
 | `visualization` | Visualization | Plot generation and quick plots | `plots.py` | Owns visualization layer | 2 | `partial` |
-| `hooks` | Hook tooling | Hook installer, config, validation | `installer.py`, `validator.py` | Owns hook-based workflow tooling | 4 | `deferred` |
-| `adapters` | Execution adapter | Adapter between execution environments | `execution_adapter.py` | Owns adapter abstraction | 1 | `deferred` |
+| `hooks` | Hook tooling | Hook installer, config, validation | `installer.py`, `validator.py` | Owns hook-based workflow tooling | 4 | `out-of-scope` |
+| `adapters` | Execution adapter | Adapter between execution environments | `execution_adapter.py` | Owns adapter abstraction | 1 | `out-of-scope` |
 | `experimental` | Experimental features | Simple cloud simulator/platform experiments | `simple_cloud/*` | Holds unstable or exploratory features | 10 | `out-of-scope` |
 
 ## Gap Analysis
@@ -90,9 +122,15 @@ Python owns a full remote stack across:
 - parts of [core](../../Traigent/traigent/core)
 - parts of [optimizers](../../Traigent/traigent/optimizers)
 
-Current JS checkout:
-- native-first only
-- explicitly rejects backend-guided hybrid execution in this branch
+Current JS project:
+- native-first in this checkout
+- backend-guided hybrid execution exists in the separate hybrid-enabled worktree
+- that hybrid worktree now includes:
+  - typed session lifecycle
+  - high-level plain-agent evaluation
+  - backend-guided config suggestion
+  - OpenAI / LangChain / Vercel AI seamless interception with runtime metric collection
+- still materially behind Python on cloud/session/control-plane breadth
 
 #### 2. TVL
 
@@ -112,7 +150,8 @@ Current JS checkout:
     safe-expression subset
   - exploration strategy/budget mapping
   - promotion-policy parsing
-  - explicit `nativeCompatibility` reporting on loaded TVL artifacts
+  - artifact-specific `nativeCompatibility` reporting on loaded TVL artifacts,
+    including `usedFeatures` and summarized `warnings`
 - still does not implement the full Python TVL runtime or CLI, and it does not
   expose the full Python promotion-gate lifecycle/reporting model; native JS now applies
   `minEffect` and `tieBreakers` during best-trial selection, uses sample-based
@@ -130,8 +169,18 @@ Python includes:
 - billing/privacy/auth operations
 - sync/resilience layers
 
-Current JS checkout:
-- none of that is active in this branch
+Current JS project:
+- typed interactive session orchestration exists in the hybrid-enabled worktree
+- that worktree now covers the practical decorator path better than before:
+  - plain agent functions
+  - local evaluation
+  - seamless framework overrides
+  - framework auto-wrap helpers and seamless diagnostics
+  - session status/finalize/delete helpers with normalized DTOs
+  - executable hybrid session-control example
+  - provider-derived cost/token/latency submission
+- still lacks Python's broader cloud/session/control-plane surface, resilience
+  layers, and DTO breadth
 
 #### 4. Config Generation and Assisted Authoring
 
@@ -167,7 +216,9 @@ Current JS checkout:
 
 ### Gaps That Are Not Yet Justified
 
-- full hybrid/cloud session parity in the dedicated hybrid JS branch needs to be reconciled against [cloud](../../Traigent/traigent/cloud) and [hybrid](../../Traigent/traigent/hybrid)
+- full hybrid/cloud session parity in the dedicated hybrid JS branch still needs
+  to be reconciled against [cloud](../../Traigent/traigent/cloud) and
+  [hybrid](../../Traigent/traigent/hybrid)
 - TVL support remains a meaningful Python-to-JS feature gap if the long-term goal is cross-SDK authoring parity
 - tuned-variable discovery and config-generation parity are still materially behind Python
 

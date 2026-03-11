@@ -13,13 +13,13 @@ export const optimizedThing = optimize(spec)(existingAgentFunction);
 
 ## Start Here
 
-- plain client code: [minimal-change/original-agent.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/minimal-change/original-agent.mjs)
-- minimally Traigent-enabled version: [minimal-change/optimized-agent.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/minimal-change/optimized-agent.mjs)
-- runner: [minimal-change/runner.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/minimal-change/runner.mjs)
-- seamless original: [seamless/original-agent.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/seamless/original-agent.mjs)
-- seamless codemod target: [seamless/codemod-target.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/seamless/codemod-target.mjs)
-- seamless transformed: [seamless/transformed-agent.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/seamless/transformed-agent.mjs)
-- seamless runner: [seamless/runner.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/seamless/runner.mjs)
+- plain client code: [minimal-change/original-agent.mjs](./minimal-change/original-agent.mjs)
+- minimally Traigent-enabled version: [minimal-change/optimized-agent.mjs](./minimal-change/optimized-agent.mjs)
+- runner: [minimal-change/runner.mjs](./minimal-change/runner.mjs)
+- seamless original: [seamless/original-agent.mjs](./seamless/original-agent.mjs)
+- seamless codemod target: [seamless/codemod-target.mjs](./seamless/codemod-target.mjs)
+- seamless transformed: [seamless/transformed-agent.mjs](./seamless/transformed-agent.mjs)
+- seamless runner: [seamless/runner.mjs](./seamless/runner.mjs)
 
 ## What This Demonstrates
 

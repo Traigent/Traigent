@@ -1,101 +1,94 @@
-# Python SDK vs JS SDK Feature Matrix
+# Native JS Parity Matrix
 
-This matrix compares the current Python SDK surface with this specific JS checkout.
+This matrix describes the verified state of the native-first JS checkout in
+this repository root.
 
-Important: this repo is the native-first safety branch. It supports high-level
-agent optimization and hybrid spec authoring, but it does **not** implement the
-backend-guided hybrid execution work from the separate hybrid branch/worktree.
+Use it together with:
+
+- [Python SDK Module Catalog and Gap Analysis](./PYTHON_SDK_MODULE_CATALOG_AND_GAP_ANALYSIS.md)
+- [JS Parity Roadmap](./JS_PARITY_ROADMAP.md)
+- [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md)
+
+Important scope note:
+
+- this file is about the native-first checkout only
+- if a capability exists only in the hybrid-enabled worktree, the native status
+  here is not upgraded to `matched`
+
+## Label Semantics
+
+- `matched`: implemented in this checkout and covered by passing tests or a
+  verified public example
+- `partial`: implemented with bounded semantics and covered, but still behind
+  Python
+- `gap`: no backend change is required; JS could implement it in this project
+  today
+- `deferred-backend`: blocked on hybrid/backend protocol or control-plane work
+- `out-of-scope`: not a target for the native JS SDK
 
 ## Optimize / Decorator Surface
 
-| Capability | Python SDK | JS SDK | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Optimize plain agent functions | Yes | Yes | `matched` | JS now defaults to a high-level agent contract with SDK-owned evaluation. |
-| SDK-owned evaluation loop | Yes | Yes | `matched` | JS iterates `evaluation.data` / `evaluation.loadData` and aggregates metrics. |
-| `scoring_function` / `scoringFunction` | Yes | Yes | `matched` | JS uses `evaluation.scoringFunction`. |
-| `metric_functions` / `metricFunctions` | Yes | Yes | `matched` | JS supports additive metric functions. |
-| `custom_evaluator` / `customEvaluator` | Yes | Yes | `matched` | JS supports both the high-level context callback and the Python-style `(agentFn, config, row)` callback shape. |
-| Advanced manual trial contract | No public primary path | Yes | `js-only` | JS keeps `execution.contract = 'trial'` as a deprecated compatibility path. |
-| `default_config` baseline | Yes | Yes | `matched` | JS uses `defaultConfig` as the baseline injected config before optimization and when merging trial configs. |
-| Constraints | Yes | Yes | `partial` | JS supports callback-based pre-trial config constraints and post-trial metric constraints, but not the Python TVL/builder DSL. |
-| Safety constraints | Yes | Yes | `partial` | JS supports callback-based post-trial safety constraints, but not Python's preset/statistical safety layer. |
+| Capability | Python | Native JS | Overall JS | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Optimize plain agent functions | Yes | `matched` | `matched` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts), [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts) | Native JS defaults to the high-level agent contract. |
+| SDK-owned evaluation loop | Yes | `matched` | `matched` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | The SDK owns dataset iteration, scoring, aggregation, and runtime-metric capture. |
+| `scoringFunction` | Yes | `matched` | `matched` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | Supports raw output plus expected-output scoring. |
+| `metricFunctions` | Yes | `matched` | `matched` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | Additive metric computation is supported. |
+| `customEvaluator` | Yes | `matched` | `matched` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | Supports both the JS context form and the Python-style `(agentFn, config, row)` form. |
+| Deprecated trial contract | Legacy/advanced | `partial` | `partial` | [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts) | Still supported via `execution.contract = "trial"` but explicitly deprecated. |
+| `default_config` baseline | Yes | `matched` | `matched` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Merged into trial configs and `applyBestConfig()` flows. |
+| Context injection | Yes | `partial` | `partial` | [`tests/unit/core/context.test.ts`](../tests/unit/core/context.test.ts), [`examples/quickstart/00_agent_injection_map.mjs`](../examples/quickstart/00_agent_injection_map.mjs) | JS uses `getTrialParam()` / `getTrialConfig()` instead of Python’s global `get_config()`. |
+| Parameter injection | Yes | `partial` | `partial` | [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | JS uses `agentFn(input, config?)` second-argument injection. |
+| Seamless injection | Yes | `partial` | `partial` | [`tests/unit/seamless/transform.test.ts`](../tests/unit/seamless/transform.test.ts), [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Codemod, build-time transform, and framework-interception paths exist; full Python runtime AST parity is intentionally not claimed. |
 
-## Injection and Runtime Access
+## Native Runtime
 
-| Capability | Python SDK | JS SDK | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Context injection | Yes | Yes | `partial` | JS uses `getTrialParam()` / `getTrialConfig()` instead of Python `get_config()`. |
-| Parameter injection | Yes | Yes | `partial` | Python supports named `config_param`; JS uses `agentFn(input, config?)` second-argument injection. |
-| Seamless AST/source transformation | Yes | Yes | `partial` | JS supports codemod/build-time rewriting and a narrow runtime fallback, not full Python-style runtime AST parity. |
-| Framework interception / override | Yes | Yes | `partial` | JS supports explicit wrappers for OpenAI, LangChain, and Vercel AI. |
-| `auto_override_frameworks` | Yes | Yes | `partial` | JS seamless defaults to active wrapped targets and now exposes `autoWrapFrameworkTarget(s)` helpers, but it still does not implicitly discover and wrap framework clients on its own. |
-| `framework_targets` selection | Yes | Yes | `partial` | JS validates `frameworkTargets`, defaults seamless auto-override to all active wrapped targets, but still requires users to wrap framework clients/models explicitly. |
-| Global config access after optimization | Yes | No | `deferred` | JS intentionally avoids a global `get_config()` API. |
-| `apply_best_config` ergonomics | Yes | Yes | `partial` | JS uses wrapper-local `applyBestConfig()` / `currentConfig()`. |
-## Native Optimization Runtime
+| Capability | Python | Native JS | Overall JS | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Grid search | Yes | `matched` | `matched` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Deterministic ordered enumeration. |
+| Random search | Yes | `matched` | `matched` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts), [`tests/unit/optimization/python-random.test.ts`](../tests/unit/optimization/python-random.test.ts) | Python-style seeded sampling for parity. |
+| Local Bayesian search | Yes | `partial` | `partial` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts), [`tests/unit/optimization/native-bayesian.test.ts`](../tests/unit/optimization/native-bayesian.test.ts) | Sequential in-process Bayesian only; no Optuna-family parity here. |
+| Stop reasons: timeout/error/cancel/plateau/budget/maxExamples | Yes | `matched` | `matched` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Native JS now covers the practical local stop-condition set. |
+| Repetition stability controls | Yes | `matched` | `matched` | [`tests/unit/optimization/native-reps.test.ts`](../tests/unit/optimization/native-reps.test.ts), [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | `execution.repsPerTrial` and `execution.repsAggregation` are implemented. |
+| Max total examples | Yes | `matched` | `matched` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Stops with `maxExamples`. |
+| Trial concurrency | Yes | `partial` | `partial` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Supported for `grid` and `random`, not Bayesian. |
+| Example concurrency | Yes | `gap` | `gap` | n/a | No backend change is required, but this checkout still does not parallelize per-example evaluation. |
+| Checkpoint/resume | Yes | `partial` | `partial` | [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Trial-boundary checkpoints only. |
+| Runtime cost accounting | Yes | `partial` | `partial` | [`tests/unit/optimization/native-cost.test.ts`](../tests/unit/optimization/native-cost.test.ts), [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts) | Records `input_cost`, `output_cost`, `total_cost`, and `cost`, but still uses a lightweight local pricing table. |
+| Constraints and safety constraints | Yes | `partial` | `partial` | [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts), [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts) | Callback-based constraints are implemented; Python’s richer preset/statistical safety layer is still missing. |
 
-| Capability | Python SDK | JS SDK | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Grid search | Yes | Yes | `matched` | JS uses deterministic ordered enumeration. |
-| Random search | Yes | Yes | `matched` | JS uses Python-style seeded sampling for parity fixtures. |
-| Bayesian optimizer | Yes | Yes | `partial` | JS supports sequential in-process Bayesian search only. |
-| Optuna-family algorithms | Yes | No | `deferred` | Includes TPE, CMA-ES, NSGA-II, Optuna grid/random. |
-| Log-scale params | Yes | Yes | `matched` | JS supports log-scale sampling and multiplicative grid steps. |
-| Budget stop | Yes | Yes | `matched` | JS relies on numeric `metrics.total_cost` or `metrics.cost`. |
-| Timeout stop | Yes | Yes | `matched` | JS exposes `timeoutMs`. |
-| Error stop | Yes | Yes | `matched` | Runtime errors produce `stopReason: 'error'`. |
-| Plateau stop | Yes | Yes | `matched` | JS exposes `plateau`. |
-| Cancellation | Yes | Yes | `matched` | JS uses `AbortSignal`. |
-| Max total examples / sample budget | Yes | Yes | `matched` | JS exposes `execution.maxTotalExamples` and stops with `maxExamples`. |
-| Repetition stability controls | Yes | Yes | `matched` | JS exposes `execution.repsPerTrial` and `execution.repsAggregation`. |
-| Trial concurrency | Yes | Yes | `partial` | JS supports `trialConcurrency` for `grid` and `random` only. |
-| Example concurrency | Yes | No | `deferred` | JS does not parallelize per-example evaluation in this checkout. |
-| Checkpoint/resume | Yes | Yes | `partial` | Trial-boundary checkpoints only. |
-| Runtime cost accounting detail | Yes | Yes | `partial` | JS records `input_cost`, `output_cost`, `total_cost`, and `cost`, but still uses a lightweight local pricing table instead of Python's canonical calculator stack. |
-| Pre-trial constraint rejection | Yes | Yes | `matched` | Invalid configs are skipped before execution and do not consume native trial slots. |
-| Post-trial constraint rejection | Yes | Yes | `partial` | Rejected trials are recorded and excluded from best-trial selection, but JS does not yet expose Python's richer pruned/failed trial taxonomy. |
+## TVL / Advanced Specification
 
-## Hybrid and Execution Modes
+| Capability | Python | Native JS | Overall JS | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| TVL loading | Yes | `partial` | `partial` | [`tests/unit/optimization/tvl.test.ts`](../tests/unit/optimization/tvl.test.ts), [`examples/core/tvl-loading/run.mjs`](../examples/core/tvl-loading/run.mjs) | Focused native subset with explicit `nativeCompatibility` reporting. |
+| TVL constraints | Yes | `partial` | `partial` | [`tests/unit/optimization/tvl-expression.test.ts`](../tests/unit/optimization/tvl-expression.test.ts), [`tests/unit/optimization/tvl.test.ts`](../tests/unit/optimization/tvl.test.ts) | Safe-expression subset compiles into native callbacks. |
+| TVL banded objectives | Yes | `partial` | `partial` | [`tests/unit/optimization/native-scoring.test.ts`](../tests/unit/optimization/native-scoring.test.ts), [`tests/unit/optimization/native-promotion.test.ts`](../tests/unit/optimization/native-promotion.test.ts) | Native scorer and promotion logic honor banded objectives. |
+| TVL promotion policy | Yes | `partial` | `partial` | [`tests/unit/optimization/native-promotion.test.ts`](../tests/unit/optimization/native-promotion.test.ts), [`tests/unit/optimization/native-scoring.test.ts`](../tests/unit/optimization/native-scoring.test.ts) | `minEffect`, `tieBreakers`, sample-based paired/TOST promotion, and behavioral `chanceConstraints` are implemented; full Python promotion-gate lifecycle parity is not. |
+| Full TVL CLI/runtime breadth | Yes | `gap` | `gap` | n/a | The native subset is deliberate; broader TVL authoring/runtime parity remains open. |
 
-| Capability | Python SDK | JS SDK | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Native/local execution | Yes | Yes | `matched` | JS local/native path is the primary implementation here. |
-| Cloud execution | Yes | No | `deferred` | Not implemented in this checkout. |
-| Hybrid execution orchestration | Yes | No | `deferred` | `execution.mode = 'hybrid'` throws in this branch. |
-| Hybrid spec authoring to legacy wire format | Yes | Yes | `matched` | JS supports `toHybridConfigSpace()` for current hybrid HTTP routes. |
-| Legacy Python-to-Node bridge | Yes | Yes | `partial` | JS still exposes the CLI runner for bridge use, but it is legacy-only. |
+## Framework Ergonomics
 
-## TVL / Advanced Specification Features
+| Capability | Python | Native JS | Overall JS | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI interception | Yes | `matched` | `matched` | [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Real override injection and provider-usage capture. |
+| LangChain interception | Yes | `matched` | `matched` | [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Proxy-based wrapping plus runtime metrics extraction. |
+| Vercel AI interception | Yes | `matched` | `matched` | [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Generate/stream wrappers and cost recording are implemented. |
+| Auto-wrap helpers | Yes | `matched` | `matched` | [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts), [`examples/core/seamless-autowrap/run.mjs`](../examples/core/seamless-autowrap/run.mjs) | `autoWrapFrameworkTarget(...)` and `autoWrapFrameworkTargets(...)` are available. |
+| Framework auto-override diagnostics | Yes | `matched` | `matched` | [`tests/unit/integrations/registry.test.ts`](../tests/unit/integrations/registry.test.ts), [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts) | `frameworkAutoOverrideStatus()` and `seamlessResolution()` expose active targets, selected targets, and the resolved seamless path. |
+| Implicit framework discovery | Yes | `gap` | `gap` | n/a | JS still requires explicit wrapping; it does not auto-discover arbitrary framework clients inside user code. |
 
-| Capability | Python SDK | JS SDK | Status | Notes |
-| --- | --- | --- | --- | --- |
-| TVL spec loading | Yes | Yes | `partial` | JS supports a focused native subset through `parseTvlSpec()` / `loadTvlSpec()` and now exposes a `nativeCompatibility` report describing supported vs reduced-semantics features. |
-| TVL banded objectives | Yes | Yes | `partial` | JS parses banded objectives and the native scorer honors them, including sample-based TOST-style band comparison. |
-| TVL promotion policy | Yes | Yes | `partial` | JS applies `minEffect`, `tieBreakers`, behavioral `chanceConstraints`, sample-based paired/TOST promotion, and now emits bounded `promotionDecision` reports. Full Python promotion-gate lifecycle parity is still deferred. |
-| Constraints | Yes | Yes | `partial` | Native callback constraints work, and TVL structural/derived constraints compile into those callbacks through a parsed safe-expression subset. |
-| Safety constraints | Yes | Yes | `partial` | Native callback safety predicates work; Python's safety preset library is still deferred. |
-| Multi-agent execution options | Yes | No | `deferred` | Not implemented here. |
+## Hybrid / Cloud Boundaries
 
-## Normalized Stop Reason Mapping
+| Capability | Python | Native JS | Overall JS | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `execution.mode = "hybrid"` | Yes | `deferred-backend` | `partial` | Native rejection: [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts); hybrid implementation: [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Native checkout intentionally rejects hybrid execution; the hybrid worktree carries that parity work. |
+| Cloud/session helpers | Yes | `deferred-backend` | `partial` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Exists only in the hybrid-enabled worktree. |
+| Broader cloud control plane | Yes | `deferred-backend` | `partial` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Session/status/finalize/delete are implemented in the hybrid worktree; broader control-plane breadth still trails Python. |
 
-These mappings are used by parity tests and reports when comparing Python and JS output:
+## Explicit Non-Goals for the Native Checkout
 
-| Python | JS |
-| --- | --- |
-| `max_trials_reached` | `maxTrials` |
-| `max_samples_reached` | `maxExamples` |
-| `cost_limit` | `budget` |
-| `timeout` | `timeout` |
-| `error` | `error` |
-| `user_cancelled` | `cancelled` |
-| `plateau` | `plateau` |
-| `optimizer` | `completed` when the search space is exhausted |
-
-## Explicit Deferrals in This Checkout
-
-- Full Python-style runtime AST seamless injection
-- Full TVL statistical/promotion behavior beyond native sample-based promotion
-  best-trial selection
-- Python safety preset/statistical validation layer
-- Cloud/hybrid execution orchestration
-- Global `get_config()` semantics
+- full cloud/session control-plane parity
+- Python’s platform/security/analytics families
+- global `get_config()` semantics
+- full Optuna-family parity in local/native JS

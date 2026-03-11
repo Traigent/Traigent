@@ -676,47 +676,61 @@ function extractSpecHeader(raw: Record<string, unknown>): {
   return { moduleId, tvlVersion };
 }
 
-export function getNativeTvlCompatibilityReport(): NativeTvlCompatibilityReport {
+export function getNativeTvlCompatibilityReport(
+  usedFeatures: Partial<Record<string, boolean>> = {},
+): NativeTvlCompatibilityReport {
+  const items: NativeTvlCompatibilityReport['items'] = [
+    {
+      feature: 'tvars',
+      status: 'supported-with-reduced-semantics',
+      reason:
+        'Native JS supports bool, enum, int, float, tuple, and callable TVL variable forms, but not the full canonical TVL tvar surface.',
+      used: usedFeatures['tvars'] === true,
+    },
+    {
+      feature: 'banded-objectives',
+      status: 'supported-with-reduced-semantics',
+      reason:
+        'Native JS supports banded objectives and TOST-style band comparison, but not the full Python promotion reporting model.',
+      used: usedFeatures['banded-objectives'] === true,
+    },
+    {
+      feature: 'promotion-policy',
+      status: 'supported-with-reduced-semantics',
+      reason:
+        'Native JS applies minEffect, tieBreakers, chanceConstraints, and sample-based promotion, but not the full Python promotion-gate lifecycle/reporting semantics.',
+      used: usedFeatures['promotion-policy'] === true,
+    },
+    {
+      feature: 'constraints',
+      status: 'supported-with-reduced-semantics',
+      reason:
+        'TVL structural and derived constraints compile into a safe native callback subset instead of preserving the canonical schema objects end-to-end.',
+      used: usedFeatures['constraints'] === true,
+    },
+    {
+      feature: 'exploration-strategy',
+      status: 'supported-with-reduced-semantics',
+      reason:
+        'Native JS supports grid, random, and bayesian strategies. Multi-objective/server-oriented strategies remain hybrid-only.',
+      used: usedFeatures['exploration-strategy'] === true,
+    },
+    {
+      feature: 'hybrid-session-features',
+      status: 'hybrid-only',
+      reason:
+        'Session persistence, remote orchestration, and full control-plane semantics belong to the hybrid/server path, not this native checkout.',
+      used: usedFeatures['hybrid-session-features'] === true,
+    },
+  ];
+
   return {
     scope: 'native',
-    items: [
-      {
-        feature: 'tvars',
-        status: 'supported-with-reduced-semantics',
-        reason:
-          'Native JS supports bool, enum, int, float, tuple, and callable TVL variable forms, but not the full canonical TVL tvar surface.',
-      },
-      {
-        feature: 'banded-objectives',
-        status: 'supported-with-reduced-semantics',
-        reason:
-          'Native JS supports banded objectives and TOST-style band comparison, but not the full Python promotion reporting model.',
-      },
-      {
-        feature: 'promotion-policy',
-        status: 'supported-with-reduced-semantics',
-        reason:
-          'Native JS applies minEffect, tieBreakers, chanceConstraints, and sample-based promotion, but not the full Python promotion-gate lifecycle/reporting semantics.',
-      },
-      {
-        feature: 'constraints',
-        status: 'supported-with-reduced-semantics',
-        reason:
-          'TVL structural and derived constraints compile into a safe native callback subset instead of preserving the canonical schema objects end-to-end.',
-      },
-      {
-        feature: 'exploration-strategy',
-        status: 'supported-with-reduced-semantics',
-        reason:
-          'Native JS supports grid, random, and bayesian strategies. Multi-objective/server-oriented strategies remain hybrid-only.',
-      },
-      {
-        feature: 'hybrid-session-features',
-        status: 'hybrid-only',
-        reason:
-          'Session persistence, remote orchestration, and full control-plane semantics belong to the hybrid/server path, not this native checkout.',
-      },
-    ],
+    items,
+    usedFeatures: items.filter((item) => item.used).map((item) => item.feature),
+    warnings: items
+      .filter((item) => item.used && item.status !== 'supported')
+      .map((item) => `${item.feature}: ${item.reason}`),
   };
 }
 
@@ -736,6 +750,26 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
   const strategy = parseExplorationStrategy(parsedAny.exploration);
   const budgets = parseExplorationBudgets(parsedAny.exploration);
   const { moduleId, tvlVersion } = extractSpecHeader(parsed);
+  // This flag is intentionally about explicit exploration strategy selection,
+  // not the mere presence of exploration budgets/settings. The warning for this
+  // feature is meant to explain reduced-semantics strategy mapping, especially
+  // when TVL specifies a strategy type that has hybrid/server-oriented meaning.
+  const usedFeatures: Partial<Record<string, boolean>> = {
+    tvars: Object.keys(configurationSpace).length > 0,
+    'banded-objectives': objectives.some(
+      (objective) =>
+        typeof objective === 'object' &&
+        objective !== null &&
+        'band' in objective &&
+        objective.band !== undefined,
+    ),
+    'promotion-policy': promotionPolicy !== undefined,
+    constraints: constraints.length > 0,
+    'exploration-strategy': isPlainObject(parsedAny['exploration']) &&
+      (typeof parsedAny['exploration']['strategy'] === 'string' ||
+        (isPlainObject(parsedAny['exploration']['strategy']) &&
+          typeof parsedAny['exploration']['strategy']['type'] === 'string')),
+  };
 
   const spec: OptimizationSpec = {
     configurationSpace,
@@ -758,7 +792,7 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
     ...(optimizeOptions ? { optimizeOptions } : {}),
     ...(moduleId ? { moduleId } : {}),
     ...(tvlVersion ? { tvlVersion } : {}),
-    nativeCompatibility: getNativeTvlCompatibilityReport(),
+    nativeCompatibility: getNativeTvlCompatibilityReport(usedFeatures),
     metadata: {
       ...(isPlainObject(parsedAny['metadata']) ? parsedAny['metadata'] : {}),
       ...(parsedAny['promotion'] !== undefined

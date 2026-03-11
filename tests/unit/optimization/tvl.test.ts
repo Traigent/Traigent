@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  getNativeTvlCompatibilityReport,
   loadTvlSpec,
   parseTvlSpec,
 } from '../../../src/optimization/tvl.js';
@@ -91,16 +90,36 @@ promotion_policy:
       algorithm: 'bayesian',
       maxTrials: 9,
     });
-    expect(parsed.nativeCompatibility).toEqual(getNativeTvlCompatibilityReport());
+    expect(parsed.nativeCompatibility.scope).toBe('native');
+    expect(parsed.nativeCompatibility.usedFeatures).toEqual(
+      expect.arrayContaining([
+        'tvars',
+        'banded-objectives',
+        'promotion-policy',
+        'constraints',
+        'exploration-strategy',
+      ]),
+    );
+    expect(parsed.nativeCompatibility.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('tvars:'),
+        expect.stringContaining('banded-objectives:'),
+        expect.stringContaining('promotion-policy:'),
+        expect.stringContaining('constraints:'),
+        expect.stringContaining('exploration-strategy:'),
+      ]),
+    );
     expect(parsed.nativeCompatibility.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           feature: 'promotion-policy',
           status: 'supported-with-reduced-semantics',
+          used: true,
         }),
         expect.objectContaining({
           feature: 'hybrid-session-features',
           status: 'hybrid-only',
+          used: false,
         }),
       ]),
     );
@@ -198,6 +217,41 @@ objectives:
     const loaded = await loadTvlSpec({ path });
     expect(loaded.moduleId).toBe('path-loaded');
     expect(loaded.metadata.path).toBe(path);
+  });
+
+  it('reports used native TVL features per artifact and leaves unused features unmarked', () => {
+    const parsed = parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["cheap", "accurate"]
+objectives:
+  - name: accuracy
+    direction: maximize
+`);
+
+    expect(parsed.nativeCompatibility.usedFeatures).toEqual(['tvars']);
+    expect(parsed.nativeCompatibility.warnings).toEqual([
+      expect.stringContaining('tvars:'),
+    ]);
+    expect(parsed.nativeCompatibility.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ feature: 'tvars', used: true }),
+        expect.objectContaining({
+          feature: 'banded-objectives',
+          used: false,
+        }),
+        expect.objectContaining({
+          feature: 'promotion-policy',
+          used: false,
+        }),
+        expect.objectContaining({ feature: 'constraints', used: false }),
+        expect.objectContaining({
+          feature: 'exploration-strategy',
+          used: false,
+        }),
+      ]),
+    );
   });
 
   it('rejects loadTvlSpec calls without path or source', async () => {

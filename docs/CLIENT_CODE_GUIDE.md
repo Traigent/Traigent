@@ -11,7 +11,7 @@ Use the SDK in one of two supported ways:
 | Hybrid mode authoring | Your app exposes Traigent-compatible HTTP routes and needs a code-defined config space | `optimize`, `param`, `toHybridConfigSpace`, `TrialContext`, `getTrialParam`, `getTrialConfig` |
 | Native Node optimization | Your optimization loop should run in-process in Node | `optimize`, `param`, `wrapped.optimize(...)`, `applyBestConfig()` |
 
-This repo does not implement backend-guided `execution.mode = 'hybrid'`. The older Python-orchestrated bridge flow still exists, but it is documented as a legacy reference in [REAL_MODE_SEQUENCE_FLOW.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/REAL_MODE_SEQUENCE_FLOW.md).
+This repo does not implement backend-guided `execution.mode = 'hybrid'`. The older Python-orchestrated bridge flow still exists, but it is documented as a legacy reference in [REAL_MODE_SEQUENCE_FLOW.md](./REAL_MODE_SEQUENCE_FLOW.md).
 
 ## Flow 1: Hybrid Mode Authoring
 
@@ -286,8 +286,10 @@ Do not introduce a second global config mechanism for JS.
   - structural and derived constraints compiled through a parsed safe-expression subset
   - exploration strategy/budget mapping
   - promotion-policy parsing
-  - `parseTvlSpec()` and `loadTvlSpec()` expose `nativeCompatibility` so the
-    supported vs reduced-semantics native envelope is explicit in the artifact
+  - `parseTvlSpec()` and `loadTvlSpec()` expose artifact-specific
+    `nativeCompatibility`
+    so the supported vs reduced-semantics native envelope is explicit in the
+    loaded file, including `usedFeatures` and summarized `warnings`
 - Promotion policy is partially enforced in this checkout: native best-trial
   selection honors `minEffect` and `tieBreakers`, uses statistical promotion
   when both trials expose per-objective metric samples, and `chanceConstraints`
@@ -301,4 +303,4 @@ Do not introduce a second global config mechanism for JS.
 If you still need the Python-to-Node bridge:
 
 - Use the CLI runner with `npx traigent-js --module ./dist/trial.js --function runTrial`
-- Treat [REAL_MODE_SEQUENCE_FLOW.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/REAL_MODE_SEQUENCE_FLOW.md) and the Mermaid diagrams as bridge-only reference material
+- Treat [REAL_MODE_SEQUENCE_FLOW.md](./REAL_MODE_SEQUENCE_FLOW.md) and the Mermaid diagrams as bridge-only reference material

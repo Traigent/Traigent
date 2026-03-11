@@ -77,7 +77,7 @@ console.log(await answerQuestion('What is 2+2?'));
 console.log(answerQuestion.currentConfig());
 ```
 
-See [examples/native-optimization.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/native-optimization.mjs) for the runnable smoke example.
+See [examples/native-optimization.mjs](./examples/native-optimization.mjs) for the runnable smoke example.
 
 ## Focused TVL Loading
 
@@ -137,7 +137,11 @@ Supported TVL subset:
   - `max_spend_usd`
   - `max_wallclock_s`
 - promotion-policy parsing
-- explicit native compatibility reporting via `loaded.nativeCompatibility`
+- artifact-specific native compatibility reporting via `loaded.nativeCompatibility`
+  - `usedFeatures` tells you which bounded native TVL features the loaded file
+    actually uses
+  - `warnings` summarizes reduced-semantics or hybrid-only implications for the
+    loaded artifact
 
 Still reduced vs full Python TVL/runtime semantics:
 
@@ -155,11 +159,11 @@ JS supports three runtime injection modes:
 
 `seamless` in this checkout is no longer framework-only. It means:
 
-- [createTraigentOpenAI](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/openai/index.ts)
-- [withTraigentModel](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/langchain/model.ts)
-- [withTraigent](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/vercel-ai/index.ts)
-- [autoWrapFrameworkTarget](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/auto-wrap.ts)
-- [autoWrapFrameworkTargets](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/auto-wrap.ts)
+- [createTraigentOpenAI](./src/integrations/openai/index.ts)
+- [withTraigentModel](./src/integrations/langchain/model.ts)
+- [withTraigent](./src/integrations/vercel-ai/index.ts)
+- [autoWrapFrameworkTarget](./src/integrations/auto-wrap.ts)
+- [autoWrapFrameworkTargets](./src/integrations/auto-wrap.ts)
 - build-time transformed tuned variables via the Babel plugin export
 - one-time source rewrites via `traigent migrate seamless`
 - an experimental runtime rewrite for self-contained plain Node functions
@@ -375,7 +379,8 @@ Do not assume context is available in top-level route handlers or unrelated code
   - structural and derived constraints compiled into native callbacks
   - exploration strategy/budget mapping
   - promotion-policy parsing
-  - `nativeCompatibility` reporting on loaded TVL artifacts
+  - artifact-specific `nativeCompatibility` reporting on loaded TVL artifacts,
+    including `usedFeatures` and `warnings`
 - Promotion policy is partially enforced in this checkout: native best-trial
   selection honors `minEffect` and `tieBreakers`, uses statistical promotion
   when both trials expose per-objective metric samples, and `chanceConstraints`
@@ -388,17 +393,17 @@ Do not assume context is available in top-level route handlers or unrelated code
 
 Start here for the current repo shape:
 
-- [docs/README.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/README.md)
-- [docs/CLIENT_CODE_GUIDE.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/CLIENT_CODE_GUIDE.md)
-- [docs/NATIVE_JS_PARITY_MATRIX.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/NATIVE_JS_PARITY_MATRIX.md)
-- [examples/README.md](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/README.md)
-- [walkthrough/README.md](/home/nimrodbu/Traigent_enterprise/traigent-js/walkthrough/README.md)
+- [docs/README.md](./docs/README.md)
+- [docs/CLIENT_CODE_GUIDE.md](./docs/CLIENT_CODE_GUIDE.md)
+- [docs/NATIVE_JS_PARITY_MATRIX.md](./docs/NATIVE_JS_PARITY_MATRIX.md)
+- [examples/README.md](./examples/README.md)
+- [walkthrough/README.md](./walkthrough/README.md)
 
 Legacy bridge references:
 
-- [docs/REAL_MODE_SEQUENCE_FLOW.md](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/REAL_MODE_SEQUENCE_FLOW.md)
-- [docs/diagrams/real_mode_sequence.mmd](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/diagrams/real_mode_sequence.mmd)
-- [docs/diagrams/real_mode_flowchart.mmd](/home/nimrodbu/Traigent_enterprise/traigent-js/docs/diagrams/real_mode_flowchart.mmd)
+- [docs/REAL_MODE_SEQUENCE_FLOW.md](./docs/REAL_MODE_SEQUENCE_FLOW.md)
+- [docs/diagrams/real_mode_sequence.mmd](./docs/diagrams/real_mode_sequence.mmd)
+- [docs/diagrams/real_mode_flowchart.mmd](./docs/diagrams/real_mode_flowchart.mmd)
 
 ## Development Validation
 

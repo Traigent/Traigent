@@ -40,11 +40,14 @@ export interface NativeTvlCompatibilityItem {
   feature: string;
   status: NativeTvlSupportStatus;
   reason: string;
+  used: boolean;
 }
 
 export interface NativeTvlCompatibilityReport {
   scope: 'native';
   items: NativeTvlCompatibilityItem[];
+  usedFeatures: string[];
+  warnings: string[];
 }
 
 export interface ObjectiveDefinition {

@@ -46,20 +46,20 @@ owns the dataset iteration and evaluation.
 
 In a more realistic demo, the app logic is separated:
 
-- agent/business logic: [agent.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/demos/arkia-sales-agent/src/agent.ts)
-- optimization wrapper: [trial.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/demos/arkia-sales-agent/src/trial.ts)
+- agent/business logic: [agent.ts](../../demos/arkia-sales-agent/src/agent.ts)
+- optimization wrapper: [trial.ts](../../demos/arkia-sales-agent/src/trial.ts)
 
 ## Where Injection Happens
 
 The injection point is inside the SDK runtime:
 
 1. the optimizer chooses a config
-2. the wrapper resolves the active config in [spec.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/optimization/spec.ts)
-3. the agent evaluator binds trial context in [agent.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/optimization/agent.ts)
+2. the wrapper resolves the active config in [spec.ts](../../src/optimization/spec.ts)
+3. the agent evaluator binds trial context in [agent.ts](../../src/optimization/agent.ts)
 4. your agent reads it via:
    - `trialConfig.config`
-   - [getTrialConfig()](/home/nimrodbu/Traigent_enterprise/traigent-js/src/core/context.ts#L162)
-   - [getTrialParam()](/home/nimrodbu/Traigent_enterprise/traigent-js/src/core/context.ts#L173)
+   - [getTrialConfig()](../../src/core/context.ts#L162)
+   - [getTrialParam()](../../src/core/context.ts#L173)
 5. the SDK evaluates outputs using your `evaluation` block
 
 For `seamless` mode in this checkout, config can reach your code in three ways:
@@ -70,10 +70,10 @@ For `seamless` mode in this checkout, config can reach your code in three ways:
 
 Framework interception flows through:
 
-- [openai/index.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/openai/index.ts)
-- [langchain/model.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/langchain/model.ts)
-- [vercel-ai/index.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/vercel-ai/index.ts)
-- [auto-wrap.ts](/home/nimrodbu/Traigent_enterprise/traigent-js/src/integrations/auto-wrap.ts)
+- [openai/index.ts](../../src/integrations/openai/index.ts)
+- [langchain/model.ts](../../src/integrations/langchain/model.ts)
+- [vercel-ai/index.ts](../../src/integrations/vercel-ai/index.ts)
+- [auto-wrap.ts](../../src/integrations/auto-wrap.ts)
 
 If you already have a few framework objects in scope, the least-friction path is:
 
@@ -90,7 +90,7 @@ const wrapped = autoWrapFrameworkTargets({
 
 Start with:
 
-- [00_agent_injection_map.mjs](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/quickstart/00_agent_injection_map.mjs)
+- [00_agent_injection_map.mjs](./00_agent_injection_map.mjs)
 
 That file is purpose-built to show:
 
@@ -101,4 +101,4 @@ That file is purpose-built to show:
 
 If you want minimal-change seamless adoption for hardcoded locals, read:
 
-- [examples/adoption/README.md](/home/nimrodbu/Traigent_enterprise/traigent-js/examples/adoption/README.md)
+- [examples/adoption/README.md](../adoption/README.md)
