@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 from traigent.config.backend_config import BackendConfig
-from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME
+from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 
 MAX_TIMEOUT_SECONDS = 600.0
 
@@ -15,13 +14,18 @@ MAX_TIMEOUT_SECONDS = 600.0
 class EnterpriseAdminConfig:
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
-    tenant_id: str | None = field(default_factory=lambda: os.getenv(TENANT_ENV_VAR))
+    tenant_id: str | None = field(
+        default_factory=lambda: read_optional_env(TENANT_ENV_VAR)
+    )
     api_path: str = "/api/v1beta/admin"
     request_timeout: float = 10.0
     extra_headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.backend_origin = self.backend_origin.rstrip("/")
+        self.tenant_id = (
+            self.tenant_id.strip() or None if self.tenant_id is not None else None
+        )
         self.api_path = "/" + self.api_path.strip("/")
         if self.request_timeout <= 0:
             raise ValueError("request_timeout must be greater than 0")

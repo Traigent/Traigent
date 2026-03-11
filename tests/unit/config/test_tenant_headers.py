@@ -73,3 +73,33 @@ def test_client_configs_skip_tenant_header_without_env_or_override(monkeypatch) 
     ).build_headers()
 
     assert TENANT_HEADER_NAME not in headers
+
+
+def test_client_configs_treat_blank_env_values_as_missing(monkeypatch) -> None:
+    monkeypatch.setenv(TENANT_ENV_VAR, "   ")
+    monkeypatch.setenv(PROJECT_ENV_VAR, "")
+
+    observability_config = ObservabilityConfig(
+        backend_origin="https://backend.example",
+        api_key="sk-test",  # pragma: allowlist secret
+    )
+    headers = observability_config.build_headers()
+
+    assert observability_config.tenant_id is None
+    assert observability_config.project_id is None
+    assert TENANT_HEADER_NAME not in headers
+    assert observability_config.api_path == "/api/v1beta/observability"
+
+
+def test_client_configs_normalize_explicit_blank_overrides() -> None:
+    config = EvaluationConfig(
+        backend_origin="https://backend.example",
+        api_key="sk-test",  # pragma: allowlist secret
+        tenant_id="   ",
+        project_id="  ",
+    )
+
+    assert config.tenant_id is None
+    assert config.project_id is None
+    assert TENANT_HEADER_NAME not in config.build_headers()
+    assert config.api_path == "/api/v1beta"
