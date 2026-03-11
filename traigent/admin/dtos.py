@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from traigent.observability.dtos import PaginationInfo
 from traigent.security.tenant import TenantStatus, TenantTier
 
 
-class TenantMembershipRole(str, Enum):
+class TenantMembershipRole(StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
     MEMBER = "member"
     VIEWER = "viewer"
 
 
-class TenantMembershipStatus(str, Enum):
+class TenantMembershipStatus(StrEnum):
     ACTIVE = "active"
     INVITED = "invited"
     SUSPENDED = "suspended"
 
 
-class SSOProviderType(str, Enum):
+class SSOProviderType(StrEnum):
     OIDC = "oidc"
     SAML = "saml"
 

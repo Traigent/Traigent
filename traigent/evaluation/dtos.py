@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from traigent.prompts.dtos import PaginationInfo
@@ -17,38 +17,38 @@ def _coalesce_not_none(candidate: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-class MeasureValueType(str, Enum):
+class MeasureValueType(StrEnum):
     NUMERIC = "numeric"
     CATEGORICAL = "categorical"
     BOOLEAN = "boolean"
 
 
-class EvaluationTargetType(str, Enum):
+class EvaluationTargetType(StrEnum):
     CONFIGURATION_RUN = "configuration_run"
     EXPERIMENT_RUN = "experiment_run"
     OBSERVABILITY_OBSERVATION = "observability_observation"
     OBSERVABILITY_TRACE = "observability_trace"
 
 
-class ScoreSource(str, Enum):
+class ScoreSource(StrEnum):
     MANUAL = "manual"
     EVALUATOR = "evaluator"
 
 
-class EvaluatorRunStatus(str, Enum):
+class EvaluatorRunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-class AnnotationQueueStatus(str, Enum):
+class AnnotationQueueStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     ARCHIVED = "archived"
 
 
-class AnnotationQueueItemStatus(str, Enum):
+class AnnotationQueueItemStatus(StrEnum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -216,7 +216,7 @@ class EvaluationTargetRefDTO:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> EvaluationTargetRefDTO:
         return cls(
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             target_id=str(payload.get("target_id", "")),
         )
 
@@ -255,7 +255,7 @@ class EvaluatorDefinitionDTO:
             primary_measure_id=str(
                 payload.get("primary_measure_id") or payload.get("measure_id", "")
             ),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             judge_config=JudgeConfigDTO.from_dict(payload.get("judge_config") or {}),
             sampling_rate=float(payload.get("sampling_rate", 1.0)),
             target_filters=dict(payload.get("target_filters") or {}),
@@ -302,7 +302,7 @@ class EvaluatorRunDTO:
             id=str(payload.get("id", "")),
             evaluator_id=str(payload.get("evaluator_id", "")),
             measure_id=str(payload.get("measure_id", "")),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             target_id=str(payload.get("target_id", "")),
             status=EvaluatorRunStatus(
                 payload.get("status", EvaluatorRunStatus.PENDING.value)
@@ -346,7 +346,7 @@ class BackfillResultDTO:
     def from_dict(cls, payload: dict[str, Any]) -> BackfillResultDTO:
         return cls(
             evaluator_id=str(payload.get("evaluator_id", "")),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             submitted_count=int(payload.get("submitted_count", 0)),
             skipped_count=int(payload.get("skipped_count", 0)),
             skipped_target_ids=[
@@ -387,7 +387,7 @@ class ScoreRecordDTO:
             id=str(payload.get("id", "")),
             measure_id=str(payload.get("measure_id", "")),
             evaluator_run_id=payload.get("evaluator_run_id"),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             target_id=str(payload.get("target_id", "")),
             source=ScoreSource(payload.get("source", ScoreSource.MANUAL.value)),
             value=payload.get("value"),
@@ -431,7 +431,7 @@ class AnnotationQueueDTO:
             id=str(payload.get("id", "")),
             name=str(payload.get("name", "")),
             description=payload.get("description"),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             measure_ids=[str(item) for item in payload.get("measure_ids") or []],
             status=AnnotationQueueStatus(
                 payload.get("status", AnnotationQueueStatus.ACTIVE.value)
@@ -470,7 +470,7 @@ class AnnotationQueueItemDTO:
         return cls(
             id=str(payload.get("id", "")),
             queue_id=str(payload.get("queue_id", "")),
-            target_type=EvaluationTargetType(payload.get("target_type")),
+            target_type=EvaluationTargetType(str(payload.get("target_type", ""))),
             target_id=str(payload.get("target_id", "")),
             target_snapshot=dict(payload.get("target_snapshot") or {}),
             status=AnnotationQueueItemStatus(
