@@ -9,6 +9,8 @@ import {
   toHybridConfigSpace,
 } from "../../../src/index.js";
 import { ValidationError } from "../../../src/core/errors.js";
+import { clearRegisteredFrameworkTargets } from "../../../src/integrations/registry.js";
+import { createTraigentOpenAI } from "../../../src/integrations/openai/index.js";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -490,6 +492,145 @@ describe("optimization spec helpers", () => {
     );
   });
 
+  it("defaults seamless autoOverrideFrameworks to true and exposes framework diagnostics", () => {
+    clearRegisteredFrameworkTargets();
+    createTraigentOpenAI({
+      chat: {
+        completions: {
+          create: async () => ({ usage: {} }),
+        },
+      },
+    });
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "best"]),
+      },
+      objectives: ["accuracy"],
+      injection: {
+        mode: "seamless",
+      },
+      evaluation: {
+        data: [{ input: "x", output: "x" }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+    })(async (value: string) => value);
+
+    expect(getOptimizationSpec(wrapped).injection).toMatchObject({
+      mode: "seamless",
+      autoOverrideFrameworks: true,
+    });
+    expect(wrapped.frameworkAutoOverrideStatus()).toEqual({
+      autoOverrideFrameworks: true,
+      requestedTargets: undefined,
+      activeTargets: ["openai"],
+      selectedTargets: ["openai"],
+      enabled: true,
+      reason:
+        "Using all active registered framework targets for seamless interception.",
+    });
+    expect(wrapped.seamlessResolution()).toEqual({
+      path: "framework",
+      reason:
+        "Using all active registered framework targets for seamless interception.",
+      experimental: false,
+      targets: ["openai"],
+    });
+  });
+
+  it("can narrow or disable seamless framework auto-override", () => {
+    clearRegisteredFrameworkTargets();
+    createTraigentOpenAI({
+      chat: {
+        completions: {
+          create: async () => ({ usage: {} }),
+        },
+      },
+    });
+
+    const narrowed = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "best"]),
+      },
+      objectives: ["accuracy"],
+      injection: {
+        mode: "seamless",
+        frameworkTargets: ["langchain"],
+      },
+      evaluation: {
+        data: [{ input: "x", output: "x" }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+    })(async (value: string) => value);
+
+    expect(narrowed.frameworkAutoOverrideStatus()).toEqual({
+      autoOverrideFrameworks: true,
+      requestedTargets: ["langchain"],
+      activeTargets: ["openai"],
+      selectedTargets: [],
+      enabled: false,
+      reason: "None of the requested framework targets are currently registered.",
+    });
+    expect(narrowed.seamlessResolution()).toBeUndefined();
+
+    const disabled = optimize({
+      configurationSpace: {
+        model: param.enum(["cheap", "best"]),
+      },
+      objectives: ["accuracy"],
+      injection: {
+        mode: "seamless",
+        autoOverrideFrameworks: false,
+      },
+      evaluation: {
+        data: [{ input: "x", output: "x" }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+    })(async (value: string) => value);
+
+    expect(disabled.frameworkAutoOverrideStatus()).toEqual({
+      autoOverrideFrameworks: false,
+      requestedTargets: undefined,
+      activeTargets: ["openai"],
+      selectedTargets: [],
+      enabled: false,
+      reason:
+        "Framework auto-override is disabled for this seamless configuration.",
+    });
+    expect(disabled.seamlessResolution()).toBeUndefined();
+  });
+
+  it("rejects malformed seamless injection settings", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        injection: {
+          mode: "seamless",
+          autoOverrideFrameworks: "yes" as never,
+        },
+      }),
+    ).toThrow(/autoOverrideFrameworks must be a boolean/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        injection: {
+          mode: "seamless",
+          frameworkTargets: ["unknown"] as never,
+        },
+      }),
+    ).toThrow(/frameworkTargets\[0\] must be "openai", "langchain", or "vercel-ai"/i);
+  });
+
   it("treats structurally equal conditional enum defaults as equal even when object key order differs", () => {
     const wrapped = optimize({
       configurationSpace: {
@@ -926,5 +1067,236 @@ exploration:
         },
       }),
     ).toThrow(/constraints\.derived\[0\]\.require must be a non-empty string/i);
+  });
+
+  it("rejects malformed promotion policies and hybrid-only native budgets", async () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: [] as never,
+      }),
+    ).toThrow(/promotionPolicy must be an object/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          dominance: "strict_pareto" as never,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.dominance/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          alpha: 1,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.alpha must be in \(0, 1\)/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          adjust: "holm" as never,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.adjust/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          minEffect: [] as never,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.minEffect must be an object/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          chanceConstraints: {} as never,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.chanceConstraints must be an array/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          tieBreakers: [] as never,
+        },
+      }),
+    ).toThrow(/promotionPolicy\.tieBreakers must be an object/i);
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      budget: {
+        maxTrials: 2,
+        maxWallclockMs: 1000,
+      },
+      evaluation: {
+        data: [{ input: "x", output: "x" }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+    })(async (value: string) => value);
+
+    await expect(
+      wrapped.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+      }),
+    ).rejects.toThrow(/does not support budget\.maxTrials/i);
+  });
+
+  it("rejects malformed objective bands, evaluation config, and injection/execution modes", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: [
+          {
+            metric: "latency",
+            band: [] as never,
+          },
+        ],
+      }),
+    ).toThrow(/band must be an object/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: [
+          {
+            metric: "latency",
+            band: { low: 10, high: 5 },
+          },
+        ],
+      }),
+    ).toThrow(/band\.low must be less than .*band\.high/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        evaluation: {
+          data: [] as never,
+          loadData: async () => [],
+        },
+      }),
+    ).toThrow(/either evaluation\.data or evaluation\.loadData/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        evaluation: {
+          inputField: "   ",
+        },
+      }),
+    ).toThrow(/evaluation\.inputField must be a non-empty string/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        injection: {
+          mode: "magic" as never,
+        },
+      }),
+    ).toThrow(/injection\.mode/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        execution: {
+          mode: "edge" as never,
+        },
+      }),
+    ).toThrow(/execution\.mode must be "native" or "hybrid"/i);
+  });
+
+  it("rejects malformed chance-constraint entries and aggregation maps", () => {
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          chanceConstraints: [{} as never],
+        },
+      }),
+    ).toThrow(/chanceConstraints\[0\]\.name must be a non-empty string/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        promotionPolicy: {
+          chanceConstraints: [
+            {
+              name: "quality",
+              threshold: 2,
+              confidence: 0.95,
+            },
+          ],
+        },
+      }),
+    ).toThrow(/chanceConstraints\[0\]\.threshold must be in \[0, 1\]/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(["a"]),
+        },
+        objectives: ["accuracy"],
+        evaluation: {
+          aggregation: 123 as never,
+        },
+      }),
+    ).toThrow(/evaluation\.aggregation must be a strategy string or a per-metric object/i);
   });
 });

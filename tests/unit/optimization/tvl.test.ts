@@ -486,4 +486,439 @@ promotion_policy:
 `),
     ).toThrow(/threshold must be in \[0, 1\]/i);
   });
+
+  it("supports band center/tolerance, strategy objects, source loading, and legacy promotion metadata", async () => {
+    const loaded = await loadTvlSpec({
+      source: `
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.1, 0.9]
+objectives:
+  - name: latency
+    band:
+      center: 100
+      tol: 20
+    test: TOST
+    alpha: 0.1
+exploration:
+  strategy:
+    type: grid
+promotion:
+  gate: manual_review
+`,
+    });
+
+    expect(loaded.metadata.strategyType).toBe("grid");
+    expect(loaded.spec.objectives).toEqual([
+      {
+        kind: "banded",
+        metric: "latency",
+        band: { low: 80, high: 120 },
+        bandTest: "TOST",
+        bandAlpha: 0.1,
+        weight: 1,
+      },
+    ]);
+  });
+
+  it("supports require aliases and boolean-expression normalization", () => {
+    const parsed = parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["cheap", "accurate"]
+objectives:
+  - name: accuracy
+    direction: maximize
+constraints:
+  structural:
+    - require: params.model = "accurate" or params.model == "cheap"
+  derived:
+    - require: not (metrics.accuracy < 0.8)
+`);
+
+    expect(parsed.spec.constraints).toEqual({
+      structural: [
+        { require: 'params.model = "accurate" or params.model == "cheap"' },
+      ],
+      derived: [{ require: "not (metrics.accuracy < 0.8)" }],
+    });
+  });
+
+  it("handles a minimal TVL spec without optional sections", () => {
+    const parsed = parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["cheap"]
+objectives:
+  - name: accuracy
+    direction: maximize
+`);
+
+    expect(parsed.metadata).toEqual({
+      strategyType: undefined,
+    });
+    expect(parsed.spec.constraints).toBeUndefined();
+    expect(parsed.spec.defaultConfig).toBeUndefined();
+    expect(parsed.spec.budget).toBeUndefined();
+    expect(parsed.spec.execution).toBeUndefined();
+  });
+
+  it("parses float variables without explicit steps and rejects malformed min_effect values", () => {
+    const parsed = parseTvlSpec(`
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.1, 0.9]
+objectives:
+  - name: accuracy
+    direction: maximize
+`);
+
+    expect(parsed.spec.configurationSpace.temperature).toEqual({
+      type: "float",
+      min: 0.1,
+      max: 0.9,
+      scale: "linear",
+    });
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  min_effect: []
+`),
+    ).toThrow(/min_effect must be an object/i);
+  });
+
+  it("parses spec.version numbers and promotion tie breakers", () => {
+    const parsed = parseTvlSpec(`
+spec:
+  version: 1
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["cheap"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  tie_breakers:
+    accuracy: maximize
+`);
+
+    expect(parsed.metadata).toEqual({
+      strategyType: undefined,
+    });
+    expect(parsed.spec.promotionPolicy).toEqual({
+      tieBreakers: {
+        accuracy: "maximize",
+      },
+    });
+  });
+
+  it("rejects invalid promotion policy and exploration budget shapes", () => {
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  dominance: strict_pareto
+`),
+    ).toThrow(/dominance must be "epsilon_pareto"/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  chance_constraints: {}
+`),
+    ).toThrow(/chance_constraints must be an array/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  budgets:
+    max_trials: 0
+`),
+    ).toThrow(/max_trials must be a positive integer/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  budgets:
+    max_wallclock_s: 0
+`),
+    ).toThrow(/max_wallclock_s must be a positive number/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  strategy:
+    type: annealing
+`),
+    ).toThrow(/not supported by the JS SDK/i);
+  });
+
+  it("rejects malformed tvars, objectives, and constraint entry shapes", () => {
+    expect(() => parseTvlSpec(`tvars: []`)).toThrow(
+      /TVL tvars must be a non-empty array/i,
+    );
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: choice
+    type: tuple[str,str]
+    domain:
+      values:
+        - []
+objectives:
+  - name: accuracy
+    direction: maximize
+`),
+    ).toThrow(/must be a non-empty tuple-like array/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: scorer
+    type: callable[Ranker]
+    domain:
+      values: [""]
+objectives:
+  - name: accuracy
+    direction: maximize
+`),
+    ).toThrow(/must be a non-empty string for callable variables/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: []
+objectives:
+  - name: accuracy
+    direction: maximize
+`),
+    ).toThrow(/domain\.values must be a non-empty array/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - {}
+`),
+    ).toThrow(/objectives\[0\]\.name must be a non-empty string/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: latency
+    band: []
+`),
+    ).toThrow(/objectives\[0\]\.band must be an object/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: latency
+    band:
+      low: 1
+      high: 2
+    test: WELCH
+`),
+    ).toThrow(/objectives\[0\]\.test must be "TOST"/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+constraints:
+  structural: {}
+`),
+    ).toThrow(/constraints\.structural must be an array/i);
+  });
+
+  it("preserves optional constraint ids/messages and rejects malformed entry metadata", () => {
+    const parsed = parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["cheap", "accurate"]
+objectives:
+  - name: accuracy
+    direction: maximize
+constraints:
+  structural:
+    - id: choose_model
+      expr: params.model == "cheap"
+      errorMessage: use the cheaper model
+  derived:
+    - id: floor
+      expr: metrics.accuracy >= 0.8
+      error_message: accuracy floor
+`);
+
+    expect(parsed.spec.constraints).toEqual({
+      structural: [
+        {
+          id: "choose_model",
+          require: 'params.model == "cheap"',
+          errorMessage: "use the cheaper model",
+        },
+      ],
+      derived: [
+        {
+          id: "floor",
+          require: "metrics.accuracy >= 0.8",
+          errorMessage: "accuracy floor",
+        },
+      ],
+    });
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - {}
+objectives:
+  - name: accuracy
+    direction: maximize
+`),
+    ).toThrow(/tvars\[0\]\.name must be a non-empty string/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: ""
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+`),
+    ).toThrow(/tvars\[0\]\.type must be a non-empty string/i);
+  });
+
+  it("rejects malformed tie breakers and unsupported strategy metadata", () => {
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  tie_breakers: []
+`),
+    ).toThrow(/promotion_policy\.tie_breakers must be an object/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+promotion_policy:
+  tie_breakers:
+    accuracy: sideways
+`),
+    ).toThrow(/tie_breakers\.accuracy must be "maximize" or "minimize"/i);
+
+    expect(() =>
+      parseTvlSpec(`
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      values: ["a"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  strategy:
+    type: ParetoFrontier
+`),
+    ).toThrow(/not supported by the JS SDK/i);
+  });
 });

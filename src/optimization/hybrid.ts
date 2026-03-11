@@ -9,6 +9,7 @@ import {
   type Metrics,
   type TrialConfig,
 } from "../dtos/trial.js";
+import { resolveEvaluationRows } from "./agent.js";
 import { stableValueEquals } from "./stable-value.js";
 import type {
   BandedObjectiveDefinition,
@@ -17,6 +18,17 @@ import type {
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
   ObjectiveDefinition,
+  OptimizationConvergencePoint,
+  OptimizationSessionDeleteOptions,
+  OptimizationSessionDeleteResponse,
+  OptimizationSessionFinalizeOptions,
+  OptimizationSessionFinalizationResponse,
+  OptimizationSessionRequestOptions,
+  OptimizationSessionStatusMetadata,
+  OptimizationSessionStatusSummary,
+  OptimizationSessionStatusResponse,
+  OptimizationReportingSummary,
+  OptimizationReportingTrialHistoryEntry,
   OptimizationResult,
   OptimizationSpec,
   OptimizationTrialRecord,
@@ -45,6 +57,18 @@ interface ValidatedHybridOptimizeOptions extends HybridOptimizeOptions {
   backendUrl: string;
   apiKey: string;
   requestTimeoutMs: number;
+}
+
+interface ValidatedHybridRequestOptions {
+  backendUrl: string;
+  apiKey: string;
+  requestTimeoutMs: number;
+  signal?: AbortSignal;
+}
+
+interface HybridConnectionOptions {
+  backendUrl?: string;
+  apiKey?: string;
 }
 
 interface SerializedHybridObjective {
@@ -171,17 +195,6 @@ function normalizeDuration(
   }
 
   return fallbackDuration;
-}
-
-async function resolveEvaluationRows(
-  spec: NormalizedOptimizationSpec,
-): Promise<readonly unknown[]> {
-  if (spec.evaluation?.data) return spec.evaluation.data;
-  if (spec.evaluation?.loadData) return spec.evaluation.loadData();
-
-  throw new ValidationError(
-    "optimize() requires spec.evaluation.data or spec.evaluation.loadData.",
-  );
 }
 
 async function executeTrial(
@@ -508,7 +521,7 @@ export function normalizeBackendApiBase(rawUrl: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function resolveBackendUrl(options: HybridOptimizeOptions): string {
+function resolveBackendUrl(options: HybridConnectionOptions): string {
   return (
     options.backendUrl ??
     process.env["TRAIGENT_BACKEND_URL"] ??
@@ -517,7 +530,7 @@ function resolveBackendUrl(options: HybridOptimizeOptions): string {
   );
 }
 
-function resolveApiKey(options: HybridOptimizeOptions): string {
+function resolveApiKey(options: HybridConnectionOptions): string {
   return options.apiKey ?? process.env["TRAIGENT_API_KEY"] ?? "";
 }
 
@@ -606,6 +619,15 @@ function validateHybridOptimizeOptions(
     );
   }
 
+  if (
+    options.includeFullHistory !== undefined &&
+    typeof options.includeFullHistory !== "boolean"
+  ) {
+    throw new ValidationError(
+      "Hybrid optimize() includeFullHistory must be a boolean when provided.",
+    );
+  }
+
   const nativeOnlyKeys = [
     "trialConcurrency",
     "plateau",
@@ -637,6 +659,42 @@ function validateHybridOptimizeOptions(
     backendUrl,
     apiKey,
     requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+  };
+}
+
+function validateHybridRequestOptions(
+  options: OptimizationSessionRequestOptions | undefined,
+): ValidatedHybridRequestOptions {
+  if (options !== undefined && typeof options !== "object") {
+    throw new ValidationError("Session request options must be an object.");
+  }
+
+  if (
+    options?.requestTimeoutMs !== undefined &&
+    (!Number.isInteger(options.requestTimeoutMs) ||
+      options.requestTimeoutMs <= 0)
+  ) {
+    throw new ValidationError(
+      "Session request options requestTimeoutMs must be a positive integer when provided.",
+    );
+  }
+
+  const unresolvedBackendUrl = resolveBackendUrl(options ?? {});
+  validateStringOption(
+    unresolvedBackendUrl,
+    "Session requests require backendUrl, TRAIGENT_BACKEND_URL, or TRAIGENT_API_URL.",
+  );
+  const apiKey = resolveApiKey(options ?? {});
+  validateStringOption(
+    apiKey,
+    "Session requests require apiKey or TRAIGENT_API_KEY.",
+  );
+
+  return {
+    backendUrl: normalizeBackendApiBase(unresolvedBackendUrl),
+    apiKey,
+    requestTimeoutMs: options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    signal: options?.signal,
   };
 }
 
@@ -919,6 +977,7 @@ function finalizeHybridResult(
   const bestConfig = isPlainObject(finalized?.best_config)
     ? finalized?.best_config
     : bestTrial?.config;
+  const reporting = createReportingSummary(finalized);
 
   return {
     mode: "hybrid",
@@ -930,9 +989,73 @@ function finalizeHybridResult(
     trials: orderedTrials,
     stopReason,
     totalCostUsd,
+    reporting,
     metadata,
     errorMessage,
   };
+}
+
+function toOptionalFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function createReportingSummary(
+  finalized: HybridFinalizationResponse | undefined,
+): OptimizationReportingSummary | undefined {
+  if (!finalized) {
+    return undefined;
+  }
+
+  const reporting: OptimizationReportingSummary = {
+    totalTrials: toOptionalFiniteNumber(finalized.total_trials),
+    successfulTrials: toOptionalFiniteNumber(finalized.successful_trials),
+    totalDuration: toOptionalFiniteNumber(finalized.total_duration),
+    costSavings: toOptionalFiniteNumber(finalized.cost_savings),
+    convergenceHistory: Array.isArray(finalized.convergence_history)
+      ? normalizeConvergenceHistory(finalized.convergence_history)
+      : undefined,
+    fullHistory: Array.isArray(finalized.full_history)
+      ? normalizeFullHistory(finalized.full_history)
+      : undefined,
+  };
+
+  if (
+    reporting.totalTrials === undefined &&
+    reporting.successfulTrials === undefined &&
+    reporting.totalDuration === undefined &&
+    reporting.costSavings === undefined &&
+    reporting.convergenceHistory === undefined &&
+    reporting.fullHistory === undefined
+  ) {
+    return undefined;
+  }
+
+  return reporting;
+}
+
+function normalizeConvergenceHistory(
+  entries: unknown[],
+): readonly OptimizationConvergencePoint[] | undefined {
+  const normalized = entries.filter((entry): entry is OptimizationConvergencePoint =>
+    isPlainObject(entry),
+  );
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeFullHistory(
+  entries: unknown[],
+): readonly OptimizationReportingTrialHistoryEntry[] | undefined {
+  const normalized = entries.filter(
+    (entry): entry is OptimizationReportingTrialHistoryEntry =>
+      isPlainObject(entry) &&
+      typeof entry["session_id"] === "string" &&
+      typeof entry["trial_id"] === "string" &&
+      isPlainObject(entry["metrics"]) &&
+      typeof entry["duration"] === "number" &&
+      Number.isFinite(entry["duration"]) &&
+      typeof entry["status"] === "string",
+  );
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 interface HybridFetchResponse {
@@ -940,6 +1063,21 @@ interface HybridFetchResponse {
   status: number;
   json: () => Promise<unknown>;
   text: () => Promise<string>;
+}
+
+interface HybridSessionStatusPayload {
+  session_id?: string;
+  status?: string;
+  progress?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+interface HybridSuccessEnvelope<T> {
+  success?: boolean;
+  message?: string;
+  data?: T;
+  meta?: Record<string, unknown>;
 }
 
 interface HybridErrorPayload {
@@ -1028,15 +1166,18 @@ class HybridSessionClient {
 
   async finalizeSession(
     sessionId: string,
+    includeFullHistory: boolean,
     signal: AbortSignal | undefined,
   ): Promise<HybridFinalizationResponse> {
-    return this.requestJson<HybridFinalizationResponse>(
+    const response = await this.requestJson<
+      HybridFinalizationResponse | HybridSuccessEnvelope<HybridFinalizationResponse>
+    >(
       "POST",
       `/sessions/${sessionId}/finalize`,
       {
         body: {
           session_id: sessionId,
-          include_full_history: false,
+          include_full_history: includeFullHistory,
           metadata: {
             sdk: "js",
             mode: "hybrid",
@@ -1045,6 +1186,36 @@ class HybridSessionClient {
         signal,
       },
     );
+    return normalizeHybridFinalizationPayload(sessionId, response);
+  }
+
+  async getSessionStatus(
+    sessionId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<HybridSessionStatusPayload> {
+    return this.requestJson<HybridSessionStatusPayload>(
+      "GET",
+      `/sessions/${sessionId}`,
+      { signal },
+    );
+  }
+
+  async deleteSession(
+    sessionId: string,
+    cascade: boolean,
+    signal: AbortSignal | undefined,
+  ): Promise<OptimizationSessionDeleteResponse> {
+    const encodedCascade = cascade ? "true" : "false";
+    const response = await this.requestJson<
+      | OptimizationSessionDeleteResponse
+      | HybridSuccessEnvelope<Record<string, unknown>>
+      | undefined
+    >(
+      "DELETE",
+      `/sessions/${sessionId}?cascade=${encodedCascade}`,
+      { signal },
+    );
+    return normalizeSessionDeleteResponse(sessionId, response);
   }
 
   private async requestJson<T>(
@@ -1139,6 +1310,246 @@ class HybridSessionClient {
       }
     }
   }
+}
+
+function normalizeSessionStatusResponse(
+  sessionId: string,
+  payload:
+    | HybridSessionStatusPayload
+    | HybridSuccessEnvelope<HybridSessionStatusPayload>,
+): OptimizationSessionStatusResponse {
+  const source = unwrapSuccessEnvelope(payload);
+  return {
+    ...source,
+    sessionId:
+      typeof source["session_id"] === "string" && source["session_id"].length > 0
+        ? source["session_id"]
+        : sessionId,
+    progress: normalizeSessionProgress(source["progress"]),
+    metadata: isPlainObject(source["metadata"])
+      ? (source["metadata"] as OptimizationSessionStatusMetadata)
+      : undefined,
+  };
+}
+
+function normalizeSessionDeleteResponse(
+  sessionId: string,
+  payload:
+    | OptimizationSessionDeleteResponse
+    | HybridSuccessEnvelope<Record<string, unknown>>
+    | undefined,
+): OptimizationSessionDeleteResponse {
+  if (!payload) {
+    return {
+      success: true,
+      sessionId,
+    };
+  }
+
+  const source = unwrapSuccessEnvelope(payload);
+  const deleted =
+    typeof source["deleted"] === "boolean"
+      ? source["deleted"]
+      : typeof source["success"] === "boolean"
+        ? source["success"]
+        : true;
+  const normalizedSessionId =
+    typeof source["session_id"] === "string"
+      ? source["session_id"]
+      : typeof source["sessionId"] === "string"
+        ? source["sessionId"]
+        : sessionId;
+  const message =
+    typeof payload.message === "string"
+      ? payload.message
+      : typeof source["message"] === "string"
+        ? source["message"]
+        : undefined;
+  const metadata = isPlainObject(source["metadata"])
+    ? (source["metadata"] as Record<string, unknown>)
+    : undefined;
+
+  return {
+    ...(isPlainObject(source) ? source : {}),
+    success: deleted,
+    deleted,
+    cascade:
+      typeof source["cascade"] === "boolean" ? source["cascade"] : undefined,
+    sessionId: normalizedSessionId,
+    message,
+    metadata,
+  };
+}
+
+function normalizeHybridFinalizationPayload(
+  sessionId: string,
+  payload:
+    | HybridFinalizationResponse
+    | HybridSuccessEnvelope<HybridFinalizationResponse>,
+): HybridFinalizationResponse {
+  const source = unwrapSuccessEnvelope(payload);
+
+  return {
+    ...source,
+    session_id:
+      typeof source["session_id"] === "string" && source["session_id"].length > 0
+        ? source["session_id"]
+        : sessionId,
+    best_config: isPlainObject(source["best_config"])
+      ? (source["best_config"] as Record<string, unknown>)
+      : undefined,
+    best_metrics: isPlainObject(source["best_metrics"])
+      ? (source["best_metrics"] as Record<string, unknown>)
+      : undefined,
+    metadata: isPlainObject(source["metadata"])
+      ? (source["metadata"] as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function unwrapSuccessEnvelope(payload: unknown): Record<string, unknown> {
+  const wrappedData = isPlainObject(
+    (payload as HybridSuccessEnvelope<Record<string, unknown>>).data,
+  )
+    ? ((payload as HybridSuccessEnvelope<Record<string, unknown>>)
+        .data as Record<string, unknown>)
+    : undefined;
+
+  return (wrappedData ??
+    ((payload as unknown) as Record<string, unknown>)) as Record<string, unknown>;
+}
+
+function normalizeSessionProgress(
+  value: unknown,
+): OptimizationSessionStatusSummary | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const progress: OptimizationSessionStatusSummary = {};
+
+  const completed = source["completed"];
+  if (typeof completed === "number" && Number.isFinite(completed)) {
+    progress.completed = completed;
+  }
+
+  const total = source["total"];
+  if (typeof total === "number" && Number.isFinite(total)) {
+    progress.total = total;
+  }
+
+  const failed = source["failed"];
+  if (typeof failed === "number" && Number.isFinite(failed)) {
+    progress.failed = failed;
+  }
+
+  for (const [key, nestedValue] of Object.entries(source)) {
+    if (key === "completed" || key === "total" || key === "failed") {
+      continue;
+    }
+    progress[key] = nestedValue;
+  }
+
+  return Object.keys(progress).length > 0 ? progress : undefined;
+}
+
+function normalizeSessionFinalizationResponse(
+  sessionId: string,
+  payload:
+    | HybridFinalizationResponse
+    | HybridSuccessEnvelope<HybridFinalizationResponse>,
+): OptimizationSessionFinalizationResponse {
+  const finalized = normalizeHybridFinalizationPayload(sessionId, payload);
+  const bestMetricsParse = MetricsSchema.safeParse(finalized.best_metrics);
+  return {
+    sessionId: finalized.session_id,
+    bestConfig: isPlainObject(finalized.best_config)
+      ? finalized.best_config
+      : undefined,
+    bestMetrics: bestMetricsParse.success ? bestMetricsParse.data : null,
+    stopReason:
+      typeof finalized.stop_reason === "string" || finalized.stop_reason === null
+        ? finalized.stop_reason
+        : undefined,
+    reporting: createReportingSummary(finalized),
+    metadata: finalized.metadata,
+  };
+}
+
+function validateHybridFinalizeOptions(
+  options: OptimizationSessionFinalizeOptions | undefined,
+): ValidatedHybridRequestOptions & { includeFullHistory: boolean } {
+  if (
+    options?.includeFullHistory !== undefined &&
+    typeof options.includeFullHistory !== "boolean"
+  ) {
+    throw new ValidationError(
+      "Session finalization includeFullHistory must be a boolean when provided.",
+    );
+  }
+
+  const resolved = validateHybridRequestOptions(options);
+  return {
+    ...resolved,
+    includeFullHistory: options?.includeFullHistory ?? false,
+  };
+}
+
+export async function getOptimizationSessionStatus(
+  sessionId: string,
+  options?: OptimizationSessionRequestOptions,
+): Promise<OptimizationSessionStatusResponse> {
+  validateStringOption(sessionId, "Session status requires a non-empty sessionId.");
+  const resolved = validateHybridRequestOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const payload = await client.getSessionStatus(sessionId, resolved.signal);
+  return normalizeSessionStatusResponse(sessionId, payload);
+}
+
+export async function deleteOptimizationSession(
+  sessionId: string,
+  options?: OptimizationSessionDeleteOptions,
+): Promise<OptimizationSessionDeleteResponse> {
+  validateStringOption(sessionId, "Session deletion requires a non-empty sessionId.");
+  const resolved = validateHybridRequestOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const response = await client.deleteSession(
+    sessionId,
+    options?.cascade ?? false,
+    resolved.signal,
+  );
+  return response;
+}
+
+export async function finalizeOptimizationSession(
+  sessionId: string,
+  options?: OptimizationSessionFinalizeOptions,
+): Promise<OptimizationSessionFinalizationResponse> {
+  validateStringOption(
+    sessionId,
+    "Session finalization requires a non-empty sessionId.",
+  );
+  const resolved = validateHybridFinalizeOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const response = await client.finalizeSession(
+    sessionId,
+    resolved.includeFullHistory,
+    resolved.signal,
+  );
+  return normalizeSessionFinalizationResponse(sessionId, response);
 }
 
 export async function runHybridOptimization(
@@ -1245,6 +1656,9 @@ export async function runHybridOptimization(
         sessionId,
         {
           session_id: sessionId,
+          // The typed backend session is authoritative and persists full trial
+          // state server-side, so the client only needs to send recent results
+          // as context instead of replaying the entire history every turn.
           previous_results: previousResults.slice(-5),
           request_metadata: {
             dataset_size: evaluationRows.length,
@@ -1331,7 +1745,11 @@ export async function runHybridOptimization(
   } finally {
     if (sessionId) {
       try {
-        finalization = await client.finalizeSession(sessionId, undefined);
+        finalization = await client.finalizeSession(
+          sessionId,
+          options.includeFullHistory ?? false,
+          undefined,
+        );
         backendReason = resolveBackendStopReason(
           finalization.stop_reason,
           backendReason,

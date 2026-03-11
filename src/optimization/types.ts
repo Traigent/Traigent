@@ -3,8 +3,28 @@ import type { Metrics, TrialConfig } from "../dtos/trial.js";
 export type ObjectiveDirection = "maximize" | "minimize";
 export type BuiltInObjectiveName = "accuracy" | "cost" | "latency";
 export type ParamScale = "linear" | "log";
+export type InjectionMode = "context" | "parameter" | "seamless";
+export type ExecutionContract = "agent" | "trial";
 export type ParameterConditionValue = string | number | boolean;
 export type ParameterConditions = Record<string, ParameterConditionValue>;
+export type AggregationStrategy = "mean" | "median" | "sum" | "min" | "max";
+export type FrameworkTarget = "openai" | "langchain" | "vercel-ai";
+
+export interface FrameworkAutoOverrideStatus {
+  autoOverrideFrameworks: boolean;
+  requestedTargets?: readonly FrameworkTarget[];
+  activeTargets: readonly FrameworkTarget[];
+  selectedTargets: readonly FrameworkTarget[];
+  enabled: boolean;
+  reason: string;
+}
+
+export interface SeamlessResolution {
+  path: "framework";
+  reason: string;
+  experimental: boolean;
+  targets?: readonly FrameworkTarget[];
+}
 
 export interface BandTarget {
   low?: number;
@@ -118,9 +138,56 @@ export interface LoadedTvlOptimizationSpec {
   };
 }
 
+export type EvaluationScoringFunction<Row = unknown, Output = unknown> = (
+  output: Output,
+  expectedOutput: unknown,
+  runtimeMetrics: Metrics,
+  row: Row,
+) => number | null | Promise<number | null>;
+
+export type EvaluationMetricFunction<Row = unknown, Output = unknown> = (
+  output: Output,
+  expectedOutput: unknown,
+  runtimeMetrics: Metrics,
+  row: Row,
+) => number | null | Promise<number | null>;
+
+export interface EvaluationContext<Row = unknown, Output = unknown> {
+  output: Output;
+  expectedOutput: unknown;
+  runtimeMetrics: Metrics;
+  row: Row;
+  config: TrialConfig["config"];
+}
+
+export interface EvaluationAggregationMap {
+  default?: AggregationStrategy;
+  [metric: string]: AggregationStrategy | undefined;
+}
+
+export type AgentCustomEvaluator<Row = unknown, Output = unknown> =
+  | ((context: EvaluationContext<Row, Output>) => Metrics | Promise<Metrics>)
+  | ((
+      agentFn: (input: unknown) => unknown | Promise<unknown>,
+      config: TrialConfig["config"],
+      row: Row,
+    ) => Metrics | Promise<Metrics>);
+
 export interface EvaluationSpec {
   data?: readonly unknown[];
   loadData?: () => Promise<readonly unknown[]>;
+  scoringFunction?: EvaluationScoringFunction;
+  metricFunctions?: Record<string, EvaluationMetricFunction>;
+  customEvaluator?: AgentCustomEvaluator;
+  inputField?: string;
+  expectedField?: string;
+  aggregation?: AggregationStrategy | EvaluationAggregationMap;
+}
+
+export interface InjectionSpec {
+  mode?: InjectionMode;
+  autoOverrideFrameworks?: boolean;
+  frameworkTargets?: readonly FrameworkTarget[];
 }
 
 export interface OptimizationExecutionSpec {
@@ -131,6 +198,7 @@ export interface OptimizationExecutionSpec {
   timeoutMs?: number;
   requestTimeoutMs?: number;
   trialConcurrency?: number;
+  contract?: ExecutionContract;
 }
 
 export interface OptimizationSpec {
@@ -144,6 +212,7 @@ export interface OptimizationSpec {
   autoLoadBest?: boolean;
   loadFrom?: string;
   evaluation?: EvaluationSpec;
+  injection?: InjectionSpec;
 }
 
 export interface NormalizedStandardObjectiveDefinition {
@@ -180,6 +249,7 @@ export interface NormalizedOptimizationSpec {
   autoLoadBest?: boolean;
   loadFrom?: string;
   evaluation?: EvaluationSpec;
+  injection?: Required<Pick<InjectionSpec, "mode">> & InjectionSpec;
 }
 
 export interface NativeOptimizeOptions {
@@ -211,9 +281,91 @@ export interface HybridOptimizeOptions {
   billingTier?: string;
   optimizationStrategy?: Record<string, unknown>;
   datasetMetadata?: Record<string, unknown>;
+  includeFullHistory?: boolean;
   timeoutMs?: number;
   requestTimeoutMs?: number;
   signal?: AbortSignal;
+}
+
+export interface OptimizationSessionRequestOptions {
+  backendUrl?: string;
+  apiKey?: string;
+  requestTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface OptimizationSessionDeleteOptions
+  extends OptimizationSessionRequestOptions {
+  /**
+   * When true, delete related backend session artifacts in addition to the
+   * session itself. Defaults to false for the public helper.
+   */
+  cascade?: boolean;
+}
+
+export interface OptimizationSessionFinalizeOptions
+  extends OptimizationSessionRequestOptions {
+  includeFullHistory?: boolean;
+}
+
+export type OptimizationSessionLifecycleStatus =
+  | "pending"
+  | "created"
+  | "active"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "PENDING"
+  | "CREATED"
+  | "ACTIVE"
+  | "PAUSED"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface OptimizationSessionStatusSummary {
+  completed?: number;
+  total?: number;
+  failed?: number;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionStatusMetadata {
+  function_name?: string;
+  dataset_size?: number;
+  objectives?: readonly string[];
+  created_at?: string | number;
+  experiment_id?: string;
+  experiment_run_id?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionStatusResponse {
+  sessionId: string;
+  status?: OptimizationSessionLifecycleStatus | string;
+  progress?: OptimizationSessionStatusSummary;
+  metadata?: OptimizationSessionStatusMetadata;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionDeleteResponse {
+  success: boolean;
+  sessionId: string;
+  deleted?: boolean;
+  cascade?: boolean;
+  message?: string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionFinalizationResponse {
+  sessionId: string;
+  bestConfig?: TrialConfig["config"];
+  bestMetrics?: Metrics | null;
+  stopReason?: string | null;
+  reporting?: OptimizationReportingSummary;
+  metadata?: Record<string, unknown>;
 }
 
 export type OptimizeOptions = NativeOptimizeOptions | HybridOptimizeOptions;
@@ -225,6 +377,32 @@ export interface OptimizationTrialRecord {
   metrics: Metrics;
   duration: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationConvergencePoint {
+  trial?: number;
+  score?: number;
+  [key: string]: unknown;
+}
+
+export interface OptimizationReportingTrialHistoryEntry {
+  session_id: string;
+  trial_id: string;
+  metrics: Metrics;
+  duration: number;
+  status: string;
+  outputs_sample?: readonly unknown[] | null;
+  error_message?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationReportingSummary {
+  totalTrials?: number;
+  successfulTrials?: number;
+  totalDuration?: number;
+  costSavings?: number;
+  convergenceHistory?: readonly OptimizationConvergencePoint[];
+  fullHistory?: readonly OptimizationReportingTrialHistoryEntry[];
 }
 
 export interface OptimizationResult {
@@ -242,6 +420,7 @@ export interface OptimizationResult {
     | "cancelled";
   totalCostUsd: number;
   sessionId?: string;
+  reporting?: OptimizationReportingSummary;
   metadata?: Record<string, unknown>;
   errorMessage?: string;
 }
@@ -274,4 +453,23 @@ export type NativeOptimizedFunction<T extends (...args: any[]) => any> = T & {
     result: OptimizationResult,
   ): TrialConfig["config"] | undefined;
   currentConfig(): TrialConfig["config"] | undefined;
+  /**
+   * Returns the current framework auto-override status for this optimized
+   * function. The result reflects the current framework registry state, not a
+   * historical snapshot from a previous optimization run.
+   */
+  frameworkAutoOverrideStatus(): FrameworkAutoOverrideStatus;
+  /**
+   * Returns the resolved seamless path for this optimized function when a
+   * seamless interception path is currently active.
+   *
+   * Returns `undefined` when:
+   * - the function is not configured with `injection.mode = "seamless"`, or
+   * - seamless mode is configured but no active framework targets are currently
+   *   registered for interception
+   *
+   * Use `frameworkAutoOverrideStatus()` to distinguish those cases and inspect
+   * why framework interception is or is not enabled.
+   */
+  seamlessResolution(): SeamlessResolution | undefined;
 };

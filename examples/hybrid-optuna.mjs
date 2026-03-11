@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 
-import { optimize, param } from "../dist/index.js";
+import OpenAI from "openai";
+
+import { autoWrapFrameworkTarget, optimize, param } from "../dist/index.js";
 
 export async function runExample() {
   const backendUrl =
@@ -13,41 +15,49 @@ export async function runExample() {
     );
   }
 
-  const runTrial = optimize({
+  const client = autoWrapFrameworkTarget(
+    new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "demo-key" }),
+  );
+
+  const answerQuestion = optimize({
     configurationSpace: {
       model: param.enum(["gpt-4o-mini", "gpt-4o"]),
       temperature: param.float({ min: 0, max: 1, step: 0.2 }),
     },
     objectives: ["accuracy", "cost"],
     evaluation: {
-      data: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      data: [
+        { input: "hello", output: "HELLO!" },
+        { input: "world", output: "WORLD!" },
+      ],
+      scoringFunction: (output, expectedOutput) =>
+        output === expectedOutput ? 1 : 0,
+      metricFunctions: {
+        cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
+          String((row.input ?? "")).length > 4 ? 0.2 : 0.05,
+      },
     },
-  })(async (trialConfig) => {
-    const model = String(trialConfig.config.model);
-    const temperature = Number(trialConfig.config.temperature);
+    injection: {
+      mode: "seamless",
+    },
+  })(async (input) => {
+    const response = await client.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      temperature: 0.9,
+      messages: [{ role: "user", content: String(input) }],
+    });
 
-    return {
-      metrics: {
-        accuracy:
-          model === "gpt-4o"
-            ? 0.88 - Math.abs(temperature - 0.4) * 0.05
-            : 0.78 - Math.abs(temperature - 0.2) * 0.04,
-        cost: model === "gpt-4o" ? 0.35 : 0.08,
-      },
-      metadata: {
-        model,
-        temperature,
-      },
-    };
+    return response.choices[0]?.message?.content ?? "";
   });
 
-  return runTrial.optimize({
+  return answerQuestion.optimize({
     mode: "hybrid",
     algorithm: "optuna",
     maxTrials: 8,
     backendUrl,
     apiKey,
     timeoutMs: 5_000,
+    includeFullHistory: true,
   });
 }
 

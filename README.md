@@ -62,7 +62,7 @@ native-safe features.
 ```ts
 import { optimize, param } from "@traigent/sdk";
 
-const evaluatePrompt = optimize({
+const answerQuestion = optimize({
   configurationSpace: {
     model: param.enum(["cheap", "accurate"]),
     temperature: param.float({
@@ -77,23 +77,29 @@ const evaluatePrompt = optimize({
     maxCostUsd: 2,
   },
   evaluation: {
-    data: [{ id: 1 }, { id: 2 }],
-  },
-})(async (trialConfig) => {
-  const model = String(trialConfig.config.model);
-  const accuracy = model === "accurate" ? 0.95 : 0.72;
-  const cost = model === "accurate" ? 0.4 : 0.1;
-
-  return {
-    metrics: {
-      accuracy,
-      cost,
-      latency: model === "accurate" ? 1.2 : 0.6,
+    data: [
+      { input: "capital of france", output: "Paris" },
+      { input: "capital of japan", output: "Tokyo" },
+    ],
+    scoringFunction: (output, expectedOutput) =>
+      output === expectedOutput ? 1 : 0,
+    metricFunctions: {
+      cost: (_output, _expected, runtimeMetrics) => runtimeMetrics.cost ?? 0,
+      latency: (_output, _expected, runtimeMetrics) => runtimeMetrics.latency ?? 0,
     },
-  };
+  },
+  injection: {
+    mode: "parameter",
+  },
+})(async (input, config) => {
+  const model = String(config?.model ?? "cheap");
+  if (model === "accurate") {
+    return input === "capital of france" ? "Paris" : "Tokyo";
+  }
+  return input === "capital of france" ? "Paris" : "Osaka";
 });
 
-const result = await evaluatePrompt.optimize({
+const result = await answerQuestion.optimize({
   mode: "native",
   algorithm: "grid",
   maxTrials: 10,
@@ -102,8 +108,8 @@ const result = await evaluatePrompt.optimize({
 
 console.log(result.bestConfig);
 console.log(result.bestMetrics);
-evaluatePrompt.applyBestConfig(result);
-console.log(evaluatePrompt.currentConfig());
+answerQuestion.applyBestConfig(result);
+console.log(answerQuestion.currentConfig());
 ```
 
 See [`examples/native-optimization.mjs`](./examples/native-optimization.mjs) for
@@ -118,7 +124,7 @@ the default when you omit `mode`.
 ```ts
 import { optimize, param } from "@traigent/sdk";
 
-const runTrial = optimize({
+const answerQuestion = optimize({
   configurationSpace: {
     model: param.enum(["gpt-4o-mini", "gpt-4o"]),
     temperature: param.float({ min: 0, max: 1, step: 0.2 }),
@@ -136,23 +142,111 @@ const runTrial = optimize({
     ],
   },
   evaluation: {
-    data: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    data: [{ input: "hello", output: "HELLO!" }],
+    scoringFunction: (output, expectedOutput) =>
+      output === expectedOutput ? 1 : 0,
   },
-})(async (trialConfig) => ({
-  metrics: {
-    accuracy: trialConfig.config.model === "gpt-4o" ? 0.9 : 0.82,
-    cost: trialConfig.config.model === "gpt-4o" ? 0.3 : 0.08,
+  injection: {
+    mode: "parameter",
   },
-}));
+})(async (input, config) =>
+  config?.temperature && Number(config.temperature) > 0.5
+    ? `${String(input).toUpperCase()}?`
+    : `${String(input).toUpperCase()}!`,
+);
 
-const result = await runTrial.optimize({
+const result = await answerQuestion.optimize({
   algorithm: "optuna",
   maxTrials: 12,
   backendUrl: process.env.TRAIGENT_BACKEND_URL,
   apiKey: process.env.TRAIGENT_API_KEY,
   timeoutMs: 5_000,
+  includeFullHistory: true,
 });
 ```
+
+Hybrid results expose backend finalization reporting directly on
+`result.reporting`, including:
+
+- `totalTrials`
+- `successfulTrials`
+- `totalDuration`
+- `costSavings`
+- `convergenceHistory`
+- `fullHistory` when `includeFullHistory: true`
+
+For follow-up session control, the hybrid SDK also exposes:
+
+- `getOptimizationSessionStatus(sessionId, options?)`
+- `finalizeOptimizationSession(sessionId, options?)`
+- `deleteOptimizationSession(sessionId, options?)`
+
+`deleteOptimizationSession(...)` defaults `cascade` to `false`; opt in
+explicitly if you want recursive backend cleanup.
+
+See [`examples/core/hybrid-session-control/run.mjs`](./examples/core/hybrid-session-control/run.mjs)
+for an executable session-control flow that demonstrates:
+
+1. env-based hybrid optimize/session helpers
+2. explicit options-based helper calls
+3. wrapped or auto-wrapped framework clients in `injection.mode = "seamless"`
+4. shared `reporting` shape between `.optimize()` and `finalizeOptimizationSession(...)`
+5. seamless diagnostics through `frameworkAutoOverrideStatus()` and `seamlessResolution()`
+
+For supported frameworks, seamless mode now works in hybrid too. Wrap the
+framework target once, then let the backend-suggested config override the local
+framework call while the SDK records provider usage metrics:
+
+```ts
+import OpenAI from "openai";
+import { autoWrapFrameworkTarget, optimize, param } from "@traigent/sdk";
+
+const client = autoWrapFrameworkTarget(
+  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+);
+
+const answerQuestion = optimize({
+  configurationSpace: {
+    model: param.enum(["gpt-4o-mini", "gpt-4o"]),
+    temperature: param.float({ min: 0, max: 1, step: 0.2 }),
+    maxTokens: param.int({ min: 32, max: 256, step: 32 }),
+  },
+  objectives: ["accuracy", "cost"],
+  evaluation: {
+    data: [{ input: "hello", output: "HELLO!" }],
+    scoringFunction: (output, expectedOutput) =>
+      output === expectedOutput ? 1 : 0,
+  },
+  injection: {
+    mode: "seamless",
+  },
+})(async (input) => {
+  const response = await client.chat.completions.create({
+    model: "gpt-3.5-turbo",
+    temperature: 0.9,
+    max_tokens: 16,
+    messages: [{ role: "user", content: input }],
+  });
+
+  return response.choices[0]?.message?.content ?? "";
+});
+
+console.log(answerQuestion.frameworkAutoOverrideStatus());
+console.log(answerQuestion.seamlessResolution());
+```
+
+The seamless diagnostics surface is available on every optimized function:
+
+- `frameworkAutoOverrideStatus()`
+  - reports active registered targets, requested targets, selected targets, and
+    why framework auto-override is or is not enabled
+  - reflects the current framework registry state, not a historical trial snapshot
+- `seamlessResolution()`
+  - reports the resolved seamless path for the function, including framework
+    targets when the framework interception path is active
+  - returns `undefined` when seamless mode is not configured, or when seamless
+    mode is configured but no active framework targets are currently registered
+  - use `frameworkAutoOverrideStatus()` to distinguish those cases
 
 Resolution order:
 
@@ -191,10 +285,20 @@ Compatibility note:
   round-based service, not the Optuna-style one-trial-at-a-time contract used by
   this JS client.
 
-The wrapped function must satisfy the JS trial contract:
+Primary contract:
 
-- Input: `TrialConfig`
-- Output: `{ metrics, metadata?, duration? }`
+- Input: a plain agent function like `agentFn(input, config?)`
+- Output: raw model/application output
+- Evaluation: local `scoringFunction`, `metricFunctions`, or `customEvaluator`
+- Seamless wrappers: OpenAI, LangChain, and Vercel AI can now apply backend
+  suggestions automatically and feed token/cost/latency metrics back into the
+  hybrid evaluation pipeline
+
+Advanced compatibility contract:
+
+- set `execution.contract = "trial"`
+- input: `TrialConfig`
+- output: `{ metrics, metadata?, duration? }`
 
 ## Objectives, Constraints, and Parameters
 

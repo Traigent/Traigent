@@ -27,6 +27,10 @@ export {
   wrapCallback,
   bindContext,
 } from './core/context.js';
+export {
+  recordRuntimeMetrics,
+  withRuntimeMetricsCollector,
+} from "./core/runtime-metrics.js";
 
 export type {
   ProgressCallback,
@@ -43,23 +47,45 @@ export type {
 export {
   optimize,
   param,
+  finalizeOptimizationSession,
+  getOptimizationSessionStatus,
+  deleteOptimizationSession,
   getOptimizationSpec,
   toHybridConfigSpace,
   loadTvlSpec,
   parseTvlSpec,
 } from './optimization/index.js';
 
+export {
+  autoWrapFrameworkTarget,
+  autoWrapFrameworkTargets,
+} from "./integrations/auto-wrap.js";
+export {
+  describeFrameworkAutoOverride,
+  getRegisteredFrameworkTargets,
+} from "./integrations/registry.js";
+
 export type {
+  AggregationStrategy,
+  AgentCustomEvaluator,
   BandTarget,
   BandedObjectiveDefinition,
   BuiltInObjectiveName,
   ChanceConstraintDefinition,
   DerivedConstraintDefinition,
+  EvaluationAggregationMap,
+  EvaluationContext,
+  EvaluationMetricFunction,
+  EvaluationScoringFunction,
   EvaluationSpec,
   FloatParamDefinition,
+  FrameworkAutoOverrideStatus,
+  FrameworkTarget,
   HybridOptimizeOptions,
   HybridConfigSpace,
   HybridTunableDefinition,
+  InjectionMode,
+  InjectionSpec,
   IntParamDefinition,
   LoadedTvlOptimizationSpec,
   NativeOptimizedFunction,
@@ -69,9 +95,18 @@ export type {
   ObjectiveDirection,
   ObjectiveInput,
   OptimizationExecutionSpec,
+  OptimizationReportingSummary,
   OptimizeOptions,
   OptimizationBudget,
   OptimizationConstraints,
+  OptimizationSessionDeleteOptions,
+  OptimizationSessionDeleteResponse,
+  OptimizationSessionFinalizeOptions,
+  OptimizationSessionFinalizationResponse,
+  OptimizationSessionRequestOptions,
+  OptimizationSessionStatusResponse,
+  OptimizationSessionStatusSummary,
+  ExecutionContract,
   PromotionPolicy,
   OptimizationResult,
   OptimizationSpec,
@@ -80,6 +115,7 @@ export type {
   ParameterConditionValue,
   ParameterDefinition,
   ParamScale,
+  SeamlessResolution,
   StructuralConstraintDefinition,
   TvlLoadOptions,
 } from './optimization/index.js';

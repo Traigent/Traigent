@@ -165,6 +165,90 @@ describe("native optimize()", () => {
     expect(result.stopReason).toBe("completed");
   });
 
+  it("covers stepped grid edge cases and log-scale validation branches", async () => {
+    const steppedWrapped = optimize({
+      configurationSpace: {
+        retries: param.int({ min: 0, max: 5, step: 2 }),
+        temperature: param.float({ min: 0, max: 1, step: 0.3 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        accuracy:
+          Number(trialConfig.config.retries) +
+          Number(trialConfig.config.temperature),
+      },
+    }));
+
+    const steppedResult = await steppedWrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 100,
+    });
+
+    expect(
+      new Set(steppedResult.trials.map((trial) => trial.config.retries)),
+    ).toEqual(new Set([0, 2, 4, 5]));
+    expect(
+      new Set(steppedResult.trials.map((trial) => trial.config.temperature)),
+    ).toEqual(new Set([0, 0.3, 0.6, 0.9, 1]));
+
+    const invalidLogInt = optimize({
+      configurationSpace: {
+        retries: param.int({ min: 1, max: 10, scale: "log" }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({ metrics: { accuracy: 1 } }));
+
+    await expect(
+      invalidLogInt.optimize({
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 4,
+      }),
+    ).rejects.toThrow(/log-scaled int parameters to define a multiplicative step/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          learningRate: param.float({
+            min: 0,
+            max: 1,
+            scale: "log",
+            step: 10,
+          }),
+        },
+        objectives: ["accuracy"],
+        evaluation: {
+          data: [{ id: 1 }],
+        },
+      })(async () => ({ metrics: { accuracy: 1 } })),
+    ).toThrow(/require min\/max > 0/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          learningRate: param.float({
+            min: 0.1,
+            max: 1,
+            scale: "log",
+            step: 1,
+          }),
+        },
+        objectives: ["accuracy"],
+        evaluation: {
+          data: [{ id: 1 }],
+        },
+      })(async () => ({ metrics: { accuracy: 1 } })),
+    ).toThrow(/step to be greater than 1/i);
+  });
+
   it("requires step for float grid search", async () => {
     const wrapped = optimize({
       configurationSpace: {
@@ -324,6 +408,70 @@ describe("native optimize()", () => {
     expect(result.stopReason).toBe("error");
     expect(result.errorMessage).toContain("boom");
     expect(result.trials).toHaveLength(0);
+  });
+
+  it("uses explicit duration values, falls back from invalid duration, and reports non-Error throws", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const explicitDuration = await runNativeOptimization(
+      async () => ({
+        metrics: {
+          accuracy: 1,
+        },
+        duration: 0.25,
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+      },
+    );
+
+    expect(explicitDuration.trials[0]?.duration).toBe(0.25);
+
+    const fallbackDuration = await runNativeOptimization(
+      async () => {
+        await delay(5);
+        return {
+          metrics: {
+            accuracy: 1,
+          },
+          duration: -1,
+        };
+      },
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+      },
+    );
+
+    expect(fallbackDuration.trials[0]?.duration).toBeGreaterThan(0);
+
+    const stringError = await runNativeOptimization(
+      async () => {
+        throw "native boom";
+      },
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 1,
+      },
+    );
+
+    expect(stringError.stopReason).toBe("error");
+    expect(stringError.errorMessage).toBe("native boom");
   });
 
   it("supports sequential bayesian optimization for smooth objectives", async () => {
@@ -649,6 +797,112 @@ describe("native optimize()", () => {
     ).rejects.toThrow(/evaluation data to be a non-empty array/i);
   });
 
+  it("supports high-level agent optimization with scoringFunction and parameter injection", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        tone: param.enum(["quiet", "loud"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ input: "hello", output: "HELLO!" }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+      injection: {
+        mode: "parameter",
+      },
+    })(async (input: string, config?: { tone?: string }) =>
+      config?.tone === "loud"
+        ? `${String(input).toUpperCase()}!`
+        : String(input).toUpperCase(),
+    );
+
+    const result = await wrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 2,
+    });
+
+    expect(result.bestConfig).toEqual({ tone: "loud" });
+    expect(result.bestMetrics).toEqual(
+      expect.objectContaining({ accuracy: 1 }),
+    );
+  });
+
+  it("supports async loadData and custom input/expected field resolution", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        loadData: async () => [{ question: "hello", answer: "HELLO" }],
+        inputField: "question",
+        expectedField: "answer",
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+    })(async (input: string) => input.toUpperCase());
+
+    const result = await wrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 1,
+    });
+
+    expect(result.bestMetrics).toEqual(
+      expect.objectContaining({ accuracy: 1 }),
+    );
+  });
+
+  it("allows metricFunctions and customEvaluator without expected output fields", async () => {
+    const metricWrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: [{ metric: "quality", direction: "maximize" }],
+      evaluation: {
+        data: [{ input: "hello" }],
+        metricFunctions: {
+          quality: (output) => (String(output).length > 0 ? 1 : 0),
+        },
+      },
+    })(async (input: string) => input.toUpperCase());
+
+    const metricResult = await metricWrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 1,
+    });
+
+    expect(metricResult.bestMetrics).toEqual(
+      expect.objectContaining({ quality: 1 }),
+    );
+
+    const evaluatorWrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ input: "hello" }],
+        customEvaluator: async ({ output }) => ({
+          accuracy: String(output) === "HELLO" ? 1 : 0,
+        }),
+      },
+    })(async (input: string) => input.toUpperCase());
+
+    const evaluatorResult = await evaluatorWrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 1,
+    });
+
+    expect(evaluatorResult.bestMetrics).toEqual(
+      expect.objectContaining({ accuracy: 1 }),
+    );
+  });
+
   it("rejects invalid native optimize() runtime options", async () => {
     const wrapped = optimize({
       configurationSpace: {
@@ -755,6 +1009,242 @@ describe("native optimize()", () => {
     ).rejects.toThrow(/checkpoint\.dir must be non-empty/i);
   });
 
+  it("rejects invalid metrics returned from runNativeOptimization and handles pre-aborted signals", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () =>
+          ({
+            metrics: {
+              accuracy: Number.NaN,
+            },
+          }) as never,
+        spec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/trial metrics are invalid/i);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runNativeOptimization(
+      async () => ({
+        metrics: {
+          accuracy: 1,
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "grid",
+        maxTrials: 2,
+        signal: controller.signal,
+      },
+    );
+
+    expect(result.stopReason).toBe("cancelled");
+    expect(result.trials).toHaveLength(0);
+  });
+
+  it("validates native options and evaluation prerequisites eagerly", async () => {
+    const validSpec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        undefined as never,
+      ),
+    ).rejects.toThrow(/options are required/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "hybrid" as never,
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/native mode only accepts mode: "native"/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "optuna" as never,
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/only supports algorithm "grid", "random", or "bayesian"/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 0,
+        },
+      ),
+    ).rejects.toThrow(/requires maxTrials to be a positive integer/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          randomSeed: -1,
+        },
+      ),
+    ).rejects.toThrow(/randomSeed must be a non-negative integer/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          timeoutMs: 0,
+        },
+      ),
+    ).rejects.toThrow(/timeoutMs must be a positive integer/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          trialConcurrency: 0,
+        },
+      ),
+    ).rejects.toThrow(/trialConcurrency must be a positive integer/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          plateau: {
+            window: 0,
+            minImprovement: 0,
+          },
+        },
+      ),
+    ).rejects.toThrow(/plateau\.window must be a positive integer/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        validSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+          plateau: {
+            window: 1,
+            minImprovement: -1,
+          },
+        },
+      ),
+    ).rejects.toThrow(/plateau\.minImprovement must be a finite number >= 0/i);
+
+    const missingEvaluationSpec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () => ({ metrics: { accuracy: 1 } }),
+        missingEvaluationSpec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/requires spec\.evaluation\.data or spec\.evaluation\.loadData/i);
+  });
+
+  it("rejects invalid native trial result shapes and objective metrics", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    await expect(
+      runNativeOptimization(
+        async () => "bad-result" as never,
+        spec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/must resolve to an object containing metrics/i);
+
+    await expect(
+      runNativeOptimization(
+        async () => ({
+          metrics: {
+            cost: 0.1,
+          },
+        }),
+        spec,
+        {
+          mode: "native",
+          algorithm: "grid",
+          maxTrials: 1,
+        },
+      ),
+    ).rejects.toThrow(/missing numeric metric "accuracy"/i);
+  });
+
   it("stops bayesian search with plateau when objective improvements flatten out", async () => {
     const wrapped = optimize({
       configurationSpace: {
@@ -823,6 +1313,36 @@ describe("native optimize()", () => {
       temperature: 0.7,
       model: "accurate",
     });
+  });
+
+  it("prefers in-band results over values above the target range for banded objectives", async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["balanced", "verbose"]),
+      },
+      objectives: [
+        {
+          metric: "response_length",
+          band: { low: 120, high: 180 },
+        },
+      ],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async (trialConfig) => ({
+      metrics: {
+        response_length:
+          trialConfig.config.model === "balanced" ? 150 : 240,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      mode: "native",
+      algorithm: "grid",
+      maxTrials: 2,
+    });
+
+    expect(result.bestConfig).toEqual({ model: "balanced" });
   });
 
   it("supports conditional sampling paths when runNativeOptimization() is invoked directly", async () => {
@@ -917,6 +1437,36 @@ describe("native optimize()", () => {
       new Set(result.trials.map((trial) => JSON.stringify(trial.config))).size,
     ).toBe(4);
     expect(result.stopReason).toBe("completed");
+  });
+
+  it("supports continuous random sampling spaces without discrete exhaustion tracking", async () => {
+    const spec = normalizeOptimizationSpec({
+      configurationSpace: {
+        temperature: param.float({ min: 0, max: 1 }),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    });
+
+    const result = await runNativeOptimization(
+      async (trialConfig) => ({
+        metrics: {
+          accuracy: 1 - Math.abs(Number(trialConfig.config.temperature) - 0.5),
+        },
+      }),
+      spec,
+      {
+        mode: "native",
+        algorithm: "random",
+        maxTrials: 3,
+        randomSeed: 7,
+      },
+    );
+
+    expect(result.trials).toHaveLength(3);
+    expect(result.stopReason).toBe("maxTrials");
   });
 
   it("rejects invalid metrics returned from a trial function", async () => {

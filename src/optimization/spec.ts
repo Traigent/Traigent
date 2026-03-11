@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 
+import { TrialContext } from "../core/context.js";
 import { ValidationError } from "../core/errors.js";
+import { describeFrameworkAutoOverride } from "../integrations/registry.js";
 import type { TrialConfig } from "../dtos/trial.js";
+import {
+  createAgentTrialFunction,
+  invokeFunctionWithConfig,
+  resolveEvaluationRows,
+} from "./agent.js";
 import { runHybridOptimization } from "./hybrid.js";
 import { runNativeOptimization } from "./native.js";
 import { stableValueKey } from "./stable-value.js";
@@ -10,8 +17,11 @@ import type {
   DerivedConstraintDefinition,
   EnumParamDefinition,
   FloatParamDefinition,
+  FrameworkAutoOverrideStatus,
+  FrameworkTarget,
   HybridOptimizeOptions,
   HybridConfigSpace,
+  InjectionSpec,
   IntParamDefinition,
   NativeOptimizedFunction,
   NativeTrialFunctionResult,
@@ -21,7 +31,9 @@ import type {
   ObjectiveInput,
   OptimizeOptions,
   PromotionPolicy,
+  SeamlessResolution,
   OptimizationConstraints,
+  OptimizationExecutionSpec,
   OptimizationResult,
   OptimizationSpec,
   ParameterConditions,
@@ -45,6 +57,10 @@ type AnyFunction = (...args: any[]) => any;
 type NativeTrialFunction = (
   trialConfig: TrialConfig,
 ) => Promise<NativeTrialFunctionResult>;
+const LOW_LEVEL_CONTRACT_WARNING =
+  'execution.contract="trial" is deprecated and will be removed in a future release. Use the high-level agent contract instead.';
+
+let hasWarnedAboutTrialContract = false;
 
 function isHybridOptimizeOptions(
   options: OptimizeOptions,
@@ -785,6 +801,194 @@ function normalizeBudget(
   return normalized;
 }
 
+function normalizeEvaluationSpec(
+  evaluation: OptimizationSpec["evaluation"],
+): OptimizationSpec["evaluation"] {
+  if (!evaluation) {
+    return undefined;
+  }
+
+  if (evaluation.data !== undefined && evaluation.loadData !== undefined) {
+    throw new ValidationError(
+      "Use either evaluation.data or evaluation.loadData, not both.",
+    );
+  }
+
+  if (
+    evaluation.customEvaluator &&
+    (evaluation.scoringFunction || evaluation.metricFunctions)
+  ) {
+    throw new ValidationError(
+      "evaluation.customEvaluator cannot be combined with scoringFunction or metricFunctions.",
+    );
+  }
+
+  if (
+    evaluation.inputField !== undefined &&
+    (typeof evaluation.inputField !== "string" ||
+      evaluation.inputField.trim().length === 0)
+  ) {
+    throw new ValidationError("evaluation.inputField must be a non-empty string.");
+  }
+
+  if (
+    evaluation.expectedField !== undefined &&
+    (typeof evaluation.expectedField !== "string" ||
+      evaluation.expectedField.trim().length === 0)
+  ) {
+    throw new ValidationError(
+      "evaluation.expectedField must be a non-empty string.",
+    );
+  }
+
+  if (evaluation.aggregation !== undefined) {
+    const validateAggregationStrategy = (
+      value: unknown,
+      field: string,
+    ): void => {
+      if (
+        value !== "mean" &&
+        value !== "median" &&
+        value !== "sum" &&
+        value !== "min" &&
+        value !== "max"
+      ) {
+        throw new ValidationError(
+          `${field} must be one of "mean", "median", "sum", "min", or "max".`,
+        );
+      }
+    };
+
+    if (typeof evaluation.aggregation === "string") {
+      validateAggregationStrategy(
+        evaluation.aggregation,
+        "evaluation.aggregation",
+      );
+    } else if (isPlainObject(evaluation.aggregation)) {
+      for (const [metric, strategy] of Object.entries(evaluation.aggregation)) {
+        validateAggregationStrategy(
+          strategy,
+          `evaluation.aggregation.${metric}`,
+        );
+      }
+    } else {
+      throw new ValidationError(
+        "evaluation.aggregation must be a strategy string or a per-metric object.",
+      );
+    }
+  }
+
+  return evaluation;
+}
+
+function normalizeInjectionSpec(
+  injection: OptimizationSpec["injection"],
+): (Required<Pick<InjectionSpec, "mode">> & InjectionSpec) | undefined {
+  if (!injection) {
+    return undefined;
+  }
+  const mode = injection?.mode ?? "context";
+  if (mode !== "context" && mode !== "parameter" && mode !== "seamless") {
+    throw new ValidationError(
+      'injection.mode must be "context", "parameter", or "seamless".',
+    );
+  }
+
+  if (
+    injection.autoOverrideFrameworks !== undefined &&
+    typeof injection.autoOverrideFrameworks !== "boolean"
+  ) {
+    throw new ValidationError(
+      "injection.autoOverrideFrameworks must be a boolean when provided.",
+    );
+  }
+
+  if (injection.frameworkTargets !== undefined) {
+    if (!Array.isArray(injection.frameworkTargets)) {
+      throw new ValidationError(
+        "injection.frameworkTargets must be an array when provided.",
+      );
+    }
+
+    for (const [index, target] of injection.frameworkTargets.entries()) {
+      if (
+        target !== "openai" &&
+        target !== "langchain" &&
+        target !== "vercel-ai"
+      ) {
+        throw new ValidationError(
+          `injection.frameworkTargets[${index}] must be "openai", "langchain", or "vercel-ai".`,
+        );
+      }
+    }
+  }
+
+  if (mode === "seamless") {
+    return {
+      ...injection,
+      mode,
+      autoOverrideFrameworks: injection.autoOverrideFrameworks ?? true,
+    };
+  }
+
+  return {
+    ...injection,
+    mode,
+    autoOverrideFrameworks: injection.autoOverrideFrameworks ?? false,
+  };
+}
+
+function normalizeExecutionSpec(
+  execution: OptimizationSpec["execution"],
+): OptimizationExecutionSpec | undefined {
+  if (!execution) {
+    return undefined;
+  }
+
+  const mode = execution.mode ?? "hybrid";
+  const contract = execution.contract;
+  if (mode !== "native" && mode !== "hybrid") {
+    throw new ValidationError('execution.mode must be "native" or "hybrid".');
+  }
+  if (
+    contract !== undefined &&
+    contract !== "agent" &&
+    contract !== "trial"
+  ) {
+    throw new ValidationError(
+      'execution.contract must be "agent" or "trial".',
+    );
+  }
+
+  return {
+    ...execution,
+    mode,
+    ...(contract ? { contract } : {}),
+  };
+}
+
+function inferExecutionContract(
+  spec: Pick<NormalizedOptimizationSpec, "evaluation" | "injection" | "execution">,
+): "agent" | "trial" {
+  if (spec.execution?.contract) {
+    return spec.execution.contract;
+  }
+
+  if (
+    spec.evaluation?.scoringFunction ||
+    spec.evaluation?.metricFunctions ||
+    spec.evaluation?.customEvaluator ||
+    spec.evaluation?.inputField ||
+    spec.evaluation?.expectedField ||
+    spec.injection?.mode === "parameter" ||
+    spec.injection?.mode === "seamless"
+  ) {
+    return "agent";
+  }
+
+  return "trial";
+}
+
 function normalizeDefaultConfig(
   value: unknown,
 ): Record<string, unknown> | undefined {
@@ -892,15 +1096,9 @@ export function normalizeOptimizationSpec(
   const constraints = normalizeConstraints(spec.constraints);
   const defaultConfig = normalizeDefaultConfig(spec.defaultConfig);
   const promotionPolicy = normalizePromotionPolicy(spec.promotionPolicy);
-
-  if (
-    spec.evaluation?.data !== undefined &&
-    spec.evaluation?.loadData !== undefined
-  ) {
-    throw new ValidationError(
-      "Use either evaluation.data or evaluation.loadData, not both.",
-    );
-  }
+  const evaluation = normalizeEvaluationSpec(spec.evaluation);
+  const injection = normalizeInjectionSpec(spec.injection);
+  const execution = normalizeExecutionSpec(spec.execution);
 
   return {
     configurationSpace,
@@ -909,10 +1107,11 @@ export function normalizeOptimizationSpec(
     constraints,
     defaultConfig,
     promotionPolicy,
-    execution: spec.execution,
+    execution,
     autoLoadBest: spec.autoLoadBest,
     loadFrom: spec.loadFrom,
-    evaluation: spec.evaluation,
+    evaluation,
+    injection,
   };
 }
 
@@ -927,6 +1126,30 @@ function defineHiddenProperty(
     configurable: false,
     writable: false,
   });
+}
+
+function emitTrialContractWarning(): void {
+  if (hasWarnedAboutTrialContract) {
+    return;
+  }
+  hasWarnedAboutTrialContract = true;
+  process.emitWarning(LOW_LEVEL_CONTRACT_WARNING, "DeprecationWarning");
+}
+
+function createAppliedTrialConfig(config: TrialConfig["config"]): TrialConfig {
+  return {
+    trial_id: "applied_config",
+    trial_number: 0,
+    experiment_run_id: "applied_config",
+    config: { ...config },
+    dataset_subset: {
+      indices: [],
+      total: 1,
+    },
+    metadata: {
+      source: "applyBestConfig",
+    },
+  };
 }
 
 export const param = {
@@ -1035,39 +1258,145 @@ export function optimize(specInput: OptimizationSpec) {
   const spec = normalizeOptimizationSpec(specInput);
 
   return function <T extends AnyFunction>(fn: T): NativeOptimizedFunction<T> {
-    const target = fn as NativeOptimizedFunction<T>;
     let appliedConfig: TrialConfig["config"] | undefined = mergeConfig(
       spec.defaultConfig,
       resolveAutoLoadedConfig(specInput),
     );
-    defineHiddenProperty(target, OPTIMIZATION_SPEC, spec);
+
+    function getFrameworkAutoOverrideStatus(): FrameworkAutoOverrideStatus {
+      const resolvedFrameworkStatus = describeFrameworkAutoOverride(
+        spec.injection?.frameworkTargets as
+          | readonly FrameworkTarget[]
+          | undefined,
+        spec.injection?.autoOverrideFrameworks ??
+          (spec.injection?.mode === "seamless"),
+      );
+
+      return {
+        ...resolvedFrameworkStatus,
+        requestedTargets: resolvedFrameworkStatus.requestedTargets
+          ? [...resolvedFrameworkStatus.requestedTargets]
+          : undefined,
+        activeTargets: [...resolvedFrameworkStatus.activeTargets],
+        selectedTargets: [...resolvedFrameworkStatus.selectedTargets],
+      };
+    }
+
+    function getSeamlessResolution(): SeamlessResolution | undefined {
+      if (spec.injection?.mode !== "seamless") {
+        return undefined;
+      }
+
+      const status = getFrameworkAutoOverrideStatus();
+      if (!status.enabled) {
+        return undefined;
+      }
+
+      return {
+        path: "framework",
+        reason: status.reason,
+        experimental: false,
+        targets: [...status.selectedTargets],
+      };
+    }
+
+    const wrapped = function wrappedOptimizedFunction(
+      this: unknown,
+      ...args: Parameters<T>
+    ): ReturnType<T> {
+      const activeTrialConfig = TrialContext.getConfigOrUndefined();
+      const activeConfig =
+        activeTrialConfig?.config ??
+        appliedConfig ??
+        (spec.defaultConfig ? { ...spec.defaultConfig } : undefined);
+
+      if (!activeConfig) {
+        return fn.apply(this, args) as ReturnType<T>;
+      }
+
+      const invoke = () =>
+        invokeFunctionWithConfig(
+          fn,
+          this,
+          args,
+          activeConfig,
+          spec.injection?.mode ?? "context",
+        );
+
+      if (activeTrialConfig) {
+        return invoke() as ReturnType<T>;
+      }
+
+      return TrialContext.run(createAppliedTrialConfig(activeConfig), invoke) as ReturnType<T>;
+    } as NativeOptimizedFunction<T>;
+
+    defineHiddenProperty(wrapped, OPTIMIZATION_SPEC, spec);
 
     defineHiddenProperty(
-      target,
+      wrapped,
       "optimize",
       async (options: OptimizeOptions) => {
         const resolvedOptions = mergeOptimizeOptions(spec, options);
+        const executionContract = inferExecutionContract(spec);
+
+        if (executionContract === "trial") {
+          emitTrialContractWarning();
+          if (isHybridOptimizeOptions(resolvedOptions)) {
+            return runHybridOptimization(
+              fn as unknown as NativeTrialFunction,
+              spec,
+              specInput,
+              resolvedOptions as HybridOptimizeOptions,
+              fn.name,
+            );
+          }
+
+          validateNativeOptimizationCompatibility(spec);
+          return runNativeOptimization(
+            fn as unknown as NativeTrialFunction,
+            spec,
+            resolvedOptions as NativeOptimizeOptions,
+          );
+        }
+
+        const evaluationRows = await resolveEvaluationRows(spec);
+        if (!Array.isArray(evaluationRows) || evaluationRows.length === 0) {
+          throw new ValidationError(
+            "optimize() requires evaluation data to be a non-empty array.",
+          );
+        }
+
+        const hydratedSpec: NormalizedOptimizationSpec = {
+          ...spec,
+          evaluation: {
+            ...spec.evaluation,
+            data: evaluationRows,
+            loadData: undefined,
+          },
+        };
+
+        const trialFn = createAgentTrialFunction(fn, hydratedSpec, evaluationRows);
         if (isHybridOptimizeOptions(resolvedOptions)) {
           return runHybridOptimization(
-            target as unknown as NativeTrialFunction,
-            spec,
+            trialFn,
+            hydratedSpec,
             specInput,
             resolvedOptions as HybridOptimizeOptions,
             fn.name,
           );
         }
 
-        validateNativeOptimizationCompatibility(spec);
+        validateNativeOptimizationCompatibility(hydratedSpec);
         return runNativeOptimization(
-          target as unknown as NativeTrialFunction,
-          spec,
+          trialFn,
+          hydratedSpec,
           resolvedOptions as NativeOptimizeOptions,
         );
       },
     );
 
     defineHiddenProperty(
-      target,
+      wrapped,
       "applyBestConfig",
       (result: OptimizationResult) => {
         appliedConfig = mergeConfig(spec.defaultConfig, result.bestConfig);
@@ -1075,10 +1404,24 @@ export function optimize(specInput: OptimizationSpec) {
       },
     );
 
-    defineHiddenProperty(target, "currentConfig", () =>
-      appliedConfig ? { ...appliedConfig } : undefined,
+    defineHiddenProperty(
+      wrapped,
+      "currentConfig",
+      () => (appliedConfig ? { ...appliedConfig } : undefined),
     );
 
-    return target;
+    defineHiddenProperty(
+      wrapped,
+      "frameworkAutoOverrideStatus",
+      () => getFrameworkAutoOverrideStatus(),
+    );
+
+    defineHiddenProperty(
+      wrapped,
+      "seamlessResolution",
+      () => getSeamlessResolution(),
+    );
+
+    return wrapped;
   };
 }

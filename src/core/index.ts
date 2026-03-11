@@ -9,6 +9,10 @@ export {
   wrapCallback,
   bindContext,
 } from './context.js';
+export {
+  recordRuntimeMetrics,
+  withRuntimeMetricsCollector,
+} from './runtime-metrics.js';
 
 export type {
   ProgressCallback,

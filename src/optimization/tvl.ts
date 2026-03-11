@@ -424,7 +424,21 @@ function parseStrategyType(exploration: unknown): string | undefined {
   if (!isPlainObject(strategy) || typeof strategy["type"] !== "string") {
     return undefined;
   }
-  return strategy["type"];
+  const type = strategy["type"];
+  if (
+    type !== "grid" &&
+    type !== "random" &&
+    type !== "bayesian" &&
+    type !== "tpe" &&
+    type !== "optuna" &&
+    type !== "nsga2" &&
+    type !== "pareto_optimal"
+  ) {
+    throw new ValidationError(
+      `TVL exploration.strategy.type "${type}" is not supported by the JS SDK.`,
+    );
+  }
+  return type;
 }
 
 function parsePromotionPolicy(raw: unknown): PromotionPolicy | undefined {
@@ -518,6 +532,22 @@ function parsePromotionPolicy(raw: unknown): PromotionPolicy | undefined {
         confidence,
       };
     });
+  }
+
+  if (raw["tie_breakers"] !== undefined) {
+    if (!isPlainObject(raw["tie_breakers"])) {
+      throw new ValidationError("promotion_policy.tie_breakers must be an object.");
+    }
+    normalized.tieBreakers = Object.fromEntries(
+      Object.entries(raw["tie_breakers"]).map(([metric, direction]) => {
+        if (direction !== "maximize" && direction !== "minimize") {
+          throw new ValidationError(
+            `promotion_policy.tie_breakers.${metric} must be "maximize" or "minimize".`,
+          );
+        }
+        return [metric, direction];
+      }),
+    );
   }
 
   return Object.keys(normalized).length === 0 ? undefined : normalized;
