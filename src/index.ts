@@ -95,6 +95,8 @@ export type {
 export {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
+  discoverFrameworkTargets,
+  prepareFrameworkTargets,
 } from './integrations/auto-wrap.js';
 export {
   getRegisteredFrameworkTargets,
@@ -154,3 +156,9 @@ export type {
   TunedVariableDiscoveryResult,
   TunedVariableValueKind,
 } from './tuned-variables/index.js';
+
+export type {
+  DiscoveredFrameworkTarget,
+  PreparedFrameworkTargets,
+  PrepareFrameworkTargetsOptions,
+} from './integrations/auto-wrap.js';

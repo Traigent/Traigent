@@ -167,6 +167,8 @@ console.log(answerQuestion.currentConfig());
   - the fastest framework path is now:
     - `autoWrapFrameworkTarget(...)` for one client/model
     - `autoWrapFrameworkTargets({ ... })` for a small object map of supported targets
+    - `discoverFrameworkTargets(...)` to inspect an explicit object graph
+    - `prepareFrameworkTargets(...)` for one-call discover + wrap + status
   - also supported for hardcoded local tuned variables through:
     - `traigent migrate seamless`
     - `@traigent/sdk/babel-plugin-seamless`
@@ -215,16 +217,17 @@ Example:
 
 ```ts
 import {
-  autoWrapFrameworkTargets,
   describeFrameworkAutoOverride,
+  prepareFrameworkTargets,
   optimize,
   param,
 } from '@traigent/sdk';
 
-const wrapped = autoWrapFrameworkTargets({
+const prepared = prepareFrameworkTargets({
   openaiClient,
   chatModel,
 });
+const wrapped = prepared.wrapped;
 
 const agent = optimize({
   configurationSpace: {
@@ -242,7 +245,36 @@ const agent = optimize({
 })(async (input) => wrapped.chatModel.invoke(input));
 
 console.log(describeFrameworkAutoOverride(undefined, true));
+console.log(prepared.discovered);
 ```
+
+### Bounded framework discovery
+
+The native checkout now also supports bounded framework discovery for explicit
+object graphs:
+
+```ts
+import { discoverFrameworkTargets, prepareFrameworkTargets } from '@traigent/sdk';
+
+const discovered = discoverFrameworkTargets({
+  services: { openaiClient, chatModel },
+});
+
+const prepared = prepareFrameworkTargets({
+  services: { openaiClient, chatModel },
+});
+```
+
+Current scope:
+
+- direct supported targets
+- nested arrays and plain-object graphs
+- cycle-safe traversal
+
+Out of scope:
+
+- scanning module globals
+- auto-patching arbitrary imported clients you did not pass explicitly
 
 Identity note:
 

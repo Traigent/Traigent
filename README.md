@@ -165,6 +165,8 @@ JS supports three runtime injection modes:
 - [withTraigent](./src/integrations/vercel-ai/index.ts)
 - [autoWrapFrameworkTarget](./src/integrations/auto-wrap.ts)
 - [autoWrapFrameworkTargets](./src/integrations/auto-wrap.ts)
+- [discoverFrameworkTargets](./src/integrations/auto-wrap.ts)
+- [prepareFrameworkTargets](./src/integrations/auto-wrap.ts)
 - build-time transformed tuned variables via the Babel plugin export
 - one-time source rewrites via `traigent migrate seamless`
 - an experimental runtime rewrite for self-contained plain Node functions
@@ -174,18 +176,20 @@ of calling each wrapper manually:
 
 ```ts
 import {
-  autoWrapFrameworkTargets,
   describeFrameworkAutoOverride,
   optimize,
   param,
+  prepareFrameworkTargets,
 } from '@traigent/sdk';
 
-const { openaiClient, chatModel } = autoWrapFrameworkTargets({
+const prepared = prepareFrameworkTargets({
   openaiClient,
   chatModel,
 });
+const { openaiClient, chatModel } = prepared.wrapped;
 
 console.log(describeFrameworkAutoOverride(undefined, true));
+console.log(prepared.discovered);
 ```
 
 Identity note:
@@ -237,6 +241,26 @@ This is intentionally bounded:
 - heuristic, not full Python-style dataflow discovery
 - focused on self-contained local literal defaults that map cleanly into the JS
   config-space model
+
+For framework discovery, the native checkout now also supports bounded
+explicit-object discovery:
+
+```ts
+import { discoverFrameworkTargets, prepareFrameworkTargets } from '@traigent/sdk';
+
+const prepared = prepareFrameworkTargets({
+  providers: { openaiClient, chatModel },
+});
+
+console.log(discoverFrameworkTargets({ openaiClient, chatModel }));
+console.log(prepared.autoOverrideStatus);
+```
+
+This is also intentionally bounded:
+
+- it only inspects explicitly passed arrays and plain-object graphs
+- it does not scan module globals or arbitrary runtime state
+- it complements auto-wrap; it does not replace explicit wrappers in unknown code
 
 Both the codemod and Babel plugin are fail-closed:
 

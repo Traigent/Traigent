@@ -110,6 +110,8 @@ collapse two different implementation lines into one label.
 - Cost and stop-condition handling for native-local optimization
 - Basic framework interception for OpenAI / LangChain / Vercel AI, plus
   `autoWrapFrameworkTarget(...)` / `autoWrapFrameworkTargets({...})` helpers
+  and bounded explicit-object discovery via `discoverFrameworkTargets(...)` /
+  `prepareFrameworkTargets(...)`
 - DTO/measure validation and native runtime coverage
 
 ### Areas Where Python Still Exceeds This JS Checkout

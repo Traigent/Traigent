@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import {
-  autoWrapFrameworkTargets,
   describeFrameworkAutoOverride,
   optimize,
   param,
+  prepareFrameworkTargets,
 } from '../../../dist/index.js';
 
-const wrapped = autoWrapFrameworkTargets({
+const prepared = prepareFrameworkTargets({
   chatModel: {
     modelName: 'gpt-3.5-turbo',
     bind(config) {
@@ -22,6 +22,7 @@ const wrapped = autoWrapFrameworkTargets({
     },
   },
 });
+const wrapped = prepared.wrapped;
 
 const askQuestion = optimize({
   configurationSpace: {
@@ -54,7 +55,10 @@ askQuestion.applyBestConfig(result);
 console.log(
   JSON.stringify(
     {
-      frameworkAutoOverride: describeFrameworkAutoOverride(undefined, true),
+      discoveredTargets: prepared.discovered,
+      frameworkAutoOverride:
+        prepared.autoOverrideStatus ??
+        describeFrameworkAutoOverride(undefined, true),
       seamlessResolution: askQuestion.seamlessResolution(),
       bestConfig: result.bestConfig,
       bestMetrics: result.bestMetrics,

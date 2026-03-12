@@ -107,7 +107,8 @@ native-first checkout.
   - `frameworkTargets` can narrow active targets and `autoOverrideFrameworks: false`
     disables framework interception entirely for a seamless function
   - `autoWrapFrameworkTarget(...)`, `autoWrapFrameworkTargets(...)`, and
-    bounded explicit-object discovery now reduce setup friction for supported
+    bounded explicit-object discovery via `discoverFrameworkTargets(...)` /
+    `prepareFrameworkTargets(...)` now reduce setup friction for supported
     framework objects without scanning arbitrary module/global state
   - `frameworkAutoOverrideStatus()` and `seamlessResolution()` now surface the
     active targets and resolved seamless path for an optimized function
