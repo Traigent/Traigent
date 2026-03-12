@@ -1848,6 +1848,35 @@ class TestStopReasonInResult:
         assert len(result.trials) == 0
 
 
+class TestUsageAnalyticsSubmission:
+    """Tests for optimization-completion analytics submission."""
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_analytics_skips_when_backend_offline(self):
+        """Backend-offline mode should short-circuit before analytics submission."""
+        optimizer = MockOptimizer({"param1": (0, 1)}, ["accuracy"])
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        config = TraigentConfig.edge_analytics_mode()
+        config.enable_usage_analytics = True
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=1,
+            config=config,
+        )
+
+        with (
+            patch("traigent.core.orchestrator.is_backend_offline", return_value=True),
+            patch(
+                "traigent.utils.local_analytics.LocalAnalytics", new_callable=MagicMock
+            ) as mock_analytics,
+        ):
+            await orchestrator._submit_usage_analytics()
+
+        mock_analytics.assert_not_called()
+
+
 class TestOrchestratorCodeQuality:
     """Test code quality aspects of orchestrator.py."""
 
