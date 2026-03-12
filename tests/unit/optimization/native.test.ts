@@ -702,7 +702,7 @@ describe("native optimize()", () => {
     });
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 35);
+    setTimeout(() => controller.abort(), 60);
 
     const partial = await wrapped.optimize({
       mode: "native",

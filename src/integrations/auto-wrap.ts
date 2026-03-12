@@ -1,11 +1,26 @@
 import { withTraigentModel } from "./langchain/index.js";
 import { createTraigentOpenAI } from "./openai/index.js";
+import type { FrameworkTarget } from "../optimization/types.js";
 import { withTraigent } from "./vercel-ai/index.js";
 
 type UnknownRecord = Record<string, unknown>;
 
+export interface DiscoveredFrameworkTarget {
+  path: string;
+  target: FrameworkTarget;
+}
+
 function isObjectLike(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
+}
+
+function isPlainObject(value: unknown): value is UnknownRecord {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function isOpenAIClientLike(value: unknown): boolean {
@@ -61,6 +76,140 @@ function isVercelLanguageModelLike(value: unknown): boolean {
   );
 }
 
+function detectFrameworkTarget(value: unknown): FrameworkTarget | undefined {
+  if (isOpenAIClientLike(value)) {
+    return "openai";
+  }
+
+  if (isLangChainModelLike(value)) {
+    return "langchain";
+  }
+
+  if (isVercelLanguageModelLike(value)) {
+    return "vercel-ai";
+  }
+
+  return undefined;
+}
+
+function createObjectClone(value: UnknownRecord): UnknownRecord {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null ? Object.create(null) : {};
+}
+
+function formatChildPath(parent: string, key: string | number): string {
+  if (typeof key === "number") {
+    return `${parent}[${key}]`;
+  }
+
+  return parent === "<root>" ? key : `${parent}.${key}`;
+}
+
+function discoverFrameworkTargetsInternal(
+  value: unknown,
+  path: string,
+  discovered: DiscoveredFrameworkTarget[],
+  seen: WeakSet<object>,
+): void {
+  if (!isObjectLike(value)) {
+    return;
+  }
+
+  const target = detectFrameworkTarget(value);
+  if (target) {
+    discovered.push({ path, target });
+    seen.add(value);
+    return;
+  }
+
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      discoverFrameworkTargetsInternal(
+        entry,
+        formatChildPath(path, index),
+        discovered,
+        seen,
+      );
+    });
+    return;
+  }
+
+  if (!isPlainObject(value)) {
+    return;
+  }
+
+  Object.entries(value).forEach(([key, entry]) => {
+    discoverFrameworkTargetsInternal(
+      entry,
+      formatChildPath(path, key),
+      discovered,
+      seen,
+    );
+  });
+}
+
+/**
+ * Discover supported framework targets inside an explicitly provided value.
+ *
+ * This is bounded discovery:
+ * - direct framework targets are detected
+ * - nested arrays and plain-object graphs are traversed
+ * - arbitrary module state or non-plain container instances are not scanned
+ */
+export function discoverFrameworkTargets(
+  value: unknown,
+): DiscoveredFrameworkTarget[] {
+  const discovered: DiscoveredFrameworkTarget[] = [];
+  discoverFrameworkTargetsInternal(value, "<root>", discovered, new WeakSet());
+  return discovered;
+}
+
+function autoWrapFrameworkTargetsInternal<T>(
+  value: T,
+  seen: WeakMap<object, unknown>,
+): T {
+  if (!isObjectLike(value)) {
+    return value;
+  }
+
+  const existing = seen.get(value);
+  if (existing !== undefined) {
+    return existing as T;
+  }
+
+  const target = detectFrameworkTarget(value);
+  if (target) {
+    const wrapped = autoWrapFrameworkTarget(value);
+    seen.set(value, wrapped);
+    return wrapped;
+  }
+
+  if (Array.isArray(value)) {
+    const wrappedArray: unknown[] = [];
+    seen.set(value, wrappedArray);
+    value.forEach((entry) => {
+      wrappedArray.push(autoWrapFrameworkTargetsInternal(entry, seen));
+    });
+    return wrappedArray as T;
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const wrappedObject = createObjectClone(value);
+  seen.set(value, wrappedObject);
+  Object.entries(value).forEach(([key, entry]) => {
+    wrappedObject[key] = autoWrapFrameworkTargetsInternal(entry, seen);
+  });
+  return wrappedObject as T;
+}
+
 /**
  * Wrap a supported framework target for seamless interception.
  *
@@ -95,26 +244,5 @@ export function autoWrapFrameworkTarget<T>(value: T): T {
  * single direct framework object.
  */
 export function autoWrapFrameworkTargets<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((entry) => autoWrapFrameworkTarget(entry)) as T;
-  }
-
-  if (!isObjectLike(value)) {
-    return value;
-  }
-
-  if (
-    isOpenAIClientLike(value) ||
-    isLangChainModelLike(value) ||
-    isVercelLanguageModelLike(value)
-  ) {
-    return autoWrapFrameworkTarget(value);
-  }
-
-  const wrappedEntries = Object.entries(value).map(([key, entry]) => [
-    key,
-    autoWrapFrameworkTarget(entry),
-  ]);
-
-  return Object.fromEntries(wrappedEntries) as T;
+  return autoWrapFrameworkTargetsInternal(value, new WeakMap());
 }

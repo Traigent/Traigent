@@ -177,6 +177,11 @@ Hybrid results expose backend finalization reporting directly on
 
 For follow-up session control, the hybrid SDK also exposes:
 
+- `createOptimizationSession(request, options?)`
+- `getNextOptimizationTrial(sessionId, options?)`
+- `submitOptimizationTrialResult(sessionId, result, options?)`
+- `listOptimizationSessions(options?)`
+- `checkOptimizationServiceStatus(options?)`
 - `getOptimizationSessionStatus(sessionId, options?)`
 - `finalizeOptimizationSession(sessionId, options?)`
 - `deleteOptimizationSession(sessionId, options?)`
@@ -184,12 +189,27 @@ For follow-up session control, the hybrid SDK also exposes:
 `deleteOptimizationSession(...)` defaults `cascade` to `false`; opt in
 explicitly if you want recursive backend cleanup.
 
+The low-level `createOptimizationSession(...)`,
+`getNextOptimizationTrial(...)`, and
+`submitOptimizationTrialResult(...)` helpers are advanced session-control APIs.
+Use them when you want to drive the typed session lifecycle directly instead of
+going through `wrapped.optimize(...)`.
+
+`listOptimizationSessions(...)` forwards `pattern` directly to the current
+typed-session backend, where it behaves like a substring-style session-id
+filter. Its `total` field reflects the backend-reported count before SDK-side
+filtering of malformed entries, so it may be larger than `sessions.length`.
+`getOptimizationSessionStatus(...)` and listed session entries also surface the
+current backend's known session detail fields directly when present:
+`createdAt`, `functionName`, `datasetSize`, `objectives`, `experimentId`, and
+`experimentRunId`, while still preserving the raw `metadata` object.
+
 See [`examples/core/hybrid-session-control/run.mjs`](./examples/core/hybrid-session-control/run.mjs)
 for an executable session-control flow that demonstrates:
 
 1. env-based hybrid optimize/session helpers
-2. explicit options-based helper calls
-3. wrapped or auto-wrapped framework clients in `injection.mode = "seamless"`
+2. explicit options-based list/health/status/finalize/delete helper calls
+3. wrapped, auto-wrapped, or discovered framework clients in `injection.mode = "seamless"`
 4. shared `reporting` shape between `.optimize()` and `finalizeOptimizationSession(...)`
 5. seamless diagnostics through `frameworkAutoOverrideStatus()` and `seamlessResolution()`
 
@@ -199,11 +219,23 @@ framework call while the SDK records provider usage metrics:
 
 ```ts
 import OpenAI from "openai";
-import { autoWrapFrameworkTarget, optimize, param } from "@traigent/sdk";
+import {
+  autoWrapFrameworkTargets,
+  discoverFrameworkTargets,
+  optimize,
+  param,
+} from "@traigent/sdk";
 
-const client = autoWrapFrameworkTarget(
-  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-);
+const runtime = {
+  providers: {
+    primary: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  },
+};
+
+console.log(discoverFrameworkTargets(runtime));
+
+const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+const client = wrappedRuntime.providers.primary;
 
 const answerQuestion = optimize({
   configurationSpace: {
@@ -247,6 +279,16 @@ The seamless diagnostics surface is available on every optimized function:
   - returns `undefined` when seamless mode is not configured, or when seamless
     mode is configured but no active framework targets are currently registered
   - use `frameworkAutoOverrideStatus()` to distinguish those cases
+
+For bounded convenience discovery, the hybrid worktree also supports:
+
+- `discoverFrameworkTargets(value)`
+  - inspects explicitly passed arrays and plain-object graphs
+  - reports discovered target paths like `providers.primary`
+- `autoWrapFrameworkTargets(value)`
+  - now recursively wraps those explicit object graphs
+  - preserves cycles and repeated references
+  - does not scan arbitrary module/global state
 
 Resolution order:
 

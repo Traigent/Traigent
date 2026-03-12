@@ -10,6 +10,7 @@ import {
   param,
   resolveConnection,
   scoreTokenAccuracy,
+  summarizeSessionEvidence,
   summarizeProvider,
   summarizeResult,
 } from "./shared.mjs";
@@ -100,9 +101,8 @@ export async function runSection() {
 
   return summarizeResult(metadata.title, result, {
     provider: summarizeProvider(provider),
-    status: helpers.status?.status ?? null,
-    finalizedStatus: helpers.finalized?.status ?? null,
     finalizeFullHistoryCount:
       helpers.finalized?.reporting?.fullHistory?.length ?? 0,
+    ...summarizeSessionEvidence(helpers),
   });
 }

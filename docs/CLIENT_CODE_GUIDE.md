@@ -100,13 +100,39 @@ history without guessing the payload format.
 
 If you need session lifecycle helpers outside the optimize loop, use:
 
+- `createOptimizationSession(request, options?)`
+- `getNextOptimizationTrial(sessionId, options?)`
+- `submitOptimizationTrialResult(sessionId, result, options?)`
+- `listOptimizationSessions(options?)`
+- `checkOptimizationServiceStatus(options?)`
 - `getOptimizationSessionStatus(sessionId, options?)`
 - `finalizeOptimizationSession(sessionId, options?)`
 - `deleteOptimizationSession(sessionId, options?)`
 
 Both helpers normalize backend field naming:
 
+- `createOptimizationSession(...)` mirrors the reachable typed backend create
+  route using JS-friendly camelCase request fields and a normalized `sessionId`
+  response
+- `getNextOptimizationTrial(...)` returns a normalized `suggestion`,
+  `shouldContinue`, `stopReason`, and `sessionStatus` shape for low-level trial
+  orchestration
+- `submitOptimizationTrialResult(...)` accepts JS-friendly trial result input
+  and normalizes the backend response to `{ success, continueOptimization, ... }`
+- `listOptimizationSessions(...)` always returns a normalized `{ sessions, total }`
+  shape and filters malformed session entries instead of guessing IDs
+- `pattern` is forwarded directly to the backend list route; on the current
+  typed-session backend it behaves like a substring-style session-id filter
+- `total` reflects the backend-reported count before SDK-side filtering, so it
+  may be larger than `sessions.length` when malformed entries are dropped
+- `checkOptimizationServiceStatus(...)` returns `{ status, error? }` and mirrors
+  the Python cloud-client behavior by returning `"unavailable"` instead of
+  throwing when the backend health check itself fails
 - `getOptimizationSessionStatus(...)` always exposes `sessionId`
+- `getOptimizationSessionStatus(...)` and each normalized listed session entry
+  also expose the current backend's known detail fields directly when present:
+  `createdAt`, `functionName`, `datasetSize`, `objectives`, `experimentId`, and
+  `experimentRunId`
 - `finalizeOptimizationSession(...)` always exposes normalized `sessionId`,
   `bestConfig`, `bestMetrics`, optional `reporting`, and supports
   `includeFullHistory`
@@ -120,8 +146,9 @@ For an executable control-plane example, see
 That example demonstrates:
 
 - env-based `optimize(...)`
-- explicit helper options for status/finalize/delete
-- wrapped or auto-wrapped framework clients in seamless mode
+- explicit helper options for list/status/finalize/delete
+- low-level session lifecycle parity is available through advanced helper APIs
+- wrapped, auto-wrapped, or explicitly discovered framework clients in seamless mode
 - `frameworkAutoOverrideStatus()` and `seamlessResolution()` diagnostics
 - the shared `reporting` shape returned by `.optimize()` and `finalizeOptimizationSession(...)`
 
@@ -129,11 +156,23 @@ For supported frameworks, use seamless mode with a wrapped target:
 
 ```ts
 import OpenAI from "openai";
-import { autoWrapFrameworkTarget, optimize, param } from "@traigent/sdk";
+import {
+  autoWrapFrameworkTargets,
+  discoverFrameworkTargets,
+  optimize,
+  param,
+} from "@traigent/sdk";
 
-const client = autoWrapFrameworkTarget(
-  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-);
+const runtime = {
+  providers: {
+    primary: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  },
+};
+
+console.log(discoverFrameworkTargets(runtime));
+
+const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+const client = wrappedRuntime.providers.primary;
 
 const answerQuestion = optimize({
   configurationSpace: {
@@ -178,6 +217,12 @@ did or did not select framework interception:
   - returns `undefined` when seamless mode is not configured or when no active
     framework targets are currently registered
   - use `frameworkAutoOverrideStatus()` to tell those cases apart
+- `discoverFrameworkTargets(value)`
+  - bounded discovery for explicitly passed arrays and plain-object graphs
+  - useful when your runtime bundles framework clients inside nested objects
+- `autoWrapFrameworkTargets(value)`
+  - recursively wraps those explicit object graphs with cycle safety
+  - does not scan arbitrary module/global state
 
 Hybrid mode uses the backend interactive session API:
 

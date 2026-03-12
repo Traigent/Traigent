@@ -4,6 +4,7 @@ import type { TrialConfig } from "../../../src/dtos/trial.js";
 import {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
+  discoverFrameworkTargets,
 } from "../../../src/integrations/auto-wrap.js";
 import { clearRegisteredFrameworkTargets } from "../../../src/integrations/registry.js";
 import { TrialContext } from "../../../src/core/context.js";
@@ -30,6 +31,7 @@ describe("autoWrapFrameworkTarget(s)", () => {
     expect(autoWrapFrameworkTargets("plain-value")).toBe("plain-value");
     expect(autoWrapFrameworkTargets(42)).toBe(42);
     expect(autoWrapFrameworkTargets(null)).toBeNull();
+    expect(autoWrapFrameworkTarget("plain-value")).toBe("plain-value");
   });
 
   it("wraps supported targets inside arrays", async () => {
@@ -102,6 +104,86 @@ describe("autoWrapFrameworkTarget(s)", () => {
     expect(create).toHaveBeenCalledWith({
       model: "gpt-4o-mini",
       temperature: 0.4,
+    });
+  });
+
+  it("recursively wraps supported targets inside nested plain-object graphs", async () => {
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 3,
+        completion_tokens: 1,
+      },
+    }));
+
+    const wrapped = autoWrapFrameworkTargets({
+      services: {
+        llm: {
+          primary: {
+            chat: {
+              completions: {
+                create,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await TrialContext.run(
+      createTrialConfig({ model: "gpt-4o", temperature: 0.2 }),
+      async () => {
+        await wrapped.services.llm.primary.chat?.completions?.create({
+          model: "gpt-3.5-turbo",
+        });
+      },
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      model: "gpt-4o",
+      temperature: 0.2,
+    });
+  });
+
+  it("preserves cycles and repeated references while recursively wrapping", async () => {
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+      },
+    }));
+    const sharedClient = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    };
+    const graph: {
+      primary: typeof sharedClient;
+      secondary?: typeof sharedClient;
+      self?: unknown;
+    } = {
+      primary: sharedClient,
+    };
+    graph.secondary = sharedClient;
+    graph.self = graph;
+
+    const wrapped = autoWrapFrameworkTargets(graph);
+
+    expect(wrapped.self).toBe(wrapped);
+    expect(wrapped.primary).toBe(wrapped.secondary);
+
+    await TrialContext.run(
+      createTrialConfig({ model: "gpt-4o-mini" }),
+      async () => {
+        await wrapped.secondary?.chat?.completions?.create({
+          model: "gpt-3.5-turbo",
+        });
+      },
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      model: "gpt-4o-mini",
     });
   });
 
@@ -198,5 +280,78 @@ describe("autoWrapFrameworkTarget(s)", () => {
     expect(autoWrapFrameworkTarget(openaiClient)).toBe(openaiClient);
     expect(autoWrapFrameworkTarget(langchainModel)).not.toBe(langchainModel);
     expect(autoWrapFrameworkTarget(vercelModel as never)).not.toBe(vercelModel);
+  });
+
+  it("discovers supported targets inside explicit object graphs with stable paths", () => {
+    const graph = {
+      openai: {
+        chat: {
+          completions: {
+            create: vi.fn(async () => ({ usage: {} })),
+          },
+        },
+      },
+      nested: {
+        models: [
+          {
+            modelName: "gpt-4o-mini",
+            bind: vi.fn(() => ({ invoke: vi.fn(async () => "ok") })),
+            async invoke() {
+              return "fallback";
+            },
+          },
+        ],
+      },
+      untouched: {
+        provider: "custom",
+      },
+    };
+
+    expect(discoverFrameworkTargets(graph)).toEqual([
+      { path: "openai", target: "openai" },
+      { path: "nested.models[0]", target: "langchain" },
+    ]);
+  });
+
+  it("discovers a direct root target once and ignores repeated cycle traversal", () => {
+    const root = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({ usage: {} })),
+        },
+      },
+    };
+    const graph: { root: typeof root; loop?: unknown } = { root };
+    graph.loop = graph;
+
+    expect(discoverFrameworkTargets(root)).toEqual([
+      { path: "<root>", target: "openai" },
+    ]);
+    expect(discoverFrameworkTargets(graph)).toEqual([
+      { path: "root", target: "openai" },
+    ]);
+  });
+
+  it("does not recurse into non-plain container instances", () => {
+    class RuntimeContainer {
+      constructor(readonly client: unknown) {}
+    }
+
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+      },
+    }));
+    const container = new RuntimeContainer({
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    });
+
+    expect(discoverFrameworkTargets(container)).toEqual([]);
+    expect(autoWrapFrameworkTargets(container)).toBe(container);
   });
 });

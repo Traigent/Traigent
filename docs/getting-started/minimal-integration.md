@@ -34,7 +34,8 @@ summary. Set `includeFullHistory: true` if you want the backend full-history
 payload included there.
 
 If you keep the returned `result.sessionId`, you can later query, finalize, or
-delete the typed backend session with `getOptimizationSessionStatus(...)`,
+inspect and manage the typed backend session with
+`checkOptimizationServiceStatus(...)`, `listOptimizationSessions(...)`, `getOptimizationSessionStatus(...)`,
 `finalizeOptimizationSession(...)`, and `deleteOptimizationSession(...)`.
 
 See the executable session-control walkthrough in
@@ -43,14 +44,17 @@ for both:
 
 - env-based auth/config
 - explicit helper options-based auth/config
-- wrapped framework interception in `injection.mode = "seamless"`
+- wrapped or discovered framework interception in `injection.mode = "seamless"`
 - `frameworkAutoOverrideStatus()` / `seamlessResolution()` diagnostics
 
 If your agent already uses a supported framework client or model, wrap it once
 and switch to `injection.mode = "seamless"`. The wrapped framework call will
 pick up optimized params from the active trial and report runtime usage metrics
 automatically. Use `autoWrapFrameworkTarget(...)` when you want the SDK to pick
-the right OpenAI/LangChain/Vercel wrapper for you.
+the right OpenAI/LangChain/Vercel wrapper for a direct framework object. If
+your runtime stores clients/models inside nested arrays or plain-object graphs,
+use `discoverFrameworkTargets(...)` and `autoWrapFrameworkTargets(...)` for
+bounded explicit-object discovery and recursive wrapping.
 
 For production debugging, call:
 

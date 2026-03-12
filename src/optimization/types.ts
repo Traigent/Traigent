@@ -193,6 +193,7 @@ export interface InjectionSpec {
 export interface OptimizationExecutionSpec {
   mode?: "native" | "hybrid";
   algorithm?: "grid" | "random" | "bayesian" | "optuna";
+  /** Backend origin (for example, https://host:5000) or any path-prefixed /api/v1 base URL. */
   backendUrl?: string;
   apiKey?: string;
   timeoutMs?: number;
@@ -275,6 +276,7 @@ export interface HybridOptimizeOptions {
   mode?: "hybrid";
   algorithm: "optuna";
   maxTrials: number;
+  /** Backend origin (for example, https://host:5000) or any path-prefixed /api/v1 base URL. */
   backendUrl?: string;
   apiKey?: string;
   userId?: string;
@@ -288,10 +290,107 @@ export interface HybridOptimizeOptions {
 }
 
 export interface OptimizationSessionRequestOptions {
+  /** Backend origin (for example, https://host:5000) or any path-prefixed /api/v1 base URL. */
   backendUrl?: string;
   apiKey?: string;
   requestTimeoutMs?: number;
   signal?: AbortSignal;
+}
+
+export interface OptimizationServiceStatusResponse {
+  status: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionCreateRequest {
+  functionName: string;
+  configurationSpace: Record<string, ParameterDefinition>;
+  objectives: readonly ObjectiveInput[];
+  datasetMetadata?: Record<string, unknown>;
+  maxTrials?: number;
+  budget?: OptimizationBudget;
+  constraints?: OptimizationConstraints;
+  defaultConfig?: Record<string, unknown>;
+  promotionPolicy?: PromotionPolicy;
+  optimizationStrategy?: Record<string, unknown>;
+  userId?: string;
+  billingTier?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionCreationResponse {
+  sessionId: string;
+  status?: OptimizationSessionLifecycleStatus | string;
+  optimizationStrategy?: Record<string, unknown>;
+  estimatedDuration?: number;
+  billingEstimate?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionDatasetSubset {
+  indices: readonly number[];
+  selectionStrategy?: string;
+  confidenceLevel?: number;
+  estimatedRepresentativeness?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionTrialSuggestion {
+  trialId: string;
+  sessionId: string;
+  trialNumber: number;
+  config: TrialConfig["config"];
+  datasetSubset: OptimizationSessionDatasetSubset;
+  explorationType?: string;
+  priority?: number;
+  estimatedDuration?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionTrialResultInput {
+  sessionId?: string;
+  trialId: string;
+  metrics: Metrics;
+  duration: number;
+  status?: "completed" | "failed" | "cancelled" | "timeout";
+  outputsSample?: readonly unknown[] | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionNextTrialOptions
+  extends OptimizationSessionRequestOptions {
+  previousResults?: readonly OptimizationSessionTrialResultInput[];
+  requestMetadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionNextTrialResponse {
+  suggestion: OptimizationSessionTrialSuggestion | null;
+  shouldContinue: boolean;
+  reason?: string | null;
+  stopReason?: string | null;
+  sessionStatus?: OptimizationSessionLifecycleStatus | string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionSubmitResultResponse {
+  success: boolean;
+  continueOptimization?: boolean;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionListOptions
+  extends OptimizationSessionRequestOptions {
+  /**
+   * Backend-defined session-id filter forwarded verbatim as the `pattern`
+   * query parameter. The current backend treats this as a substring-style match.
+   */
+  pattern?: string;
+  status?: OptimizationSessionLifecycleStatus | string;
 }
 
 export interface OptimizationSessionDeleteOptions
@@ -345,7 +444,30 @@ export interface OptimizationSessionStatusResponse {
   sessionId: string;
   status?: OptimizationSessionLifecycleStatus | string;
   progress?: OptimizationSessionStatusSummary;
+  /** Top-level normalized alias for backend `created_at` when present. */
+  createdAt?: string | number;
+  /** Top-level normalized alias for backend `function_name` when present. */
+  functionName?: string;
+  /** Top-level normalized alias for backend `dataset_size` when present. */
+  datasetSize?: number;
+  /** Top-level normalized alias for backend `objectives` when present. */
+  objectives?: readonly string[];
+  /** Top-level normalized alias for backend `experiment_id` when present. */
+  experimentId?: string;
+  /** Top-level normalized alias for backend `experiment_run_id` when present. */
+  experimentRunId?: string;
   metadata?: OptimizationSessionStatusMetadata;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionListResponse {
+  sessions: readonly OptimizationSessionStatusResponse[];
+  /**
+   * Backend-reported total count before SDK-side filtering of malformed session
+   * entries. This may exceed `sessions.length` if the backend returned entries
+   * without a usable `session_id`.
+   */
+  total: number;
   [key: string]: unknown;
 }
 

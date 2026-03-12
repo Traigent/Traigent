@@ -1,10 +1,13 @@
 import { fileURLToPath } from "node:url";
 
 import {
-  autoWrapFrameworkTarget,
+  autoWrapFrameworkTargets,
+  checkOptimizationServiceStatus,
   deleteOptimizationSession,
+  discoverFrameworkTargets,
   finalizeOptimizationSession,
   getOptimizationSessionStatus,
+  listOptimizationSessions,
   optimize,
   param,
 } from "../../../dist/index.js";
@@ -17,34 +20,43 @@ function readConnectionFromEnv() {
 }
 
 function createAgent() {
-  const client = autoWrapFrameworkTarget({
-    chat: {
-      completions: {
-        async create(params) {
-          const content = String(params.messages?.[0]?.content ?? "");
-          return {
-            choices: [
-              {
-                message: {
-                  content:
-                    Number(params.temperature ?? 0) >= 0.5
-                      ? `${content.toUpperCase()}!`
-                      : content.toUpperCase(),
-                },
+  const runtime = {
+    providers: {
+      primary: {
+        client: {
+          chat: {
+            completions: {
+              async create(params) {
+                const content = String(params.messages?.[0]?.content ?? "");
+                return {
+                  choices: [
+                    {
+                      message: {
+                        content:
+                          Number(params.temperature ?? 0) >= 0.5
+                            ? `${content.toUpperCase()}!`
+                            : content.toUpperCase(),
+                      },
+                    },
+                  ],
+                  usage: {
+                    prompt_tokens: 2,
+                    completion_tokens: 1,
+                  },
+                  model: params.model,
+                };
               },
-            ],
-            usage: {
-              prompt_tokens: 2,
-              completion_tokens: 1,
             },
-            model: params.model,
-          };
+          },
         },
       },
     },
-  });
+  };
+  const discoveredTargets = discoverFrameworkTargets(runtime);
+  const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+  const client = wrappedRuntime.providers.primary.client;
 
-  return optimize({
+  const agent = optimize({
     configurationSpace: {
       model: param.enum(["gpt-4o-mini", "gpt-4o"]),
       temperature: param.float({ min: 0, max: 1, step: 0.5 }),
@@ -67,12 +79,18 @@ function createAgent() {
 
     return response.choices[0]?.message?.content ?? "";
   });
+
+  return {
+    agent,
+    discoveredTargets,
+  };
 }
 
 async function runEnvBasedFlow() {
-  const agent = createAgent();
+  const { agent, discoveredTargets } = createAgent();
   const frameworkAutoOverride = agent.frameworkAutoOverrideStatus();
   const seamlessResolution = agent.seamlessResolution();
+  const service = await checkOptimizationServiceStatus();
   const result = await agent.optimize({
     mode: "hybrid",
     algorithm: "optuna",
@@ -84,16 +102,30 @@ async function runEnvBasedFlow() {
   }
 
   const status = await getOptimizationSessionStatus(result.sessionId);
+  const listed = await listOptimizationSessions({
+    pattern: result.sessionId,
+  });
   const finalized = await finalizeOptimizationSession(result.sessionId);
   const deleted = await deleteOptimizationSession(result.sessionId);
 
-  return { result, status, finalized, deleted, frameworkAutoOverride, seamlessResolution };
+  return {
+    result,
+    service,
+    status,
+    listed,
+    finalized,
+    deleted,
+    frameworkAutoOverride,
+    seamlessResolution,
+    discoveredTargets,
+  };
 }
 
 async function runExplicitFlow(connection) {
-  const agent = createAgent();
+  const { agent, discoveredTargets } = createAgent();
   const frameworkAutoOverride = agent.frameworkAutoOverrideStatus();
   const seamlessResolution = agent.seamlessResolution();
+  const service = await checkOptimizationServiceStatus(connection);
   const result = await agent.optimize({
     mode: "hybrid",
     algorithm: "optuna",
@@ -106,6 +138,10 @@ async function runExplicitFlow(connection) {
   }
 
   const status = await getOptimizationSessionStatus(result.sessionId, connection);
+  const listed = await listOptimizationSessions({
+    ...connection,
+    pattern: result.sessionId,
+  });
   const finalized = await finalizeOptimizationSession(result.sessionId, {
     ...connection,
     includeFullHistory: true,
@@ -115,7 +151,17 @@ async function runExplicitFlow(connection) {
     cascade: false,
   });
 
-  return { result, status, finalized, deleted, frameworkAutoOverride, seamlessResolution };
+  return {
+    result,
+    service,
+    status,
+    listed,
+    finalized,
+    deleted,
+    frameworkAutoOverride,
+    seamlessResolution,
+    discoveredTargets,
+  };
 }
 
 export async function runExample() {
@@ -140,7 +186,14 @@ export async function runExample() {
       reportingKeys: Object.keys(envFlow.result.reporting ?? {}),
       frameworkAutoOverride: envFlow.frameworkAutoOverride,
       seamlessResolution: envFlow.seamlessResolution,
+      discoveredTargets: envFlow.discoveredTargets,
+      serviceStatus: envFlow.service.status,
       status: envFlow.status.status,
+      functionName: envFlow.status.functionName,
+      datasetSize: envFlow.status.datasetSize,
+      experimentId: envFlow.status.experimentId,
+      experimentRunId: envFlow.status.experimentRunId,
+      listedCount: envFlow.listed.sessions.length,
       finalizeStatus: envFlow.finalized.status,
       deleteSuccess: envFlow.deleted.success,
     },
@@ -150,7 +203,14 @@ export async function runExample() {
       reportingKeys: Object.keys(explicitFlow.finalized.reporting ?? {}),
       frameworkAutoOverride: explicitFlow.frameworkAutoOverride,
       seamlessResolution: explicitFlow.seamlessResolution,
+      discoveredTargets: explicitFlow.discoveredTargets,
+      serviceStatus: explicitFlow.service.status,
       status: explicitFlow.status.status,
+      functionName: explicitFlow.status.functionName,
+      datasetSize: explicitFlow.status.datasetSize,
+      experimentId: explicitFlow.status.experimentId,
+      experimentRunId: explicitFlow.status.experimentRunId,
+      listedCount: explicitFlow.listed.sessions.length,
       finalizeStatus: explicitFlow.finalized.status,
       deleteSuccess: explicitFlow.deleted.success,
     },

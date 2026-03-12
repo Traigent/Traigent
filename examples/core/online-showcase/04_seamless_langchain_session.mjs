@@ -12,6 +12,7 @@ import {
   optimize,
   param,
   resolveConnection,
+  summarizeSessionEvidence,
   summarizeProvider,
   summarizeResult,
 } from "./shared.mjs";
@@ -62,7 +63,6 @@ export async function runSection() {
     provider: summarizeProvider(provider),
     frameworkAutoOverride: answerToken.frameworkAutoOverrideStatus(),
     seamlessResolution: answerToken.seamlessResolution(),
-    status: helpers.status?.status ?? null,
-    finalizedStatus: helpers.finalized?.status ?? null,
+    ...summarizeSessionEvidence(helpers),
   });
 }

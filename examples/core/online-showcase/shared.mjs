@@ -5,6 +5,7 @@ import {
   autoWrapFrameworkTarget,
   deleteOptimizationSession,
   finalizeOptimizationSession,
+  listOptimizationSessions,
   getOptimizationSessionStatus,
   getTrialParam,
   optimize,
@@ -207,20 +208,51 @@ export async function maybeDeleteSession(sessionId, connection) {
 export async function collectSessionHelpers(sessionId, connection) {
   if (!sessionId) {
     return {
+      listed: null,
       status: null,
       finalized: null,
       deleted: { attempted: false, deleted: false },
+      helperErrors: [],
     };
   }
 
-  const status = await getOptimizationSessionStatus(sessionId, connection);
-  const finalized = await finalizeOptimizationSession(sessionId, {
-    ...connection,
-    includeFullHistory: true,
+  const settled = await Promise.allSettled([
+    listOptimizationSessions({
+      ...connection,
+      pattern: sessionId,
+    }),
+    getOptimizationSessionStatus(sessionId, connection),
+    finalizeOptimizationSession(sessionId, {
+      ...connection,
+      includeFullHistory: true,
+    }),
+  ]);
+
+  const helperNames = ["listed", "status", "finalized"];
+  const helperValues = Object.fromEntries(
+    settled.map((result, index) => [
+      helperNames[index],
+      result.status === "fulfilled" ? result.value : null,
+    ]),
+  );
+  const helperErrors = settled.flatMap((result, index) => {
+    if (result.status === "fulfilled") {
+      return [];
+    }
+
+    return [
+      {
+        helper: helperNames[index],
+        message:
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+      },
+    ];
   });
   const deleted = await maybeDeleteSession(sessionId, connection);
 
-  return { status, finalized, deleted };
+  return { ...helperValues, deleted, helperErrors };
 }
 
 export function summarizeResult(name, result, extras = {}) {
@@ -242,6 +274,52 @@ export function summarizeResult(name, result, extras = {}) {
         }
       : null,
     ...extras,
+  };
+}
+
+export function summarizeSessionEvidence(helpers) {
+  const status = helpers.status;
+  const listed = helpers.listed;
+  const metadata =
+    status && typeof status.metadata === "object" && status.metadata
+      ? status.metadata
+      : null;
+  const experimentId =
+    metadata && typeof metadata.experiment_id === "string"
+      ? metadata.experiment_id
+      : null;
+  const experimentRunId =
+    metadata && typeof metadata.experiment_run_id === "string"
+      ? metadata.experiment_run_id
+      : null;
+  const frontendBase =
+    process.env.TRAIGENT_SHOWCASE_FE_URL ?? "http://localhost:3000";
+
+  return {
+    // NOTE: the current backend session listing may exclude completed sessions,
+    // so `listedSessionCount` can be 0 even when `status` shows a completed run.
+    listedSessionCount:
+      listed && Array.isArray(listed.sessions) ? listed.sessions.length : 0,
+    listedTotal: listed?.total ?? null,
+    status: status?.status ?? null,
+    progress:
+      status && typeof status.progress === "object" && status.progress
+        ? {
+            completed: status.progress.completed ?? null,
+            total: status.progress.total ?? null,
+            failed: status.progress.failed ?? null,
+          }
+        : null,
+    experimentId,
+    experimentRunId,
+    experimentUrl:
+      experimentId && experimentId.length > 0
+        ? `${frontendBase.replace(/\/$/, "")}/experiments/view/${experimentId}`
+        : null,
+    helperErrors:
+      Array.isArray(helpers.helperErrors) && helpers.helperErrors.length > 0
+        ? helpers.helperErrors
+        : [],
   };
 }
 

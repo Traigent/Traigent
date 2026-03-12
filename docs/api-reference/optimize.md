@@ -56,14 +56,45 @@ Reporting shape:
 
 Related hybrid session helpers:
 
+- `createOptimizationSession(request, options?)`
+- `getNextOptimizationTrial(sessionId, options?)`
+- `submitOptimizationTrialResult(sessionId, result, options?)`
+- `listOptimizationSessions(options?)`
+- `checkOptimizationServiceStatus(options?)`
 - `getOptimizationSessionStatus(sessionId, options?)`
 - `finalizeOptimizationSession(sessionId, options?)`
 - `deleteOptimizationSession(sessionId, options?)`
 
 Helper normalization:
 
+- `createOptimizationSession(...)` accepts camelCase request fields and returns
+  normalized `sessionId`, `status`, and optional strategy / metadata fields even
+  when the backend payload uses snake_case keys
+- `getNextOptimizationTrial(...)` normalizes raw and wrapped next-trial payloads
+  into one JS-friendly shape with `suggestion`, `shouldContinue`, `stopReason`,
+  and `sessionStatus`
+- `submitOptimizationTrialResult(...)` accepts JS-friendly result input and
+  normalizes the backend response into `{ success, continueOptimization, ... }`
+- `listOptimizationSessions(...)` normalizes raw and wrapped list payloads into
+  `{ sessions, total }`, preserves `sessionId` on each listed session, and
+  filters malformed session entries instead of inventing synthetic IDs
+- `listOptimizationSessions(..., { pattern })` forwards `pattern` verbatim to the
+  backend list route; in the current backend this behaves like a substring-style
+  session-id filter
+- `listOptimizationSessions(...).total` reflects the backend-reported total count
+  before SDK-side filtering of malformed entries, so it may exceed
+  `sessions.length`
+- `checkOptimizationServiceStatus(...)` queries the backend root `/health` route
+  and returns `{ status, error? }`. Like the Python cloud client, it reports
+  `status: "unavailable"` instead of throwing when the health check itself
+  fails
 - `getOptimizationSessionStatus(...)` always returns `sessionId`, even when the
-  backend payload uses `session_id`
+  backend payload uses `session_id`, and surfaces the current backend's known
+  detail fields directly when present: `createdAt`, `functionName`,
+  `datasetSize`, `objectives`, `experimentId`, and `experimentRunId`
+- `listOptimizationSessions(...)` uses the same normalized session-entry shape
+  as `getOptimizationSessionStatus(...)` for the per-session fields it can
+  derive from the list response
 - `finalizeOptimizationSession(...)` always returns `sessionId`, normalized
   `bestConfig` / `bestMetrics`, optional `reporting`, and supports
   `includeFullHistory?: boolean`
@@ -79,8 +110,8 @@ Executable example:
 That example uses only public exports and shows both:
 
 - env-based hybrid optimize/session control
-- explicit helper options for status/finalize/delete
-- wrapped or auto-wrapped seamless framework usage
+- explicit helper options for create/next-trial/submit/list/status/finalize/delete
+- wrapped, auto-wrapped, or explicitly discovered seamless framework usage
 
 Related seamless diagnostics on the optimized function:
 
@@ -96,3 +127,9 @@ Related seamless diagnostics on the optimized function:
   configured, or when seamless mode is configured but no active framework
   targets are currently registered. Use `frameworkAutoOverrideStatus()` to
   distinguish those cases.
+- `discoverFrameworkTargets(value)`
+  Inspects explicitly passed arrays and plain-object graphs and reports the
+  wrappable target paths it finds, such as `providers.primary`.
+- `autoWrapFrameworkTargets(value)`
+  Recursively wraps those explicit object graphs with cycle safety. It does not
+  scan arbitrary module/global state.

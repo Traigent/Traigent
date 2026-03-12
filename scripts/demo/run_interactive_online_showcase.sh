@@ -320,10 +320,9 @@ run_section_with_retry() {
 
   while true; do
     node "$ROOT/scripts/demo/interactive_online_showcase.mjs" --section "$id" >"$output_file"
-    cat "$output_file"
 
-    local retry_after
-    retry_after="$(
+    local parsed
+    parsed="$(
       python3 - "$output_file" <<'PY'
 import json
 import re
@@ -339,24 +338,31 @@ with open(path, "r", encoding="utf-8") as handle:
 
 result = payload.get("result") if isinstance(payload, dict) else None
 if not isinstance(result, dict):
-    print("")
+    print("|")
     raise SystemExit(0)
 
-if result.get("stopReason") != "error":
-    print("")
+stop_reason = result.get("stopReason")
+if stop_reason != "error":
+    print(f"{stop_reason or ''}|")
     raise SystemExit(0)
 
 message = result.get("errorMessage")
 if not isinstance(message, str) or "rate_limit_exceeded" not in message:
-    print("")
+    print(f"{stop_reason or ''}|")
     raise SystemExit(0)
 
 match = re.search(r'"retry_after"\s*:\s*(\d+)', message)
-print(match.group(1) if match else "60")
+print(f"{stop_reason or ''}|{match.group(1) if match else '15'}")
 PY
     )"
+    local stop_reason="${parsed%%|*}"
+    local retry_after="${parsed#*|}"
 
     if [[ -z "$retry_after" || "$attempt" -ge "$max_attempts" ]]; then
+      cat "$output_file"
+      if [[ "$stop_reason" == "error" ]]; then
+        return 1
+      fi
       return 0
     fi
 

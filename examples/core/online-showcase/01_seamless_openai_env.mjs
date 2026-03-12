@@ -12,6 +12,7 @@ import {
   optimize,
   param,
   resolveConnection,
+  summarizeSessionEvidence,
   summarizeProvider,
   summarizeResult,
 } from "./shared.mjs";
@@ -46,6 +47,8 @@ export async function runSection() {
       () =>
         client.chat.completions.create({
           model: provider.model,
+          // Intentionally hard-coded: the seamless wrapper should override this
+          // from the active trial config at runtime.
           temperature: 0.9,
           max_tokens: 24,
           messages: createTokenOnlyPrompt(input),
@@ -62,8 +65,7 @@ export async function runSection() {
     provider: summarizeProvider(provider),
     frameworkAutoOverride: answerToken.frameworkAutoOverrideStatus(),
     seamlessResolution: answerToken.seamlessResolution(),
-    status: helpers.status?.status ?? null,
-    finalizedStatus: helpers.finalized?.status ?? null,
     deleteAttempted: helpers.deleted.attempted,
+    ...summarizeSessionEvidence(helpers),
   });
 }

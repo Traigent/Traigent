@@ -18,20 +18,33 @@ import type {
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
   ObjectiveDefinition,
+  ObjectiveInput,
   OptimizationConvergencePoint,
+  OptimizationSessionCreateRequest,
+  OptimizationSessionCreationResponse,
+  OptimizationSessionDatasetSubset,
   OptimizationSessionDeleteOptions,
   OptimizationSessionDeleteResponse,
   OptimizationSessionFinalizeOptions,
   OptimizationSessionFinalizationResponse,
+  OptimizationSessionListOptions,
+  OptimizationSessionListResponse,
+  OptimizationSessionNextTrialOptions,
+  OptimizationSessionNextTrialResponse,
   OptimizationSessionRequestOptions,
   OptimizationSessionStatusMetadata,
   OptimizationSessionStatusSummary,
   OptimizationSessionStatusResponse,
+  OptimizationServiceStatusResponse,
   OptimizationReportingSummary,
   OptimizationReportingTrialHistoryEntry,
   OptimizationResult,
   OptimizationSpec,
+  OptimizationSessionSubmitResultResponse,
+  OptimizationSessionTrialResultInput,
+  OptimizationSessionTrialSuggestion,
   OptimizationTrialRecord,
+  ParameterDefinition,
 } from "./types.js";
 
 type NativeTrialFunction = (
@@ -131,12 +144,25 @@ interface HybridFinalizationResponse {
   metadata?: Record<string, unknown>;
 }
 
+interface HybridSessionListPayload {
+  sessions?: unknown[];
+  total?: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface HybridSubmitResultsResponse {
+  success?: boolean;
+  continue_optimization?: boolean;
+  message?: string;
+  [key: string]: unknown;
+}
+
 interface HybridSubmittedResult {
   session_id: string;
   trial_id: string;
   metrics: Metrics;
   duration: number;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "cancelled" | "timeout";
   error_message: string | null;
   metadata: Record<string, unknown>;
 }
@@ -508,11 +534,11 @@ export function normalizeBackendApiBase(rawUrl: string): string {
   const pathname = url.pathname.replace(/\/+$/, "");
   if (pathname === "" || pathname === "/") {
     url.pathname = "/api/v1";
-  } else if (pathname === "/api/v1") {
-    url.pathname = "/api/v1";
+  } else if (pathname === "/api/v1" || pathname.endsWith("/api/v1")) {
+    url.pathname = pathname;
   } else {
     throw new ValidationError(
-      "Hybrid optimize() backendUrl must be a backend origin or the /api/v1 base URL.",
+      "Hybrid optimize() backendUrl must be a backend origin or an /api/v1 base URL.",
     );
   }
 
@@ -532,6 +558,16 @@ function resolveBackendUrl(options: HybridConnectionOptions): string {
 
 function resolveApiKey(options: HybridConnectionOptions): string {
   return options.apiKey ?? process.env["TRAIGENT_API_KEY"] ?? "";
+}
+
+function deriveServiceBaseUrl(apiBase: string): string {
+  const url = new URL(apiBase);
+  if (url.pathname.endsWith("/api/v1")) {
+    url.pathname = url.pathname.replace(/\/api\/v1$/, "") || "/";
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }
 
 function validateStringOption(
@@ -698,6 +734,204 @@ function validateHybridRequestOptions(
   };
 }
 
+function validateHybridListOptions(
+  options: OptimizationSessionListOptions | undefined,
+): ValidatedHybridRequestOptions & {
+  pattern?: string;
+  status?: string;
+} {
+  if (options?.pattern !== undefined) {
+    validateStringOption(
+      options.pattern,
+      "Session list pattern must be a non-empty string when provided.",
+    );
+  }
+
+  if (options?.status !== undefined) {
+    validateStringOption(
+      options.status,
+      "Session list status must be a non-empty string when provided.",
+    );
+  }
+
+  const resolved = validateHybridRequestOptions(options);
+  return {
+    ...resolved,
+    pattern: options?.pattern,
+    status: options?.status,
+  };
+}
+
+function validateSessionCreateRequest(
+  request: OptimizationSessionCreateRequest,
+): void {
+  if (!request || typeof request !== "object") {
+    throw new ValidationError("Session creation request must be an object.");
+  }
+
+  validateStringOption(
+    request.functionName,
+    "Session creation requires a non-empty functionName.",
+  );
+
+  if (
+    !request.configurationSpace ||
+    typeof request.configurationSpace !== "object" ||
+    Array.isArray(request.configurationSpace) ||
+    Object.keys(request.configurationSpace).length === 0
+  ) {
+    throw new ValidationError(
+      "Session creation requires a non-empty configurationSpace object.",
+    );
+  }
+
+  if (!Array.isArray(request.objectives) || request.objectives.length === 0) {
+    throw new ValidationError(
+      "Session creation requires a non-empty objectives array.",
+    );
+  }
+
+  if (
+    request.maxTrials !== undefined &&
+    (!Number.isInteger(request.maxTrials) || request.maxTrials <= 0)
+  ) {
+    throw new ValidationError(
+      "Session creation maxTrials must be a positive integer when provided.",
+    );
+  }
+
+  if (
+    request.datasetMetadata !== undefined &&
+    !isPlainObject(request.datasetMetadata)
+  ) {
+    throw new ValidationError(
+      "Session creation datasetMetadata must be an object when provided.",
+    );
+  }
+
+  if (request.userId !== undefined) {
+    validateStringOption(
+      request.userId,
+      "Session creation userId must be non-empty when provided.",
+    );
+  }
+
+  if (request.billingTier !== undefined) {
+    validateStringOption(
+      request.billingTier,
+      "Session creation billingTier must be non-empty when provided.",
+    );
+  }
+
+  const objectFields = [
+    ["budget", request.budget],
+    ["constraints", request.constraints],
+    ["defaultConfig", request.defaultConfig],
+    ["promotionPolicy", request.promotionPolicy],
+    ["optimizationStrategy", request.optimizationStrategy],
+    ["metadata", request.metadata],
+  ] as const;
+
+  for (const [label, value] of objectFields) {
+    if (value !== undefined && !isPlainObject(value)) {
+      throw new ValidationError(
+        `Session creation ${label} must be an object when provided.`,
+      );
+    }
+  }
+}
+
+function validateHybridNextTrialOptions(
+  sessionId: string,
+  options: OptimizationSessionNextTrialOptions | undefined,
+): ValidatedHybridRequestOptions & {
+  previousResults?: readonly OptimizationSessionTrialResultInput[];
+  requestMetadata?: Record<string, unknown>;
+} {
+  validateStringOption(
+    sessionId,
+    "Next-trial requests require a non-empty sessionId.",
+  );
+
+  if (
+    options?.previousResults !== undefined &&
+    !Array.isArray(options.previousResults)
+  ) {
+    throw new ValidationError(
+      "Next-trial previousResults must be an array when provided.",
+    );
+  }
+
+  if (
+    options?.requestMetadata !== undefined &&
+    !isPlainObject(options.requestMetadata)
+  ) {
+    throw new ValidationError(
+      "Next-trial requestMetadata must be an object when provided.",
+    );
+  }
+
+  return {
+    ...validateHybridRequestOptions(options),
+    previousResults: options?.previousResults,
+    requestMetadata: options?.requestMetadata,
+  };
+}
+
+function validateSessionTrialResultInput(
+  sessionId: string,
+  result: OptimizationSessionTrialResultInput,
+): OptimizationSessionTrialResultInput {
+  validateStringOption(
+    sessionId,
+    "Trial result submission requires a non-empty sessionId.",
+  );
+
+  if (!result || typeof result !== "object") {
+    throw new ValidationError("Trial result submission must be an object.");
+  }
+
+  validateStringOption(
+    result.trialId,
+    "Trial result submission requires a non-empty trialId.",
+  );
+
+  const metricsParse = MetricsSchema.safeParse(result.metrics);
+  if (!metricsParse.success) {
+    throw new ValidationError("Trial result submission metrics must be valid.");
+  }
+
+  if (!Number.isFinite(result.duration) || result.duration < 0) {
+    throw new ValidationError(
+      "Trial result submission duration must be a non-negative number.",
+    );
+  }
+
+  if (
+    result.metadata !== undefined &&
+    !isPlainObject(result.metadata)
+  ) {
+    throw new ValidationError(
+      "Trial result submission metadata must be an object when provided.",
+    );
+  }
+
+  if (
+    result.outputsSample !== undefined &&
+    result.outputsSample !== null &&
+    !Array.isArray(result.outputsSample)
+  ) {
+    throw new ValidationError(
+      "Trial result submission outputsSample must be an array when provided.",
+    );
+  }
+
+  return {
+    ...result,
+    metrics: metricsParse.data,
+  };
+}
+
 function serializeHybridObjective(
   objective: ObjectiveDefinition | BandedObjectiveDefinition,
 ): SerializedHybridObjective {
@@ -731,11 +965,11 @@ function serializeHybridObjective(
 }
 
 function serializeHybridObjectives(
-  specInput: OptimizationSpec,
+  objectivesInput: readonly ObjectiveInput[],
 ): Array<string | SerializedHybridObjective> {
   const objectives: Array<string | SerializedHybridObjective> = [];
 
-  for (const objective of specInput.objectives) {
+  for (const objective of objectivesInput) {
     if (typeof objective === "string") {
       objectives.push(objective);
       continue;
@@ -777,7 +1011,7 @@ function serializeSessionConstraints(
 }
 
 export function serializeSessionConfigurationSpace(
-  spec: NormalizedOptimizationSpec,
+  configurationSpace: Record<string, ParameterDefinition>,
 ): Record<string, Record<string, unknown>> {
   const encodeCategoricalChoices = (
     values: readonly unknown[],
@@ -811,7 +1045,7 @@ export function serializeSessionConfigurationSpace(
     };
   };
 
-  const entries = Object.entries(spec.configurationSpace);
+  const entries = Object.entries(configurationSpace);
 
   return Object.fromEntries(
     entries.map(([name, definition]) => {
@@ -877,6 +1111,60 @@ export function serializeSessionConfigurationSpace(
       }
     }),
   );
+}
+
+function serializeSessionCreateRequest(
+  request: OptimizationSessionCreateRequest,
+): Record<string, unknown> {
+  validateSessionCreateRequest(request);
+
+  return {
+    function_name: request.functionName,
+    configuration_space: serializeSessionConfigurationSpace(
+      request.configurationSpace,
+    ),
+    objectives: serializeHybridObjectives(request.objectives),
+    dataset_metadata: request.datasetMetadata,
+    max_trials: request.maxTrials ?? 10,
+    budget: request.budget
+      ? (serializeSnakeCaseObject(request.budget) as Record<string, unknown>)
+      : undefined,
+    constraints: request.constraints
+      ? (serializeSnakeCaseObject(request.constraints) as Record<string, unknown>)
+      : undefined,
+    default_config: request.defaultConfig,
+    promotion_policy: request.promotionPolicy
+      ? (serializeSnakeCaseObject(request.promotionPolicy) as Record<string, unknown>)
+      : undefined,
+    optimization_strategy: request.optimizationStrategy,
+    user_id: request.userId,
+    billing_tier: request.billingTier,
+    metadata: request.metadata,
+  };
+}
+
+function serializeTrialResultInput(
+  sessionId: string,
+  result: OptimizationSessionTrialResultInput,
+): HybridSubmittedResult {
+  const validated = validateSessionTrialResultInput(sessionId, result);
+  return {
+    session_id: validated.sessionId ?? sessionId,
+    trial_id: validated.trialId,
+    metrics: validated.metrics,
+    duration: validated.duration,
+    status: validated.status ?? "completed",
+    error_message: validated.errorMessage ?? null,
+    metadata: validated.metadata ?? {},
+    ...(validated.outputsSample !== undefined
+      ? {
+          outputs_sample:
+            validated.outputsSample === null
+              ? null
+              : [...validated.outputsSample],
+        }
+      : {}),
+  };
 }
 
 function createTrialConfigFromSuggestion(
@@ -1157,8 +1445,12 @@ class HybridSessionClient {
     sessionId: string,
     payload: HybridSubmittedResult,
     signal: AbortSignal | undefined,
-  ): Promise<void> {
-    await this.requestJson("POST", `/sessions/${sessionId}/results`, {
+  ): Promise<
+    | HybridSubmitResultsResponse
+    | HybridSuccessEnvelope<HybridSubmitResultsResponse>
+    | undefined
+  > {
+    return this.requestJson("POST", `/sessions/${sessionId}/results`, {
       body: payload,
       signal,
     });
@@ -1200,6 +1492,25 @@ class HybridSessionClient {
     );
   }
 
+  async listSessions(
+    pattern: string | undefined,
+    status: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<HybridSessionListPayload> {
+    const params = new URLSearchParams();
+    if (pattern) {
+      params.set("pattern", pattern);
+    }
+    if (status) {
+      params.set("status", status);
+    }
+    const query = params.toString();
+    const suffix = query !== "" ? `?${query}` : "";
+    return this.requestJson<HybridSessionListPayload>("GET", `/sessions${suffix}`, {
+      signal,
+    });
+  }
+
   async deleteSession(
     sessionId: string,
     cascade: boolean,
@@ -1218,6 +1529,16 @@ class HybridSessionClient {
     return normalizeSessionDeleteResponse(sessionId, response);
   }
 
+  async getServiceStatus(
+    signal: AbortSignal | undefined,
+  ): Promise<OptimizationServiceStatusResponse> {
+    return this.requestUrlJson<OptimizationServiceStatusResponse>(
+      "GET",
+      `${deriveServiceBaseUrl(this.apiBase)}/health`,
+      { signal },
+    );
+  }
+
   private async requestJson<T>(
     method: string,
     path: string,
@@ -1226,11 +1547,22 @@ class HybridSessionClient {
       signal?: AbortSignal;
     },
   ): Promise<T> {
-    const url = `${this.apiBase}${path}`;
+    return this.requestUrlJson<T>(method, `${this.apiBase}${path}`, options);
+  }
+
+  private async requestUrlJson<T>(
+    method: string,
+    url: string,
+    options: {
+      body?: unknown;
+      signal?: AbortSignal;
+    },
+  ): Promise<T> {
     const controller = new AbortController();
     const listeners: Array<() => void> = [];
     let timeoutId: NodeJS.Timeout | undefined;
     let timedOut = false;
+    const requestPath = new URL(url).pathname.replace(/^\/api\/v1/, "") || "/";
 
     try {
       if (options.signal) {
@@ -1267,7 +1599,7 @@ class HybridSessionClient {
         const errorText = await response.text();
         const compatibilityError = classifyHybridCompatibilityError(
           method,
-          path,
+          requestPath,
           response.status,
           errorText,
         );
@@ -1275,7 +1607,7 @@ class HybridSessionClient {
           throw compatibilityError;
         }
         throw new Error(
-          `Hybrid optimize() request failed (${method} ${path}) with HTTP ${response.status}: ${errorText || "No response body"}`,
+          `Hybrid optimize() request failed (${method} ${requestPath}) with HTTP ${response.status}: ${errorText || "No response body"}`,
         );
       }
 
@@ -1291,7 +1623,7 @@ class HybridSessionClient {
 
       if (timedOut) {
         throw new TimeoutError(
-          `Hybrid optimize() request timeout (${method} ${path})`,
+          `Hybrid optimize() request timeout (${method} ${requestPath})`,
           this.requestTimeoutMs,
         );
       }
@@ -1315,6 +1647,16 @@ class HybridSessionClient {
   }
 }
 
+function normalizeServiceStatusResponse(
+  payload: OptimizationServiceStatusResponse,
+): OptimizationServiceStatusResponse {
+  return {
+    ...payload,
+    status: typeof payload.status === "string" ? payload.status : "unknown",
+    error: typeof payload.error === "string" ? payload.error : undefined,
+  };
+}
+
 function normalizeSessionStatusResponse(
   sessionId: string,
   payload:
@@ -1322,6 +1664,47 @@ function normalizeSessionStatusResponse(
     | HybridSuccessEnvelope<HybridSessionStatusPayload>,
 ): OptimizationSessionStatusResponse {
   const source = unwrapSuccessEnvelope(payload);
+  const metadata = isPlainObject(source["metadata"])
+    ? (source["metadata"] as OptimizationSessionStatusMetadata)
+    : undefined;
+  const createdAt =
+    source["created_at"] ??
+    (metadata && "created_at" in metadata ? metadata.created_at : undefined);
+  const functionName =
+    typeof source["function_name"] === "string"
+      ? source["function_name"]
+      : typeof metadata?.function_name === "string"
+        ? metadata.function_name
+        : undefined;
+  const datasetSize =
+    typeof source["dataset_size"] === "number" &&
+    Number.isFinite(source["dataset_size"])
+      ? source["dataset_size"]
+      : typeof metadata?.dataset_size === "number" &&
+          Number.isFinite(metadata.dataset_size)
+        ? metadata.dataset_size
+        : undefined;
+  const objectives = Array.isArray(source["objectives"])
+    ? source["objectives"].filter(
+        (objective): objective is string => typeof objective === "string",
+      )
+    : Array.isArray(metadata?.objectives)
+      ? metadata.objectives.filter(
+          (objective): objective is string => typeof objective === "string",
+        )
+      : undefined;
+  const experimentId =
+    typeof source["experiment_id"] === "string"
+      ? source["experiment_id"]
+      : typeof metadata?.experiment_id === "string"
+        ? metadata.experiment_id
+        : undefined;
+  const experimentRunId =
+    typeof source["experiment_run_id"] === "string"
+      ? source["experiment_run_id"]
+      : typeof metadata?.experiment_run_id === "string"
+        ? metadata.experiment_run_id
+        : undefined;
   return {
     ...source,
     sessionId:
@@ -1329,9 +1712,197 @@ function normalizeSessionStatusResponse(
         ? source["session_id"]
         : sessionId,
     progress: normalizeSessionProgress(source["progress"]),
-    metadata: isPlainObject(source["metadata"])
-      ? (source["metadata"] as OptimizationSessionStatusMetadata)
+    createdAt:
+      typeof createdAt === "string" || typeof createdAt === "number"
+        ? createdAt
+        : undefined,
+    functionName,
+    datasetSize,
+    objectives,
+    experimentId,
+    experimentRunId,
+    metadata,
+  };
+}
+
+function normalizeSessionCreationResponse(
+  payload:
+    | HybridSessionCreateResponse
+    | HybridSuccessEnvelope<HybridSessionCreateResponse>,
+): OptimizationSessionCreationResponse {
+  const source = unwrapSuccessEnvelope(payload);
+  const sessionId = source["session_id"];
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new ValidationError(
+      "Session creation response is missing a valid session_id.",
+    );
+  }
+
+  return {
+    ...source,
+    sessionId,
+    status:
+      typeof source["status"] === "string" ? source["status"] : undefined,
+    optimizationStrategy: isPlainObject(source["optimization_strategy"])
+      ? (source["optimization_strategy"] as Record<string, unknown>)
       : undefined,
+    estimatedDuration: toOptionalFiniteNumber(source["estimated_duration"]),
+    billingEstimate: isPlainObject(source["billing_estimate"])
+      ? (source["billing_estimate"] as Record<string, unknown>)
+      : undefined,
+    metadata: isPlainObject(source["metadata"])
+      ? (source["metadata"] as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function normalizeSessionDatasetSubset(
+  value: unknown,
+): OptimizationSessionDatasetSubset {
+  if (!isPlainObject(value) || !Array.isArray(value["indices"])) {
+    throw new ValidationError(
+      "Next-trial response suggestion is missing a valid dataset_subset.indices array.",
+    );
+  }
+
+  return {
+    indices: value["indices"].filter(
+      (index): index is number => Number.isInteger(index),
+    ),
+    selectionStrategy:
+      typeof value["selection_strategy"] === "string"
+        ? value["selection_strategy"]
+        : undefined,
+    confidenceLevel: toOptionalFiniteNumber(value["confidence_level"]),
+    estimatedRepresentativeness: toOptionalFiniteNumber(
+      value["estimated_representativeness"],
+    ),
+    metadata: isPlainObject(value["metadata"])
+      ? (value["metadata"] as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function normalizeSessionTrialSuggestion(
+  value: unknown,
+): OptimizationSessionTrialSuggestion {
+  if (!isPlainObject(value)) {
+    throw new ValidationError("Next-trial response suggestion must be an object.");
+  }
+
+  if (
+    typeof value["trial_id"] !== "string" ||
+    value["trial_id"].length === 0 ||
+    typeof value["session_id"] !== "string" ||
+    value["session_id"].length === 0 ||
+    !Number.isInteger(value["trial_number"]) ||
+    !isPlainObject(value["config"])
+  ) {
+    throw new ValidationError(
+      "Next-trial response suggestion is missing required trial fields.",
+    );
+  }
+
+  return {
+    trialId: value["trial_id"],
+    sessionId: value["session_id"],
+    trialNumber: value["trial_number"] as number,
+    config: value["config"] as TrialConfig["config"],
+    datasetSubset: normalizeSessionDatasetSubset(value["dataset_subset"]),
+    explorationType:
+      typeof value["exploration_type"] === "string"
+        ? value["exploration_type"]
+        : undefined,
+    priority:
+      typeof value["priority"] === "number" && Number.isFinite(value["priority"])
+        ? value["priority"]
+        : undefined,
+    estimatedDuration: toOptionalFiniteNumber(value["estimated_duration"]),
+    metadata: isPlainObject(value["metadata"])
+      ? (value["metadata"] as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function normalizeNextTrialResponse(
+  payload:
+    | HybridNextTrialResponse
+    | HybridSuccessEnvelope<HybridNextTrialResponse>,
+): OptimizationSessionNextTrialResponse {
+  const source = unwrapSuccessEnvelope(payload);
+  const suggestionValue = source["suggestion"];
+
+  return {
+    ...source,
+    suggestion:
+      suggestionValue === null || suggestionValue === undefined
+        ? null
+        : normalizeSessionTrialSuggestion(suggestionValue),
+    shouldContinue:
+      typeof source["should_continue"] === "boolean"
+        ? source["should_continue"]
+        : typeof source["shouldContinue"] === "boolean"
+          ? source["shouldContinue"]
+          : false,
+    reason:
+      typeof source["reason"] === "string" || source["reason"] === null
+        ? (source["reason"] as string | null)
+        : undefined,
+    stopReason:
+      typeof source["stop_reason"] === "string" || source["stop_reason"] === null
+        ? (source["stop_reason"] as string | null)
+        : typeof source["stopReason"] === "string" ||
+            source["stopReason"] === null
+          ? (source["stopReason"] as string | null)
+          : undefined,
+    sessionStatus:
+      typeof source["session_status"] === "string"
+        ? source["session_status"]
+        : typeof source["sessionStatus"] === "string"
+          ? source["sessionStatus"]
+          : undefined,
+    metadata: isPlainObject(source["metadata"])
+      ? (source["metadata"] as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function normalizeSessionListResponse(
+  payload:
+    | HybridSessionListPayload
+    | HybridSuccessEnvelope<HybridSessionListPayload>,
+): OptimizationSessionListResponse {
+  const source = unwrapSuccessEnvelope(payload);
+  const rawSessions = Array.isArray(source["sessions"]) ? source["sessions"] : [];
+  const sessions = rawSessions.flatMap((entry) => {
+    if (!isPlainObject(entry)) {
+      return [];
+    }
+
+    const record = entry as Record<string, unknown>;
+    const entrySessionId =
+      typeof record["session_id"] === "string" &&
+      record["session_id"].length > 0
+        ? record["session_id"]
+        : typeof record["sessionId"] === "string" &&
+            record["sessionId"].length > 0
+          ? record["sessionId"]
+          : undefined;
+
+    if (!entrySessionId) {
+      return [];
+    }
+
+    return [normalizeSessionStatusResponse(entrySessionId, record)];
+  });
+
+  return {
+    ...source,
+    sessions,
+    total:
+      typeof source["total"] === "number" && Number.isFinite(source["total"])
+        ? source["total"]
+        : sessions.length,
   };
 }
 
@@ -1480,6 +2051,34 @@ function normalizeSessionFinalizationResponse(
   };
 }
 
+function normalizeSessionSubmitResultResponse(
+  payload:
+    | HybridSubmitResultsResponse
+    | HybridSuccessEnvelope<HybridSubmitResultsResponse>
+    | undefined,
+): OptimizationSessionSubmitResultResponse {
+  if (!payload) {
+    return { success: true };
+  }
+
+  const source = unwrapSuccessEnvelope(payload);
+  const success =
+    typeof source["success"] === "boolean" ? source["success"] : true;
+
+  return {
+    ...source,
+    success,
+    continueOptimization:
+      typeof source["continue_optimization"] === "boolean"
+        ? source["continue_optimization"]
+        : typeof source["continueOptimization"] === "boolean"
+          ? source["continueOptimization"]
+          : undefined,
+    message:
+      typeof source["message"] === "string" ? source["message"] : undefined,
+  };
+}
+
 function validateHybridFinalizeOptions(
   options: OptimizationSessionFinalizeOptions | undefined,
 ): ValidatedHybridRequestOptions & { includeFullHistory: boolean } {
@@ -1514,6 +2113,90 @@ export async function getOptimizationSessionStatus(
   return normalizeSessionStatusResponse(sessionId, payload);
 }
 
+export async function checkOptimizationServiceStatus(
+  options?: OptimizationSessionRequestOptions,
+): Promise<OptimizationServiceStatusResponse> {
+  const resolved = validateHybridRequestOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+
+  try {
+    const payload = await client.getServiceStatus(resolved.signal);
+    return normalizeServiceStatusResponse(payload);
+  } catch (error) {
+    return {
+      status: "unavailable",
+      error: toErrorMessage(error),
+    };
+  }
+}
+
+export async function createOptimizationSession(
+  request: OptimizationSessionCreateRequest,
+  options?: OptimizationSessionRequestOptions,
+): Promise<OptimizationSessionCreationResponse> {
+  const resolved = validateHybridRequestOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const payload = await client.createSession(
+    serializeSessionCreateRequest(request),
+    resolved.signal,
+  );
+  return normalizeSessionCreationResponse(payload);
+}
+
+export async function getNextOptimizationTrial(
+  sessionId: string,
+  options?: OptimizationSessionNextTrialOptions,
+): Promise<OptimizationSessionNextTrialResponse> {
+  const resolved = validateHybridNextTrialOptions(sessionId, options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const payload = await client.getNextTrial(
+    sessionId,
+    {
+      ...(resolved.previousResults
+        ? {
+            previous_results: resolved.previousResults.map((entry) =>
+              serializeTrialResultInput(sessionId, entry),
+            ),
+          }
+        : {}),
+      ...(resolved.requestMetadata
+        ? { request_metadata: resolved.requestMetadata }
+        : {}),
+    },
+    resolved.signal,
+  );
+  return normalizeNextTrialResponse(payload);
+}
+
+export async function listOptimizationSessions(
+  options?: OptimizationSessionListOptions,
+): Promise<OptimizationSessionListResponse> {
+  const resolved = validateHybridListOptions(options);
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const payload = await client.listSessions(
+    resolved.pattern,
+    resolved.status,
+    resolved.signal,
+  );
+  return normalizeSessionListResponse(payload);
+}
+
 export async function deleteOptimizationSession(
   sessionId: string,
   options?: OptimizationSessionDeleteOptions,
@@ -1531,6 +2214,29 @@ export async function deleteOptimizationSession(
     resolved.signal,
   );
   return response;
+}
+
+export async function submitOptimizationTrialResult(
+  sessionId: string,
+  result: OptimizationSessionTrialResultInput,
+  options?: OptimizationSessionRequestOptions,
+): Promise<OptimizationSessionSubmitResultResponse> {
+  const resolved = validateHybridRequestOptions(options);
+  validateStringOption(
+    sessionId,
+    "Trial result submission requires a non-empty sessionId.",
+  );
+  const client = new HybridSessionClient(
+    resolved.backendUrl,
+    resolved.apiKey,
+    resolved.requestTimeoutMs,
+  );
+  const payload = await client.submitResult(
+    sessionId,
+    serializeTrialResultInput(sessionId, result),
+    resolved.signal,
+  );
+  return normalizeSessionSubmitResultResponse(payload);
 }
 
 export async function finalizeOptimizationSession(
@@ -1571,8 +2277,10 @@ export async function runHybridOptimization(
     );
   }
 
-  const objectives = serializeHybridObjectives(specInput);
-  const configurationSpace = serializeSessionConfigurationSpace(spec);
+  const objectives = serializeHybridObjectives(specInput.objectives);
+  const configurationSpace = serializeSessionConfigurationSpace(
+    spec.configurationSpace,
+  );
   const budget = serializeSessionBudget(spec);
   const constraints = serializeSessionConstraints(spec);
   const promotionPolicy = serializePromotionPolicy(spec);

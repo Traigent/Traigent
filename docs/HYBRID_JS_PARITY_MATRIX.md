@@ -30,7 +30,12 @@ Use it together with:
 
 | Capability | Python | Hybrid JS | Evidence | Notes |
 | --- | --- | --- | --- | --- |
-| `getOptimizationSessionStatus(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Raw and wrapped envelopes are normalized, including `progress`. |
+| `createOptimizationSession(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts) | CamelCase JS request fields are serialized to the typed backend create-session contract and normalized back to `sessionId`-first responses. |
+| `getNextOptimizationTrial(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts) | Normalizes raw and wrapped next-trial payloads into one JS-friendly suggestion shape. |
+| `submitOptimizationTrialResult(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts) | JS-friendly result input is normalized to the backend payload and response is surfaced as `{ success, continueOptimization, ... }`. |
+| `listOptimizationSessions(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Raw and wrapped list payloads are normalized into one `{ sessions, total }` shape, with explicit top-level session detail fields when present. |
+| `checkOptimizationServiceStatus(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Queries the reachable backend `/health` route and returns `{ status, error? }`, mirroring the Python cloud client’s service-status surface. |
+| `getOptimizationSessionStatus(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Raw and wrapped envelopes are normalized, including `progress` plus explicit top-level session detail fields sourced from the current backend payload. |
 | `finalizeOptimizationSession(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Finalization reporting is normalized into the same shape as `.optimize()` results. |
 | `deleteOptimizationSession(...)` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | Safe default is `cascade: false`. |
 | Reporting summary on `.optimize()` | Yes | `matched` | [`tests/unit/optimization/hybrid.test.ts`](../tests/unit/optimization/hybrid.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | `result.reporting` surfaces backend finalization summary directly. |
@@ -46,8 +51,9 @@ Use it together with:
 | LangChain seamless interception | Yes | `matched` | [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Proxy wrapping plus usage extraction works in hybrid mode. |
 | Vercel AI seamless interception | Yes | `matched` | [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts) | Generate/stream overrides and provider usage capture are implemented. |
 | Auto-wrap helpers | Yes | `matched` | [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts) | `autoWrapFrameworkTarget(...)` and `autoWrapFrameworkTargets(...)` are available in the hybrid worktree too. |
+| Explicit-object framework discovery | Yes | `matched` | [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | `discoverFrameworkTargets(...)` inspects explicitly passed arrays and plain-object graphs, and `autoWrapFrameworkTargets(...)` now recursively wraps those graphs with cycle safety. |
 | Framework auto-override diagnostics | Yes | `matched` | [`tests/unit/integrations/registry.test.ts`](../tests/unit/integrations/registry.test.ts), [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts), [`examples/core/hybrid-session-control/run.mjs`](../examples/core/hybrid-session-control/run.mjs) | `frameworkAutoOverrideStatus()` and `seamlessResolution()` expose active targets, selected targets, and the resolved seamless path. |
-| Implicit framework discovery | Yes | `gap` | n/a | Users still need to wrap framework targets explicitly, even though auto-wrap helpers and diagnostics now reduce the manual setup burden. |
+| Implicit framework discovery | Yes | `gap` | n/a | The SDK can now discover wrappable targets inside explicitly passed object graphs, but it still does not scan arbitrary module/global state or auto-patch unknown imports. |
 
 ## TVL / Spec Compatibility
 
@@ -62,6 +68,6 @@ Use it together with:
 
 | Capability Family | Current Status | Why It Is Still Open |
 | --- | --- | --- |
-| Broader cloud/session control plane | `partial` | Status/delete/finalize are in place, but the wider Python cloud family is larger than the current JS helper surface. |
-| Implicit framework discovery | `gap` | No backend work is required, but the hybrid worktree still expects explicit wrapping even though diagnostics and auto-wrap helpers are now in place. |
+| Broader cloud/session control plane | `partial` | The reachable typed `/sessions` helper surface is largely covered, but wider Python cloud families such as `/agent/optimize` do not exist on the current backend route surface and therefore remain backend-dependent. |
+| Implicit framework discovery | `gap` | No backend work is required, but the hybrid worktree still requires callers to pass explicit objects for discovery rather than scanning arbitrary runtime/module state. |
 | Full TVL/runtime breadth | `deferred-backend` | The backend/session contract does not yet expose the whole Python TVL lifecycle. |

@@ -13,12 +13,17 @@ import {
   serializeSessionConfigurationSpace,
 } from "../../../src/optimization/hybrid.js";
 import {
+  checkOptimizationServiceStatus,
+  createOptimizationSession,
   deleteOptimizationSession,
   finalizeOptimizationSession,
+  getNextOptimizationTrial,
   getOptimizationSessionStatus,
+  listOptimizationSessions,
   getOptimizationSpec,
   optimize,
   param,
+  submitOptimizationTrialResult,
 } from "../../../src/index.js";
 
 function jsonResponse(status: number, payload: unknown) {
@@ -70,9 +75,12 @@ describe("hybrid optimize()", () => {
     expect(normalizeBackendApiBase("http://localhost:5000/api/v1/")).toBe(
       "http://localhost:5000/api/v1",
     );
+    expect(
+      normalizeBackendApiBase("http://localhost:5000/traigent/api/v1"),
+    ).toBe("http://localhost:5000/traigent/api/v1");
     expect(() =>
       normalizeBackendApiBase("http://localhost:5000/custom/path"),
-    ).toThrow(/backendUrl must be a backend origin or the \/api\/v1 base URL/i);
+    ).toThrow(/backendUrl must be a backend origin or an \/api\/v1 base URL/i);
   });
 
   it("fetches optimization session status through the typed session API", async () => {
@@ -103,6 +111,12 @@ describe("hybrid optimize()", () => {
         total: 5,
         failed: 1,
       },
+      createdAt: undefined,
+      functionName: undefined,
+      datasetSize: undefined,
+      objectives: undefined,
+      experimentId: undefined,
+      experimentRunId: undefined,
       metadata: { owner: "js" },
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -113,6 +127,64 @@ describe("hybrid optimize()", () => {
       headers: expect.objectContaining({
         Authorization: "Bearer env-key",
       }),
+    });
+  });
+
+  it("checks service health through the backend root and normalizes the response", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "healthy",
+        service: "traigent-backend",
+      }),
+    );
+
+    const result = await checkOptimizationServiceStatus();
+
+    expect(result).toEqual({
+      status: "healthy",
+      service: "traigent-backend",
+      error: undefined,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:5000/health");
+  });
+
+  it("checks service health through a path-prefixed api base without dropping the prefix", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000/traigent/api/v1");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "healthy",
+        service: "traigent-backend",
+      }),
+    );
+
+    const result = await checkOptimizationServiceStatus();
+
+    expect(result).toEqual({
+      status: "healthy",
+      service: "traigent-backend",
+      error: undefined,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/traigent/health",
+    );
+  });
+
+  it("returns unavailable service status when the health check request fails", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const result = await checkOptimizationServiceStatus();
+
+    expect(result).toEqual({
+      status: "unavailable",
+      error: "socket hang up",
     });
   });
 
@@ -146,6 +218,12 @@ describe("hybrid optimize()", () => {
         total: 3,
         failed: 0,
       },
+      createdAt: undefined,
+      functionName: "agent_fn",
+      datasetSize: 10,
+      objectives: ["accuracy", "cost"],
+      experimentId: undefined,
+      experimentRunId: undefined,
       metadata: {
         function_name: "agent_fn",
         dataset_size: 10,
@@ -182,6 +260,12 @@ describe("hybrid optimize()", () => {
         total: 4,
         stage: "running",
       },
+      createdAt: undefined,
+      functionName: undefined,
+      datasetSize: undefined,
+      objectives: undefined,
+      experimentId: undefined,
+      experimentRunId: undefined,
       metadata: { owner: "js" },
     });
   });
@@ -221,10 +305,65 @@ describe("hybrid optimize()", () => {
         total: 4,
         failed: 0,
       },
+      createdAt: undefined,
+      functionName: "agent_fn",
+      datasetSize: 4,
+      objectives: undefined,
+      experimentId: undefined,
+      experimentRunId: undefined,
       metadata: {
         function_name: "agent_fn",
         dataset_size: 4,
       },
+    });
+  });
+
+  it("normalizes explicit session detail fields from top-level status payloads", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        session_id: "session-detailed",
+        status: "COMPLETED",
+        created_at: "2026-03-12T01:02:03Z",
+        function_name: "detailed_agent",
+        dataset_size: 12,
+        objectives: ["accuracy", "cost"],
+        experiment_id: "exp-123",
+        experiment_run_id: "run-456",
+        progress: {
+          completed: 5,
+          total: 5,
+          failed: 0,
+        },
+        metadata: { owner: "js" },
+      }),
+    );
+
+    const result = await getOptimizationSessionStatus("session-detailed");
+
+    expect(result).toEqual({
+      session_id: "session-detailed",
+      sessionId: "session-detailed",
+      status: "COMPLETED",
+      created_at: "2026-03-12T01:02:03Z",
+      function_name: "detailed_agent",
+      dataset_size: 12,
+      objectives: ["accuracy", "cost"],
+      experiment_id: "exp-123",
+      experiment_run_id: "run-456",
+      createdAt: "2026-03-12T01:02:03Z",
+      functionName: "detailed_agent",
+      datasetSize: 12,
+      experimentId: "exp-123",
+      experimentRunId: "run-456",
+      progress: {
+        completed: 5,
+        total: 5,
+        failed: 0,
+      },
+      metadata: { owner: "js" },
     });
   });
 
@@ -250,6 +389,525 @@ describe("hybrid optimize()", () => {
       data: null,
       sessionId: "session-envelope-null",
       metadata: undefined,
+    });
+  });
+
+  it("lists optimization sessions and normalizes raw payloads", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        sessions: [
+          {
+            session_id: "session-1",
+            status: "ACTIVE",
+            progress: { completed: 1, total: 5 },
+          },
+          {
+            session_id: "session-2",
+            status: "COMPLETED",
+            progress: { completed: 5, total: 5 },
+          },
+          "bad-entry",
+        ],
+        total: 2,
+      }),
+    );
+
+    const result = await listOptimizationSessions({
+      pattern: "session",
+      status: "ACTIVE",
+    });
+
+    expect(result).toEqual({
+      sessions: [
+        {
+          session_id: "session-1",
+          sessionId: "session-1",
+          status: "ACTIVE",
+          createdAt: undefined,
+          functionName: undefined,
+          datasetSize: undefined,
+          objectives: undefined,
+          experimentId: undefined,
+          experimentRunId: undefined,
+          progress: { completed: 1, total: 5 },
+          metadata: undefined,
+        },
+        {
+          session_id: "session-2",
+          sessionId: "session-2",
+          status: "COMPLETED",
+          createdAt: undefined,
+          functionName: undefined,
+          datasetSize: undefined,
+          objectives: undefined,
+          experimentId: undefined,
+          experimentRunId: undefined,
+          progress: { completed: 5, total: 5 },
+          metadata: undefined,
+        },
+      ],
+      total: 2,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/api/v1/sessions?pattern=session&status=ACTIVE",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "GET",
+      headers: expect.objectContaining({
+        Authorization: "Bearer env-key",
+      }),
+    });
+  });
+
+  it("creates optimization sessions through the typed session API", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(201, {
+        session_id: "session-create",
+        status: "CREATED",
+        optimization_strategy: { algorithm: "optuna" },
+        metadata: { owner: "js" },
+      }),
+    );
+
+    const result = await createOptimizationSession({
+      functionName: "agent_fn",
+      configurationSpace: {
+        model: param.enum(["gpt-4o-mini", "gpt-4o"]),
+        temperature: param.float({ min: 0, max: 1, step: 0.5 }),
+      },
+      objectives: ["accuracy"],
+      datasetMetadata: { size: 10 },
+      maxTrials: 5,
+    });
+
+    expect(result).toEqual({
+      session_id: "session-create",
+      sessionId: "session-create",
+      status: "CREATED",
+      optimization_strategy: { algorithm: "optuna" },
+      optimizationStrategy: { algorithm: "optuna" },
+      metadata: { owner: "js" },
+      estimatedDuration: undefined,
+      billingEstimate: undefined,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/api/v1/sessions",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({
+        Authorization: "Bearer env-key",
+        "X-API-Key": "env-key",
+      }),
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      function_name: "agent_fn",
+      max_trials: 5,
+      configuration_space: {
+        model: {
+          type: "categorical",
+          choices: ["gpt-4o-mini", "gpt-4o"],
+        },
+        temperature: {
+          type: "float",
+          low: 0,
+          high: 1,
+          step: 0.5,
+        },
+      },
+      objectives: ["accuracy"],
+      dataset_metadata: { size: 10 },
+    });
+  });
+
+  it("normalizes wrapped session creation responses and rejects missing session ids", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          success: true,
+          data: {
+            session_id: "session-envelope",
+            status: "ACTIVE",
+            estimated_duration: 12.5,
+            billing_estimate: { usd: 0.42 },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          success: true,
+          data: {
+            status: "ACTIVE",
+          },
+        }),
+      );
+
+    const result = await createOptimizationSession(
+      {
+        functionName: "agent_fn",
+        configurationSpace: {
+          model: param.enum(["gpt-4o-mini", "gpt-4o"]),
+        },
+        objectives: ["accuracy"],
+      },
+      {
+        backendUrl: "http://localhost:5000",
+        apiKey: "env-key",
+      },
+    );
+
+    expect(result).toEqual({
+      session_id: "session-envelope",
+      sessionId: "session-envelope",
+      status: "ACTIVE",
+      estimated_duration: 12.5,
+      optimizationStrategy: undefined,
+      estimatedDuration: 12.5,
+      billingEstimate: { usd: 0.42 },
+      metadata: undefined,
+      billing_estimate: { usd: 0.42 },
+    });
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent_fn",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini", "gpt-4o"]),
+          },
+          objectives: ["accuracy"],
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "env-key",
+        },
+      ),
+    ).rejects.toThrow(/missing a valid session_id/i);
+  });
+
+  it("gets next trials and normalizes suggestions", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        suggestion: {
+          trial_id: "trial-1",
+          session_id: "session-next",
+          trial_number: 2,
+          config: {
+            model: "gpt-4o-mini",
+          },
+          dataset_subset: {
+            indices: [0, 1, 2],
+            selection_strategy: "sequential_head",
+            confidence_level: 1,
+            estimated_representativeness: 0.6,
+            metadata: { source: "backend" },
+          },
+          exploration_type: "exploitation",
+          priority: 1,
+          metadata: { active_parameters: ["model"] },
+        },
+        should_continue: true,
+        reason: null,
+        stop_reason: null,
+        session_status: "ACTIVE",
+        metadata: { remaining_trials: 3 },
+      }),
+    );
+
+    const result = await getNextOptimizationTrial("session-next", {
+      previousResults: [
+        {
+          trialId: "trial-prev",
+          metrics: { accuracy: 0.8 },
+          duration: 1.2,
+        },
+      ],
+      requestMetadata: { requester: "js" },
+    });
+
+    expect(result).toEqual({
+      suggestion: {
+        trialId: "trial-1",
+        sessionId: "session-next",
+        trialNumber: 2,
+        config: { model: "gpt-4o-mini" },
+        datasetSubset: {
+          indices: [0, 1, 2],
+          selectionStrategy: "sequential_head",
+          confidenceLevel: 1,
+          estimatedRepresentativeness: 0.6,
+          metadata: { source: "backend" },
+        },
+        explorationType: "exploitation",
+        priority: 1,
+        estimatedDuration: undefined,
+        metadata: { active_parameters: ["model"] },
+      },
+      should_continue: true,
+      shouldContinue: true,
+      reason: null,
+      stop_reason: null,
+      stopReason: null,
+      session_status: "ACTIVE",
+      sessionStatus: "ACTIVE",
+      metadata: { remaining_trials: 3 },
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/api/v1/sessions/session-next/next-trial",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      previous_results: [
+        {
+          session_id: "session-next",
+          trial_id: "trial-prev",
+          metrics: { accuracy: 0.8 },
+          duration: 1.2,
+          status: "completed",
+        },
+      ],
+      request_metadata: { requester: "js" },
+    });
+  });
+
+  it("normalizes terminal next-trial responses without suggestions", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        success: true,
+        data: {
+          suggestion: null,
+          should_continue: false,
+          reason: "budget exhausted",
+          stop_reason: "budget_exhausted",
+          session_status: "COMPLETED",
+        },
+      }),
+    );
+
+    const result = await getNextOptimizationTrial("session-terminal", {
+      backendUrl: "http://localhost:5000",
+      apiKey: "env-key",
+    });
+
+    expect(result).toEqual({
+      suggestion: null,
+      should_continue: false,
+      shouldContinue: false,
+      reason: "budget exhausted",
+      stop_reason: "budget_exhausted",
+      stopReason: "budget_exhausted",
+      session_status: "COMPLETED",
+      sessionStatus: "COMPLETED",
+      metadata: undefined,
+    });
+  });
+
+  it("submits trial results and normalizes the backend response", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        success: true,
+        continue_optimization: true,
+        message: "Results submitted successfully",
+      }),
+    );
+
+    const result = await submitOptimizationTrialResult("session-submit", {
+      trialId: "trial-submit",
+      metrics: { accuracy: 0.9, cost: 0.01 },
+      duration: 1.5,
+      outputsSample: ["HELLO"],
+    });
+
+    expect(result).toEqual({
+      success: true,
+      continue_optimization: true,
+      continueOptimization: true,
+      message: "Results submitted successfully",
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/api/v1/sessions/session-submit/results",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      session_id: "session-submit",
+      trial_id: "trial-submit",
+      metrics: { accuracy: 0.9, cost: 0.01 },
+      duration: 1.5,
+      status: "completed",
+      outputs_sample: ["HELLO"],
+    });
+  });
+
+  it("treats missing submit-result payloads as success", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      json: async () => undefined,
+      text: async () => "",
+    });
+
+    const result = await submitOptimizationTrialResult("session-submit", {
+      trialId: "trial-submit",
+      metrics: { accuracy: 0.9 },
+      duration: 1.5,
+    });
+
+    expect(result).toEqual({ success: true });
+  });
+
+  it("normalizes wrapped list responses and filters malformed session entries", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        success: true,
+        data: {
+          sessions: [
+            {
+              session_id: "session-envelope",
+              status: "ACTIVE",
+              progress: { completed: 2, total: 4 },
+              metadata: { owner: "js" },
+            },
+            {
+              status: "ACTIVE",
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await listOptimizationSessions();
+
+    expect(result).toEqual({
+      sessions: [
+        {
+          session_id: "session-envelope",
+          sessionId: "session-envelope",
+          status: "ACTIVE",
+          createdAt: undefined,
+          functionName: undefined,
+          datasetSize: undefined,
+          objectives: undefined,
+          experimentId: undefined,
+          experimentRunId: undefined,
+          progress: { completed: 2, total: 4 },
+          metadata: { owner: "js" },
+        },
+      ],
+      total: 1,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://localhost:5000/api/v1/sessions",
+    );
+  });
+
+  it("preserves backend total counts even when malformed listed sessions are filtered out", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        sessions: [
+          {
+            session_id: "session-valid",
+            status: "ACTIVE",
+          },
+          {
+            status: "ACTIVE",
+          },
+        ],
+        total: 2,
+      }),
+    );
+
+    const result = await listOptimizationSessions();
+
+    expect(result.sessions).toEqual([
+      {
+        session_id: "session-valid",
+        sessionId: "session-valid",
+        status: "ACTIVE",
+        createdAt: undefined,
+        functionName: undefined,
+        datasetSize: undefined,
+        objectives: undefined,
+        experimentId: undefined,
+        experimentRunId: undefined,
+        metadata: undefined,
+      },
+    ]);
+    expect(result.total).toBe(2);
+    expect(result.sessions).toHaveLength(1);
+  });
+
+  it("normalizes explicit session detail fields from list payloads", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        sessions: [
+          {
+            session_id: "session-detail-list",
+            status: "COMPLETED",
+            created_at: "2026-03-12T01:02:03Z",
+            function_name: "listed_agent",
+            dataset_size: 9,
+            objectives: ["accuracy"],
+            experiment_id: "exp-list",
+            experiment_run_id: "run-list",
+            progress: { completed: 3, total: 3, failed: 0 },
+          },
+        ],
+        total: 1,
+      }),
+    );
+
+    const result = await listOptimizationSessions();
+
+    expect(result).toEqual({
+      sessions: [
+        {
+          session_id: "session-detail-list",
+          sessionId: "session-detail-list",
+          status: "COMPLETED",
+          created_at: "2026-03-12T01:02:03Z",
+          function_name: "listed_agent",
+          dataset_size: 9,
+          objectives: ["accuracy"],
+          experiment_id: "exp-list",
+          experiment_run_id: "run-list",
+          createdAt: "2026-03-12T01:02:03Z",
+          functionName: "listed_agent",
+          datasetSize: 9,
+          experimentId: "exp-list",
+          experimentRunId: "run-list",
+          progress: { completed: 3, total: 3, failed: 0 },
+          metadata: undefined,
+        },
+      ],
+      total: 1,
     });
   });
 
@@ -493,6 +1151,18 @@ describe("hybrid optimize()", () => {
 
   it("validates session helper request options eagerly", async () => {
     await expect(
+      listOptimizationSessions("bad" as never),
+    ).rejects.toThrow(/Session request options must be an object/i);
+
+    await expect(
+      listOptimizationSessions({ pattern: "" }),
+    ).rejects.toThrow(/Session list pattern must be a non-empty string/i);
+
+    await expect(
+      listOptimizationSessions({ status: "" }),
+    ).rejects.toThrow(/Session list status must be a non-empty string/i);
+
+    await expect(
       getOptimizationSessionStatus("session-invalid", "bad" as never),
     ).rejects.toThrow(/Session request options must be an object/i);
 
@@ -511,6 +1181,203 @@ describe("hybrid optimize()", () => {
     ).rejects.toThrow(
       /Session finalization includeFullHistory must be a boolean/i,
     );
+
+    await expect(
+      createOptimizationSession("bad" as never, {
+        backendUrl: "http://localhost:5000",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow(/Session creation request must be an object/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini"]),
+          },
+          objectives: ["accuracy"],
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/requires a non-empty functionName/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent",
+          configurationSpace: {},
+          objectives: ["accuracy"],
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/non-empty configurationSpace object/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini"]),
+          },
+          objectives: [],
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/non-empty objectives array/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini"]),
+          },
+          objectives: ["accuracy"],
+          maxTrials: 0,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/maxTrials must be a positive integer/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini"]),
+          },
+          objectives: ["accuracy"],
+          datasetMetadata: "bad" as never,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/datasetMetadata must be an object/i);
+
+    await expect(
+      createOptimizationSession(
+        {
+          functionName: "agent",
+          configurationSpace: {
+            model: param.enum(["gpt-4o-mini"]),
+          },
+          objectives: ["accuracy"],
+          budget: "bad" as never,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/budget must be an object/i);
+
+    await expect(
+      getNextOptimizationTrial("session-invalid", {
+        backendUrl: "http://localhost:5000",
+        apiKey: "key",
+        previousResults: "bad" as never,
+      }),
+    ).rejects.toThrow(/previousResults must be an array/i);
+
+    await expect(
+      getNextOptimizationTrial("session-invalid", {
+        backendUrl: "http://localhost:5000",
+        apiKey: "key",
+        requestMetadata: "bad" as never,
+      }),
+    ).rejects.toThrow(/requestMetadata must be an object/i);
+
+    await expect(
+      submitOptimizationTrialResult(
+        "session-invalid",
+        {
+          trialId: "",
+          metrics: { accuracy: 1 },
+          duration: 1,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/requires a non-empty trialId/i);
+
+    await expect(
+      submitOptimizationTrialResult(
+        "session-invalid",
+        {
+          trialId: "trial-1",
+          metrics: { accuracy: Number.NaN },
+          duration: 1,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/metrics must be valid/i);
+
+    await expect(
+      submitOptimizationTrialResult(
+        "session-invalid",
+        {
+          trialId: "trial-1",
+          metrics: { accuracy: 1 },
+          duration: -1,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/duration must be a non-negative number/i);
+
+    await expect(
+      submitOptimizationTrialResult(
+        "session-invalid",
+        {
+          trialId: "trial-1",
+          metrics: { accuracy: 1 },
+          duration: 1,
+          metadata: "bad" as never,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/metadata must be an object/i);
+
+    await expect(
+      submitOptimizationTrialResult(
+        "session-invalid",
+        {
+          trialId: "trial-1",
+          metrics: { accuracy: 1 },
+          duration: 1,
+          outputsSample: "bad" as never,
+        },
+        {
+          backendUrl: "http://localhost:5000",
+          apiKey: "key",
+        },
+      ),
+    ).rejects.toThrow(/outputsSample must be an array/i);
   });
 
   it("rejects pre-aborted session helper signals before issuing requests", async () => {
@@ -539,7 +1406,9 @@ describe("hybrid optimize()", () => {
     })(async () => ({ metrics: { accuracy: 1 } }));
 
     expect(
-      serializeSessionConfigurationSpace(getOptimizationSpec(wrapped)!),
+      serializeSessionConfigurationSpace(
+        getOptimizationSpec(wrapped)!.configurationSpace,
+      ),
     ).toEqual({
       model: { type: "categorical", choices: ["gpt-4o-mini", "gpt-4o"] },
       retries: { type: "int", low: 1, high: 5, step: 2, log: true },
@@ -563,7 +1432,9 @@ describe("hybrid optimize()", () => {
     })(async () => ({ metrics: { accuracy: 1 } }));
 
     expect(
-      serializeSessionConfigurationSpace(getOptimizationSpec(wrapped)!),
+      serializeSessionConfigurationSpace(
+        getOptimizationSpec(wrapped)!.configurationSpace,
+      ),
     ).toEqual({
       model: { type: "categorical", choices: ["cheap", "accurate"] },
       maxTokens: {
@@ -589,7 +1460,9 @@ describe("hybrid optimize()", () => {
     })(async () => ({ metrics: { accuracy: 1 } }));
 
     expect(
-      serializeSessionConfigurationSpace(getOptimizationSpec(wrapped)!),
+      serializeSessionConfigurationSpace(
+        getOptimizationSpec(wrapped)!.configurationSpace,
+      ),
     ).toEqual({
       retrievalPair: {
         type: "categorical",
@@ -617,7 +1490,9 @@ describe("hybrid optimize()", () => {
     })(async () => ({ metrics: { accuracy: 1 } }));
 
     expect(
-      serializeSessionConfigurationSpace(getOptimizationSpec(wrapped)!),
+      serializeSessionConfigurationSpace(
+        getOptimizationSpec(wrapped)!.configurationSpace,
+      ),
     ).toEqual({
       mode: { type: "categorical", choices: ["structured"] },
       retrievalPair: {
@@ -1992,6 +2867,264 @@ describe("hybrid optimize()", () => {
     const result = await promise;
     expect(result.stopReason).toBe("cancelled");
     expect(result.errorMessage).toMatch(/cancelled/i);
+  });
+
+  it("returns a cancelled result when the signal aborts after session creation and before the next trial is requested", async () => {
+    const controller = new AbortController();
+    fetchMock
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => controller.abort());
+        return Promise.resolve(
+          jsonResponse(201, {
+            session_id: "session-created-then-cancelled",
+            status: "active",
+            optimization_strategy: {},
+            metadata: {},
+          }),
+        );
+      })
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: "session-created-then-cancelled",
+          metadata: { finalized_by: "backend" },
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: {
+        data: [{ id: 1 }],
+      },
+    })(async () => ({
+      metrics: {
+        accuracy: 1,
+      },
+    }));
+
+    const result = await wrapped.optimize({
+      mode: "hybrid",
+      algorithm: "optuna",
+      maxTrials: 1,
+      backendUrl: "http://localhost:5000",
+      apiKey: "key",
+      signal: controller.signal,
+    });
+
+    expect(result.stopReason).toBe("cancelled");
+    expect(result.errorMessage).toMatch(/cancelled/i);
+    expect(result.sessionId).toBe("session-created-then-cancelled");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects when the hybrid trial resolves to a non-object result", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          session_id: "session-invalid-shape",
+          status: "active",
+          optimization_strategy: { algorithm: "optuna" },
+          metadata: {},
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: {
+            trial_id: "trial-invalid-shape",
+            session_id: "session-invalid-shape",
+            trial_number: 1,
+            config: { model: "a" },
+            dataset_subset: {
+              indices: [0],
+              selection_strategy: "random",
+              confidence_level: 1,
+              estimated_representativeness: 1,
+              metadata: {},
+            },
+          },
+          should_continue: true,
+          session_status: "active",
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(201, { success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: "session-invalid-shape",
+          metadata: {},
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: { data: [{ id: 1 }] },
+    })(async () => null as never);
+
+    await expect(
+      wrapped.optimize({
+        mode: "hybrid",
+        algorithm: "optuna",
+        maxTrials: 1,
+        backendUrl: "http://localhost:5000",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow(/must resolve to an object containing metrics/i);
+  });
+
+  it("uses String(error) when a hybrid trial throws a non-Error value", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          session_id: "session-non-error-throw",
+          status: "active",
+          optimization_strategy: { algorithm: "optuna" },
+          metadata: {},
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: {
+            trial_id: "trial-non-error-throw",
+            session_id: "session-non-error-throw",
+            trial_number: 1,
+            config: { model: "a" },
+            dataset_subset: {
+              indices: [0],
+              selection_strategy: "random",
+              confidence_level: 1,
+              estimated_representativeness: 1,
+              metadata: {},
+            },
+          },
+          should_continue: true,
+          session_status: "active",
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(201, { success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: "session-non-error-throw",
+          metadata: {},
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: { data: [{ id: 1 }] },
+    })(async () => {
+      throw "boom";
+    });
+
+    const result = await wrapped.optimize({
+      mode: "hybrid",
+      algorithm: "optuna",
+      maxTrials: 1,
+      backendUrl: "http://localhost:5000",
+      apiKey: "key",
+    });
+
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toBeUndefined();
+
+    const submitPayload = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
+    expect(submitPayload).toMatchObject({
+      session_id: "session-non-error-throw",
+      trial_id: "trial-non-error-throw",
+      status: "failed",
+      error_message: "boom",
+    });
+  });
+
+  it("falls back to measured duration when a hybrid trial returns an invalid duration", async () => {
+    vi.stubEnv("TRAIGENT_BACKEND_URL", "http://localhost:5000");
+    vi.stubEnv("TRAIGENT_API_KEY", "env-key");
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          session_id: "session-duration-fallback",
+          status: "active",
+          optimization_strategy: { algorithm: "optuna" },
+          metadata: {},
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: {
+            trial_id: "trial-duration-fallback",
+            session_id: "session-duration-fallback",
+            trial_number: 1,
+            config: { model: "a" },
+            dataset_subset: {
+              indices: [0],
+              selection_strategy: "random",
+              confidence_level: 1,
+              estimated_representativeness: 1,
+              metadata: {},
+            },
+          },
+          should_continue: true,
+          session_status: "active",
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(201, { success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          session_id: "session-duration-fallback",
+          best_config: { model: "a" },
+          best_metrics: { accuracy: 1 },
+          stop_reason: "completed",
+          total_trials: 1,
+          successful_trials: 1,
+          total_duration: 0.01,
+          metadata: {},
+        }),
+      );
+
+    const wrapped = optimize({
+      configurationSpace: {
+        model: param.enum(["a"]),
+      },
+      objectives: ["accuracy"],
+      evaluation: { data: [{ id: 1 }] },
+    })(async () => {
+      await delay(5);
+      return {
+        metrics: { accuracy: 1 },
+        duration: -1,
+      };
+    });
+
+    const result = await wrapped.optimize({
+      mode: "hybrid",
+      algorithm: "optuna",
+      maxTrials: 1,
+      backendUrl: "http://localhost:5000",
+      apiKey: "key",
+    });
+
+    expect(result.trials).toHaveLength(1);
+    expect(result.trials[0]?.duration).toBeGreaterThan(0);
+
+    const submitPayload = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
+    expect(submitPayload.duration).toBeGreaterThan(0);
   });
 
   it("maps reason-only backend stop messages and malformed finalization payloads defensively", async () => {
