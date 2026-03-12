@@ -1253,6 +1253,7 @@ class HybridSessionClient {
         method,
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
+          "X-API-Key": this.apiKey,
           "Content-Type": "application/json",
         },
         body:

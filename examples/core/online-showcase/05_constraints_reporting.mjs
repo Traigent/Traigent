@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   collectSessionHelpers,
+  getCachedCompletion,
   createHybridOptions,
   createWrappedOpenAIClient,
   getDataset,
@@ -24,6 +25,7 @@ export const metadata = {
 export async function runSection() {
   const connection = resolveConnection();
   const { client, provider } = createWrappedOpenAIClient({ wrapper: "auto" });
+  const completionCache = new Map();
 
   const answerToken = optimize({
     configurationSpace: {
@@ -63,22 +65,28 @@ export async function runSection() {
       mode: "context",
     },
   })(async (input) => {
-    const response = await client.chat.completions.create({
-      model: provider.model,
-      temperature: 0.2,
-      max_tokens: 20,
-      messages: [
-        {
-          role: "system",
-          content:
-            'If the request says "Reply with exactly this uppercase token", return only that token.',
-        },
-        {
-          role: "user",
-          content: String(input),
-        },
-      ],
-    });
+    const prompt = [
+      {
+        role: "system",
+        content:
+          'If the request says "Reply with exactly this uppercase token", return only that token.',
+      },
+      {
+        role: "user",
+        content: String(input),
+      },
+    ];
+    const response = await getCachedCompletion(
+      completionCache,
+      JSON.stringify({ input, prompt }),
+      () =>
+        client.chat.completions.create({
+          model: provider.model,
+          temperature: 0.2,
+          max_tokens: 20,
+          messages: prompt,
+        }),
+    );
 
     return response.choices[0]?.message?.content ?? "";
   });

@@ -3,10 +3,12 @@ import { fileURLToPath } from "node:url";
 import {
   collectSessionHelpers,
   createBaseSpec,
+  getCachedCompletion,
   createHybridOptions,
   createTokenOnlyPrompt,
   createWrappedOpenAIClient,
   FIVE_TEMPERATURES,
+  getTrialParam,
   optimize,
   param,
   resolveConnection,
@@ -25,6 +27,7 @@ export const metadata = {
 export async function runSection() {
   resolveConnection();
   const { client, provider } = createWrappedOpenAIClient({ wrapper: "auto" });
+  const completionCache = new Map();
 
   const answerToken = optimize(
     createBaseSpec({
@@ -36,12 +39,18 @@ export async function runSection() {
       },
     }),
   )(async (input) => {
-    const response = await client.chat.completions.create({
-      model: provider.model,
-      temperature: 0.9,
-      max_tokens: 24,
-      messages: createTokenOnlyPrompt(input),
-    });
+    const temperature = getTrialParam("temperature", 0.9);
+    const response = await getCachedCompletion(
+      completionCache,
+      JSON.stringify({ temperature, input }),
+      () =>
+        client.chat.completions.create({
+          model: provider.model,
+          temperature: 0.9,
+          max_tokens: 24,
+          messages: createTokenOnlyPrompt(input),
+        }),
+    );
 
     return response.choices[0]?.message?.content ?? "";
   });

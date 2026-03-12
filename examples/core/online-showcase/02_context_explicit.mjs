@@ -4,6 +4,7 @@ import {
   collectSessionHelpers,
   createBaseSpec,
   createContextStylePrompt,
+  getCachedCompletion,
   createHybridOptions,
   createWrappedOpenAIClient,
   FIVE_STYLES,
@@ -25,6 +26,7 @@ export const metadata = {
 export async function runSection() {
   const connection = resolveConnection();
   const { client, provider } = createWrappedOpenAIClient({ wrapper: "manual" });
+  const completionCache = new Map();
 
   const answerToken = optimize(
     createBaseSpec({
@@ -36,12 +38,18 @@ export async function runSection() {
       },
     }),
   )(async (input) => {
-    const response = await client.chat.completions.create({
-      model: provider.model,
-      temperature: 0.1,
-      max_tokens: 20,
-      messages: createContextStylePrompt(input),
-    });
+    const prompt = createContextStylePrompt(input);
+    const response = await getCachedCompletion(
+      completionCache,
+      JSON.stringify({ input, prompt }),
+      () =>
+        client.chat.completions.create({
+          model: provider.model,
+          temperature: 0.1,
+          max_tokens: 20,
+          messages: prompt,
+        }),
+    );
 
     return response.choices[0]?.message?.content ?? "";
   });

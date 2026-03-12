@@ -34,15 +34,15 @@ export const FIVE_STYLES = [
 
 const TOKEN_DATASET = [
   "ALPHA",
-  "BRAVO",
-  "CHARLIE",
-  "DELTA",
-  "ECHO",
-  "FOXTROT",
-  "GOLF",
-  "HOTEL",
-  "INDIA",
-  "JULIET",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
+  "ALPHA",
 ].map((token) => ({
   input: `Reply with exactly this uppercase token and nothing else: ${token}`,
   output: token,
@@ -75,7 +75,7 @@ export function resolveProvider() {
       baseURL: "https://openrouter.ai/api/v1",
       model:
         process.env.OPENROUTER_FREE_MODEL ??
-        "meta-llama/llama-3.3-8b-instruct:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
       headers: {
         "HTTP-Referer": "https://traigent.ai",
         "X-Title": "Traigent JS Interactive Showcase",
@@ -245,6 +245,17 @@ export function summarizeResult(name, result, extras = {}) {
   };
 }
 
+export function getCachedCompletion(cache, cacheKey, createRequest) {
+  const existing = cache.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const created = Promise.resolve().then(createRequest);
+  cache.set(cacheKey, created);
+  return created;
+}
+
 export function createTokenOnlyPrompt(input) {
   return [
     {
@@ -321,4 +332,4 @@ export function createBaseSpec(overrides = {}) {
   };
 }
 
-export { optimize, param };
+export { getTrialParam, optimize, param };

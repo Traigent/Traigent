@@ -3,10 +3,12 @@ import { fileURLToPath } from "node:url";
 import {
   collectSessionHelpers,
   createBaseSpec,
+  getCachedCompletion,
   createHybridOptions,
   createTokenOnlyPrompt,
   createWrappedLangChainModel,
   FIVE_MAX_TOKENS,
+  getTrialParam,
   optimize,
   param,
   resolveConnection,
@@ -25,6 +27,7 @@ export const metadata = {
 export async function runSection() {
   const connection = resolveConnection();
   const { model, provider } = createWrappedLangChainModel();
+  const completionCache = new Map();
 
   const answerToken = optimize(
     createBaseSpec({
@@ -36,7 +39,13 @@ export async function runSection() {
       },
     }),
   )(async (input) => {
-    const response = await model.invoke(createTokenOnlyPrompt(input));
+    const maxTokens = getTrialParam("maxTokens", 24);
+    const prompt = createTokenOnlyPrompt(input);
+    const response = await getCachedCompletion(
+      completionCache,
+      JSON.stringify({ input, maxTokens }),
+      () => model.invoke(prompt),
+    );
     return typeof response?.content === "string"
       ? response.content
       : Array.isArray(response?.content)

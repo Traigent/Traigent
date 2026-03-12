@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   collectSessionHelpers,
+  getCachedCompletion,
   createHybridOptions,
   createParameterizedPrompt,
   createWrappedOpenAIClient,
@@ -26,6 +27,7 @@ export const metadata = {
 export async function runSection() {
   const connection = resolveConnection();
   const { client, provider } = createWrappedOpenAIClient({ wrapper: "auto" });
+  const completionCache = new Map();
 
   const answerToken = optimize({
     configurationSpace: {
@@ -50,12 +52,19 @@ export async function runSection() {
       prefix: "token-only",
     },
   })(async (input, config) => {
-    const response = await client.chat.completions.create({
-      model: provider.model,
-      temperature: 0.2,
-      max_tokens: 18,
-      messages: createParameterizedPrompt(input, config ?? {}),
-    });
+    const normalizedConfig = config ?? {};
+    const prompt = createParameterizedPrompt(input, normalizedConfig);
+    const response = await getCachedCompletion(
+      completionCache,
+      JSON.stringify({ input, config: normalizedConfig }),
+      () =>
+        client.chat.completions.create({
+          model: provider.model,
+          temperature: 0.2,
+          max_tokens: 18,
+          messages: prompt,
+        }),
+    );
 
     return response.choices[0]?.message?.content ?? "";
   });
