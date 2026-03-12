@@ -68,11 +68,151 @@ class StatusBreakdownsDTO:
 
 
 @dataclass(frozen=True)
+class CostSourceBreakdownDTO:
+    observed_usage: int
+    recorded_metrics: int
+    catalog_fallback: int
+    unknown_unpriced: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CostSourceBreakdownDTO:
+        return cls(
+            observed_usage=int(payload["observed_usage"]),
+            recorded_metrics=int(payload["recorded_metrics"]),
+            catalog_fallback=int(payload["catalog_fallback"]),
+            unknown_unpriced=int(payload["unknown_unpriced"]),
+        )
+
+
+@dataclass(frozen=True)
+class PricingCatalogModelDTO:
+    model: str
+    input_price_per_1k_usd: float
+    output_price_per_1k_usd: float
+    context_window: int | None
+    available_tiers: list[str]
+    supports_catalog_fallback: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> PricingCatalogModelDTO:
+        return cls(
+            model=str(payload["model"]),
+            input_price_per_1k_usd=float(payload["input_price_per_1k_usd"]),
+            output_price_per_1k_usd=float(payload["output_price_per_1k_usd"]),
+            context_window=(
+                int(payload["context_window"])
+                if payload.get("context_window") is not None
+                else None
+            ),
+            available_tiers=[str(item) for item in payload["available_tiers"]],
+            supports_catalog_fallback=bool(payload["supports_catalog_fallback"]),
+        )
+
+
+@dataclass(frozen=True)
+class PricingCatalogProviderDTO:
+    provider: str
+    model_count: int
+    pricing_resolution_mode: str
+    models: list[PricingCatalogModelDTO]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> PricingCatalogProviderDTO:
+        return cls(
+            provider=str(payload["provider"]),
+            model_count=int(payload["model_count"]),
+            pricing_resolution_mode=str(payload["pricing_resolution_mode"]),
+            models=[
+                PricingCatalogModelDTO.from_dict(item) for item in payload["models"]
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class OptimizationOverviewSummaryCardsDTO:
+    experiments_total: int
+    experiment_runs_in_range: int
+    configuration_runs_in_range: int
+    priced_configuration_runs_in_range: int
+    unpriced_configuration_runs_in_range: int
+    total_cost_usd_in_range: float
+    avg_latency_ms_in_range: float
+    total_tokens_in_range: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> OptimizationOverviewSummaryCardsDTO:
+        return cls(
+            experiments_total=int(payload["experiments_total"]),
+            experiment_runs_in_range=int(payload["experiment_runs_in_range"]),
+            configuration_runs_in_range=int(payload["configuration_runs_in_range"]),
+            priced_configuration_runs_in_range=int(
+                payload["priced_configuration_runs_in_range"]
+            ),
+            unpriced_configuration_runs_in_range=int(
+                payload["unpriced_configuration_runs_in_range"]
+            ),
+            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            avg_latency_ms_in_range=float(payload["avg_latency_ms_in_range"]),
+            total_tokens_in_range=int(payload["total_tokens_in_range"]),
+        )
+
+
+@dataclass(frozen=True)
+class OptimizationOverviewExperimentDTO:
+    experiment_id: str
+    name: str
+    status: str
+    experiment_run_count: int
+    configuration_run_count: int
+    priced_configuration_runs: int
+    unpriced_configuration_runs: int
+    total_cost_usd: float
+    avg_latency_ms: float | None
+    avg_primary_score: float | None
+    total_tokens: int
+    last_run_at: str | None
+    privacy_classification: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> OptimizationOverviewExperimentDTO:
+        return cls(
+            experiment_id=str(payload["experiment_id"]),
+            name=str(payload["name"]),
+            status=str(payload["status"]),
+            experiment_run_count=int(payload["experiment_run_count"]),
+            configuration_run_count=int(payload["configuration_run_count"]),
+            priced_configuration_runs=int(payload["priced_configuration_runs"]),
+            unpriced_configuration_runs=int(payload["unpriced_configuration_runs"]),
+            total_cost_usd=float(payload["total_cost_usd"]),
+            avg_latency_ms=(
+                float(payload["avg_latency_ms"])
+                if payload.get("avg_latency_ms") is not None
+                else None
+            ),
+            avg_primary_score=(
+                float(payload["avg_primary_score"])
+                if payload.get("avg_primary_score") is not None
+                else None
+            ),
+            total_tokens=int(payload["total_tokens"]),
+            last_run_at=(
+                str(payload["last_run_at"])
+                if payload.get("last_run_at") is not None
+                else None
+            ),
+            privacy_classification=str(payload["privacy_classification"]),
+        )
+
+
+@dataclass(frozen=True)
 class UsageSummaryDTO:
     experiment_runs: int
     configuration_runs: int
+    priced_configuration_runs: int
+    unpriced_configuration_runs: int
     total_cost_usd: float
     avg_cost_usd: float
+    cost_source_breakdown: CostSourceBreakdownDTO
     total_tokens: int
     avg_latency_ms: float
     p95_latency_ms: float
@@ -82,11 +222,44 @@ class UsageSummaryDTO:
         return cls(
             experiment_runs=int(payload["experiment_runs"]),
             configuration_runs=int(payload["configuration_runs"]),
+            priced_configuration_runs=int(payload["priced_configuration_runs"]),
+            unpriced_configuration_runs=int(payload["unpriced_configuration_runs"]),
             total_cost_usd=float(payload["total_cost_usd"]),
             avg_cost_usd=float(payload["avg_cost_usd"]),
+            cost_source_breakdown=CostSourceBreakdownDTO.from_dict(
+                payload["cost_source_breakdown"]
+            ),
             total_tokens=int(payload["total_tokens"]),
             avg_latency_ms=float(payload["avg_latency_ms"]),
             p95_latency_ms=float(payload["p95_latency_ms"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectOptimizationOverviewDashboardDTO:
+    context: AnalyticsContextDTO
+    range_days: int
+    summary_cards: OptimizationOverviewSummaryCardsDTO
+    cost_source_breakdown: CostSourceBreakdownDTO
+    recent_experiments: list[OptimizationOverviewExperimentDTO]
+
+    @classmethod
+    def from_dict(
+        cls, payload: dict[str, Any]
+    ) -> ProjectOptimizationOverviewDashboardDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            range_days=int(payload["range_days"]),
+            summary_cards=OptimizationOverviewSummaryCardsDTO.from_dict(
+                payload["summary_cards"]
+            ),
+            cost_source_breakdown=CostSourceBreakdownDTO.from_dict(
+                payload["cost_source_breakdown"]
+            ),
+            recent_experiments=[
+                OptimizationOverviewExperimentDTO.from_dict(item)
+                for item in payload["recent_experiments"]
+            ],
         )
 
 
@@ -257,6 +430,30 @@ class ProjectAnalyticsSummaryDTO:
 
 
 @dataclass(frozen=True)
+class ProjectPricingCatalogDTO:
+    context: AnalyticsContextDTO
+    catalog_source: str
+    catalog_last_updated: str
+    total_providers: int
+    total_models: int
+    providers: list[PricingCatalogProviderDTO]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectPricingCatalogDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            catalog_source=str(payload["catalog_source"]),
+            catalog_last_updated=str(payload["catalog_last_updated"]),
+            total_providers=int(payload["total_providers"]),
+            total_models=int(payload["total_models"]),
+            providers=[
+                PricingCatalogProviderDTO.from_dict(item)
+                for item in payload["providers"]
+            ],
+        )
+
+
+@dataclass(frozen=True)
 class ProjectAnalyticsTrendDTO:
     context: AnalyticsContextDTO
     metric_id: str
@@ -336,6 +533,7 @@ class FineTuningManifestDTO:
     export_mode: str
     privacy_mode: bool
     include_content: bool
+    job_id: str | None
     record_count: int
     records: list[FineTuningManifestRecordDTO]
 
@@ -346,11 +544,126 @@ class FineTuningManifestDTO:
             export_mode=str(payload["export_mode"]),
             privacy_mode=bool(payload["privacy_mode"]),
             include_content=bool(payload["include_content"]),
+            job_id=(
+                str(payload["job_id"]) if payload.get("job_id") is not None else None
+            ),
             record_count=int(payload["record_count"]),
             records=[
                 FineTuningManifestRecordDTO.from_dict(item)
                 for item in payload["records"]
             ],
+        )
+
+
+@dataclass(frozen=True)
+class ExportJobsPaginationDTO:
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ExportJobsPaginationDTO:
+        return cls(
+            page=int(payload["page"]),
+            per_page=int(payload["per_page"]),
+            total=int(payload["total"]),
+            total_pages=int(payload["total_pages"]),
+            has_next=bool(payload["has_next"]),
+            has_prev=bool(payload["has_prev"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectExportJobDTO:
+    job_id: str
+    export_type: str
+    status: str
+    privacy_classification: str
+    export_mode: str
+    privacy_mode: bool
+    include_content: bool
+    record_count: int
+    artifact_filename: str
+    artifact_content_type: str
+    experiment_id: str | None
+    experiment_run_id: str | None
+    limit: int
+    requested_by: str | None
+    requested_at: str
+    completed_at: str | None
+    error_message: str | None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectExportJobDTO:
+        return cls(
+            job_id=str(payload["job_id"]),
+            export_type=str(payload["export_type"]),
+            status=str(payload["status"]),
+            privacy_classification=str(payload["privacy_classification"]),
+            export_mode=str(payload["export_mode"]),
+            privacy_mode=bool(payload["privacy_mode"]),
+            include_content=bool(payload["include_content"]),
+            record_count=int(payload["record_count"]),
+            artifact_filename=str(payload["artifact_filename"]),
+            artifact_content_type=str(payload["artifact_content_type"]),
+            experiment_id=(
+                str(payload["experiment_id"])
+                if payload.get("experiment_id") is not None
+                else None
+            ),
+            experiment_run_id=(
+                str(payload["experiment_run_id"])
+                if payload.get("experiment_run_id") is not None
+                else None
+            ),
+            limit=int(payload["limit"]),
+            requested_by=(
+                str(payload["requested_by"])
+                if payload.get("requested_by") is not None
+                else None
+            ),
+            requested_at=str(payload["requested_at"]),
+            completed_at=(
+                str(payload["completed_at"])
+                if payload.get("completed_at") is not None
+                else None
+            ),
+            error_message=(
+                str(payload["error_message"])
+                if payload.get("error_message") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectExportJobResponseDTO:
+    context: AnalyticsContextDTO
+    job: ProjectExportJobDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectExportJobResponseDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            job=ProjectExportJobDTO.from_dict(payload["job"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectExportJobListDTO:
+    context: AnalyticsContextDTO
+    items: list[ProjectExportJobDTO]
+    pagination: ExportJobsPaginationDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectExportJobListDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            items=[ProjectExportJobDTO.from_dict(item) for item in payload["items"]],
+            pagination=ExportJobsPaginationDTO.from_dict(payload["pagination"]),
         )
 
 

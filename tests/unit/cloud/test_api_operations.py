@@ -302,9 +302,84 @@ class TestBuildSessionPayload:
 
         assert payload["problem_statement"] == "test_func"
         assert payload["dataset"]["metadata"] == {"size": 100}
-        assert payload["search_space"] == {"param": [1, 2, 3]}
+        assert payload["search_space"] == {
+            "param": {"type": "categorical", "choices": [1, 2, 3]}
+        }
         assert payload["optimization_config"]["max_trials"] == 10
         assert payload["optimization_config"]["optimization_goal"] == "maximize"
+
+    def test_payload_normalizes_numeric_tuple_ranges(self):
+        """Test tuple ranges are converted to typed numeric definitions."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {}
+        request.configuration_space = {
+            "temperature": (0.0, 1.0),
+            "max_tokens": (100, 500),
+        }
+        request.objectives = ["maximize"]
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["search_space"] == {
+            "temperature": {"type": "float", "low": 0.0, "high": 1.0},
+            "max_tokens": {"type": "int", "low": 100, "high": 500},
+        }
+
+    def test_payload_preserves_typed_parameter_definitions(self):
+        """Test already-typed config definitions pass through unchanged."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {}
+        request.configuration_space = {
+            "temperature": {"type": "float", "low": 0.0, "high": 1.0, "step": 0.1},
+            "strategy_id": {"type": "categorical", "choices": [0, 1, 2]},
+        }
+        request.objectives = ["maximize"]
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["search_space"] == request.configuration_space
+
+    def test_payload_normalizes_untyped_dict_values_as_categorical(self):
+        """Test legacy dict config shapes fall back to categorical choices."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {}
+        request.configuration_space = {
+            "strategy": {
+                "safe": "low_temperature",
+                "fast": "high_temperature",
+            }
+        }
+        request.objectives = ["maximize"]
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["search_space"] == {
+            "strategy": {
+                "type": "categorical",
+                "choices": ["low_temperature", "high_temperature"],
+            }
+        }
+
+    def test_payload_normalizes_scalar_values_as_single_choice_categorical(self):
+        """Test scalar config values are wrapped as single-choice categoricals."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {}
+        request.configuration_space = {"strategy_id": 3}
+        request.objectives = ["maximize"]
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["search_space"] == {
+            "strategy_id": {"type": "categorical", "choices": [3]}
+        }
 
     def test_payload_with_metadata(self):
         """Test payload with metadata."""

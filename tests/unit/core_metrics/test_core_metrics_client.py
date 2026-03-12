@@ -115,8 +115,16 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                     "usage_summary": {
                         "experiment_runs": 5,
                         "configuration_runs": 6,
+                        "priced_configuration_runs": 5,
+                        "unpriced_configuration_runs": 1,
                         "total_cost_usd": 1.25,
                         "avg_cost_usd": 0.25,
+                        "cost_source_breakdown": {
+                            "observed_usage": 4,
+                            "recorded_metrics": 1,
+                            "catalog_fallback": 0,
+                            "unknown_unpriced": 1,
+                        },
                         "total_tokens": 1234,
                         "avg_latency_ms": 120.5,
                         "p95_latency_ms": 210.0,
@@ -134,6 +142,153 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                             "privacy_classification": "aggregate_safe",
                         }
                     ],
+                }
+            }
+        if path == "/analytics/pricing-catalog":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:00:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "catalog_source": "static_catalog",
+                    "catalog_last_updated": "2026-03-12T08:55:00Z",
+                    "total_providers": 1,
+                    "total_models": 1,
+                    "providers": [
+                        {
+                            "provider": "openai",
+                            "model_count": 1,
+                            "pricing_resolution_mode": "static_catalog",
+                            "models": [
+                                {
+                                    "model": "gpt-4o",
+                                    "input_price_per_1k_usd": 0.005,
+                                    "output_price_per_1k_usd": 0.015,
+                                    "context_window": 128000,
+                                    "available_tiers": ["standard", "premium", "enterprise"],
+                                    "supports_catalog_fallback": True,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        if path == "/analytics/dashboards/optimization-overview?days=7&limit=3":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:15:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "range_days": 7,
+                    "summary_cards": {
+                        "experiments_total": 4,
+                        "experiment_runs_in_range": 5,
+                        "configuration_runs_in_range": 12,
+                        "priced_configuration_runs_in_range": 11,
+                        "unpriced_configuration_runs_in_range": 1,
+                        "total_cost_usd_in_range": 1.55,
+                        "avg_latency_ms_in_range": 118.2,
+                        "total_tokens_in_range": 4321,
+                    },
+                    "cost_source_breakdown": {
+                        "observed_usage": 8,
+                        "recorded_metrics": 2,
+                        "catalog_fallback": 1,
+                        "unknown_unpriced": 1,
+                    },
+                    "recent_experiments": [
+                        {
+                            "experiment_id": "exp_1",
+                            "name": "Support Experiment",
+                            "status": "completed",
+                            "experiment_run_count": 3,
+                            "configuration_run_count": 9,
+                            "priced_configuration_runs": 8,
+                            "unpriced_configuration_runs": 1,
+                            "total_cost_usd": 1.23,
+                            "avg_latency_ms": 111.0,
+                            "avg_primary_score": 0.93,
+                            "total_tokens": 3210,
+                            "last_run_at": "2026-03-12T08:30:00Z",
+                            "privacy_classification": "aggregate_safe",
+                        }
+                    ],
+                }
+            }
+        if path == "/analytics/export-jobs?page=1&per_page=10":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:20:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "items": [
+                        {
+                            "job_id": "export_job_1",
+                            "export_type": "fine_tuning_manifest",
+                            "status": "completed",
+                            "privacy_classification": "manifest_safe",
+                            "export_mode": "manifest",
+                            "privacy_mode": True,
+                            "include_content": False,
+                            "record_count": 12,
+                            "artifact_filename": "fine-tuning-manifest.json",
+                            "artifact_content_type": "application/json",
+                            "experiment_id": "exp_1",
+                            "experiment_run_id": None,
+                            "limit": 1000,
+                            "requested_by": "user_123",
+                            "requested_at": "2026-03-12T09:18:00Z",
+                            "completed_at": "2026-03-12T09:18:02Z",
+                            "error_message": None,
+                        }
+                    ],
+                    "pagination": {
+                        "page": 1,
+                        "per_page": 10,
+                        "total": 1,
+                        "total_pages": 1,
+                        "has_next": False,
+                        "has_prev": False,
+                    },
+                }
+            }
+        if path == "/analytics/export-jobs/export_job_1":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:20:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "job": {
+                        "job_id": "export_job_1",
+                        "export_type": "fine_tuning_manifest",
+                        "status": "completed",
+                        "privacy_classification": "manifest_safe",
+                        "export_mode": "manifest",
+                        "privacy_mode": True,
+                        "include_content": False,
+                        "record_count": 12,
+                        "artifact_filename": "fine-tuning-manifest.json",
+                        "artifact_content_type": "application/json",
+                        "experiment_id": "exp_1",
+                        "experiment_run_id": None,
+                        "limit": 1000,
+                        "requested_by": "user_123",
+                        "requested_at": "2026-03-12T09:18:00Z",
+                        "completed_at": "2026-03-12T09:18:02Z",
+                        "error_message": None,
+                    },
                 }
             }
         if path == "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day":
@@ -193,23 +348,46 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
 
     client = CoreMetricsClient(request_sender=request_sender)
     summary = client.get_analytics_summary(days=7)
+    catalog = client.get_pricing_catalog()
+    dashboard = client.get_optimization_overview_dashboard(days=7, limit=3)
+    export_jobs = client.list_export_jobs(page=1, per_page=10)
+    export_job = client.get_export_job("export_job_1")
     trend = client.get_run_volume_trend(experiment_id="exp_1", days=7, bucket="day")
     distribution = client.get_measure_distribution("accuracy", experiment_id="exp_1", bins=5)
 
     assert calls[0] == ("GET", "/analytics/summary?days=7", None, "json")
-    assert calls[1] == (
+    assert calls[1] == ("GET", "/analytics/pricing-catalog", None, "json")
+    assert calls[2] == (
+        "GET",
+        "/analytics/dashboards/optimization-overview?days=7&limit=3",
+        None,
+        "json",
+    )
+    assert calls[3] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
+    assert calls[4] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
+    assert calls[5] == (
         "GET",
         "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day",
         None,
         "json",
     )
-    assert calls[2] == (
+    assert calls[6] == (
         "GET",
         "/analytics/distributions/measures/accuracy?experiment_id=exp_1&bins=5",
         None,
         "json",
     )
+    assert summary.usage_summary.priced_configuration_runs == 5
+    assert summary.usage_summary.cost_source_breakdown.observed_usage == 4
     assert summary.usage_summary.total_cost_usd == 1.25
+    assert catalog.catalog_source == "static_catalog"
+    assert catalog.providers[0].models[0].supports_catalog_fallback is True
+    assert dashboard.summary_cards.unpriced_configuration_runs_in_range == 1
+    assert dashboard.cost_source_breakdown.catalog_fallback == 1
+    assert dashboard.recent_experiments[0].experiment_id == "exp_1"
+    assert export_jobs.pagination.total == 1
+    assert export_jobs.items[0].job_id == "export_job_1"
+    assert export_job.job.requested_by == "user_123"
     assert trend.series[0].points[0].value == 3
     assert distribution.histogram[0].count == 1
 
@@ -266,6 +444,7 @@ def test_core_metrics_client_exports_privacy_safe_manifest() -> None:
                 "export_mode": "manifest",
                 "privacy_mode": True,
                 "include_content": False,
+                "job_id": "export_job_1",
                 "record_count": 1,
                 "records": [
                     {
@@ -292,8 +471,46 @@ def test_core_metrics_client_exports_privacy_safe_manifest() -> None:
 
     assert manifest.export_mode == "manifest"
     assert manifest.privacy_mode is True
+    assert manifest.job_id == "export_job_1"
     assert manifest.records[0].input_content is None
     assert manifest.records[0].input_hash == "abc123"
+
+
+def test_core_metrics_client_allows_missing_export_job_id() -> None:
+    def request_sender(
+        method: str,
+        path: str,
+        payload: dict | None,
+        response_kind: str = "json",
+    ):
+        assert method == "GET"
+        assert payload is None
+        assert response_kind == "json"
+        assert (
+            path
+            == "/analytics/exports/fine-tuning.manifest?experiment_id=exp_1&limit=25&include_content=false"
+        )
+        return {
+            "data": {
+                "context": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "generated_at": "2026-03-11T10:15:00Z",
+                    "privacy_classification": "manifest_safe",
+                },
+                "export_mode": "manifest",
+                "privacy_mode": True,
+                "include_content": False,
+                "job_id": None,
+                "record_count": 1,
+                "records": [],
+            }
+        }
+
+    client = CoreMetricsClient(request_sender=request_sender)
+    manifest = client.export_fine_tuning_manifest(experiment_id="exp_1", limit=25)
+
+    assert manifest.job_id is None
 
 
 def test_core_metrics_client_validates_custom_request_sender_shapes() -> None:

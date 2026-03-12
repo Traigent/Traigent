@@ -15,7 +15,11 @@ from traigent.core_metrics.dtos import (
     FineTuningManifestDTO,
     ProjectAnalyticsSummaryDTO,
     ProjectAnalyticsTrendDTO,
+    ProjectExportJobListDTO,
+    ProjectExportJobResponseDTO,
     ProjectMeasureDistributionDTO,
+    ProjectOptimizationOverviewDashboardDTO,
+    ProjectPricingCatalogDTO,
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -52,6 +56,33 @@ class CoreMetricsClient:
         )
         return ProjectAnalyticsSummaryDTO.from_dict(
             self._unwrap_data(payload, "analytics summary")
+        )
+
+    def get_pricing_catalog(self) -> ProjectPricingCatalogDTO:
+        payload = self._request_json(
+            "GET",
+            "/analytics/pricing-catalog",
+        )
+        return ProjectPricingCatalogDTO.from_dict(
+            self._unwrap_data(payload, "pricing catalog")
+        )
+
+    def get_optimization_overview_dashboard(
+        self,
+        *,
+        days: int = 30,
+        limit: int = 5,
+    ) -> ProjectOptimizationOverviewDashboardDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/dashboards/optimization-overview",
+                days=days,
+                limit=limit,
+            ),
+        )
+        return ProjectOptimizationOverviewDashboardDTO.from_dict(
+            self._unwrap_data(payload, "optimization overview dashboard")
         )
 
     def get_run_volume_trend(
@@ -145,6 +176,33 @@ class CoreMetricsClient:
         )
         return FineTuningManifestDTO.from_dict(
             self._unwrap_data(payload, "fine-tuning manifest")
+        )
+
+    def list_export_jobs(
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> ProjectExportJobListDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/export-jobs",
+                page=page,
+                per_page=per_page,
+            ),
+        )
+        return ProjectExportJobListDTO.from_dict(
+            self._unwrap_data(payload, "export jobs")
+        )
+
+    def get_export_job(self, job_id: str) -> ProjectExportJobResponseDTO:
+        payload = self._request_json(
+            "GET",
+            f"/analytics/export-jobs/{quote(job_id, safe='')}",
+        )
+        return ProjectExportJobResponseDTO.from_dict(
+            self._unwrap_data(payload, "export job")
         )
 
     def _request_json(

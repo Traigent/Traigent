@@ -112,6 +112,23 @@ class SpanType(StrEnum):
 # =============================================================================
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce numpy-style scalars into JSON-serializable primitives."""
+
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except Exception:
+            return str(value)
+    return value
+
+
 @dataclass
 class SpanPayload:
     """Span data payload for backend ingestion.
@@ -174,11 +191,11 @@ class SpanPayload:
         if self.decision_reason:
             result["decision_reason"] = self.decision_reason
         if self.input_data:
-            result["input_data"] = self.input_data
+            result["input_data"] = _json_safe(self.input_data)
         if self.output_data:
-            result["output_data"] = self.output_data
+            result["output_data"] = _json_safe(self.output_data)
         if self.metadata:
-            result["metadata"] = self.metadata
+            result["metadata"] = _json_safe(self.metadata)
 
         return result
 
@@ -200,7 +217,7 @@ class WorkflowNode:
             "type": self.type,
             "display_name": self.display_name,
             "tunable_params": self.tunable_params,
-            "metadata": self.metadata,
+            "metadata": _json_safe(self.metadata),
         }
 
 
@@ -224,7 +241,7 @@ class WorkflowEdge:
         if self.condition:
             result["condition"] = self.condition
         if self.metadata:
-            result["metadata"] = self.metadata
+            result["metadata"] = _json_safe(self.metadata)
         return result
 
 
