@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from traigent.admin.config import EnterpriseAdminConfig
-from traigent.config.project import PROJECT_ENV_VAR
+from traigent.config.project import (
+    PROJECT_ENV_VAR,
+    read_optional_project_env,
+    scope_api_path,
+)
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME
 from traigent.core_metrics.config import CoreMetricsConfig
 from traigent.evaluation.config import EvaluationConfig
@@ -103,3 +107,22 @@ def test_client_configs_normalize_explicit_blank_overrides() -> None:
     assert config.project_id is None
     assert TENANT_HEADER_NAME not in config.build_headers()
     assert config.api_path == "/api/v1beta"
+
+
+def test_project_scope_helpers_normalize_paths_and_blank_env(monkeypatch) -> None:
+    monkeypatch.setenv(PROJECT_ENV_VAR, "   ")
+
+    assert read_optional_project_env() is None
+    assert scope_api_path("/api/v1beta/core-metrics/overview", "project_alpha") == (
+        "/api/v1beta/projects/project_alpha/core-metrics/overview"
+    )
+    assert scope_api_path("/api/v1beta/projects/project_alpha/prompts", "project_beta") == (
+        "/api/v1beta/projects/project_alpha/prompts"
+    )
+    assert scope_api_path("/api/v1/measures", "project_alpha") == (
+        "/api/v1beta/projects/project_alpha/measures"
+    )
+    assert scope_api_path("/api/v1/experiments", "project_alpha") == (
+        "/api/v1beta/projects/project_alpha/experiments"
+    )
+    assert scope_api_path("/api/v1/experiments", None) == "/api/v1/experiments"

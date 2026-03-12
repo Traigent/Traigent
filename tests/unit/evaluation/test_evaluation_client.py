@@ -369,8 +369,8 @@ def test_evaluation_client_updates_typed_measures_and_maps_errors(monkeypatch):
         },
     )
 
-    assert measure_calls[0][1] == "/api/v1/measures"
-    assert measure_calls[1][1] == "/api/v1/measures/measure_quality"
+    assert measure_calls[0][1] == "/api/v1beta/measures"
+    assert measure_calls[1][1] == "/api/v1beta/measures/measure_quality"
     assert created_measure["value_type"] == "categorical"
     assert updated_measure["value_type"] == "boolean"
 
