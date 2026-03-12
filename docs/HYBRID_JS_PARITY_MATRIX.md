@@ -16,6 +16,13 @@ Use it together with:
 - `deferred-backend`: blocked on missing or insufficiently specified backend/protocol support
 - `out-of-scope`: not a current JS SDK target
 
+Scope note:
+
+- this matrix treats backend-guided **local** execution over the typed `/sessions`
+  surface as the JS parity target
+- Python's separate server-side remote cloud-execution family is not treated as
+  a JS gap here
+
 ## High-level Agent and Execution Surface
 
 | Capability | Python | Hybrid JS | Evidence | Notes |
@@ -68,6 +75,7 @@ Use it together with:
 
 | Capability Family | Current Status | Why It Is Still Open |
 | --- | --- | --- |
-| Broader cloud/session control plane | `partial` | The reachable typed `/sessions` helper surface is largely covered, but wider Python cloud families such as `/agent/optimize` do not exist on the current backend route surface and therefore remain backend-dependent. |
+| Additional reachable typed `/sessions` control plane | `partial` | The core typed `/sessions` helper surface is covered. Any remaining JS-side cloud work should be limited to additional routes that are actually reachable from the current backend session base and have a known contract. |
+| Python remote cloud-execution family (`/agent/optimize`, remote invocation) | `out-of-scope` | JS hybrid intentionally keeps agent execution local and does not target server-side agent reconstruction/invocation. |
 | Implicit framework discovery | `gap` | No backend work is required, but the hybrid worktree still requires callers to pass explicit objects for discovery rather than scanning arbitrary runtime/module state. |
 | Full TVL/runtime breadth | `deferred-backend` | The backend/session contract does not yet expose the whole Python TVL lifecycle. |

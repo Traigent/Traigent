@@ -109,6 +109,11 @@ If you need session lifecycle helpers outside the optimize loop, use:
 - `finalizeOptimizationSession(sessionId, options?)`
 - `deleteOptimizationSession(sessionId, options?)`
 
+Hybrid mode in JS is backend-guided **local execution**. The backend owns the
+typed `/sessions` optimization loop, but your JS agent still executes locally.
+Python's separate remote cloud-execution APIs are not a JS target in this
+worktree.
+
 Both helpers normalize backend field naming:
 
 - `createOptimizationSession(...)` mirrors the reachable typed backend create

@@ -195,6 +195,11 @@ The low-level `createOptimizationSession(...)`,
 Use them when you want to drive the typed session lifecycle directly instead of
 going through `wrapped.optimize(...)`.
 
+Hybrid mode is backend-guided **local execution**: the backend suggests
+configurations and owns session state, but the JS agent still runs locally.
+This SDK does not target Python's separate remote cloud-execution model where
+agents are reconstructed and invoked on the server.
+
 `listOptimizationSessions(...)` forwards `pattern` directly to the current
 typed-session backend, where it behaves like a substring-style session-id
 filter. Its `total` field reflects the backend-reported count before SDK-side
