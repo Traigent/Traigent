@@ -134,7 +134,7 @@ class TestFullOptimizationWorkflow:
 
         # Patch evaluator
         async def patched_evaluate_single(
-            evaluator_self, func, config, example, example_index
+            evaluator_self, func, config, example, example_index, **kwargs
         ):
             nonlocal current_config
             old_config = current_config.copy()
@@ -142,7 +142,7 @@ class TestFullOptimizationWorkflow:
 
             try:
                 result = await original_method(
-                    evaluator_self, func, config, example, example_index
+                    evaluator_self, func, config, example, example_index, **kwargs
                 )
                 return result
             finally:

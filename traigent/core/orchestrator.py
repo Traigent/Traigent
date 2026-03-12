@@ -81,6 +81,7 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
@@ -1490,6 +1491,10 @@ class OptimizationOrchestrator:
         """Submit usage analytics if enabled."""
 
         if not self.traigent_config.enable_usage_analytics:
+            return
+
+        if is_backend_offline():
+            logger.debug("Skipping analytics submission: backend is offline")
             return
 
         try:
