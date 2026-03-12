@@ -1,4 +1,5 @@
 import { ValidationError } from '../core/errors.js';
+import { cloneAndFreezePlainValue } from '../core/immutable.js';
 import { isPlainObject } from '../core/is-plain-object.js';
 import { withRuntimeMetricsCollector } from '../core/runtime-metrics.js';
 import type { Metrics, TrialConfig } from '../dtos/trial.js';
@@ -13,7 +14,7 @@ import type {
 } from './types.js';
 import { collectMetricSamples } from './native-reps.js';
 
-type AnyFunction = (...args: any[]) => any;
+type AnyFunction = (...args: unknown[]) => unknown;
 type ContextCustomEvaluator = (context: EvaluationContext) => Metrics | Promise<Metrics>;
 type LegacyCustomEvaluator = (
   agentFn: (input: unknown) => unknown | Promise<unknown>,
@@ -153,18 +154,18 @@ function mergeParameterConfig(
   config: TrialConfig['config'],
 ): unknown[] {
   if (args.length === 0) {
-    return [{ ...config }];
+    return [cloneAndFreezePlainValue({ ...config })];
   }
 
   if (args.length === 1) {
-    return [args[0], { ...config }];
+    return [args[0], cloneAndFreezePlainValue({ ...config })];
   }
 
   const updatedArgs = [...args];
   const currentConfig = updatedArgs[1];
 
   if (currentConfig === undefined) {
-    updatedArgs[1] = { ...config };
+    updatedArgs[1] = cloneAndFreezePlainValue({ ...config });
     return updatedArgs;
   }
 
@@ -174,10 +175,10 @@ function mergeParameterConfig(
     );
   }
 
-  updatedArgs[1] = {
+  updatedArgs[1] = cloneAndFreezePlainValue({
     ...config,
     ...currentConfig,
-  };
+  });
   return updatedArgs;
 }
 

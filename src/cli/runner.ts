@@ -24,6 +24,11 @@ console.trace = (...args: unknown[]) => {
   console.error('[user:trace]', ...args);
 };
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { TrialContext } from '../core/context.js';
@@ -541,7 +546,8 @@ function handleCapabilities(request: CLIRequest): CLIResponse {
 
 /**
  * Handle a validate_config request.
- * Validates configuration without running a trial.
+ * Performs basic configuration shape validation without running a trial.
+ * Full JSON Schema validation is not advertised until implemented.
  */
 function handleValidateConfig(request: CLIRequest): CLIResponse {
   const payload = request.payload as {

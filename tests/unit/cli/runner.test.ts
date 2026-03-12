@@ -213,13 +213,13 @@ describe('Runner Integration Tests', () => {
       const response = createSuccessResponse('req-001', {
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: '1.0',
-        capabilities: ['validate_config', 'warnings'],
+        capabilities: ['warnings'],
         supported_actions: ['run_trial', 'ping', 'shutdown', 'cancel', 'capabilities', 'validate_config'],
       });
 
       expect(response.status).toBe('success');
       const payload = response.payload as { capabilities: string[] };
-      expect(payload.capabilities).toContain('validate_config');
+      expect(payload.capabilities).not.toContain('validate_config');
     });
 
     it('should create validate_config success response', () => {

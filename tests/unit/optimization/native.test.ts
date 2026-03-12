@@ -916,7 +916,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => {
       invocationCount += 1;
-      await delay(invocationCount === 1 ? 10 : 200);
+      await delay(invocationCount === 1 ? 5 : 250);
       return {
         metrics: {
           accuracy:
@@ -928,7 +928,7 @@ describe('native optimize()', () => {
     });
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
+    setTimeout(() => controller.abort(), 25);
 
     const partial = await wrapped.optimize({
       algorithm: 'grid',
@@ -965,7 +965,7 @@ describe('native optimize()', () => {
     );
 
     await rm(checkpointDir, { recursive: true, force: true });
-  });
+  }, 10000);
 
   it('supports bayesian checkpoint/resume by restoring sampler state', async () => {
     const checkpointDir = await mkdtemp(join(tmpdir(), 'traigent-bayes-checkpoint-'));

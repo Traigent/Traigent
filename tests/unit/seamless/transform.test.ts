@@ -6,7 +6,7 @@ import { transformSync } from '@babel/core';
 import { parse } from '@babel/parser';
 import traverse, { type NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runSeamlessMigration } from '../../../src/cli/migrate.js';
 import { getTrialParam } from '../../../src/core/context.js';
@@ -32,6 +32,11 @@ afterEach(async () => {
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
+  vi.unstubAllEnvs();
+});
+
+beforeEach(() => {
+  vi.unstubAllEnvs();
 });
 
 function transformFunctionSnippet(
@@ -784,6 +789,8 @@ describe('seamless transform tooling', () => {
   });
 
   it('uses experimental runtime seamless rewriting for self-contained functions', async () => {
+    vi.stubEnv('TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS', '1');
+
     const wrapped = optimize({
       configurationSpace: {
         temperature: param.enum([0.2, 0.8]),
@@ -858,6 +865,8 @@ describe('seamless transform tooling', () => {
   });
 
   it('allows known globals during runtime seamless rewriting', async () => {
+    vi.stubEnv('TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS', '1');
+
     const wrapped = optimize({
       configurationSpace: {
         temperature: param.enum([0.2, 0.8]),
@@ -945,6 +954,8 @@ describe('seamless transform tooling', () => {
   });
 
   it('rejects experimental runtime seamless rewriting for non-self-contained functions', async () => {
+    vi.stubEnv('TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS', '1');
+
     clearRegisteredFrameworkTargets();
     const defaults = { temperature: 0.2 };
 
@@ -972,5 +983,21 @@ describe('seamless transform tooling', () => {
         maxTrials: 2,
       }),
     ).rejects.toThrow(/self-contained functions|Babel plugin/i);
+  });
+
+  it('rejects runtime seamless rewriting unless explicitly opted in', () => {
+    clearRegisteredFrameworkTargets();
+
+    expect(() =>
+      resolveSeamlessFunction(
+        async function answer(question: string) {
+          const temperature = 0.2;
+          return `${temperature}:${question}`;
+        },
+        ['temperature'],
+        undefined,
+        true,
+      ),
+    ).toThrow(/disabled by default|trusted local code/i);
   });
 });

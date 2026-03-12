@@ -6,6 +6,7 @@ import {
 } from '../shared.js';
 
 const TRAIGENT_WRAPPED = Symbol.for('traigent.langchain.wrapped');
+const wrappedModelCache = new WeakMap<object, object>();
 
 type BindableLangChainModel = {
   model?: string;
@@ -131,6 +132,11 @@ function bindIfNeeded<T extends BindableLangChainModel>(model: T): T {
 }
 
 export function withTraigentModel<T extends BindableLangChainModel>(model: T): T {
+  const cached = wrappedModelCache.get(model as object);
+  if (cached) {
+    return cached as T;
+  }
+
   if ((model as WrappedLangChainModel)[TRAIGENT_WRAPPED]) {
     return model;
   }
@@ -181,6 +187,8 @@ export function withTraigentModel<T extends BindableLangChainModel>(model: T): T
     configurable: false,
     writable: false,
   });
+
+  wrappedModelCache.set(model as object, wrapped as object);
 
   return wrapped;
 }

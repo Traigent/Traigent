@@ -22,7 +22,7 @@ content here is specific to the JS SDK project and this native-first checkout.
 - `seamless` now covers:
   - framework interception for wrapped OpenAI, LangChain, and Vercel AI clients
   - codemod/build-time rewriting for hardcoded tuned variables
-  - an experimental runtime rewrite fallback for self-contained plain Node functions
+  - an experimental runtime rewrite fallback for self-contained plain Node functions when explicitly opted in
 
 ## Project-Wide Note
 

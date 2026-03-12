@@ -49,13 +49,13 @@ export type TrialFunction = (
  */
 export interface TraigentSDKConfig {
   /** Enable debug logging */
-  debug?: boolean;
+  readonly debug?: boolean;
   /** Path to data file for loading examples */
-  dataPath?: string;
+  readonly dataPath?: string;
   /** Custom data loader function */
-  dataLoader?: (indices: number[]) => Promise<unknown[]>;
+  readonly dataLoader?: (indices: number[]) => Promise<unknown[]>;
   /** Timeout for trial execution in milliseconds */
-  timeoutMs?: number;
+  readonly timeoutMs?: number;
 }
 
 /**

@@ -36,6 +36,8 @@ const ALLOWED_GLOBAL_IDENTIFIERS = new Set([
 type AnyFunction = (...args: any[]) => any;
 const traverse = traverseModule.default ?? traverseModule;
 const generate = generatorModule.default ?? generatorModule;
+const RUNTIME_SEAMLESS_OPT_IN_ENV =
+  'TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS';
 
 export interface ResolvedSeamlessFunction<T extends AnyFunction> {
   fn: T;
@@ -86,10 +88,18 @@ function collectFreeIdentifiers(
 }
 
 function createFunctionFromSource<T extends AnyFunction>(code: string): T {
+  // This is an experimental convenience path for self-contained, developer-authored
+  // local functions after AST-based rewrite validation. It is not intended as a
+  // sandbox for untrusted code; prefer the codemod or build-time plugin in any
+  // environment where the function source is not fully trusted.
   return new Function(
     'getTrialParam',
     `return (${code});`,
   )(getTrialParam) as T;
+}
+
+function isRuntimeSeamlessOptedIn(): boolean {
+  return process.env[RUNTIME_SEAMLESS_OPT_IN_ENV] === '1';
 }
 
 export function resolveSeamlessFunction<T extends AnyFunction>(
@@ -195,6 +205,12 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
   if (!transformedCode || rewrittenCount === 0) {
     throw new ValidationError(
       'Seamless injection requires a wrapped framework target or transformed tuned-variable function. Run `traigent migrate seamless` or use the Babel plugin for non-framework tuned variables.',
+    );
+  }
+
+  if (!isRuntimeSeamlessOptedIn()) {
+    throw new ValidationError(
+      `Experimental runtime seamless rewriting is disabled by default. Set ${RUNTIME_SEAMLESS_OPT_IN_ENV}=1 only for trusted local code, or use \`traigent migrate seamless\` / the Babel plugin instead.`,
     );
   }
 

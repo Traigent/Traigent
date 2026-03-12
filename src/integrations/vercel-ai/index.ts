@@ -8,6 +8,7 @@ import {
 } from '../shared.js';
 
 const TRAIGENT_WRAPPED = Symbol.for('traigent.vercel-ai.wrapped');
+const wrappedModelCache = new WeakMap<object, object>();
 
 function getUsage(result: unknown): {
   promptTokens: number;
@@ -49,6 +50,11 @@ function getModelName(
 }
 
 export function withTraigent<T extends LanguageModel>(model: T): T {
+  const cached = wrappedModelCache.get(model as object);
+  if (cached) {
+    return cached as T;
+  }
+
   if ((model as T & { [TRAIGENT_WRAPPED]?: true })[TRAIGENT_WRAPPED]) {
     return model;
   }
@@ -98,6 +104,8 @@ export function withTraigent<T extends LanguageModel>(model: T): T {
     configurable: false,
     writable: false,
   });
+
+  wrappedModelCache.set(model as object, wrapped as object);
 
   return wrapped;
 }

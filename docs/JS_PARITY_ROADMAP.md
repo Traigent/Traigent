@@ -122,6 +122,7 @@ native-first checkout.
 
 - Current JS status:
   - native subset is implemented and tested
+  - native CLI inspection now exists via `traigent inspect tvl ...`
 - Remaining gap:
   - full TVL language/runtime parity
   - tighter alignment with Python authoring expectations

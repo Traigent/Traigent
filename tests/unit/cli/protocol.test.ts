@@ -37,7 +37,6 @@ describe('Protocol Constants', () => {
   });
 
   it('should have supported capabilities', () => {
-    expect(SUPPORTED_CAPABILITIES).toContain('validate_config');
     expect(SUPPORTED_CAPABILITIES).toContain('dataset_hash');
     expect(SUPPORTED_CAPABILITIES).toContain('inline_rows');
     expect(SUPPORTED_CAPABILITIES).toContain('warnings');
@@ -344,12 +343,12 @@ describe('CapabilitiesPayloadSchema', () => {
     const payload = {
       protocol_version: '1.1',
       min_protocol_version: '1.0',
-      capabilities: ['validate_config', 'warnings'],
+      capabilities: ['dataset_hash', 'warnings'],
       supported_actions: ['run_trial', 'ping'],
     };
 
     const result = CapabilitiesPayloadSchema.parse(payload);
-    expect(result.capabilities).toContain('validate_config');
+    expect(result.capabilities).not.toContain('validate_config');
   });
 });
 

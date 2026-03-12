@@ -497,6 +497,37 @@ describe('framework interception', () => {
     expect(doGenerate).toHaveBeenCalledTimes(1);
   });
 
+  it('returns the same wrapped instance when the original LangChain or Vercel model is wrapped again', () => {
+    const baseLangChainModel = {
+      modelName: 'gpt-4o-mini',
+      async invoke() {
+        return 'ok';
+      },
+    };
+
+    const wrappedLangChain = withTraigentModel(baseLangChainModel);
+    expect(withTraigentModel(baseLangChainModel)).toBe(wrappedLangChain);
+
+    const baseVercelModel = {
+      specificationVersion: 'v1',
+      provider: 'openai',
+      modelId: 'gpt-4o-mini',
+      defaultObjectGenerationMode: 'json',
+      supportedUrls: {},
+      async doGenerate() {
+        return {
+          usage: {
+            promptTokens: 1,
+            completionTokens: 1,
+          },
+        };
+      },
+    };
+
+    const wrappedVercel = withTraigent(baseVercelModel as never);
+    expect(withTraigent(baseVercelModel as never)).toBe(wrappedVercel);
+  });
+
   it('auto-wraps a supported framework target in one call', async () => {
     const create = vi.fn(async (params: Record<string, unknown>) => ({
       model: params.model,

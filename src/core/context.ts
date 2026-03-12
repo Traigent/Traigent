@@ -6,6 +6,7 @@
  */
 import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
 import type { TrialConfig } from '../dtos/trial.js';
+import { cloneAndFreezePlainValue } from './immutable.js';
 
 /**
  * Extended trial context that includes cancellation support.
@@ -63,7 +64,10 @@ export const TrialContext = {
    * @returns Promise resolving to the function's return value
    */
   run<T>(config: TrialConfig, fn: () => T | Promise<T>, abortSignal?: AbortSignal): T | Promise<T> {
-    const contextData: TrialContextData = { config, abortSignal };
+    const contextData: TrialContextData = {
+      config: cloneAndFreezePlainValue(config),
+      abortSignal,
+    };
     return trialStorage.run(contextData, fn);
   },
 
@@ -188,11 +192,9 @@ export function getTrialParam<T>(key: string, defaultValue?: T): T | undefined {
  * @param fn - The callback function to wrap
  * @returns A wrapped function that preserves trial context
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function wrapCallback<T extends (...args: any[]) => any>(fn: T): T {
+export function wrapCallback<T extends (...args: unknown[]) => unknown>(fn: T): T {
   const resource = new AsyncResource('TraigentCallback');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((...args: any[]) => resource.runInAsyncScope(fn, null, ...args)) as T;
+  return ((...args: Parameters<T>) => resource.runInAsyncScope(fn, null, ...args)) as T;
 }
 
 /**
@@ -203,14 +205,12 @@ export function wrapCallback<T extends (...args: any[]) => any>(fn: T): T {
  * @param fn - The function to bind
  * @returns A bound function that preserves the current trial context
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function bindContext<T extends (...args: any[]) => any>(fn: T): T {
+export function bindContext<T extends (...args: unknown[]) => unknown>(fn: T): T {
   const currentConfig = TrialContext.getConfigOrUndefined();
   const currentAbortSignal = TrialContext.getAbortSignal();
   if (!currentConfig) {
     return fn;
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((...args: any[]) =>
+  return ((...args: Parameters<T>) =>
     TrialContext.run(currentConfig, () => fn(...args), currentAbortSignal)) as T;
 }

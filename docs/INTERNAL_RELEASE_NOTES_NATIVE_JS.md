@@ -16,7 +16,7 @@ This release hardens the current native JS optimization surface in `@traigent/sd
 - Seamless support for hardcoded local tuned variables is now available through:
   - `traigent migrate seamless`
   - `@traigent/sdk/babel-plugin-seamless`
-  - an experimental runtime rewrite fallback for self-contained plain Node functions
+  - an experimental runtime rewrite fallback for self-contained plain Node functions when explicitly opted in for trusted local code
 - The old low-level manual trial contract still exists behind `execution.contract = 'trial'`, but it is deprecated.
 
 ## Demo / Migration State

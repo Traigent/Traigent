@@ -80,6 +80,34 @@ describe('agent optimization helpers', () => {
     ).toThrow(/second argument to be an object config/i);
   });
 
+  it('passes a frozen config object during parameter injection', () => {
+    expect(() =>
+      invokeFunctionWithConfig(
+        (_input: string, config?: Record<string, unknown>) => {
+          expect(Object.isFrozen(config)).toBe(true);
+          (config as Record<string, unknown>)['tone'] = 'mutated';
+          return 'never';
+        },
+        undefined,
+        ['hello'],
+        { tone: 'friendly', nested: { retries: 2 } },
+        'parameter',
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it('rejects non-plain objects as parameter config values', () => {
+    expect(() =>
+      invokeFunctionWithConfig(
+        () => 'never',
+        undefined,
+        ['hello', new Date()],
+        { tone: 'friendly' },
+        'parameter',
+      ),
+    ).toThrow(/second argument to be an object config/i);
+  });
+
   it('aggregates example metrics using default and explicit strategies', async () => {
     const wrapped = optimize({
       configurationSpace: {

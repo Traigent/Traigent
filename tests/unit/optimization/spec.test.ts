@@ -816,6 +816,8 @@ describe('optimization spec helpers', () => {
   });
 
   it('can disable seamless auto framework overrides explicitly', async () => {
+    vi.stubEnv('TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS', '1');
+
     createTraigentOpenAI({
       chat: {
         completions: {

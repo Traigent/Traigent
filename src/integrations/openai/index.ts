@@ -14,11 +14,17 @@ type OpenAICompletionUsage = {
 };
 
 type OpenAIChatCompletionsClient = {
-  create: (params: Record<string, unknown>, ...args: unknown[]) => Promise<any>;
+  create: (
+    params: Record<string, unknown>,
+    ...args: unknown[]
+  ) => Promise<unknown>;
 };
 
 type OpenAIResponsesClient = {
-  create: (params: Record<string, unknown>, ...args: unknown[]) => Promise<any>;
+  create: (
+    params: Record<string, unknown>,
+    ...args: unknown[]
+  ) => Promise<unknown>;
 };
 
 type OpenAIClientLike = {
@@ -68,10 +74,14 @@ function wrapCreate(
       },
       ...args,
     );
+    const responseRecord =
+      response && typeof response === 'object'
+        ? (response as Record<string, unknown>)
+        : {};
 
-    const usage = response?.usage as OpenAICompletionUsage | undefined;
+    const usage = responseRecord['usage'] as OpenAICompletionUsage | undefined;
     const model = String(
-      response?.model ?? overrides['model'] ?? params['model'] ?? 'unknown',
+      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown',
     );
     const inputTokens = usage?.prompt_tokens ?? 0;
     const outputTokens = usage?.completion_tokens ?? 0;
@@ -107,12 +117,16 @@ function wrapResponsesCreate(
       },
       ...args,
     );
+    const responseRecord =
+      response && typeof response === 'object'
+        ? (response as Record<string, unknown>)
+        : {};
 
-    const usage = response?.usage as
+    const usage = responseRecord['usage'] as
       | { input_tokens?: number; output_tokens?: number }
       | undefined;
     const model = String(
-      response?.model ?? overrides['model'] ?? params['model'] ?? 'unknown',
+      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown',
     );
 
     recordProviderUsage(

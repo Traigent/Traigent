@@ -6,10 +6,10 @@ This guide describes the current JavaScript and TypeScript integration surface f
 
 Use the SDK in one of two supported ways:
 
-| Flow | When to use it | Main APIs |
-| --- | --- | --- |
-| Hybrid mode authoring | Your app exposes Traigent-compatible HTTP routes and needs a code-defined config space | `optimize`, `param`, `toHybridConfigSpace`, `TrialContext`, `getTrialParam`, `getTrialConfig` |
-| Native Node optimization | Your optimization loop should run in-process in Node | `optimize`, `param`, `wrapped.optimize(...)`, `applyBestConfig()` |
+| Flow                     | When to use it                                                                         | Main APIs                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Hybrid mode authoring    | Your app exposes Traigent-compatible HTTP routes and needs a code-defined config space | `optimize`, `param`, `toHybridConfigSpace`, `TrialContext`, `getTrialParam`, `getTrialConfig` |
+| Native Node optimization | Your optimization loop should run in-process in Node                                   | `optimize`, `param`, `wrapped.optimize(...)`, `applyBestConfig()`                             |
 
 This repo does not implement backend-guided `execution.mode = 'hybrid'`. The older Python-orchestrated bridge flow still exists, but it is documented as a legacy reference in [REAL_MODE_SEQUENCE_FLOW.md](./REAL_MODE_SEQUENCE_FLOW.md).
 
@@ -26,13 +26,7 @@ In hybrid mode authoring, the SDK defines the spec and exposes runtime config ac
 ### Minimal example
 
 ```ts
-import {
-  TrialContext,
-  getTrialParam,
-  optimize,
-  param,
-  toHybridConfigSpace,
-} from '@traigent/sdk';
+import { TrialContext, getTrialParam, optimize, param, toHybridConfigSpace } from '@traigent/sdk';
 
 export const childAgeSpec = optimize({
   configurationSpace: {
@@ -125,8 +119,7 @@ const answerQuestion = optimize({
       { input: 'What is 2+2?', output: '4' },
       { input: 'What is the capital of France?', output: 'Paris' },
     ],
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
     metricFunctions: {
       cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
         row.input.includes('capital') ? 0.2 : 0.1,
@@ -134,11 +127,7 @@ const answerQuestion = optimize({
   },
 })(async (question: string) => {
   const model = String(getTrialParam('model', 'cheap'));
-  return model === 'accurate'
-    ? question.includes('capital')
-      ? 'Paris'
-      : '4'
-    : 'unknown';
+  return model === 'accurate' ? (question.includes('capital') ? 'Paris' : '4') : 'unknown';
 });
 
 const result = await answerQuestion.optimize({
@@ -172,7 +161,7 @@ console.log(answerQuestion.currentConfig());
   - also supported for hardcoded local tuned variables through:
     - `traigent migrate seamless`
     - `@traigent/sdk/babel-plugin-seamless`
-    - an experimental runtime rewrite fallback for self-contained plain Node functions
+    - an experimental runtime rewrite fallback for self-contained plain Node functions when `TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS=1`
   - defaults `autoOverrideFrameworks` to `true`, so all active wrapped targets
     are eligible unless you narrow them with `frameworkTargets`
   - fail-closed semantics:
@@ -201,6 +190,13 @@ The matching CLI is:
 
 ```bash
 traigent detect tuned-variables src/agent.ts --function answerQuestion
+```
+
+For native TVL artifacts, the CLI can also inspect the loaded feature set and
+native-compatibility report:
+
+```bash
+traigent inspect tvl path/to/spec.yml
 ```
 
 Current scope:

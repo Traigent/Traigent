@@ -46,8 +46,7 @@ const answerQuestion = optimize({
       { input: 'What is 2+2?', output: '4' },
       { input: 'What is the capital of France?', output: 'Paris' },
     ],
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
     metricFunctions: {
       cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
         row.input.includes('capital') ? 0.2 : 0.1,
@@ -156,7 +155,7 @@ JS supports three runtime injection modes:
 
 - `context` (default): use `getTrialParam()` / `getTrialConfig()` inside the wrapped function.
 - `parameter`: the SDK calls your function as `agentFn(input, config?)`.
-- `seamless`: the SDK supports framework interception, explicit code rewrites for tuned locals, and an experimental runtime rewrite fallback for self-contained functions.
+- `seamless`: the SDK supports framework interception, explicit code rewrites for tuned locals, and an experimental runtime rewrite fallback for self-contained functions when explicitly opted in for trusted local code.
 
 `seamless` in this checkout is no longer framework-only. It means:
 
@@ -169,7 +168,7 @@ JS supports three runtime injection modes:
 - [prepareFrameworkTargets](./src/integrations/auto-wrap.ts)
 - build-time transformed tuned variables via the Babel plugin export
 - one-time source rewrites via `traigent migrate seamless`
-- an experimental runtime rewrite for self-contained plain Node functions
+- an experimental runtime rewrite for self-contained plain Node functions when `TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS=1`
 
 For framework-mediated params, you can now batch-wrap supported targets instead
 of calling each wrapper manually:
@@ -233,6 +232,12 @@ and the matching CLI:
 
 ```bash
 traigent detect tuned-variables src/agent.ts --function answerQuestion
+```
+
+For quick native TVL inspection from the terminal, the CLI now also supports:
+
+```bash
+traigent inspect tvl path/to/spec.yml
 ```
 
 This is intentionally bounded:
@@ -306,13 +311,7 @@ Use `optimize(...)` and `toHybridConfigSpace(...)` to define tunables in code
 while keeping the existing hybrid API wire format unchanged.
 
 ```ts
-import {
-  TrialContext,
-  getTrialParam,
-  optimize,
-  param,
-  toHybridConfigSpace,
-} from '@traigent/sdk';
+import { TrialContext, getTrialParam, optimize, param, toHybridConfigSpace } from '@traigent/sdk';
 
 export const childAgeSpec = optimize({
   configurationSpace: {
@@ -384,7 +383,7 @@ Built-in objective strings:
 Any other metric must use an explicit object:
 
 ```ts
-objectives: [{ metric: 'quality_score', direction: 'maximize', weight: 1 }]
+objectives: [{ metric: 'quality_score', direction: 'maximize', weight: 1 }];
 ```
 
 Parameter helpers:
@@ -427,7 +426,7 @@ Do not assume context is available in top-level route handlers or unrelated code
 - Log-scale grid search requires a multiplicative `step > 1`.
 - `trialConcurrency` is limited to `grid` and `random`.
 - `execution.mode = 'hybrid'` is not implemented in this branch.
-- `seamless` now includes framework interception, codemod/build-time rewritten tuned variables, and an experimental runtime rewrite fallback for self-contained functions.
+- `seamless` now includes framework interception, codemod/build-time rewritten tuned variables, and an experimental runtime rewrite fallback for trusted self-contained functions when explicitly opted in.
 - seamless framework auto-override defaults to all active wrapped targets and can be narrowed with `frameworkTargets` or disabled with `autoOverrideFrameworks: false`.
 - Native JS supports `defaultConfig`, callback-based `constraints`, and callback-based `safetyConstraints`.
 - TVL loading is now supported for a focused native subset:

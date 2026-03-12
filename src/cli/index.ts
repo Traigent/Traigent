@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 
 import { detectTunedVariablesInFiles } from './detect.js';
 import { runSeamlessMigration } from './migrate.js';
+import { inspectTvlFiles } from './tvl.js';
 
 interface CLIValues {
   function?: string;
@@ -19,6 +20,7 @@ Traigent CLI
 Usage:
   traigent migrate seamless [paths...] [--write]
   traigent detect tuned-variables [paths...] [--function name] [--include-low-confidence]
+  traigent inspect tvl [paths...]
 
 Options:
   --write   Apply rewrites in place
@@ -72,6 +74,12 @@ async function main(): Promise<void> {
       functionName: cliValues.function,
       includeLowConfidence: cliValues['include-low-confidence'] ?? false,
     });
+    console.log(JSON.stringify(results, null, 2));
+    return;
+  }
+
+  if (command === 'inspect' && subcommand === 'tvl') {
+    const results = await inspectTvlFiles(targetPaths);
     console.log(JSON.stringify(results, null, 2));
     return;
   }

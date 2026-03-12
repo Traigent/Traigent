@@ -60,6 +60,32 @@ describe('TrialContext', () => {
 
       expect(result).toBe('test-trial-123');
     });
+
+    it('clones and freezes trial config inside the context', async () => {
+      const originalConfig = createMockConfig({
+        config: {
+          model: 'gpt-4o-mini',
+          nested: { temperature: 0.7 },
+        },
+      });
+
+      await TrialContext.run(originalConfig, async () => {
+        const contextConfig = TrialContext.getConfig();
+
+        expect(contextConfig).not.toBe(originalConfig);
+        expect(contextConfig.config).not.toBe(originalConfig.config);
+        expect(contextConfig.config).toEqual(originalConfig.config);
+        expect(Object.isFrozen(contextConfig)).toBe(true);
+        expect(Object.isFrozen(contextConfig.config)).toBe(true);
+        expect(Object.isFrozen((contextConfig.config as { nested: object }).nested)).toBe(true);
+
+        expect(() => {
+          (contextConfig.config as Record<string, unknown>)['model'] = 'mutated';
+        }).toThrow(TypeError);
+      });
+
+      expect((originalConfig.config as Record<string, unknown>)['model']).toBe('gpt-4o-mini');
+    });
   });
 
   describe('getConfig()', () => {

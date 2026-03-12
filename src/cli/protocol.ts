@@ -33,7 +33,6 @@ export const ProtocolVersionSchema = z.string().regex(/^1\.\d+$/, {
  * Python can query these via the 'capabilities' action.
  */
 export const SUPPORTED_CAPABILITIES = [
-  'validate_config',   // Config validation before trial
   'dataset_hash',      // Dataset hash verification
   'inline_rows',       // Inline data mode (vs indices)
   'warnings',          // Warnings array in response
