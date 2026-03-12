@@ -53,8 +53,9 @@ pick up optimized params from the active trial and report runtime usage metrics
 automatically. Use `autoWrapFrameworkTarget(...)` when you want the SDK to pick
 the right OpenAI/LangChain/Vercel wrapper for a direct framework object. If
 your runtime stores clients/models inside nested arrays or plain-object graphs,
-use `discoverFrameworkTargets(...)` and `autoWrapFrameworkTargets(...)` for
-bounded explicit-object discovery and recursive wrapping.
+use `prepareFrameworkTargets(...)` for the one-call path, or
+`discoverFrameworkTargets(...)` and `autoWrapFrameworkTargets(...)` if you want
+the discovery and wrapping steps separately.
 
 For production debugging, call:
 

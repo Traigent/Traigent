@@ -133,3 +133,7 @@ Related seamless diagnostics on the optimized function:
 - `autoWrapFrameworkTargets(value)`
   Recursively wraps those explicit object graphs with cycle safety. It does not
   scan arbitrary module/global state.
+- `prepareFrameworkTargets(value)`
+  Performs bounded explicit-object discovery, wraps any supported targets it
+  finds, and returns the current auto-override diagnostics alongside the
+  wrapped value.

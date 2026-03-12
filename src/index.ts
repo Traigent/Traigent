@@ -65,8 +65,13 @@ export {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
   discoverFrameworkTargets,
+  prepareFrameworkTargets,
 } from "./integrations/auto-wrap.js";
-export type { DiscoveredFrameworkTarget } from "./integrations/auto-wrap.js";
+export type {
+  DiscoveredFrameworkTarget,
+  PreparedFrameworkTargets,
+  PrepareFrameworkTargetsOptions,
+} from "./integrations/auto-wrap.js";
 export {
   describeFrameworkAutoOverride,
   getRegisteredFrameworkTargets,

@@ -157,21 +157,21 @@ For supported frameworks, use seamless mode with a wrapped target:
 ```ts
 import OpenAI from "openai";
 import {
-  autoWrapFrameworkTargets,
-  discoverFrameworkTargets,
   optimize,
   param,
+  prepareFrameworkTargets,
 } from "@traigent/sdk";
 
-const runtime = {
+const prepared = prepareFrameworkTargets({
   providers: {
     primary: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
   },
-};
+});
 
-console.log(discoverFrameworkTargets(runtime));
+console.log(prepared.discovered);
+console.log(prepared.autoOverrideStatus);
 
-const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+const wrappedRuntime = prepared.wrapped;
 const client = wrappedRuntime.providers.primary;
 
 const answerQuestion = optimize({
@@ -223,6 +223,9 @@ did or did not select framework interception:
 - `autoWrapFrameworkTargets(value)`
   - recursively wraps those explicit object graphs with cycle safety
   - does not scan arbitrary module/global state
+- `prepareFrameworkTargets(value)`
+  - combines discovery, wrapping, and current auto-override diagnostics in one
+    explicit-object setup step
 
 Hybrid mode uses the backend interactive session API:
 

@@ -1,6 +1,10 @@
 import { withTraigentModel } from "./langchain/index.js";
 import { createTraigentOpenAI } from "./openai/index.js";
-import type { FrameworkTarget } from "../optimization/types.js";
+import type {
+  FrameworkAutoOverrideStatus,
+  FrameworkTarget,
+} from "../optimization/types.js";
+import { describeFrameworkAutoOverride } from "./registry.js";
 import { withTraigent } from "./vercel-ai/index.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -8,6 +12,17 @@ type UnknownRecord = Record<string, unknown>;
 export interface DiscoveredFrameworkTarget {
   path: string;
   target: FrameworkTarget;
+}
+
+export interface PrepareFrameworkTargetsOptions {
+  autoOverrideFrameworks?: boolean;
+  frameworkTargets?: readonly FrameworkTarget[];
+}
+
+export interface PreparedFrameworkTargets<T> {
+  wrapped: T;
+  discovered: readonly DiscoveredFrameworkTarget[];
+  autoOverrideStatus: FrameworkAutoOverrideStatus;
 }
 
 function isObjectLike(value: unknown): value is UnknownRecord {
@@ -245,4 +260,31 @@ export function autoWrapFrameworkTarget<T>(value: T): T {
  */
 export function autoWrapFrameworkTargets<T>(value: T): T {
   return autoWrapFrameworkTargetsInternal(value, new WeakMap());
+}
+
+/**
+ * Discover, wrap, and explain framework-target setup for an explicitly passed
+ * object graph.
+ *
+ * This is bounded convenience:
+ * - it only inspects the provided value
+ * - it does not scan module/global state
+ * - it returns the current auto-override status after wrapping
+ */
+export function prepareFrameworkTargets<T>(
+  value: T,
+  options: PrepareFrameworkTargetsOptions = {},
+): PreparedFrameworkTargets<T> {
+  const discovered = discoverFrameworkTargets(value);
+  const wrapped = autoWrapFrameworkTargets(value);
+  const autoOverrideStatus = describeFrameworkAutoOverride(
+    options.frameworkTargets,
+    options.autoOverrideFrameworks ?? true,
+  );
+
+  return {
+    wrapped,
+    discovered,
+    autoOverrideStatus,
+  };
 }

@@ -5,6 +5,7 @@ import {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
   discoverFrameworkTargets,
+  prepareFrameworkTargets,
 } from "../../../src/integrations/auto-wrap.js";
 import { clearRegisteredFrameworkTargets } from "../../../src/integrations/registry.js";
 import { TrialContext } from "../../../src/core/context.js";
@@ -353,5 +354,73 @@ describe("autoWrapFrameworkTarget(s)", () => {
 
     expect(discoverFrameworkTargets(container)).toEqual([]);
     expect(autoWrapFrameworkTargets(container)).toBe(container);
+  });
+
+  it("prepares framework targets by discovering, wrapping, and reporting auto-override status", async () => {
+    const create = vi.fn(async (params: Record<string, unknown>) => ({
+      usage: {
+        prompt_tokens: 2,
+        completion_tokens: 1,
+      },
+      model: params.model,
+    }));
+
+    const prepared = prepareFrameworkTargets({
+      providers: {
+        primary: {
+          chat: {
+            completions: {
+              create,
+            },
+          },
+        },
+      },
+    });
+
+    expect(prepared.discovered).toEqual([
+      { path: "providers.primary", target: "openai" },
+    ]);
+    expect(prepared.autoOverrideStatus).toMatchObject({
+      enabled: true,
+      activeTargets: ["openai"],
+      selectedTargets: ["openai"],
+    });
+
+    await TrialContext.run(
+      createTrialConfig({ model: "gpt-4o-mini", temperature: 0.2 }),
+      async () => {
+        await prepared.wrapped.providers.primary.chat?.completions?.create({
+          model: "gpt-3.5-turbo",
+        });
+      },
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+    });
+  });
+
+  it("reports disabled auto-override when preparing targets with autoOverrideFrameworks=false", () => {
+    const prepared = prepareFrameworkTargets(
+      {
+        chat: {
+          completions: {
+            create: vi.fn(async () => ({ usage: {} })),
+          },
+        },
+      },
+      {
+        autoOverrideFrameworks: false,
+      },
+    );
+
+    expect(prepared.discovered).toEqual([{ path: "<root>", target: "openai" }]);
+    expect(prepared.autoOverrideStatus).toMatchObject({
+      autoOverrideFrameworks: false,
+      enabled: false,
+      activeTargets: ["openai"],
+      selectedTargets: [],
+    });
   });
 });

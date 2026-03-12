@@ -1,15 +1,14 @@
 import { fileURLToPath } from "node:url";
 
 import {
-  autoWrapFrameworkTargets,
   checkOptimizationServiceStatus,
   deleteOptimizationSession,
-  discoverFrameworkTargets,
   finalizeOptimizationSession,
   getOptimizationSessionStatus,
   listOptimizationSessions,
   optimize,
   param,
+  prepareFrameworkTargets,
 } from "../../../dist/index.js";
 
 function readConnectionFromEnv() {
@@ -52,8 +51,8 @@ function createAgent() {
       },
     },
   };
-  const discoveredTargets = discoverFrameworkTargets(runtime);
-  const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+  const preparedTargets = prepareFrameworkTargets(runtime);
+  const wrappedRuntime = preparedTargets.wrapped;
   const client = wrappedRuntime.providers.primary.client;
 
   const agent = optimize({
@@ -82,12 +81,13 @@ function createAgent() {
 
   return {
     agent,
-    discoveredTargets,
+    discoveredTargets: preparedTargets.discovered,
+    preparedAutoOverride: preparedTargets.autoOverrideStatus,
   };
 }
 
 async function runEnvBasedFlow() {
-  const { agent, discoveredTargets } = createAgent();
+  const { agent, discoveredTargets, preparedAutoOverride } = createAgent();
   const frameworkAutoOverride = agent.frameworkAutoOverrideStatus();
   const seamlessResolution = agent.seamlessResolution();
   const service = await checkOptimizationServiceStatus();
@@ -118,11 +118,12 @@ async function runEnvBasedFlow() {
     frameworkAutoOverride,
     seamlessResolution,
     discoveredTargets,
+    preparedAutoOverride,
   };
 }
 
 async function runExplicitFlow(connection) {
-  const { agent, discoveredTargets } = createAgent();
+  const { agent, discoveredTargets, preparedAutoOverride } = createAgent();
   const frameworkAutoOverride = agent.frameworkAutoOverrideStatus();
   const seamlessResolution = agent.seamlessResolution();
   const service = await checkOptimizationServiceStatus(connection);
@@ -161,6 +162,7 @@ async function runExplicitFlow(connection) {
     frameworkAutoOverride,
     seamlessResolution,
     discoveredTargets,
+    preparedAutoOverride,
   };
 }
 
@@ -185,6 +187,7 @@ export async function runExample() {
       stopReason: envFlow.result.stopReason,
       reportingKeys: Object.keys(envFlow.result.reporting ?? {}),
       frameworkAutoOverride: envFlow.frameworkAutoOverride,
+      preparedAutoOverride: envFlow.preparedAutoOverride,
       seamlessResolution: envFlow.seamlessResolution,
       discoveredTargets: envFlow.discoveredTargets,
       serviceStatus: envFlow.service.status,
@@ -202,6 +205,7 @@ export async function runExample() {
       stopReason: explicitFlow.result.stopReason,
       reportingKeys: Object.keys(explicitFlow.finalized.reporting ?? {}),
       frameworkAutoOverride: explicitFlow.frameworkAutoOverride,
+      preparedAutoOverride: explicitFlow.preparedAutoOverride,
       seamlessResolution: explicitFlow.seamlessResolution,
       discoveredTargets: explicitFlow.discoveredTargets,
       serviceStatus: explicitFlow.service.status,

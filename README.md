@@ -220,21 +220,21 @@ framework call while the SDK records provider usage metrics:
 ```ts
 import OpenAI from "openai";
 import {
-  autoWrapFrameworkTargets,
-  discoverFrameworkTargets,
   optimize,
   param,
+  prepareFrameworkTargets,
 } from "@traigent/sdk";
 
-const runtime = {
+const prepared = prepareFrameworkTargets({
   providers: {
     primary: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
   },
-};
+});
 
-console.log(discoverFrameworkTargets(runtime));
+console.log(prepared.discovered);
+console.log(prepared.autoOverrideStatus);
 
-const wrappedRuntime = autoWrapFrameworkTargets(runtime);
+const wrappedRuntime = prepared.wrapped;
 const client = wrappedRuntime.providers.primary;
 
 const answerQuestion = optimize({
@@ -289,6 +289,10 @@ For bounded convenience discovery, the hybrid worktree also supports:
   - now recursively wraps those explicit object graphs
   - preserves cycles and repeated references
   - does not scan arbitrary module/global state
+- `prepareFrameworkTargets(value)`
+  - one-call explicit-object setup for hybrid seamless usage
+  - discovers wrappable targets, wraps them, and returns the current
+    auto-override diagnostics
 
 Resolution order:
 
