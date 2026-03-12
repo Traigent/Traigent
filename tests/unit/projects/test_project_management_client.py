@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from urllib import error
+
 import pytest
 
 from traigent.projects import ProjectManagementClient
-from traigent.utils.exceptions import ClientError
+from traigent.utils.exceptions import AuthenticationError, ClientError
 
 
 def test_project_management_client_crud_and_list() -> None:
@@ -77,3 +79,46 @@ def test_project_management_client_validates_override_response_shape() -> None:
 
     with pytest.raises(ClientError, match="override must return a dictionary payload"):
         client.list_projects()
+
+
+def test_project_management_client_rejects_missing_data_payload() -> None:
+    client = ProjectManagementClient(request_sender=lambda *_args, **_kwargs: {"data": []})
+
+    with pytest.raises(ClientError, match="Unexpected response structure for project list"):
+        client.list_projects()
+
+
+def test_project_management_client_maps_http_errors(monkeypatch) -> None:
+    client = ProjectManagementClient()
+
+    def raise_unauthorized(*_args, **_kwargs):
+        raise error.HTTPError(
+            url="https://backend.example/api/v1beta/projects",
+            code=401,
+            msg="unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_unauthorized)
+
+    with pytest.raises(AuthenticationError, match="status 401"):
+        client.list_projects()
+
+
+def test_project_management_client_maps_generic_http_failures(monkeypatch) -> None:
+    client = ProjectManagementClient()
+
+    def raise_conflict(*_args, **_kwargs):
+        raise error.HTTPError(
+            url="https://backend.example/api/v1beta/projects",
+            code=409,
+            msg="conflict",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_conflict)
+
+    with pytest.raises(ClientError, match="status 409"):
+        client.create_project(name="Alpha")

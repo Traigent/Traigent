@@ -681,7 +681,7 @@ class TestCacheEntryDefaults:
 class TestDiscoveryWithMockedSDK:
     """Tests for SDK discovery with mocked SDK clients."""
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_success(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should work with valid API key."""
@@ -699,7 +699,7 @@ class TestDiscoveryWithMockedSDK:
         assert "gpt-3.5-turbo" in result
         assert "gpt-4" in result
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_error(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should handle errors gracefully."""
@@ -710,23 +710,27 @@ class TestDiscoveryWithMockedSDK:
         with pytest.raises(Exception, match="API error"):
             discovery._fetch_models_from_sdk()
 
-    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})
-    @patch("google.generativeai.list_models")
-    @patch("google.generativeai.configure")
-    def test_gemini_sdk_discovery_success(
-        self, mock_configure: MagicMock, mock_list_models: MagicMock
-    ) -> None:
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})  # pragma: allowlist secret
+    def test_gemini_sdk_discovery_success(self) -> None:
         """Gemini SDK discovery should work with valid API key."""
-        mock_model1 = MagicMock()
-        mock_model1.name = "models/gemini-pro"
-        mock_model1.supported_generation_methods = ["generateContent"]
-        mock_model2 = MagicMock()
-        mock_model2.name = "models/gemini-1.5-flash"
-        mock_model2.supported_generation_methods = ["generateContent"]
-        mock_list_models.return_value = [mock_model1, mock_model2]
+        pytest.importorskip("google.generativeai")
 
-        discovery = GeminiDiscovery()
-        result = discovery._fetch_models_from_sdk()
+        with (
+            patch("google.generativeai.configure") as mock_configure,
+            patch("google.generativeai.list_models") as mock_list_models,
+        ):
+            mock_model1 = MagicMock()
+            mock_model1.name = "models/gemini-pro"
+            mock_model1.supported_generation_methods = ["generateContent"]
+            mock_model2 = MagicMock()
+            mock_model2.name = "models/gemini-1.5-flash"
+            mock_model2.supported_generation_methods = ["generateContent"]
+            mock_list_models.return_value = [mock_model1, mock_model2]
+
+            discovery = GeminiDiscovery()
+            result = discovery._fetch_models_from_sdk()
+
+            mock_configure.assert_called_once()
 
         assert "models/gemini-pro" in result
         assert "models/gemini-1.5-flash" in result
