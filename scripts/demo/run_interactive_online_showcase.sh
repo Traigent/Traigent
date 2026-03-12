@@ -232,6 +232,16 @@ def fail(title: str, detail: str):
     sys.exit(1)
 
 
+def extract_session_id(raw: str):
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("session_id") or payload.get("sessionId")
+
+
 invalid_probe = {
     "function_name": "showcase_probe",
     "configuration_space": {
@@ -264,6 +274,9 @@ if not strict_create_probe:
             f"{api_base}/sessions is reachable, but the backend validation probe hit an internal error.",
             f"[error] Current response snippet:\n{snippet}",
         )
+    session_id = extract_session_id(body)
+    if session_id:
+        delete(f"/sessions/{session_id}?cascade=true", timeout=10)
     sys.exit(0)
 
 create_probe = dict(invalid_probe)
@@ -303,6 +316,7 @@ run_section_with_retry() {
   local max_attempts=3
   local output_file
   output_file="$(mktemp)"
+  trap 'rm -f "$output_file"' RETURN
 
   while true; do
     node "$ROOT/scripts/demo/interactive_online_showcase.mjs" --section "$id" >"$output_file"
@@ -343,7 +357,6 @@ PY
     )"
 
     if [[ -z "$retry_after" || "$attempt" -ge "$max_attempts" ]]; then
-      rm -f "$output_file"
       return 0
     fi
 
@@ -376,7 +389,7 @@ echo "Backend: ${TRAIGENT_BACKEND_URL:-${TRAIGENT_API_URL}}"
 echo "Provider: ${PROVIDER_NOTE}"
 echo "Trials per section: ${TRAIGENT_SHOWCASE_MAX_TRIALS:-5}"
 echo "Examples per section: ${TRAIGENT_SHOWCASE_DATASET_SIZE:-10}"
-echo "Delete after section: ${TRAIGENT_SHOWCASE_DELETE_AFTER_SECTION:-0}"
+echo "Delete after section: ${TRAIGENT_SHOWCASE_DELETE_AFTER_SECTION:-0} (handled by the section runner)"
 echo
 
 probe_typed_backend

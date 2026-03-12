@@ -1252,6 +1252,8 @@ class HybridSessionClient {
       const response = (await fetch(url, {
         method,
         headers: {
+          // Some backend routes accept bearer auth while others still validate X-API-Key.
+          // Send both for compatibility across the current typed-session surface.
           Authorization: `Bearer ${this.apiKey}`,
           "X-API-Key": this.apiKey,
           "Content-Type": "application/json",
