@@ -37,6 +37,7 @@ const answerQuestion = optimize({
   },
   execution: {
     maxTotalExamples: 100,
+    exampleConcurrency: 4,
     repsPerTrial: 3,
     repsAggregation: 'median',
   },
@@ -365,7 +366,7 @@ Do not assume context is available in top-level route handlers or unrelated code
 - Supported algorithms are `grid`, `random`, and sequential `bayesian`.
 - `evaluation.data` or `evaluation.loadData` is required for high-level agent optimization.
 - `budget.maxCostUsd` is enforced from numeric `metrics.total_cost` or `metrics.cost`.
-- Native guardrails include `timeoutMs`, `trialConcurrency`, `plateau`, `checkpoint`, `execution.maxTotalExamples`, `execution.repsPerTrial`, and `execution.repsAggregation`.
+- Native guardrails include `timeoutMs`, `trialConcurrency`, `plateau`, `checkpoint`, `execution.maxTotalExamples`, `execution.exampleConcurrency`, `execution.repsPerTrial`, and `execution.repsAggregation`.
 - Runtime/provider metrics now preserve `input_cost`, `output_cost`, `total_cost`, and the compatibility alias `cost`.
 - Log-scale grid search requires a multiplicative `step > 1`.
 - `trialConcurrency` is limited to `grid` and `random`.
@@ -386,7 +387,10 @@ Do not assume context is available in top-level route handlers or unrelated code
   when both trials expose per-objective metric samples, and `chanceConstraints`
   reject trials when they have explicit `{successes, trials}` counts or binary
   metric samples. Native results/trials now expose bounded `promotionDecision`
-  reports, but full Python promotion-gate lifecycle parity is still deferred.
+  reports plus a small `result.reporting` summary for trial counts, evaluated
+  examples, and whether chance constraints / statistical comparison /
+  tie-breakers were involved. Full Python promotion-gate lifecycle parity is
+  still deferred.
 - Python's safety preset/statistical layer and backend-guided Optuna orchestration are not implemented in this checkout.
 
 ## Documentation

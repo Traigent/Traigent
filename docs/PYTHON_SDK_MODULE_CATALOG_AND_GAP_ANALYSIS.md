@@ -127,6 +127,8 @@ Current JS project:
 - backend-guided hybrid execution exists in the separate hybrid-enabled worktree
 - that hybrid worktree now includes:
   - typed session lifecycle
+  - low-level typed session helpers for create / next-trial / submit-result
+  - list / health / status / finalize / delete helpers with normalized DTOs
   - high-level plain-agent evaluation
   - backend-guided config suggestion
   - OpenAI / LangChain / Vercel AI seamless interception with runtime metric collection
@@ -175,8 +177,9 @@ Current JS project:
   - plain agent functions
   - local evaluation
   - seamless framework overrides
-  - framework auto-wrap helpers and seamless diagnostics
-  - session status/finalize/delete helpers with normalized DTOs
+  - framework auto-wrap helpers, bounded explicit-object discovery, and seamless diagnostics
+  - low-level typed session helpers for create / next-trial / submit-result
+  - session list / status / finalize / delete helpers with normalized DTOs
   - executable hybrid session-control example
   - provider-derived cost/token/latency submission
 - still lacks Python's broader cloud/session/control-plane surface, resilience

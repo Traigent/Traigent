@@ -64,8 +64,11 @@ implemented in the hybrid/cloud JS branch, not in this native-first checkout.
   - billing/privacy/auth DTOs
 - JS status:
   - not active in this checkout
-  - partially present in the hybrid-enabled worktree, but still missing the wider
-    Python cloud/control-plane breadth
+  - partially present in the hybrid-enabled worktree, which now includes:
+    - low-level typed session helpers for create / next-trial / submit-result
+    - list / health / status / finalize / delete helpers with normalized DTOs
+    - executable end-to-end session-control examples
+  - still missing the wider Python cloud/control-plane breadth
 - Why it matters:
   - required for full remote parity
   - should be solved once in the hybrid branch, not partially copied here
@@ -102,8 +105,9 @@ native-first checkout.
   - seamless mode defaults `autoOverrideFrameworks` to all active wrapped targets
   - `frameworkTargets` can narrow active targets and `autoOverrideFrameworks: false`
     disables framework interception entirely for a seamless function
-  - `autoWrapFrameworkTarget(...)` and `autoWrapFrameworkTargets({...})` now
-    batch-wrap supported framework objects in one call
+  - `autoWrapFrameworkTarget(...)`, `autoWrapFrameworkTargets(...)`, and
+    bounded explicit-object discovery now reduce setup friction for supported
+    framework objects without scanning arbitrary module/global state
   - `frameworkAutoOverrideStatus()` and `seamlessResolution()` now surface the
     active targets and resolved seamless path for an optimized function
 - Remaining gap:
@@ -131,9 +135,11 @@ These are useful parity improvements, but they are lower priority than P1.
 - Python status:
   - supports broader evaluation parallelism
 - JS status:
-  - no per-example concurrency in this checkout
+  - opt-in per-example concurrency is available through
+    `execution.exampleConcurrency`
 - Why it is secondary:
-  - performance-oriented rather than core contract parity
+  - the bounded local path now exists, but broader Python evaluation
+    parallelism still exceeds this checkout
 
 ### Broader optimizer family parity
 
@@ -206,12 +212,13 @@ native-first JS SDK package.
 2. improve auto framework override ergonomics
 3. decide whether full TVL parity is a product requirement or keep a documented
    supported subset
-4. optionally add example concurrency if runtime throughput becomes a priority
+4. tighten and benchmark the bounded `execution.exampleConcurrency` path if
+   runtime throughput becomes a priority
 
 ### Hybrid branch
 
 1. backend-guided hybrid execution parity
-2. session/status/finalize/delete helper parity and reporting normalization
+2. extend the current typed session helper surface only for reachable backend routes with known contracts
 3. align reachable remote DTO/session contracts with Python
 4. only then revisit broader control-plane or advanced optimizer breadth through the backend path
 

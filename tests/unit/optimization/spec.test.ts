@@ -546,6 +546,18 @@ describe('optimization spec helpers', () => {
         },
         objectives: ['accuracy'],
         execution: {
+          exampleConcurrency: 0,
+        },
+      }),
+    ).toThrow(/exampleConcurrency/i);
+
+    expect(() =>
+      optimize({
+        configurationSpace: {
+          model: param.enum(['a']),
+        },
+        objectives: ['accuracy'],
+        execution: {
           repsPerTrial: 0,
         },
       }),

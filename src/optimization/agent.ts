@@ -195,6 +195,44 @@ export function invokeFunctionWithConfig<T extends AnyFunction>(
   return fn.apply(thisArg, [...args]) as ReturnType<T>;
 }
 
+async function mapWithConcurrency<T, U>(
+  values: readonly T[],
+  concurrency: number,
+  worker: (value: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  if (values.length === 0) {
+    return [];
+  }
+
+  if (concurrency <= 1 || values.length === 1) {
+    const results: U[] = [];
+    for (const [index, value] of values.entries()) {
+      results.push(await worker(value, index));
+    }
+    return results;
+  }
+
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+
+  const runners = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await worker(
+          values[currentIndex]!,
+          currentIndex,
+        );
+      }
+    },
+  );
+
+  await Promise.all(runners);
+  return results;
+}
+
 function selectRows(
   rows: readonly unknown[],
   trialConfig: TrialConfig,
@@ -347,9 +385,10 @@ export function createAgentTrialFunction<T extends AnyFunction>(
     trialConfig: TrialConfig,
   ): Promise<NativeTrialFunctionResult> {
     const selectedRows = selectRows(rows, trialConfig);
-    const exampleMetrics: Metrics[] = [];
-
-    for (const row of selectedRows) {
+    const exampleMetrics = await mapWithConcurrency(
+      selectedRows,
+      spec.execution.exampleConcurrency,
+      async (row) => {
       const agentInput = getInputFromRow(row, spec.evaluation?.inputField);
       const startedAt = Date.now();
       const customEvaluator = spec.evaluation?.customEvaluator;
@@ -381,8 +420,7 @@ export function createAgentTrialFunction<T extends AnyFunction>(
           metrics['latency'] = (Date.now() - startedAt) / 1000;
         }
 
-        exampleMetrics.push(metrics);
-        continue;
+        return metrics;
       }
 
       const { result: output, metrics: collectedMetrics } =
@@ -396,10 +434,15 @@ export function createAgentTrialFunction<T extends AnyFunction>(
             : (Date.now() - startedAt) / 1000,
       };
 
-      exampleMetrics.push(
-        await evaluateExample(spec, row, output, runtimeMetrics, trialConfig.config),
+      return evaluateExample(
+        spec,
+        row,
+        output,
+        runtimeMetrics,
+        trialConfig.config,
       );
-    }
+    },
+    );
 
     const aggregatedMetrics = aggregateMetrics(spec, exampleMetrics);
     validateObjectiveMetrics(spec, aggregatedMetrics);

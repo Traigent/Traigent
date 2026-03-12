@@ -116,6 +116,7 @@ const answerQuestion = optimize({
   },
   execution: {
     maxTotalExamples: 100,
+    exampleConcurrency: 4,
     repsPerTrial: 3,
     repsAggregation: 'median',
   },
@@ -224,6 +225,7 @@ Identity note:
 - Any other objective must use `{ metric, direction, weight? }`.
 - `budget.maxCostUsd` only works when trials produce numeric `metrics.total_cost` or `metrics.cost`.
 - `execution.maxTotalExamples` caps the total number of evaluated examples across all trials.
+- `execution.exampleConcurrency` runs multiple examples from the same trial in parallel while preserving stable aggregation and metric-sample order.
 - `execution.repsPerTrial` and `execution.repsAggregation` provide repetition-based stability for noisy evaluations.
 - `execution.contract = 'trial'` still supports the old low-level trial-function style, but it is deprecated and documented as advanced-only.
 
@@ -295,7 +297,10 @@ Do not introduce a second global config mechanism for JS.
   when both trials expose per-objective metric samples, and `chanceConstraints`
   reject trials when they have explicit `{successes, trials}` counts or binary
   metric samples. Native results/trials now expose bounded `promotionDecision`
-  reports, but full Python promotion-gate lifecycle parity is still deferred.
+  reports plus a small `result.reporting` summary for trial counts, evaluated
+  examples, and whether chance constraints / statistical comparison /
+  tie-breakers were involved. Full Python promotion-gate lifecycle parity is
+  still deferred.
 - Python's safety preset/statistical layer and backend-guided Optuna orchestration are not part of this checkout.
 
 ## Legacy Bridge Flow

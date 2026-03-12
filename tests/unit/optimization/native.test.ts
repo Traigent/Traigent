@@ -2139,6 +2139,22 @@ exploration:
       incumbentTrialId: expect.any(String),
     });
     expect(result.promotionDecision?.reason).toMatch(/tie-breaker|deterministic/i);
+    expect(result.reporting).toMatchObject({
+      totalTrials: 2,
+      completedTrials: 2,
+      rejectedTrials: 0,
+      evaluatedExamples: 2,
+      promotion: {
+        applied: true,
+        bestTrialId: expect.any(String),
+        bestTrialNumber: 2,
+        decision: 'promote',
+        method: 'deterministic',
+        usedChanceConstraints: false,
+        usedStatisticalComparison: false,
+        usedTieBreakers: true,
+      },
+    });
   });
 
   it('rejects trial-contract candidates that fail promotionPolicy chance constraints', async () => {
@@ -2194,6 +2210,21 @@ exploration:
     });
 
     expect(result.bestConfig).toEqual({ variant: 'safe' });
+    expect(result.promotionDecision?.decision).not.toBe('reject');
+    expect(result.reporting).toMatchObject({
+      totalTrials: 2,
+      completedTrials: 1,
+      rejectedTrials: 1,
+      evaluatedExamples: 2,
+      promotion: {
+        applied: true,
+        bestTrialId: expect.any(String),
+        bestTrialNumber: 1,
+        decision: 'reject',
+        method: 'chance-constraints',
+        usedChanceConstraints: true,
+      },
+    });
     expect(result.trials.find((trial) => trial.config.variant === 'unsafe')).toMatchObject({
       status: 'rejected',
       promotionDecision: {
@@ -2247,6 +2278,46 @@ exploration:
         status: 'rejected',
       },
     );
+  });
+
+  it('reports baseline trial counts when no promotionPolicy is configured', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        variant: param.enum(['a', 'b']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [{ input: 'x', expected_output: 'x' }],
+        scoringFunction: (output, expectedOutput) =>
+          output === expectedOutput ? 1 : 0,
+      },
+      injection: {
+        mode: 'parameter',
+      },
+    })(async (_input, config) => (config?.variant === 'a' ? 'x' : 'y'));
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 10,
+    });
+
+    expect(result.bestConfig).toEqual({ variant: 'a' });
+    expect(result.reporting).toMatchObject({
+      totalTrials: 2,
+      completedTrials: 2,
+      rejectedTrials: 0,
+      evaluatedExamples: 2,
+      promotion: {
+        applied: false,
+        bestTrialId: expect.any(String),
+        bestTrialNumber: 1,
+        decision: undefined,
+        method: undefined,
+        usedChanceConstraints: false,
+        usedStatisticalComparison: false,
+        usedTieBreakers: false,
+      },
+    });
   });
 
   it('stops on execution.maxWallclockMs for candidate-plan algorithms', async () => {

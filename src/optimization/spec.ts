@@ -485,6 +485,7 @@ function normalizeExecutionSpec(
 ): NormalizedOptimizationSpec['execution'] {
   const mode = execution?.mode ?? 'native';
   const contract = execution?.contract ?? 'agent';
+  const exampleConcurrency = execution?.exampleConcurrency ?? 1;
   const repsPerTrial = execution?.repsPerTrial ?? 1;
   const repsAggregation = execution?.repsAggregation ?? 'mean';
 
@@ -518,6 +519,12 @@ function normalizeExecutionSpec(
     );
   }
 
+  if (!Number.isInteger(exampleConcurrency) || exampleConcurrency <= 0) {
+    throw new ValidationError(
+      'execution.exampleConcurrency must be a positive integer.',
+    );
+  }
+
   if (!Number.isInteger(repsPerTrial) || repsPerTrial <= 0) {
     throw new ValidationError(
       'execution.repsPerTrial must be a positive integer.',
@@ -539,6 +546,7 @@ function normalizeExecutionSpec(
     ...execution,
     mode,
     contract,
+    exampleConcurrency,
     repsPerTrial,
     repsAggregation,
   } satisfies NormalizedOptimizationSpec['execution'];

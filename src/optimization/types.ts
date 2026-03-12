@@ -165,6 +165,7 @@ export interface ExecutionSpec {
   contract?: ExecutionContract;
   maxTotalExamples?: number;
   maxWallclockMs?: number;
+  exampleConcurrency?: number;
   repsPerTrial?: number;
   repsAggregation?: RepetitionAggregationStrategy;
 }
@@ -174,6 +175,7 @@ export interface NormalizedExecutionSpec {
   contract: ExecutionContract;
   maxTotalExamples?: number;
   maxWallclockMs?: number;
+  exampleConcurrency: number;
   repsPerTrial: number;
   repsAggregation: RepetitionAggregationStrategy;
 }
@@ -251,6 +253,7 @@ export interface OptimizationResult {
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
   promotionDecision?: PromotionDecision;
+  reporting: NativeOptimizationReportingSummary;
   stopReason:
     | 'completed'
     | 'maxTrials'
@@ -262,6 +265,25 @@ export interface OptimizationResult {
     | 'cancelled';
   totalCostUsd: number;
   errorMessage?: string;
+}
+
+export interface NativePromotionReportingSummary {
+  applied: boolean;
+  bestTrialId?: string;
+  bestTrialNumber?: number;
+  decision?: PromotionDecision['decision'];
+  method?: PromotionDecision['method'];
+  usedChanceConstraints: boolean;
+  usedStatisticalComparison: boolean;
+  usedTieBreakers: boolean;
+}
+
+export interface NativeOptimizationReportingSummary {
+  totalTrials: number;
+  completedTrials: number;
+  rejectedTrials: number;
+  evaluatedExamples: number;
+  promotion: NativePromotionReportingSummary;
 }
 
 export interface PromotionObjectiveResult {

@@ -44,6 +44,7 @@ import {
 import { suggestBayesianConfig } from './native-bayesian.js';
 import type {
   NativeOptimizeOptions,
+  NativeOptimizationReportingSummary,
   NativeTrialFunctionResult,
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
@@ -781,12 +782,73 @@ async function saveCheckpointState(
   await writeFile(checkpoint.path, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
+function buildReportingSummary(
+  spec: NormalizedOptimizationSpec,
+  trials: readonly OptimizationTrialRecord[],
+  bestTrial: OptimizationTrialRecord | null,
+  promotionDecision: OptimizationResult['promotionDecision'],
+  totalExamplesEvaluated: number,
+): NativeOptimizationReportingSummary {
+  const completedTrials = trials.filter((trial) => trial.status === 'completed');
+  const rejectedTrials = trials.length - completedTrials.length;
+  const trialDecisions = trials.flatMap((trial) =>
+    trial.promotionDecision ? [trial.promotionDecision] : [],
+  );
+  const latestMeaningfulPromotionDecision = [...trialDecisions]
+    .reverse()
+    .find(
+      (decision) =>
+        decision !== undefined &&
+        (decision.method !== 'none' || decision.decision !== 'no_decision'),
+    );
+  const summaryPromotionDecision =
+    promotionDecision !== undefined &&
+    (promotionDecision.method !== 'none' ||
+      promotionDecision.decision !== 'no_decision')
+      ? promotionDecision
+      : latestMeaningfulPromotionDecision;
+
+  return {
+    totalTrials: trials.length,
+    completedTrials: completedTrials.length,
+    rejectedTrials,
+    evaluatedExamples: totalExamplesEvaluated,
+    promotion: {
+      applied: spec.promotionPolicy !== undefined,
+      bestTrialId: bestTrial?.trialId,
+      bestTrialNumber: bestTrial?.trialNumber,
+      decision: summaryPromotionDecision?.decision,
+      method: summaryPromotionDecision?.method,
+      usedChanceConstraints:
+        trialDecisions.some((decision) => decision.chanceResults.length > 0) ||
+        (summaryPromotionDecision?.chanceResults.length ?? 0) > 0,
+      usedStatisticalComparison:
+        trialDecisions.some(
+          (decision) =>
+            decision.method === 'statistical' ||
+            decision.objectiveResults.some(
+              (result) => result.method === 'statistical',
+            ),
+        ) ||
+        summaryPromotionDecision?.method === 'statistical' ||
+        summaryPromotionDecision?.objectiveResults.some(
+          (result) => result.method === 'statistical',
+        ) === true,
+      usedTieBreakers:
+        trialDecisions.some((decision) =>
+          /tie-breaker/i.test(decision.reason),
+        ) || /tie-breaker/i.test(summaryPromotionDecision?.reason ?? ''),
+    },
+  };
+}
+
 function finalizeResult(
   trials: OptimizationTrialRecord[],
   spec: NormalizedOptimizationSpec,
   objectives: readonly NormalizedObjectiveDefinition[],
   stopReason: OptimizationResult['stopReason'],
   totalCostUsd: number,
+  totalExamplesEvaluated: number,
   errorMessage?: string,
 ): OptimizationResult {
   const orderedTrials = [...trials].sort(
@@ -803,12 +865,20 @@ function finalizeResult(
         promotionDecision: undefined,
       };
   const bestTrial = selection.bestTrial;
+  const reporting = buildReportingSummary(
+    spec,
+    orderedTrials,
+    bestTrial,
+    selection.promotionDecision,
+    totalExamplesEvaluated,
+  );
 
   return {
     bestConfig: bestTrial?.config ?? null,
     bestMetrics: bestTrial?.metrics ?? null,
     trials: orderedTrials,
     promotionDecision: selection.promotionDecision,
+    reporting,
     stopReason,
     totalCostUsd,
     errorMessage,
@@ -876,6 +946,7 @@ async function runCandidatePlan(
         spec.objectives,
         'cancelled',
         totalCostUsd,
+        totalExamplesEvaluated,
         'Optimization cancelled',
       );
     }
@@ -1070,6 +1141,7 @@ async function runCandidatePlan(
     spec.objectives,
     stopReason,
     totalCostUsd,
+    totalExamplesEvaluated,
     errorMessage,
   );
 }
@@ -1244,6 +1316,7 @@ async function runBayesianPlan(
     spec.objectives,
     stopReason,
     totalCostUsd,
+    totalExamplesEvaluated,
     errorMessage,
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TrialContext } from '../../../src/core/context.js';
+import { recordRuntimeMetrics } from '../../../src/core/runtime-metrics.js';
 import {
   createAgentTrialFunction,
   invokeFunctionWithConfig,
@@ -362,6 +363,50 @@ describe('agent optimization helpers', () => {
       evaluatedRows: 2,
       repsPerTrial: 2,
       repsAggregation: 'max',
+    });
+  });
+
+  it('supports opt-in concurrent example evaluation with stable aggregation and isolated runtime metrics', async () => {
+    const wrapped = optimize({
+      configurationSpace: {
+        tone: param.enum(['quiet']),
+      },
+      objectives: ['accuracy'],
+      evaluation: {
+        data: [
+          {
+            payload: { text: 'slow', delayMs: 20, tokens: 1 },
+            score: 1,
+          },
+          {
+            payload: { text: 'fast', delayMs: 0, tokens: 10 },
+            score: 0.5,
+          },
+        ],
+        inputField: 'payload',
+        customEvaluator: async ({ row, runtimeMetrics }) => ({
+          accuracy: (row as { score: number }).score,
+          observed_tokens: runtimeMetrics.input_tokens ?? 0,
+        }),
+      },
+      execution: {
+        exampleConcurrency: 2,
+      },
+    })(async (input: { text: string; delayMs: number; tokens: number }) => {
+      await new Promise((resolve) => setTimeout(resolve, input.delayMs));
+      recordRuntimeMetrics({ input_tokens: input.tokens });
+      return input.text.toUpperCase();
+    });
+
+    const result = await wrapped.optimize({
+      algorithm: 'grid',
+      maxTrials: 1,
+    });
+
+    expect(result.bestMetrics).toMatchObject({
+      accuracy: 0.75,
+      observed_tokens: 5.5,
+      input_tokens: 11,
     });
   });
 });
