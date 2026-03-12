@@ -23,6 +23,11 @@ Feature matrices provide:
 | [evaluators.yml](evaluators.yml) | Evaluator implementations | ⚠️ Stale (needs refresh) |
 | [analytics.yml](analytics.yml) | Analytics engines | ⚠️ Stale (needs refresh) |
 | [exceptions_consolidation.yml](exceptions_consolidation.yml) | Exception hierarchy analysis | ⚠️ Stale (needs refresh) |
+| [langfuse_replacement_gap_analysis.md](langfuse_replacement_gap_analysis.md) | Cross-repo parity analysis against Langfuse | ✅ Current |
+| [competitor_feature_gap_analysis.md](competitor_feature_gap_analysis.md) | Competitor-set gap analysis focused on must-haves, hot features, and strategic non-goals | ✅ Current |
+| [langfuse_replacement_implementation_plan.md](langfuse_replacement_implementation_plan.md) | Multi-wave execution plan for Langfuse replacement parity | ✅ Current |
+| [../architecture/langfuse_target_architecture.md](../architecture/langfuse_target_architecture.md) | Target enterprise/security/privacy architecture for parity work | ✅ Current |
+| [../architecture/cross_repo_delivery_template.md](../architecture/cross_repo_delivery_template.md) | Schema-first delivery template for cross-repo waves | ✅ Current |
 
 ## Summary Findings
 

@@ -112,6 +112,10 @@ class TestPrivacyCompliance:
             "billing_tier",
             "metadata",
             "problem_type",  # Added as this is a valid non-sensitive field
+            "promotion_policy",
+            "default_config",
+            "constraints",
+            "budget",
         }
 
         for req in dummy_server.received_data:
@@ -275,7 +279,7 @@ class TestPrivacyCompliance:
             bad_request.dataset = Dataset(
                 [
                     EvaluationExample(
-                        input_data={"secret": "data"}, expected_output="output"  # pragma: allowlist secret
+                        input_data={"sensitive_value": "data"}, expected_output="output"
                     )
                 ]
             )

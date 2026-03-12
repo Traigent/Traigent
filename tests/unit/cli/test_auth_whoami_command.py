@@ -59,10 +59,11 @@ class _FakeSession:
         assert self._response is not None
         return self._response
 
-    def post(
-        self, url: str, headers: dict[str, str] | None = None, **kwargs
-    ) -> _FakeResponse:
-        return self.get(url, headers)
+    def post(self, url: str, headers: dict[str, str] | None = None, **kwargs: Any) -> _FakeResponse:
+        if self._error is not None:
+            raise self._error
+        assert self._response is not None
+        return self._response
 
 
 def _install_fake_aiohttp(
@@ -107,7 +108,7 @@ def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
                     "email": "dev@traigent.ai",
                     "name": "Dev User",
                     "organization": "Traigent",
-                }
+                },
             },
         ),
     )
