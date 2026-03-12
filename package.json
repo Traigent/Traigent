@@ -57,11 +57,16 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",
+    "lint:fix": "eslint src tests --ext .ts --fix",
+    "format": "prettier --write \"**/*.{js,cjs,mjs,ts,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{js,cjs,mjs,ts,json,md,yml,yaml}\"",
     "typecheck": "tsc --noEmit",
+    "test:ci": "npm run lint && npm run typecheck && npm run test:coverage && npm run build",
     "smoke:codemod": "npm run build && node dist/cli/index.js migrate seamless examples/adoption/seamless/codemod-target.mjs",
     "benchmark:cross-sdk": "npm run build:sdk && node scripts/run-cross-sdk-benchmark.mjs",
     "sonar": "npx sonar-scanner -Dsonar.token=$SONAR_LOCAL_TOKEN",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "prepare": "husky"
   },
   "dependencies": {
     "@babel/generator": "^7.28.5",
@@ -106,6 +111,8 @@
     "eslint": "^8.0.0",
     "openai": "^4.0.0",
     "prettier": "^3.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"
