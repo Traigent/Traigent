@@ -206,6 +206,38 @@ or the build-time plugin:
 import traigentSeamless from '@traigent/sdk/babel-plugin-seamless';
 ```
 
+For bounded heuristic discovery of likely local tuned variables before you
+rewrite code, the native checkout now also exposes:
+
+```ts
+import { discoverTunedVariables } from '@traigent/sdk';
+
+async function answerQuestion(input: string) {
+  const model = 'gpt-4o-mini';
+  const temperature = 0.4;
+  return client.chat.completions.create({
+    model,
+    temperature,
+    messages: [{ role: 'user', content: input }],
+  });
+}
+
+console.log(discoverTunedVariables(answerQuestion));
+```
+
+and the matching CLI:
+
+```bash
+traigent detect tuned-variables src/agent.ts --function answerQuestion
+```
+
+This is intentionally bounded:
+
+- native-only in this checkout
+- heuristic, not full Python-style dataflow discovery
+- focused on self-contained local literal defaults that map cleanly into the JS
+  config-space model
+
 Both the codemod and Babel plugin are fail-closed:
 
 - unsupported patterns are reported explicitly

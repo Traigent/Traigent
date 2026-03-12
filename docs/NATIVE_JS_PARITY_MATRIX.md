@@ -77,18 +77,20 @@ Important scope note:
 | Auto-wrap helpers | Yes | `matched` | `matched` | [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts), [`examples/core/seamless-autowrap/run.mjs`](../examples/core/seamless-autowrap/run.mjs) | `autoWrapFrameworkTarget(...)` and `autoWrapFrameworkTargets(...)` are available. |
 | Framework auto-override diagnostics | Yes | `matched` | `matched` | [`tests/unit/integrations/registry.test.ts`](../tests/unit/integrations/registry.test.ts), [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts) | `frameworkAutoOverrideStatus()` and `seamlessResolution()` expose active targets, selected targets, and the resolved seamless path. |
 | Implicit framework discovery | Yes | `gap` | `gap` | n/a | JS still requires explicit wrapping; it does not auto-discover arbitrary framework clients inside user code. |
+| Tuned-variable discovery | Yes | `partial` | `partial` | [`tests/unit/tuned-variables/discovery.test.ts`](../tests/unit/tuned-variables/discovery.test.ts), [`tests/unit/cli/detect.test.ts`](../tests/unit/cli/detect.test.ts) | Native JS now has bounded heuristic tuned-variable discovery plus a `traigent detect tuned-variables` CLI, but it is still well behind Python’s fuller dataflow/range-generation pipeline. |
 
 ## Hybrid / Cloud Boundaries
 
 | Capability | Python | Native JS | Overall JS | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `execution.mode = "hybrid"` | Yes | `deferred-backend` | `partial` | Native rejection: [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts); hybrid implementation: [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Native checkout intentionally rejects hybrid execution; the hybrid worktree carries that parity work. |
-| Cloud/session helpers | Yes | `deferred-backend` | `partial` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Exists only in the hybrid-enabled worktree. |
-| Broader cloud control plane | Yes | `deferred-backend` | `partial` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Session/status/finalize/delete are implemented in the hybrid worktree; broader control-plane breadth still trails Python. |
+| `execution.mode = "hybrid"` | Yes | `out-of-scope` | `partial` | Native rejection: [`tests/unit/optimization/spec.test.ts`](../tests/unit/optimization/spec.test.ts); hybrid implementation: [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Native checkout intentionally rejects hybrid execution; the hybrid worktree carries the backend-guided local-execution path. |
+| Typed `/sessions` control-plane helpers | Yes | `out-of-scope` | `matched` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | Create/list/status/finalize/delete on the typed session surface exist only in the hybrid-enabled worktree. |
+| Python remote cloud-execution control plane | Yes | `out-of-scope` | `out-of-scope` | [Hybrid JS Parity Matrix](../../traigent-js-hybrid-optuna/docs/HYBRID_JS_PARITY_MATRIX.md) | JS does not target Python's server-side `/agent/optimize`-style remote execution model; the product boundary is backend-guided local execution. |
 
 ## Explicit Non-Goals for the Native Checkout
 
 - full cloud/session control-plane parity
+- Python-style remote cloud execution and server-side agent reconstruction
 - Python’s platform/security/analytics families
 - global `get_config()` semantics
 - full Optuna-family parity in local/native JS

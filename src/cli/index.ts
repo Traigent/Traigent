@@ -2,11 +2,14 @@
 
 import { parseArgs } from 'node:util';
 
+import { detectTunedVariablesInFiles } from './detect.js';
 import { runSeamlessMigration } from './migrate.js';
 
 interface CLIValues {
+  function?: string;
   help?: boolean;
   write?: boolean;
+  'include-low-confidence'?: boolean;
 }
 
 function printHelp(): void {
@@ -15,9 +18,12 @@ Traigent CLI
 
 Usage:
   traigent migrate seamless [paths...] [--write]
+  traigent detect tuned-variables [paths...] [--function name] [--include-low-confidence]
 
 Options:
   --write   Apply rewrites in place
+  --function  Limit tuned-variable detection to a named function
+  --include-low-confidence  Include low-confidence discovery candidates
   --help    Show this help message
 `);
 }
@@ -43,16 +49,13 @@ async function main(): Promise<void> {
   }
 
   const [command, subcommand, ...rest] = positionals;
-  if (command !== 'migrate' || subcommand !== 'seamless') {
-    printHelp();
-    process.exitCode = 1;
-    return;
-  }
 
   const { values, positionals: targetPaths } = parseArgs({
     args: rest,
     options: {
+      function: { type: 'string' },
       help: { type: 'boolean' },
+      'include-low-confidence': { type: 'boolean' },
       write: { type: 'boolean' },
     },
     allowPositionals: true,
@@ -61,6 +64,21 @@ async function main(): Promise<void> {
   const cliValues = values as CLIValues;
   if (cliValues.help) {
     printHelp();
+    return;
+  }
+
+  if (command === 'detect' && subcommand === 'tuned-variables') {
+    const results = detectTunedVariablesInFiles(targetPaths, {
+      functionName: cliValues.function,
+      includeLowConfidence: cliValues['include-low-confidence'] ?? false,
+    });
+    console.log(JSON.stringify(results, null, 2));
+    return;
+  }
+
+  if (command !== 'migrate' || subcommand !== 'seamless') {
+    printHelp();
+    process.exitCode = 1;
     return;
   }
 

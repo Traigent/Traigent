@@ -53,10 +53,10 @@ collapse two different implementation lines into one label.
 | `optimizers` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/native.test.ts`](../tests/unit/optimization/native.test.ts), [`tests/unit/optimization/native-bayesian.test.ts`](../tests/unit/optimization/native-bayesian.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
 | `evaluators` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/agent.test.ts) |
 | `integrations` | `partial` | `partial` | `partial` | Native: [`tests/unit/integrations/framework-interception.test.ts`](../tests/unit/integrations/framework-interception.test.ts), [`tests/unit/integrations/auto-wrap.test.ts`](../tests/unit/integrations/auto-wrap.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/integrations/framework-interception.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/framework-interception.test.ts), [`../../traigent-js-hybrid-optuna/tests/unit/integrations/auto-wrap.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/auto-wrap.test.ts) |
-| `hybrid` | `deferred-backend` | `partial` | `partial` | Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
-| `cloud` | `deferred-backend` | `partial` | `partial` | Hybrid session helpers: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `hybrid` | `out-of-scope` | `partial` | `partial` | Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
+| `cloud` | `out-of-scope` | `partial` | `partial` | Hybrid session helpers: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/hybrid.test.ts) |
 | `tvl` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/tvl.test.ts`](../tests/unit/optimization/tvl.test.ts), [`tests/unit/optimization/native-promotion.test.ts`](../tests/unit/optimization/native-promotion.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/optimization/tvl.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/optimization/tvl.test.ts) |
-| `tuned_variables` | `gap` | `gap` | `gap` | No automatic tuned-variable discovery implementation in either JS line today. |
+| `tuned_variables` | `partial` | `gap` | `partial` | Native: [`tests/unit/tuned-variables/discovery.test.ts`](../tests/unit/tuned-variables/discovery.test.ts), [`tests/unit/cli/detect.test.ts`](../tests/unit/cli/detect.test.ts); Hybrid: no tuned-variable discovery implementation today. |
 | `agents` | `gap` | `gap` | `gap` | High-level agent optimization exists, but Python’s broader agent-platform mapping surface still has no JS equivalent. |
 | `config_generator` | `out-of-scope` | `out-of-scope` | `out-of-scope` | Separate product layer, not a current JS SDK target. |
 | `metrics` | `partial` | `partial` | `partial` | Native: [`tests/unit/optimization/native-cost.test.ts`](../tests/unit/optimization/native-cost.test.ts), [`tests/unit/optimization/agent.test.ts`](../tests/unit/optimization/agent.test.ts); Hybrid: [`../../traigent-js-hybrid-optuna/tests/unit/integrations/shared.test.ts`](../../traigent-js-hybrid-optuna/tests/unit/integrations/shared.test.ts) |
@@ -76,7 +76,7 @@ collapse two different implementation lines into one label.
 | `evaluators` | Dataset evaluation and metrics runtime | Local, JS, hybrid API evaluators; dataset registry; metrics tracking | `local.py`, `js_evaluator.py`, `hybrid_api.py`, `metrics.py` | Owns example-level evaluation loops | 8 | `partial` |
 | `integrations` | Framework, provider, observability, vector-store integrations | LLM plugins, framework overrides, LangChain, PydanticAI, Langfuse, observability, discovery | `framework_override.py`, `langchain/handler.py`, `llms/*`, `observability/*` | Owns ecosystem integration and seamless framework control | 65 | `partial` |
 | `hybrid` | Hybrid transport protocol layer | Discovery, lifecycle, protocol, HTTP/MCP transports | `protocol.py`, `transport.py`, `http_transport.py`, `mcp_transport.py` | Owns hybrid execution transport contracts | 7 | `partial` |
-| `cloud` | Backend/cloud client and session stack | Backend clients, session/trial operations, auth, billing, sync, DTOs, privacy, subsets | `client.py`, `models.py`, `sessions.py`, `trial_operations.py`, `billing.py` | Owns remote execution and control-plane integration | 35 | `partial` |
+| `cloud` | Backend/cloud client and session stack | Backend clients, session/trial operations, auth, billing, sync, DTOs, privacy, subsets | `client.py`, `models.py`, `sessions.py`, `trial_operations.py`, `billing.py` | Owns both typed-session control-plane integration and Python-specific remote cloud execution families | 35 | `partial` |
 | `tvl` | TVL specification system | TVL spec loading, models, validation, objectives, promotion, statistics, CLI | `spec_loader.py`, `models.py`, `promotion_gate.py`, `statistics.py` | Owns the TVL configuration language | 10 | `partial` |
 | `tuned_variables` | Tuned-variable discovery | Detection strategies, discovery, dataflow analysis, typed results | `detector.py`, `discovery.py`, `dataflow_strategy.py` | Owns automatic tuned-variable discovery | 7 | `partial` |
 | `agents` | Agent platform mapping and execution helpers | Config mapping, platform abstractions, agent spec generation, executor | `platforms.py`, `config_mapper.py`, `executor.py` | Owns agent-specific optimization adaptation | 5 | `gap` |
@@ -132,7 +132,9 @@ Current JS project:
   - high-level plain-agent evaluation
   - backend-guided config suggestion
   - OpenAI / LangChain / Vercel AI seamless interception with runtime metric collection
-- still materially behind Python on cloud/session/control-plane breadth
+- fully targets backend-guided local execution over the typed `/sessions` surface
+- does **not** target Python's server-side remote execution model, where agents are reconstructed and invoked in the cloud
+- therefore, the remaining Python cloud-execution families should be treated as `out-of-scope` for JS unless that product decision changes
 
 #### 2. TVL
 
@@ -182,8 +184,11 @@ Current JS project:
   - session list / status / finalize / delete helpers with normalized DTOs
   - executable hybrid session-control example
   - provider-derived cost/token/latency submission
+- now covers the reachable typed `/sessions` control-plane surface well
 - still lacks Python's broader cloud/session/control-plane surface, resilience
-  layers, and DTO breadth
+  layers, and DTO breadth where those depend on:
+  - backend routes that are not exposed on the current typed `/sessions` surface, or
+  - Python's remote cloud-execution model, which JS does not target
 
 #### 4. Config Generation and Assisted Authoring
 
@@ -192,7 +197,7 @@ Python includes:
 - benchmark catalogs
 - objective recommendation
 - safety-constraint recommendation
-- tuned-variable range generation
+- tuned-variable range generation still remains behind Python
 
 Current JS checkout:
 - no equivalent authoring-generation pipeline
@@ -215,15 +220,17 @@ Current JS checkout:
 
 - Python has platform/security/analytics families that should not be copied directly into the JS SDK package.
 - Python cloud/hybrid clients belong with the backend-enabled JS branch/worktree, not this native-first checkout.
+- Python's remote cloud-execution APIs are not a JS parity target; JS hybrid is explicitly backend-guided **local** execution.
 - TVL parity in JS should be deliberate; it should not be copied blindly if the JS user-facing authoring API is clearer.
 
 ### Gaps That Are Not Yet Justified
 
-- full hybrid/cloud session parity in the dedicated hybrid JS branch still needs
-  to be reconciled against [cloud](../../Traigent/traigent/cloud) and
-  [hybrid](../../Traigent/traigent/hybrid)
+- full hybrid/cloud session parity in the dedicated hybrid JS branch should be
+  reconciled against the **reachable** typed-session portions of
+  [cloud](../../Traigent/traigent/cloud) and
+  [hybrid](../../Traigent/traigent/hybrid), not Python's remote cloud-execution-only surfaces
 - TVL support remains a meaningful Python-to-JS feature gap if the long-term goal is cross-SDK authoring parity
-- tuned-variable discovery and config-generation parity are still materially behind Python
+- tuned-variable discovery is now partially covered in the native checkout through bounded heuristics and a CLI surface, but both discovery breadth and config-generation parity are still materially behind Python
 
 ## Recommended Next Work
 

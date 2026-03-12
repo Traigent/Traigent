@@ -42,7 +42,7 @@ implemented in the hybrid/cloud JS branch, not in this native-first checkout.
 
 - Python status:
   - full cloud/hybrid/session stack
-  - remote execution and optimizer orchestration
+  - includes a separate remote cloud-execution model
 - JS status:
   - native-first only in this branch
   - `execution.mode = 'hybrid'` is intentionally rejected here
@@ -52,8 +52,8 @@ implemented in the hybrid/cloud JS branch, not in this native-first checkout.
     - local evaluation + backend-guided config suggestion
     - seamless framework interception for supported OpenAI / LangChain / Vercel AI targets
 - Why it matters:
-  - this is the biggest remaining product-level parity gap
-  - it is the path for backend-owned Optuna-like functionality
+  - this is the main JS parity path for backend-owned Optuna-like functionality
+  - JS parity targets backend-guided local execution over typed `/sessions`, not Python's server-side remote execution model
 
 ### Cloud/session/control-plane parity
 
@@ -68,10 +68,11 @@ implemented in the hybrid/cloud JS branch, not in this native-first checkout.
     - low-level typed session helpers for create / next-trial / submit-result
     - list / health / status / finalize / delete helpers with normalized DTOs
     - executable end-to-end session-control examples
-  - still missing the wider Python cloud/control-plane breadth
+  - still missing parts of Python's wider cloud/control-plane breadth that are either
+    backend-dependent or intentionally out of scope for JS
 - Why it matters:
-  - required for full remote parity
-  - should be solved once in the hybrid branch, not partially copied here
+  - typed `/sessions` parity should be solved once in the hybrid branch, not partially copied here
+  - Python's remote cloud-execution family is not a JS target unless the product direction changes
 
 ## P1: Highest-Value Native Gaps In This Branch
 
@@ -187,12 +188,16 @@ These are platform-side concerns, not core local-SDK parity targets.
 
 ### Assisted generation and discovery families
 
-- tuned-variable discovery
-- config generation pipelines
-- benchmark/objective recommendation
-
-These are real Python capabilities, but they are a separate product layer from
-the local native JS optimizer/runtime.
+- bounded tuned-variable discovery is now available in the native checkout
+  through:
+  - `discoverTunedVariables(...)`
+  - `discoverTunedVariablesFromSource(...)`
+  - `discoverTunedVariablesFromFile(...)`
+  - `traigent detect tuned-variables ...`
+- but broader tuned-variable dataflow/range generation and the larger config
+  generation pipelines remain separate product layers from the local native JS
+  optimizer/runtime
+- benchmark/objective recommendation remains out of scope in this checkout
 
 ### Server / wrapper / adapter families
 
@@ -225,6 +230,7 @@ native-first JS SDK package.
 ## Non-Goals For This Branch
 
 - implementing cloud/session clients directly in this checkout
+- implementing Python-style remote cloud-executed optimization or server-side agent reconstruction in JS
 - copying platform/security/analytics modules into the JS SDK package
 - forcing Python-style global config semantics into JS if the current wrapper-
   local/context-local design remains clearer

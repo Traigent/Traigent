@@ -180,6 +180,37 @@ console.log(answerQuestion.currentConfig());
   - set `autoOverrideFrameworks: false` when you want seamless to ignore active
     wrapped SDK targets and rely only on transformed code paths
 
+### Tuned-variable discovery
+
+The native checkout now includes a bounded tuned-variable discovery helper for
+local JS functions:
+
+```ts
+import { discoverTunedVariables } from '@traigent/sdk';
+
+const report = discoverTunedVariables(answerQuestion);
+console.log(report.candidates);
+```
+
+Use it when you want a heuristic report of likely tunable locals before moving
+to explicit `context` / `parameter` injection or the seamless codemod path.
+
+The matching CLI is:
+
+```bash
+traigent detect tuned-variables src/agent.ts --function answerQuestion
+```
+
+Current scope:
+
+- native checkout only
+- self-contained function bodies
+- literal defaults that map to the JS config-space model
+- high/medium/low confidence reporting with warnings for skipped reassigned vars
+
+This is intentionally still behind Python’s fuller tuned-variable discovery and
+config-generation pipeline.
+
 Example:
 
 ```ts

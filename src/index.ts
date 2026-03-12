@@ -140,3 +140,17 @@ export type {
 
 // Protocol exports (for advanced usage)
 export { PROTOCOL_VERSION } from './cli/protocol.js';
+
+export {
+  discoverTunedVariables,
+  discoverTunedVariablesFromSource,
+  discoverTunedVariablesFromFile,
+} from './tuned-variables/index.js';
+
+export type {
+  DiscoverTunedVariablesOptions,
+  DiscoveredTunedVariable,
+  TunedVariableConfidence,
+  TunedVariableDiscoveryResult,
+  TunedVariableValueKind,
+} from './tuned-variables/index.js';
