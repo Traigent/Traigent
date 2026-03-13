@@ -39,6 +39,7 @@ from traigent.api.types import (
     StopReason,
     StrategyConfig,
     TrialResult,
+    serialize_trials,
 )
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     # Result types
     "OptimizationResult",
     "TrialResult",
+    "serialize_trials",
     "SensitivityAnalysis",
     "ConfigurationComparison",
     "ParetoFront",
