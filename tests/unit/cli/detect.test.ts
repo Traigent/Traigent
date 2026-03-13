@@ -28,7 +28,7 @@ describe('detectTunedVariablesInFiles', () => {
           });
         }
       `,
-      'utf8',
+      'utf8'
     );
 
     const [result] = detectTunedVariablesInFiles([file], {

@@ -77,21 +77,29 @@ async function callLLM(
 
   // VERBOSE: Show the actual API request
   if (VERBOSE) {
-    console.log('\n\x1b[35m┌──────────────────────────────────────────────────────────────────────┐\x1b[0m');
-    console.log('\x1b[35m│ 📤 OPENROUTER API REQUEST                                            │\x1b[0m');
-    console.log('\x1b[35m├──────────────────────────────────────────────────────────────────────┤\x1b[0m');
+    console.log(
+      '\n\x1b[35m┌──────────────────────────────────────────────────────────────────────┐\x1b[0m'
+    );
+    console.log(
+      '\x1b[35m│ 📤 OPENROUTER API REQUEST                                            │\x1b[0m'
+    );
+    console.log(
+      '\x1b[35m├──────────────────────────────────────────────────────────────────────┤\x1b[0m'
+    );
     console.log(`\x1b[35m│\x1b[0m URL: https://openrouter.ai/api/v1/chat/completions`);
     console.log(`\x1b[35m│\x1b[0m Model: ${config.model}`);
     console.log(`\x1b[35m│\x1b[0m Temperature: ${config.temperature}`);
     console.log(`\x1b[35m│\x1b[0m System Prompt: "${systemPrompt.substring(0, 60)}..."`);
     console.log(`\x1b[35m│\x1b[0m User Input: "${text.substring(0, 50)}..."`);
-    console.log('\x1b[35m└──────────────────────────────────────────────────────────────────────┘\x1b[0m');
+    console.log(
+      '\x1b[35m└──────────────────────────────────────────────────────────────────────┘\x1b[0m'
+    );
   }
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://traigent.io',
       'X-Title': 'Traigent Demo',
@@ -110,16 +118,26 @@ async function callLLM(
 
   // VERBOSE: Show the actual API response
   if (VERBOSE) {
-    console.log('\n\x1b[36m┌──────────────────────────────────────────────────────────────────────┐\x1b[0m');
-    console.log('\x1b[36m│ 📥 OPENROUTER API RESPONSE                                           │\x1b[0m');
-    console.log('\x1b[36m├──────────────────────────────────────────────────────────────────────┤\x1b[0m');
+    console.log(
+      '\n\x1b[36m┌──────────────────────────────────────────────────────────────────────┐\x1b[0m'
+    );
+    console.log(
+      '\x1b[36m│ 📥 OPENROUTER API RESPONSE                                           │\x1b[0m'
+    );
+    console.log(
+      '\x1b[36m├──────────────────────────────────────────────────────────────────────┤\x1b[0m'
+    );
     console.log(`\x1b[36m│\x1b[0m ID: ${data.id}`);
     console.log(`\x1b[36m│\x1b[0m Model: ${data.model}`);
     console.log(`\x1b[36m│\x1b[0m Response: "${data.choices?.[0]?.message?.content}"`);
     console.log(`\x1b[36m│\x1b[0m Finish Reason: ${data.choices?.[0]?.finish_reason}`);
-    console.log(`\x1b[36m│\x1b[0m Tokens - Prompt: ${data.usage?.prompt_tokens}, Completion: ${data.usage?.completion_tokens}`);
+    console.log(
+      `\x1b[36m│\x1b[0m Tokens - Prompt: ${data.usage?.prompt_tokens}, Completion: ${data.usage?.completion_tokens}`
+    );
     console.log(`\x1b[36m│\x1b[0m Latency: ${latency}ms`);
-    console.log('\x1b[36m└──────────────────────────────────────────────────────────────────────┘\x1b[0m');
+    console.log(
+      '\x1b[36m└──────────────────────────────────────────────────────────────────────┘\x1b[0m'
+    );
   }
 
   // Extract response
@@ -240,11 +258,13 @@ export async function runRealSentimentAgent(
       // Log each prediction
       const status = result.correct ? '\x1b[32m[OK]\x1b[0m' : '\x1b[31m[X]\x1b[0m ';
       const textPreview = example.input.text.substring(0, 45).padEnd(45);
-      logger(`  ${status} "${textPreview}..." => ${result.prediction.padEnd(8)} (expected: ${example.output}) [${result.latency}ms]`);
+      logger(
+        `  ${status} "${textPreview}..." => ${result.prediction.padEnd(8)} (expected: ${example.output}) [${result.latency}ms]`
+      );
 
       // Add small delay to avoid rate limiting
       if (i < examples.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -266,7 +286,9 @@ export async function runRealSentimentAgent(
 
   logger(`\n${'─'.repeat(70)}`);
   logger(`RESULTS:`);
-  logger(`  Accuracy:      \x1b[1m${(accuracy * 100).toFixed(1)}%\x1b[0m (${correctCount}/${examples.length})`);
+  logger(
+    `  Accuracy:      \x1b[1m${(accuracy * 100).toFixed(1)}%\x1b[0m (${correctCount}/${examples.length})`
+  );
   logger(`  Total Cost:    \x1b[1m$${totalCost.toFixed(6)}\x1b[0m`);
   logger(`  Avg Latency:   \x1b[1m${avgLatency.toFixed(0)}ms\x1b[0m`);
   logger(`  Input Tokens:  ${totalInputTokens}`);

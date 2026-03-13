@@ -1,3 +1,3 @@
 #!/usr/bin/env node
-import { runScenario } from "../utils/scenario_runner.mjs";
-await runScenario("tuning_qa", "real");
+import { runScenario } from '../utils/scenario_runner.mjs';
+await runScenario('tuning_qa', 'real');

@@ -7,7 +7,7 @@ function clonePlainValue<T>(value: T): T {
 
   if (isPlainObject(value)) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, clonePlainValue(entry)]),
+      Object.entries(value).map(([key, entry]) => [key, clonePlainValue(entry)])
     ) as T;
   }
 

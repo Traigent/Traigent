@@ -1,14 +1,14 @@
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const EXAMPLES_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const EXAMPLES_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export async function loadDataset(name) {
-  const raw = await readFile(resolve(EXAMPLES_ROOT, "datasets", name), "utf8");
+  const raw = await readFile(resolve(EXAMPLES_ROOT, 'datasets', name), 'utf8');
   return raw
     .trim()
-    .split("\n")
+    .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
@@ -17,8 +17,8 @@ export function normalizeText(value) {
   return String(value)
     .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ");
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 export function exactMatchScore(actual, expected) {
@@ -32,8 +32,7 @@ export function average(values) {
 }
 
 export function subsetRows(rows, trialConfig) {
-  const indices =
-    trialConfig.dataset_subset?.indices ?? rows.map((_, index) => index);
+  const indices = trialConfig.dataset_subset?.indices ?? rows.map((_, index) => index);
   return indices.map((index) => rows[index]);
 }
 
@@ -48,7 +47,7 @@ export function printSummary(name, result) {
         trialCount: result.trials.length,
       },
       null,
-      2,
-    ),
+      2
+    )
   );
 }

@@ -14,7 +14,7 @@ import type { OptimizationTrialRecord } from '../../../src/optimization/types.js
 function createTrial(
   trialId: string,
   metrics: OptimizationTrialRecord['metrics'],
-  metadata?: Record<string, unknown>,
+  metadata?: Record<string, unknown>
 ): OptimizationTrialRecord {
   return {
     trialId,
@@ -57,7 +57,7 @@ describe('native promotion helpers', () => {
           chanceConstraintCounts: {
             safety: { successes: 95, trials: 100 },
           },
-        },
+        }
       ),
       {
         chanceConstraints: [
@@ -67,7 +67,7 @@ describe('native promotion helpers', () => {
             confidence: 0.95,
           },
         ],
-      },
+      }
     );
 
     expect(results).toEqual([
@@ -87,7 +87,7 @@ describe('native promotion helpers', () => {
           metricSamples: {
             safety: [1, 1, 1, 1, 0],
           },
-        },
+        }
       ),
       {
         chanceConstraints: [
@@ -97,7 +97,7 @@ describe('native promotion helpers', () => {
             confidence: 0.8,
           },
         ],
-      },
+      }
     );
 
     expect(results[0]).toMatchObject({
@@ -110,20 +110,28 @@ describe('native promotion helpers', () => {
   it('returns undefined for malformed metric samples and rejects invalid explicit counts', () => {
     expect(
       getTrialMetricSamples(
-        createTrial('trial-2b', { safety: 0.75 }, {
-          metricSamples: { safety: [1, Number.NaN, 0] },
-        }),
-        'safety',
-      ),
+        createTrial(
+          'trial-2b',
+          { safety: 0.75 },
+          {
+            metricSamples: { safety: [1, Number.NaN, 0] },
+          }
+        ),
+        'safety'
+      )
     ).toBeUndefined();
 
     expect(() =>
       evaluatePromotionChanceConstraints(
-        createTrial('trial-2c', { safety: 0.75 }, {
-          chanceConstraintCounts: {
-            safety: { successes: 3, trials: 2 },
-          },
-        }),
+        createTrial(
+          'trial-2c',
+          { safety: 0.75 },
+          {
+            chanceConstraintCounts: {
+              safety: { successes: 3, trials: 2 },
+            },
+          }
+        ),
         {
           chanceConstraints: [
             {
@@ -132,26 +140,34 @@ describe('native promotion helpers', () => {
               confidence: 0.95,
             },
           ],
-        },
-      ),
+        }
+      )
     ).toThrow(/invalid chanceConstraintCounts/i);
   });
 
   it('covers non-array sample metadata and additional statistical edge paths', () => {
     expect(
       getTrialMetricSamples(
-        createTrial('trial-2d', { safety: 0.75 }, {
-          metricSamples: { safety: 1 },
-        }),
-        'safety',
-      ),
+        createTrial(
+          'trial-2d',
+          { safety: 0.75 },
+          {
+            metricSamples: { safety: 1 },
+          }
+        ),
+        'safety'
+      )
     ).toBeUndefined();
 
     expect(
       getPromotionRejectionReason(
-        createTrial('trial-2e', { safety: 0.75 }, {
-          chanceConstraintCounts: { safety: 1 },
-        }),
+        createTrial(
+          'trial-2e',
+          { safety: 0.75 },
+          {
+            chanceConstraintCounts: { safety: 1 },
+          }
+        ),
         {
           chanceConstraints: [
             {
@@ -160,28 +176,50 @@ describe('native promotion helpers', () => {
               confidence: 0.95,
             },
           ],
-        },
-      ),
+        }
+      )
     ).toMatch(/chance constraints rejected the trial/i);
 
-    const largeCandidateSamples = Array.from({ length: 101 }, (_, index) => 0.86 + (index % 3) * 0.01);
-    const largeIncumbentSamples = Array.from({ length: 101 }, (_, index) => 0.72 + (index % 4) * 0.01);
+    const largeCandidateSamples = Array.from(
+      { length: 101 },
+      (_, index) => 0.86 + (index % 3) * 0.01
+    );
+    const largeIncumbentSamples = Array.from(
+      { length: 101 },
+      (_, index) => 0.72 + (index % 4) * 0.01
+    );
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-2f', { accuracy: 0.88 }, { metricSamples: { accuracy: largeCandidateSamples } }),
-        createTrial('trial-2g', { accuracy: 0.75 }, { metricSamples: { accuracy: largeIncumbentSamples } }),
+        createTrial(
+          'trial-2f',
+          { accuracy: 0.88 },
+          { metricSamples: { accuracy: largeCandidateSamples } }
+        ),
+        createTrial(
+          'trial-2g',
+          { accuracy: 0.75 },
+          { metricSamples: { accuracy: largeIncumbentSamples } }
+        ),
         [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(1);
 
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-2h', { accuracy: 0.85 }, { metricSamples: { accuracy: [0.7, 0.9, 1.1, 0.7] } }),
-        createTrial('trial-2i', { accuracy: 0.85 }, { metricSamples: { accuracy: [0.9, 0.7, 0.9, 0.9] } }),
+        createTrial(
+          'trial-2h',
+          { accuracy: 0.85 },
+          { metricSamples: { accuracy: [0.7, 0.9, 1.1, 0.7] } }
+        ),
+        createTrial(
+          'trial-2i',
+          { accuracy: 0.85 },
+          { metricSamples: { accuracy: [0.9, 0.7, 0.9, 0.9] } }
+        ),
         [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(0);
 
     expect(
@@ -196,24 +234,21 @@ describe('native promotion helpers', () => {
             weight: 1,
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(-1);
   });
 
   it('rejects trials when chance constraint data is missing or unusable', () => {
-    const missingReason = getPromotionRejectionReason(
-      createTrial('trial-3', { accuracy: 0.9 }),
-      {
-        chanceConstraints: [
-          {
-            name: 'safety',
-            threshold: 0.8,
-            confidence: 0.95,
-          },
-        ],
-      },
-    );
+    const missingReason = getPromotionRejectionReason(createTrial('trial-3', { accuracy: 0.9 }), {
+      chanceConstraints: [
+        {
+          name: 'safety',
+          threshold: 0.8,
+          confidence: 0.95,
+        },
+      ],
+    });
 
     expect(missingReason).toMatch(/chance constraints rejected the trial/i);
 
@@ -225,7 +260,7 @@ describe('native promotion helpers', () => {
           metricSamples: {
             safety: [0.8, 0.9, 1],
           },
-        },
+        }
       ),
       {
         chanceConstraints: [
@@ -235,7 +270,7 @@ describe('native promotion helpers', () => {
             confidence: 0.95,
           },
         ],
-      },
+      }
     );
 
     expect(nonBinaryReason).toMatch(/chance constraints rejected the trial/i);
@@ -243,11 +278,15 @@ describe('native promotion helpers', () => {
 
   it('builds a structured rejection decision for failed chance constraints', () => {
     const decision = buildPromotionDecision(
-      createTrial('trial-cc', { accuracy: 0.9 }, {
-        chanceConstraintCounts: {
-          safety: { successes: 50, trials: 100 },
-        },
-      }),
+      createTrial(
+        'trial-cc',
+        { accuracy: 0.9 },
+        {
+          chanceConstraintCounts: {
+            safety: { successes: 50, trials: 100 },
+          },
+        }
+      ),
       undefined,
       [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
       {
@@ -258,7 +297,7 @@ describe('native promotion helpers', () => {
             confidence: 0.95,
           },
         ],
-      },
+      }
     );
 
     expect(decision).toMatchObject({
@@ -275,21 +314,29 @@ describe('native promotion helpers', () => {
 
   it('falls back to deterministic promotion reporting when statistical comparison has no decision', () => {
     const decision = buildPromotionDecision(
-      createTrial('trial-det-a', { accuracy: 0.95, cost: 0.1 }, {
-        metricSamples: {
-          accuracy: [0.84, 0.91, 0.93, 0.89, 0.92],
-        },
-      }),
-      createTrial('trial-det-b', { accuracy: 0.92, cost: 0.2 }, {
-        metricSamples: {
-          accuracy: [0.83, 0.9, 0.92, 0.88, 0.91],
-        },
-      }),
+      createTrial(
+        'trial-det-a',
+        { accuracy: 0.95, cost: 0.1 },
+        {
+          metricSamples: {
+            accuracy: [0.84, 0.91, 0.93, 0.89, 0.92],
+          },
+        }
+      ),
+      createTrial(
+        'trial-det-b',
+        { accuracy: 0.92, cost: 0.2 },
+        {
+          metricSamples: {
+            accuracy: [0.83, 0.9, 0.92, 0.88, 0.91],
+          },
+        }
+      ),
       [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
       {
         alpha: 0.05,
         minEffect: { accuracy: 0.05 },
-      },
+      }
     );
 
     expect(decision).toMatchObject({
@@ -310,14 +357,22 @@ describe('native promotion helpers', () => {
       createTrial('trial-5', { accuracy: 0.8 }, { metricSamples: { accuracy: [0.8, 0.81] } }),
       createTrial('trial-6', { accuracy: 0.82 }, { metricSamples: { accuracy: [0.82] } }),
       [maximizeObjective],
-      { alpha: 0.05 },
+      { alpha: 0.05 }
     );
     expect(missing).toBeUndefined();
 
     expect(() =>
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-7', { consistency: 0.9 }, { metricSamples: { consistency: [0.9, 0.91] } }),
-        createTrial('trial-8', { consistency: 0.88 }, { metricSamples: { consistency: [0.88, 0.89] } }),
+        createTrial(
+          'trial-7',
+          { consistency: 0.9 },
+          { metricSamples: { consistency: [0.9, 0.91] } }
+        ),
+        createTrial(
+          'trial-8',
+          { consistency: 0.88 },
+          { metricSamples: { consistency: [0.88, 0.89] } }
+        ),
         [
           {
             metric: 'consistency',
@@ -325,8 +380,8 @@ describe('native promotion helpers', () => {
             weight: 1,
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toThrow(/missing band metadata/i);
   });
 
@@ -338,7 +393,7 @@ describe('native promotion helpers', () => {
         chanceConstraintCounts: {
           safety: { successes: 29, trials: 30 },
         },
-      },
+      }
     );
 
     expect(evaluatePromotionChanceConstraints(trial, undefined)).toEqual([]);
@@ -352,7 +407,7 @@ describe('native promotion helpers', () => {
             confidence: 0.95,
           },
         ],
-      }),
+      })
     ).toBeUndefined();
   });
 
@@ -366,7 +421,7 @@ describe('native promotion helpers', () => {
           latency: [100, 102, 98, 101, 99],
           consistency: [0.9],
         },
-      },
+      }
     );
     const incumbent = createTrial(
       'trial-11',
@@ -377,7 +432,7 @@ describe('native promotion helpers', () => {
           latency: [150, 152, 149, 148, 151],
           consistency: [0.7],
         },
-      },
+      }
     );
 
     expect(
@@ -388,8 +443,8 @@ describe('native promotion helpers', () => {
           { metric: 'accuracy', direction: 'maximize', weight: 1 },
           { metric: 'latency', direction: 'minimize', weight: 1 },
         ],
-        { alpha: 0.05, adjust: 'BH' },
-      ),
+        { alpha: 0.05, adjust: 'BH' }
+      )
     ).toBe(1);
 
     expect(
@@ -409,34 +464,58 @@ describe('native promotion helpers', () => {
             },
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(1);
   });
 
   it('covers zero-variance paired promotion, incumbent-worse rejection, and band-distance fallback ties', () => {
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-12', { accuracy: 0.9 }, { metricSamples: { accuracy: [0.9, 0.9, 0.9] } }),
-        createTrial('trial-13', { accuracy: 0.8 }, { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }),
+        createTrial(
+          'trial-12',
+          { accuracy: 0.9 },
+          { metricSamples: { accuracy: [0.9, 0.9, 0.9] } }
+        ),
+        createTrial(
+          'trial-13',
+          { accuracy: 0.8 },
+          { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }
+        ),
         [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-        { alpha: 0.05, minEffect: { accuracy: 0.01 } },
-      ),
+        { alpha: 0.05, minEffect: { accuracy: 0.01 } }
+      )
     ).toBe(1);
 
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-14', { accuracy: 0.7 }, { metricSamples: { accuracy: [0.7, 0.7, 0.7] } }),
-        createTrial('trial-15', { accuracy: 0.8 }, { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }),
+        createTrial(
+          'trial-14',
+          { accuracy: 0.7 },
+          { metricSamples: { accuracy: [0.7, 0.7, 0.7] } }
+        ),
+        createTrial(
+          'trial-15',
+          { accuracy: 0.8 },
+          { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }
+        ),
         [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-        { alpha: 0.05, minEffect: { accuracy: 0.01 } },
-      ),
+        { alpha: 0.05, minEffect: { accuracy: 0.01 } }
+      )
     ).toBe(-1);
 
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-16', { consistency: 0.9 }, { metricSamples: { consistency: [0.89, 0.9, 0.91] } }),
-        createTrial('trial-17', { consistency: 0.87 }, { metricSamples: { consistency: [0.86, 0.87, 0.88] } }),
+        createTrial(
+          'trial-16',
+          { consistency: 0.9 },
+          { metricSamples: { consistency: [0.89, 0.9, 0.91] } }
+        ),
+        createTrial(
+          'trial-17',
+          { consistency: 0.87 },
+          { metricSamples: { consistency: [0.86, 0.87, 0.88] } }
+        ),
         [
           {
             metric: 'consistency',
@@ -450,19 +529,27 @@ describe('native promotion helpers', () => {
             },
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(1);
   });
 
   it('returns neutral or incumbent-favoring results for tied and band-worse statistical comparisons', () => {
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-18', { accuracy: 0.8 }, { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }),
-        createTrial('trial-19', { accuracy: 0.8 }, { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }),
+        createTrial(
+          'trial-18',
+          { accuracy: 0.8 },
+          { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }
+        ),
+        createTrial(
+          'trial-19',
+          { accuracy: 0.8 },
+          { metricSamples: { accuracy: [0.8, 0.8, 0.8] } }
+        ),
         [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-        { alpha: 0.05, minEffect: { accuracy: 0.01 } },
-      ),
+        { alpha: 0.05, minEffect: { accuracy: 0.01 } }
+      )
     ).toBe(0);
 
     expect(
@@ -482,16 +569,24 @@ describe('native promotion helpers', () => {
             },
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(-1);
   });
 
   it('handles zero-variance multi-sample TOST comparisons', () => {
     expect(
       compareTrialsWithStatisticalPromotion(
-        createTrial('trial-22', { consistency: 0.9 }, { metricSamples: { consistency: [0.9, 0.9, 0.9] } }),
-        createTrial('trial-23', { consistency: 0.8 }, { metricSamples: { consistency: [0.8, 0.8, 0.8] } }),
+        createTrial(
+          'trial-22',
+          { consistency: 0.9 },
+          { metricSamples: { consistency: [0.9, 0.9, 0.9] } }
+        ),
+        createTrial(
+          'trial-23',
+          { consistency: 0.8 },
+          { metricSamples: { consistency: [0.8, 0.8, 0.8] } }
+        ),
         [
           {
             metric: 'consistency',
@@ -505,8 +600,8 @@ describe('native promotion helpers', () => {
             },
           },
         ],
-        { alpha: 0.05 },
-      ),
+        { alpha: 0.05 }
+      )
     ).toBe(1);
   });
 });

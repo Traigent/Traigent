@@ -5,7 +5,7 @@ const apiKey = process.env.TRAIGENT_API_KEY;
 
 if (!backendUrl || !apiKey) {
   throw new Error(
-    'Set TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL) and TRAIGENT_API_KEY before running the hybrid example.',
+    'Set TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL) and TRAIGENT_API_KEY before running the hybrid example.'
   );
 }
 

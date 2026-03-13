@@ -28,12 +28,12 @@ In this JS SDK branch, the tunables are declared in:
 ```js
 optimize({
   configurationSpace: {
-    model: param.enum(["cheap", "balanced", "accurate"]),
+    model: param.enum(['cheap', 'balanced', 'accurate']),
     temperature: param.float({ min: 0, max: 0.4, step: 0.2 }),
   },
-  objectives: ["accuracy", "cost"],
+  objectives: ['accuracy', 'cost'],
   evaluation: { data: rows },
-})
+});
 ```
 
 That `configurationSpace` block is the JS equivalent of defining tunable

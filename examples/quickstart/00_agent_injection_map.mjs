@@ -19,8 +19,7 @@ const answerQuestionOptimized = optimize({
   objectives: ['accuracy', 'cost'],
   evaluation: {
     data: [{ input: 'What is 2+2?', output: 'helpful:accurate:What is 2+2?' }],
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
     metricFunctions: {
       cost: () => (getTrialParam('model') === 'accurate' ? 0.2 : 0.05),
     },
@@ -51,6 +50,6 @@ console.log(
       })),
     },
     null,
-    2,
-  ),
+    2
+  )
 );

@@ -152,8 +152,7 @@ export function resetRandomSeed(): void {
 
 /** Configuration space for the agent */
 export interface AgentConfig {
-  model:
-    // OpenAI models
+  model: // OpenAI models
     | 'gpt-3.5-turbo'
     | 'gpt-4o-mini'
     | 'gpt-4o'
@@ -162,9 +161,9 @@ export interface AgentConfig {
     | 'groq/llama-3.1-8b-instant';
   temperature: number;
   system_prompt: 'sales_aggressive' | 'consultative' | 'informative';
-  memory_turns: number;  // How many previous turns to include (affects cost!)
+  memory_turns: number; // How many previous turns to include (affects cost!)
   tool_set: ToolSetName; // Which tools to enable (affects cost AND capability!)
-  random_seed?: number;  // Optional seed for reproducible results
+  random_seed?: number; // Optional seed for reproducible results
 }
 
 /**
@@ -178,8 +177,8 @@ const MODEL_COSTS: Record<string, [number, number]> = {
   'gpt-4o-mini': [0.15, 0.6],
   'gpt-4o': [2.5, 10.0],
   // Groq pricing - significantly cheaper!
-  'groq/llama-3.3-70b-versatile': [0.59, 0.79],  // High quality, good price
-  'groq/llama-3.1-8b-instant': [0.05, 0.08],      // Ultra cheap, fast
+  'groq/llama-3.3-70b-versatile': [0.59, 0.79], // High quality, good price
+  'groq/llama-3.1-8b-instant': [0.05, 0.08], // Ultra cheap, fast
 };
 
 /**
@@ -192,39 +191,45 @@ const MODEL_COSTS: Record<string, [number, number]> = {
  *
  * Note: In production, use Mastra evals to measure actual performance.
  */
-const MODEL_QUALITY: Record<string, Record<string, {
-  relevancy: number;      // Mastra: answer-relevancy
-  completeness: number;   // Mastra: completeness
-  tone: number;           // Mastra: tone-consistency
-  conversion: number;     // Business metric: sales conversion rate
-}>> = {
+const MODEL_QUALITY: Record<
+  string,
+  Record<
+    string,
+    {
+      relevancy: number; // Mastra: answer-relevancy
+      completeness: number; // Mastra: completeness
+      tone: number; // Mastra: tone-consistency
+      conversion: number; // Business metric: sales conversion rate
+    }
+  >
+> = {
   // OpenAI models
   'gpt-3.5-turbo': {
     sales_aggressive: { relevancy: 0.72, completeness: 0.68, tone: 0.65, conversion: 0.45 },
-    consultative:     { relevancy: 0.75, completeness: 0.70, tone: 0.78, conversion: 0.52 },
-    informative:      { relevancy: 0.78, completeness: 0.75, tone: 0.82, conversion: 0.48 },
+    consultative: { relevancy: 0.75, completeness: 0.7, tone: 0.78, conversion: 0.52 },
+    informative: { relevancy: 0.78, completeness: 0.75, tone: 0.82, conversion: 0.48 },
   },
   'gpt-4o-mini': {
     sales_aggressive: { relevancy: 0.82, completeness: 0.78, tone: 0.75, conversion: 0.58 },
-    consultative:     { relevancy: 0.85, completeness: 0.82, tone: 0.88, conversion: 0.65 },
-    informative:      { relevancy: 0.88, completeness: 0.85, tone: 0.90, conversion: 0.60 },
+    consultative: { relevancy: 0.85, completeness: 0.82, tone: 0.88, conversion: 0.65 },
+    informative: { relevancy: 0.88, completeness: 0.85, tone: 0.9, conversion: 0.6 },
   },
   'gpt-4o': {
-    sales_aggressive: { relevancy: 0.90, completeness: 0.88, tone: 0.82, conversion: 0.68 },
-    consultative:     { relevancy: 0.94, completeness: 0.92, tone: 0.95, conversion: 0.78 },
-    informative:      { relevancy: 0.95, completeness: 0.94, tone: 0.96, conversion: 0.72 },
+    sales_aggressive: { relevancy: 0.9, completeness: 0.88, tone: 0.82, conversion: 0.68 },
+    consultative: { relevancy: 0.94, completeness: 0.92, tone: 0.95, conversion: 0.78 },
+    informative: { relevancy: 0.95, completeness: 0.94, tone: 0.96, conversion: 0.72 },
   },
   // Groq models - Llama 3.3 70B is comparable to GPT-4o quality
   'groq/llama-3.3-70b-versatile': {
-    sales_aggressive: { relevancy: 0.88, completeness: 0.85, tone: 0.80, conversion: 0.65 },
-    consultative:     { relevancy: 0.91, completeness: 0.89, tone: 0.92, conversion: 0.74 },
-    informative:      { relevancy: 0.93, completeness: 0.91, tone: 0.94, conversion: 0.70 },
+    sales_aggressive: { relevancy: 0.88, completeness: 0.85, tone: 0.8, conversion: 0.65 },
+    consultative: { relevancy: 0.91, completeness: 0.89, tone: 0.92, conversion: 0.74 },
+    informative: { relevancy: 0.93, completeness: 0.91, tone: 0.94, conversion: 0.7 },
   },
   // Groq Llama 3.1 8B - fast and cheap, lower quality
   'groq/llama-3.1-8b-instant': {
-    sales_aggressive: { relevancy: 0.70, completeness: 0.65, tone: 0.62, conversion: 0.42 },
-    consultative:     { relevancy: 0.73, completeness: 0.68, tone: 0.75, conversion: 0.50 },
-    informative:      { relevancy: 0.76, completeness: 0.72, tone: 0.78, conversion: 0.46 },
+    sales_aggressive: { relevancy: 0.7, completeness: 0.65, tone: 0.62, conversion: 0.42 },
+    consultative: { relevancy: 0.73, completeness: 0.68, tone: 0.75, conversion: 0.5 },
+    informative: { relevancy: 0.76, completeness: 0.72, tone: 0.78, conversion: 0.46 },
   },
 };
 
@@ -235,8 +240,8 @@ const MODEL_LATENCY: Record<string, number> = {
   'gpt-4o-mini': 250,
   'gpt-4o': 450,
   // Groq latencies - extremely fast due to LPU hardware!
-  'groq/llama-3.3-70b-versatile': 80,   // ~5x faster than GPT-4o
-  'groq/llama-3.1-8b-instant': 30,      // Ultra fast for simple tasks
+  'groq/llama-3.3-70b-versatile': 80, // ~5x faster than GPT-4o
+  'groq/llama-3.1-8b-instant': 30, // Ultra fast for simple tasks
 };
 
 /** System prompt templates */
@@ -285,11 +290,14 @@ function mockLLMCall(
   };
 } {
   const baseQuality = MODEL_QUALITY[config.model]?.[config.system_prompt] ?? {
-    relevancy: 0.7, completeness: 0.7, tone: 0.7, conversion: 0.5
+    relevancy: 0.7,
+    completeness: 0.7,
+    tone: 0.7,
+    conversion: 0.5,
   };
 
   // Temperature affects consistency - lower is more deterministic
-  const tempFactor = 1 - (config.temperature * TEMP_CONSISTENCY_FACTOR);
+  const tempFactor = 1 - config.temperature * TEMP_CONSISTENCY_FACTOR;
 
   // Memory affects quality - more context = better understanding
   const memoryQualityBoost = Math.min(
@@ -305,10 +313,15 @@ function mockLLMCall(
   const variance = () => (rng.next() - 0.5) * QUALITY_VARIANCE;
   const clamp = (v: number) => Math.max(0, Math.min(1, v));
   const relevancy = clamp((baseQuality.relevancy + memoryQualityBoost) * tempFactor + variance());
-  const completeness = clamp((baseQuality.completeness + memoryQualityBoost) * tempFactor + variance());
+  const completeness = clamp(
+    (baseQuality.completeness + memoryQualityBoost) * tempFactor + variance()
+  );
   const tone = clamp(baseQuality.tone * tempFactor + variance());
   // Conversion is boosted by tool set
-  const conversion = clamp((baseQuality.conversion + memoryQualityBoost * 2) * tempFactor * toolConversionBoost + variance());
+  const conversion = clamp(
+    (baseQuality.conversion + memoryQualityBoost * 2) * tempFactor * toolConversionBoost +
+      variance()
+  );
 
   // Calculate token costs
   // System prompt tokens (fixed per config)
@@ -324,7 +337,7 @@ function mockLLMCall(
   const lastMessage = conversation.messages[conversation.messages.length - 1];
   const currentMessageTokens = lastMessage
     ? lastMessage.content.split(/\s+/).length * TOKEN_MULTIPLIER
-    : TOKENS_PER_TURN;  // Fallback to default tokens if no messages
+    : TOKENS_PER_TURN; // Fallback to default tokens if no messages
 
   // Total input tokens (system + tools + memory + current message)
   const inputTokens = Math.round(systemTokens + toolTokens + memoryTokens + currentMessageTokens);
@@ -363,33 +376,50 @@ function generateMockResponse(conversation: ConversationExample, config: AgentCo
 
   const responses: Record<string, Record<string, string>> = {
     flight_inquiry: {
-      sales_aggressive: "Great choice! I have the PERFECT flight for you - and it's selling fast! Let me book it now before prices go up. Ready to secure your seat?",
-      consultative: "I'd love to help you find the right flight. Can you tell me more about your travel dates and preferences? Are you flexible with times?",
-      informative: "Here are the available flights for your route. The morning flight offers the best connection times, while the evening flight is more economical.",
+      sales_aggressive:
+        "Great choice! I have the PERFECT flight for you - and it's selling fast! Let me book it now before prices go up. Ready to secure your seat?",
+      consultative:
+        "I'd love to help you find the right flight. Can you tell me more about your travel dates and preferences? Are you flexible with times?",
+      informative:
+        'Here are the available flights for your route. The morning flight offers the best connection times, while the evening flight is more economical.',
     },
     price_negotiation: {
-      sales_aggressive: "This is already our BEST price! But because you're a valued customer, I can throw in priority boarding. Deal?",
-      consultative: "I understand budget is important. Let me show you some options that might work better for your needs without compromising on quality.",
-      informative: "The price breakdown includes base fare, taxes, and fees. Here's how it compares to similar dates and flexible ticket options.",
+      sales_aggressive:
+        "This is already our BEST price! But because you're a valued customer, I can throw in priority boarding. Deal?",
+      consultative:
+        'I understand budget is important. Let me show you some options that might work better for your needs without compromising on quality.',
+      informative:
+        "The price breakdown includes base fare, taxes, and fees. Here's how it compares to similar dates and flexible ticket options.",
     },
     booking_intent: {
-      sales_aggressive: "Excellent decision! I'm booking this RIGHT NOW before someone else takes it. Just need your payment details!",
-      consultative: "Wonderful! I'll walk you through the booking process step by step. Do you have any questions before we proceed?",
-      informative: "To complete the booking, I'll need passenger details, contact information, and payment method. The process takes about 5 minutes.",
+      sales_aggressive:
+        "Excellent decision! I'm booking this RIGHT NOW before someone else takes it. Just need your payment details!",
+      consultative:
+        "Wonderful! I'll walk you through the booking process step by step. Do you have any questions before we proceed?",
+      informative:
+        "To complete the booking, I'll need passenger details, contact information, and payment method. The process takes about 5 minutes.",
     },
     support: {
-      sales_aggressive: "I'll get that sorted immediately! And while I have you, have you considered upgrading to flexible tickets for your next trip?",
-      consultative: "I completely understand. Let me look into this for you right away and find the best solution.",
-      informative: "Here's the information you need. For flight changes, the policy allows modifications up to 24 hours before departure.",
+      sales_aggressive:
+        "I'll get that sorted immediately! And while I have you, have you considered upgrading to flexible tickets for your next trip?",
+      consultative:
+        'I completely understand. Let me look into this for you right away and find the best solution.',
+      informative:
+        "Here's the information you need. For flight changes, the policy allows modifications up to 24 hours before departure.",
     },
     complaint: {
-      sales_aggressive: "I sincerely apologize! Let me make this right AND offer you a discount on your next booking!",
-      consultative: "I'm truly sorry to hear about your experience. Let me understand what happened and see how we can make it right.",
-      informative: "I apologize for the inconvenience. Here are your options for compensation according to our passenger rights policy.",
+      sales_aggressive:
+        'I sincerely apologize! Let me make this right AND offer you a discount on your next booking!',
+      consultative:
+        "I'm truly sorry to hear about your experience. Let me understand what happened and see how we can make it right.",
+      informative:
+        'I apologize for the inconvenience. Here are your options for compensation according to our passenger rights policy.',
     },
   };
 
-  return responses[intent]?.[config.system_prompt] ?? "How can I help you with your travel plans today?";
+  return (
+    responses[intent]?.[config.system_prompt] ?? 'How can I help you with your travel plans today?'
+  );
 }
 
 // ============================================================================
@@ -422,7 +452,7 @@ export async function runSalesAgent(
   total_output_tokens: number;
   avg_latency_ms: number;
   // Composite score: quality vs cost tradeoff
-  margin_efficiency: number;  // conversion / cost (higher is better)
+  margin_efficiency: number; // conversion / cost (higher is better)
   // Processing stats
   examples_processed: number;
   examples_failed: number;
@@ -476,14 +506,14 @@ export async function runSalesAgent(
         const evalResult = await evaluateResponse(
           example.customer_query,
           llmResult.response,
-          'groq/llama-3.1-8b-instant'  // Cheap eval model
+          'groq/llama-3.1-8b-instant' // Cheap eval model
         );
 
         relevancy = evalResult.relevancy;
         completeness = evalResult.completeness;
         tone = evalResult.tone_consistency;
         conversion = evalResult.conversion_score;
-        cost = llmResult.metrics.cost + evalResult.eval_cost;  // Include eval cost
+        cost = llmResult.metrics.cost + evalResult.eval_cost; // Include eval cost
         inputTokens = llmResult.metrics.input_tokens;
         outputTokens = llmResult.metrics.output_tokens;
         latency = llmResult.metrics.latency_ms;
@@ -512,7 +542,9 @@ export async function runSalesAgent(
 
       // Log each conversation result
       const conversionIcon = conversion > 0.6 ? '[SALE]' : '[    ]';
-      logger(`  ${conversionIcon} "${example.customer_query.substring(0, 45)}..." | conv: ${(conversion * 100).toFixed(0)}% | cost: $${cost.toFixed(6)}`);
+      logger(
+        `  ${conversionIcon} "${example.customer_query.substring(0, 45)}..." | conv: ${(conversion * 100).toFixed(0)}% | cost: $${cost.toFixed(6)}`
+      );
     } catch (error) {
       failedCount++;
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -565,7 +597,9 @@ export async function runSalesAgent(
   logger(`  Cost Metrics:`);
   logger(`    Total Cost:          $${totalCost.toFixed(6)}`);
   logger(`    Avg Cost/Conv:       $${avgCostPerConv.toFixed(6)}`);
-  logger(`    Total Tokens:        ${totalInputTokens + totalOutputTokens} (in: ${totalInputTokens}, out: ${totalOutputTokens})`);
+  logger(
+    `    Total Tokens:        ${totalInputTokens + totalOutputTokens} (in: ${totalInputTokens}, out: ${totalOutputTokens})`
+  );
   logger(`    Avg Latency:         ${avgLatency.toFixed(0)}ms`);
   if (failedCount > 0) {
     logger(`  Processing:`);
@@ -596,11 +630,11 @@ export async function runSalesAgent(
 
 /** Default configuration (current SOTA defaults they mentioned) */
 export const DEFAULT_CONFIG: AgentConfig = {
-  model: 'gpt-4o',           // SOTA model (expensive!)
+  model: 'gpt-4o', // SOTA model (expensive!)
   temperature: 0.7,
   system_prompt: 'informative',
-  memory_turns: 10,          // Default memory (expensive!)
-  tool_set: 'full',          // All tools enabled (expensive!)
+  memory_turns: 10, // Default memory (expensive!)
+  tool_set: 'full', // All tools enabled (expensive!)
 };
 
 /** Configuration space for optimization */
@@ -611,11 +645,11 @@ export const CONFIGURATION_SPACE = {
     'gpt-4o-mini',
     'gpt-4o',
     // Groq models - great for margin optimization!
-    'groq/llama-3.3-70b-versatile',  // High quality + cheap + fast
-    'groq/llama-3.1-8b-instant',      // Ultra cheap + ultra fast
+    'groq/llama-3.3-70b-versatile', // High quality + cheap + fast
+    'groq/llama-3.1-8b-instant', // Ultra cheap + ultra fast
   ] as const,
   temperature: [0.0, 0.3, 0.5, 0.7] as const,
   system_prompt: ['sales_aggressive', 'consultative', 'informative'] as const,
-  memory_turns: [2, 5, 10, 15] as const,  // Key for margin optimization!
+  memory_turns: [2, 5, 10, 15] as const, // Key for margin optimization!
   tool_set: ['minimal', 'standard', 'enhanced', 'full'] as const, // Tool selection!
 };

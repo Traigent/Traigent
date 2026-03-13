@@ -71,7 +71,7 @@ export function deriveDeterministicSeed(config: TrialConfig['config']): number {
       system_prompt: config.system_prompt,
       memory_turns: config.memory_turns,
       tool_set: config.tool_set,
-    }),
+    })
   );
 }
 
@@ -103,16 +103,9 @@ function resolveMaxTrials(): number {
  * Validates that a config value is in the allowed set.
  * @throws Error if validation fails
  */
-function validateConfigValue<T>(
-  name: string,
-  value: T,
-  allowed: readonly T[]
-): void {
+function validateConfigValue<T>(name: string, value: T, allowed: readonly T[]): void {
   if (!allowed.includes(value)) {
-    throw new Error(
-      `Invalid ${name}: "${value}". ` +
-      `Allowed values: ${allowed.join(', ')}`
-    );
+    throw new Error(`Invalid ${name}: "${value}". ` + `Allowed values: ${allowed.join(', ')}`);
   }
 }
 
@@ -127,11 +120,19 @@ function validateAgentConfig(config: AgentConfig): void {
 
   // Validate numeric ranges
   if (typeof config.temperature !== 'number' || config.temperature < 0 || config.temperature > 1) {
-    throw new Error(`Invalid temperature: ${config.temperature}. Must be a number between 0 and 1.`);
+    throw new Error(
+      `Invalid temperature: ${config.temperature}. Must be a number between 0 and 1.`
+    );
   }
 
-  if (typeof config.memory_turns !== 'number' || config.memory_turns < 1 || config.memory_turns > 50) {
-    throw new Error(`Invalid memory_turns: ${config.memory_turns}. Must be a number between 1 and 50.`);
+  if (
+    typeof config.memory_turns !== 'number' ||
+    config.memory_turns < 1 ||
+    config.memory_turns > 50
+  ) {
+    throw new Error(
+      `Invalid memory_turns: ${config.memory_turns}. Must be a number between 1 and 50.`
+    );
   }
 }
 
@@ -171,7 +172,9 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
   }
 
   if (!trialConfig.dataset_subset) {
-    console.error(`[TRIAL ${trialConfig.trial_number}] ERROR: Missing required field 'dataset_subset'`);
+    console.error(
+      `[TRIAL ${trialConfig.trial_number}] ERROR: Missing required field 'dataset_subset'`
+    );
     return {
       metrics: { margin_efficiency: null, conversion_score: null, cost: null },
       duration: Date.now() - startTime,
@@ -189,16 +192,15 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
     memory_turns: (config.memory_turns as number) ?? 5,
     tool_set: (config.tool_set as AgentConfig['tool_set']) ?? 'standard',
     random_seed:
-      typeof config.random_seed === 'number'
-        ? config.random_seed
-        : deriveDeterministicSeed(config),
+      typeof config.random_seed === 'number' ? config.random_seed : deriveDeterministicSeed(config),
   };
 
   // Validate configuration before running
   try {
     validateAgentConfig(agentConfig);
   } catch (validationError) {
-    const error = validationError instanceof Error ? validationError.message : String(validationError);
+    const error =
+      validationError instanceof Error ? validationError.message : String(validationError);
     console.error(`[TRIAL ${trialConfig.trial_number}] VALIDATION ERROR: ${error}`);
     return {
       metrics: {
@@ -217,7 +219,9 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
   const examples = getDatasetSubset(datasetSubset.indices);
 
   if (examples.length === 0) {
-    console.error(`[TRIAL ${trialConfig.trial_number}] ERROR: No examples found for indices: ${datasetSubset.indices}`);
+    console.error(
+      `[TRIAL ${trialConfig.trial_number}] ERROR: No examples found for indices: ${datasetSubset.indices}`
+    );
     return {
       metrics: {
         margin_efficiency: null,
@@ -243,9 +247,7 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
 
   // Run the sales agent with error handling
   try {
-    const result = await runSalesAgent(examples, agentConfig, (msg) =>
-      console.error(msg)
-    );
+    const result = await runSalesAgent(examples, agentConfig, (msg) => console.error(msg));
 
     const duration = Date.now() - startTime;
 
@@ -316,10 +318,7 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
   }
 }
 
-function assertNumericMetric(
-  metrics: TrialResult['metrics'],
-  name: string,
-): void {
+function assertNumericMetric(metrics: TrialResult['metrics'], name: string): void {
   if (typeof metrics[name] !== 'number' || !Number.isFinite(metrics[name])) {
     throw new Error(`Arkia optimization trial requires numeric metric "${name}".`);
   }
@@ -338,8 +337,7 @@ async function runNativeArkiaTrial(trialConfig: TrialConfig) {
   return {
     metrics: result.metrics,
     metadata: result.metadata,
-    duration:
-      typeof result.duration === 'number' ? result.duration / 1000 : undefined,
+    duration: typeof result.duration === 'number' ? result.duration / 1000 : undefined,
   };
 }
 
@@ -364,12 +362,10 @@ export const arkiaOptimizationSpec: OptimizationSpec = {
   },
 };
 
-export const optimizeArkiaSalesAgent = optimize(arkiaOptimizationSpec)(
-  runNativeArkiaTrial,
-);
+export const optimizeArkiaSalesAgent = optimize(arkiaOptimizationSpec)(runNativeArkiaTrial);
 
 export async function runArkiaOptimization(
-  options: Partial<NativeOptimizeOptions> = {},
+  options: Partial<NativeOptimizeOptions> = {}
 ): Promise<OptimizationResult> {
   return optimizeArkiaSalesAgent.optimize({
     algorithm: 'random',

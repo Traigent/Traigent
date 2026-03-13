@@ -1,9 +1,5 @@
 import { registerFrameworkTarget } from '../registry.js';
-import {
-  ensurePositiveDuration,
-  getFrameworkOverrides,
-  recordProviderUsage,
-} from '../shared.js';
+import { ensurePositiveDuration, getFrameworkOverrides, recordProviderUsage } from '../shared.js';
 
 const TRAIGENT_WRAPPED = Symbol.for('traigent.openai.wrapped');
 
@@ -14,17 +10,11 @@ type OpenAICompletionUsage = {
 };
 
 type OpenAIChatCompletionsClient = {
-  create: (
-    params: Record<string, unknown>,
-    ...args: unknown[]
-  ) => Promise<unknown>;
+  create: (params: Record<string, unknown>, ...args: unknown[]) => Promise<unknown>;
 };
 
 type OpenAIResponsesClient = {
-  create: (
-    params: Record<string, unknown>,
-    ...args: unknown[]
-  ) => Promise<unknown>;
+  create: (params: Record<string, unknown>, ...args: unknown[]) => Promise<unknown>;
 };
 
 type OpenAIClientLike = {
@@ -39,14 +29,14 @@ type WrappedCreate = OpenAIChatCompletionsClient['create'] & {
 };
 
 function isWrapped(
-  create: OpenAIChatCompletionsClient['create'] | OpenAIResponsesClient['create'],
+  create: OpenAIChatCompletionsClient['create'] | OpenAIResponsesClient['create']
 ): boolean {
   return Boolean((create as WrappedCreate)[TRAIGENT_WRAPPED]);
 }
 
-function markWrapped<T extends OpenAIChatCompletionsClient['create'] | OpenAIResponsesClient['create']>(
-  create: T,
-): T {
+function markWrapped<
+  T extends OpenAIChatCompletionsClient['create'] | OpenAIResponsesClient['create'],
+>(create: T): T {
   Object.defineProperty(create, TRAIGENT_WRAPPED, {
     value: true,
     enumerable: false,
@@ -57,7 +47,7 @@ function markWrapped<T extends OpenAIChatCompletionsClient['create'] | OpenAIRes
 }
 
 function wrapCreate(
-  create: OpenAIChatCompletionsClient['create'],
+  create: OpenAIChatCompletionsClient['create']
 ): OpenAIChatCompletionsClient['create'] {
   return markWrapped(async function wrappedCreate(
     this: unknown,
@@ -72,16 +62,14 @@ function wrapCreate(
         ...params,
         ...overrides,
       },
-      ...args,
+      ...args
     );
     const responseRecord =
-      response && typeof response === 'object'
-        ? (response as Record<string, unknown>)
-        : {};
+      response && typeof response === 'object' ? (response as Record<string, unknown>) : {};
 
     const usage = responseRecord['usage'] as OpenAICompletionUsage | undefined;
     const model = String(
-      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown',
+      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown'
     );
     const inputTokens = usage?.prompt_tokens ?? 0;
     const outputTokens = usage?.completion_tokens ?? 0;
@@ -90,7 +78,7 @@ function wrapCreate(
       model,
       inputTokens,
       outputTokens,
-      ensurePositiveDuration(Date.now() - startedAt),
+      ensurePositiveDuration(Date.now() - startedAt)
     );
 
     return response;
@@ -98,7 +86,7 @@ function wrapCreate(
 }
 
 function wrapResponsesCreate(
-  create: OpenAIResponsesClient['create'],
+  create: OpenAIResponsesClient['create']
 ): OpenAIResponsesClient['create'] {
   return markWrapped(async function wrappedResponsesCreate(
     this: unknown,
@@ -115,25 +103,23 @@ function wrapResponsesCreate(
         temperature: overrides['temperature'] ?? params['temperature'],
         max_output_tokens: overrides['max_tokens'] ?? params['max_output_tokens'],
       },
-      ...args,
+      ...args
     );
     const responseRecord =
-      response && typeof response === 'object'
-        ? (response as Record<string, unknown>)
-        : {};
+      response && typeof response === 'object' ? (response as Record<string, unknown>) : {};
 
     const usage = responseRecord['usage'] as
       | { input_tokens?: number; output_tokens?: number }
       | undefined;
     const model = String(
-      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown',
+      responseRecord['model'] ?? overrides['model'] ?? params['model'] ?? 'unknown'
     );
 
     recordProviderUsage(
       model,
       usage?.input_tokens ?? 0,
       usage?.output_tokens ?? 0,
-      ensurePositiveDuration(Date.now() - startedAt),
+      ensurePositiveDuration(Date.now() - startedAt)
     );
 
     return response;

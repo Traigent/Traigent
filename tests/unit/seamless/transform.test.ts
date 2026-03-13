@@ -29,9 +29,7 @@ const tempDirs: string[] = [];
 const traverseAst = traverse.default ?? traverse;
 
 afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  );
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   vi.unstubAllEnvs();
 });
 
@@ -41,7 +39,7 @@ beforeEach(() => {
 
 function transformFunctionSnippet(
   source: string,
-  configKeys: string[],
+  configKeys: string[]
 ): { code: string; diagnostics: string[]; rewrittenCount: number } {
   const ast = parse(`const fn = ${source};`, {
     sourceType: 'module',
@@ -65,7 +63,7 @@ function transformFunctionSnippet(
           new Set(configKeys),
           'getTrialParam',
           '<test>',
-          diagnostics as never[],
+          diagnostics as never[]
         );
         code = path.toString();
         path.stop();
@@ -109,12 +107,8 @@ describe('seamless transform tooling', () => {
     expect(result.rewrittenCount).toBe(3);
     expect(result.code).toContain('getTrialParam');
     expect(result.code).toContain(`const model = getTrialParam("model", 'cheap')`);
-    expect(result.code).toContain(
-      `let temperature = getTrialParam("temperature", 0.2)`,
-    );
-    expect(result.code).toContain(
-      `temperature = getTrialParam("temperature", 0.4)`,
-    );
+    expect(result.code).toContain(`let temperature = getTrialParam("temperature", 0.2)`);
+    expect(result.code).toContain(`temperature = getTrialParam("temperature", 0.4)`);
   });
 
   it('reports rejected seamless patterns without partially rewriting them', () => {
@@ -140,15 +134,13 @@ describe('seamless transform tooling', () => {
     });
 
     expect(result.changed).toBe(false);
-    expect(result.diagnostics.some((entry) => entry.kind === 'rejected')).toBe(
-      true,
-    );
+    expect(result.diagnostics.some((entry) => entry.kind === 'rejected')).toBe(true);
   });
 
   it('skips files without optimize imports or static configuration space', () => {
     const noOptimize = transformSeamlessSource(
       `export async function answer() { const model = 'cheap'; return model; }`,
-      { filename: 'no-optimize.mjs' },
+      { filename: 'no-optimize.mjs' }
     );
     expect(noOptimize.changed).toBe(false);
     expect(noOptimize.diagnostics).toHaveLength(0);
@@ -163,13 +155,11 @@ describe('seamless transform tooling', () => {
         }
         export const optimized = optimize(spec)(answer);
       `,
-      { filename: 'dynamic-spec.mjs' },
+      { filename: 'dynamic-spec.mjs' }
     );
     expect(dynamicSpec.changed).toBe(false);
     expect(
-      dynamicSpec.diagnostics.some((entry) =>
-        entry.message.includes('static object literal'),
-      ),
+      dynamicSpec.diagnostics.some((entry) => entry.message.includes('static object literal'))
     ).toBe(true);
 
     const quotedKeys = transformSeamlessSource(
@@ -186,7 +176,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'quoted-keys.mjs' },
+      { filename: 'quoted-keys.mjs' }
     );
     expect(quotedKeys.changed).toBe(true);
     expect(quotedKeys.code).toContain(`const model = getTrialParam("model", 'cheap')`);
@@ -204,13 +194,11 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'spread-config.mjs' },
+      { filename: 'spread-config.mjs' }
     );
     expect(spreadConfig.changed).toBe(false);
     expect(
-      spreadConfig.diagnostics.some((entry) =>
-        entry.message.includes('static object literal'),
-      ),
+      spreadConfig.diagnostics.some((entry) => entry.message.includes('static object literal'))
     ).toBe(true);
   });
 
@@ -223,13 +211,13 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(factory());
       `,
-      { filename: 'unresolved.mjs' },
+      { filename: 'unresolved.mjs' }
     );
     expect(unresolved.changed).toBe(false);
     expect(
       unresolved.diagnostics.some((entry) =>
-        entry.message.includes('directly resolvable local function'),
-      ),
+        entry.message.includes('directly resolvable local function')
+      )
     ).toBe(true);
 
     const updateExpression = transformSeamlessSource(
@@ -245,19 +233,17 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'update-expression.mjs' },
+      { filename: 'update-expression.mjs' }
     );
     expect(updateExpression.changed).toBe(false);
     expect(updateExpression.code).not.toContain('getTrialParam');
     expect(
-      updateExpression.diagnostics.some((entry) =>
-        entry.message.includes('Increment/decrement'),
-      ),
+      updateExpression.diagnostics.some((entry) => entry.message.includes('Increment/decrement'))
     ).toBe(true);
     expect(
       updateExpression.diagnostics.some((entry) =>
-        entry.message.includes('No partial rewrite was applied'),
-      ),
+        entry.message.includes('No partial rewrite was applied')
+      )
     ).toBe(true);
   });
 
@@ -282,7 +268,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'existing-import.mjs' },
+      { filename: 'existing-import.mjs' }
     );
 
     expect(result.changed).toBe(true);
@@ -325,7 +311,7 @@ describe('seamless transform tooling', () => {
           return tone;
         });
       `,
-      { filename: 'merged-keys.mjs' },
+      { filename: 'merged-keys.mjs' }
     );
 
     expect(result.changed).toBe(true);
@@ -338,46 +324,48 @@ describe('seamless transform tooling', () => {
   it('covers direct function rewrites for assignment operators and pre-transformed values', () => {
     const existingGetter = transformFunctionSnippet(
       `async function answer() { const model = getTrialParam('model', 'cheap'); return model; }`,
-      ['model'],
+      ['model']
     );
     expect(existingGetter.rewrittenCount).toBe(0);
 
     const compoundAssignment = transformFunctionSnippet(
       `async function answer() { let retries = 1; retries += 1; return retries; }`,
-      ['retries'],
+      ['retries']
     );
-    expect(compoundAssignment.diagnostics.some((message) => message.includes('Only direct "="'))).toBe(true);
+    expect(
+      compoundAssignment.diagnostics.some((message) => message.includes('Only direct "="'))
+    ).toBe(true);
 
     const unsupportedReassignment = transformFunctionSnippet(
       `async function answer() { let settings = { enabled: true }; settings = otherSettings; return settings; }`,
-      ['settings'],
+      ['settings']
     );
     expect(
       unsupportedReassignment.diagnostics.some((message) =>
-        message.includes('supported literal values'),
-      ),
+        message.includes('supported literal values')
+      )
     ).toBe(true);
   });
 
   it('covers array and object pattern helper branches directly', () => {
     const destructuredArray = transformFunctionSnippet(
       `async function answer() { const [temperature] = [0.2]; return temperature; }`,
-      ['temperature'],
+      ['temperature']
     );
     expect(
       destructuredArray.diagnostics.some((message) =>
-        message.includes('Destructuring tuned variables'),
-      ),
+        message.includes('Destructuring tuned variables')
+      )
     ).toBe(true);
 
     const destructuredObject = transformFunctionSnippet(
       `async function answer() { const { temperature: configured = 0.2 } = defaults; return configured; }`,
-      ['configured'],
+      ['configured']
     );
     expect(
       destructuredObject.diagnostics.some((message) =>
-        message.includes('Destructuring tuned variables'),
-      ),
+        message.includes('Destructuring tuned variables')
+      )
     ).toBe(true);
   });
 
@@ -401,12 +389,12 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'unsupported-literals.mjs' },
+      { filename: 'unsupported-literals.mjs' }
     );
 
     expect(result.changed).toBe(false);
     expect(
-      result.diagnostics.filter((entry) => entry.kind === 'rejected').length,
+      result.diagnostics.filter((entry) => entry.kind === 'rejected').length
     ).toBeGreaterThanOrEqual(2);
 
     const numericKey = transformSeamlessSource(
@@ -423,7 +411,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'numeric-key.mjs' },
+      { filename: 'numeric-key.mjs' }
     );
     expect(numericKey.changed).toBe(true);
     expect(numericKey.code).toContain('getTrialParam("settings"');
@@ -439,53 +427,51 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      { filename: 'non-function-binding.mjs' },
+      { filename: 'non-function-binding.mjs' }
     );
     expect(nonFunctionBinding.changed).toBe(false);
     expect(
       nonFunctionBinding.diagnostics.some((entry) =>
-        entry.message.includes('directly resolvable local function'),
-      ),
+        entry.message.includes('directly resolvable local function')
+      )
     ).toBe(true);
 
     const restPattern = transformFunctionSnippet(
       `async function answer() { const { temperature, ...rest } = defaults; return [temperature, rest]; }`,
-      ['rest'],
+      ['rest']
     );
     expect(
-      restPattern.diagnostics.some((message) =>
-        message.includes('Destructuring tuned variables'),
-      ),
+      restPattern.diagnostics.some((message) => message.includes('Destructuring tuned variables'))
     ).toBe(true);
 
     const arrayHole = transformFunctionSnippet(
       `async function answer() { const retries = [1,,2]; return retries; }`,
-      ['retries'],
+      ['retries']
     );
     expect(
       arrayHole.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
 
     const arraySpread = transformFunctionSnippet(
       `async function answer() { const retries = [1, ...extra]; return retries; }`,
-      ['retries'],
+      ['retries']
     );
     expect(
       arraySpread.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
 
     const computedObject = transformFunctionSnippet(
       `async function answer() { const settings = { [dynamicKey]: true }; return settings; }`,
-      ['settings'],
+      ['settings']
     );
     expect(
       computedObject.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
   });
 
@@ -498,13 +484,13 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(missingAnswer);
       `,
-      { filename: 'missing-binding.mjs' },
+      { filename: 'missing-binding.mjs' }
     );
     expect(missingBinding.changed).toBe(false);
     expect(
       missingBinding.diagnostics.some((entry) =>
-        entry.message.includes('directly resolvable local function'),
-      ),
+        entry.message.includes('directly resolvable local function')
+      )
     ).toBe(true);
 
     const importedBinding = transformSeamlessSource(
@@ -516,63 +502,63 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(externalAnswer);
       `,
-      { filename: 'imported-binding.mjs' },
+      { filename: 'imported-binding.mjs' }
     );
     expect(importedBinding.changed).toBe(false);
     expect(
       importedBinding.diagnostics.some((entry) =>
-        entry.message.includes('directly resolvable local function'),
-      ),
+        entry.message.includes('directly resolvable local function')
+      )
     ).toBe(true);
 
     const uninitialized = transformFunctionSnippet(
       `async function answer() { let temperature; return temperature; }`,
-      ['temperature'],
+      ['temperature']
     );
     expect(
       uninitialized.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
 
     const unsupportedUnary = transformFunctionSnippet(
       `async function answer() { const retries = ~1; return retries; }`,
-      ['retries'],
+      ['retries']
     );
     expect(
       unsupportedUnary.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
 
     const objectMethod = transformFunctionSnippet(
       `async function answer() { const settings = { enable() { return true; } }; return settings; }`,
-      ['settings'],
+      ['settings']
     );
     expect(
       objectMethod.diagnostics.some((message) =>
-        message.includes('literal, array literal, object literal, or template literal'),
-      ),
+        message.includes('literal, array literal, object literal, or template literal')
+      )
     ).toBe(true);
 
     const restArrayPattern = transformFunctionSnippet(
       `async function answer() { const [...retries] = [1, 2]; return retries; }`,
-      ['retries'],
+      ['retries']
     );
     expect(
       restArrayPattern.diagnostics.some((message) =>
-        message.includes('Destructuring tuned variables'),
-      ),
+        message.includes('Destructuring tuned variables')
+      )
     ).toBe(true);
 
     const sparseArrayPattern = transformFunctionSnippet(
       `async function answer() { const [, retries] = [0, 1]; return retries; }`,
-      ['retries'],
+      ['retries']
     );
     expect(
       sparseArrayPattern.diagnostics.some((message) =>
-        message.includes('Destructuring tuned variables'),
-      ),
+        message.includes('Destructuring tuned variables')
+      )
     ).toBe(true);
   });
 
@@ -624,7 +610,7 @@ describe('seamless transform tooling', () => {
         plugins: [traigentSeamlessBabelPlugin],
         configFile: false,
         babelrc: false,
-      }),
+      })
     ).toThrow(/Refusing to emit a partial seamless transform/i);
   });
 
@@ -655,7 +641,7 @@ describe('seamless transform tooling', () => {
         plugins: [traigentSeamlessBabelPlugin],
         configFile: false,
         babelrc: false,
-      }),
+      })
     ).toThrow(/<unknown>|and 1 more|Refusing to emit a partial seamless transform/i);
   });
 
@@ -667,17 +653,15 @@ describe('seamless transform tooling', () => {
       line: 4,
       column: 2,
     };
-    expect(formatSeamlessDiagnosticPreview(withLocation)).toBe(
-      '- demo.mjs:4:3 bad pattern',
-    );
+    expect(formatSeamlessDiagnosticPreview(withLocation)).toBe('- demo.mjs:4:3 bad pattern');
 
     const withoutLocation: SeamlessDiagnostic = {
       kind: 'rejected',
       message: 'missing location',
     };
-    expect(
-      formatSeamlessDiagnosticPreview(withoutLocation, 'fallback.mjs'),
-    ).toBe('- fallback.mjs missing location');
+    expect(formatSeamlessDiagnosticPreview(withoutLocation, 'fallback.mjs')).toBe(
+      '- fallback.mjs missing location'
+    );
   });
 
   it('runs the codemod CLI helper in dry-run and write modes', async () => {
@@ -697,7 +681,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answerQuestion);
       `,
-      'utf8',
+      'utf8'
     );
 
     const dryRun = await runSeamlessMigration([file], {
@@ -735,7 +719,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answerQuestion);
       `,
-      'utf8',
+      'utf8'
     );
 
     const dryRun = await runSeamlessMigration([file], {
@@ -769,7 +753,7 @@ describe('seamless transform tooling', () => {
           objectives: ['accuracy'],
         })(answer);
       `,
-      'utf8',
+      'utf8'
     );
     await writeFile(path.join(tempDir, 'notes.txt'), 'ignore me', 'utf8');
 
@@ -801,8 +785,7 @@ describe('seamless transform tooling', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: '0.8:x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async function answer(question: string) {
       const temperature = 0.2;
@@ -828,9 +811,7 @@ describe('seamless transform tooling', () => {
       return question;
     };
     registerFrameworkTarget('openai');
-    expect(
-      resolveSeamlessFunction(registered, ['temperature'], ['openai'], true),
-    ).toMatchObject({
+    expect(resolveSeamlessFunction(registered, ['temperature'], ['openai'], true)).toMatchObject({
       fn: registered,
       resolution: {
         path: 'framework',
@@ -839,9 +820,7 @@ describe('seamless transform tooling', () => {
     });
 
     registerFrameworkTarget('langchain');
-    expect(
-      resolveSeamlessFunction(registered, ['temperature'], undefined, true),
-    ).toMatchObject({
+    expect(resolveSeamlessFunction(registered, ['temperature'], undefined, true)).toMatchObject({
       resolution: {
         path: 'framework',
         targets: ['langchain', 'openai'],
@@ -854,7 +833,7 @@ describe('seamless transform tooling', () => {
       return getTrialParam('temperature', 0.2);
     };
     expect(
-      resolveSeamlessFunction(alreadyTransformed, ['temperature'], undefined, true),
+      resolveSeamlessFunction(alreadyTransformed, ['temperature'], undefined, true)
     ).toMatchObject({
       fn: alreadyTransformed,
       resolution: {
@@ -877,8 +856,7 @@ describe('seamless transform tooling', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: '0.2:x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async function answer(question: string) {
       const temperature = 0.2;
@@ -908,8 +886,8 @@ describe('seamless transform tooling', () => {
         },
         ['temperature'],
         undefined,
-        true,
-      ),
+        true
+      )
     ).toThrow(/Run `traigent migrate seamless`|Babel plugin/i);
 
     expect(() =>
@@ -920,8 +898,8 @@ describe('seamless transform tooling', () => {
         },
         ['temperature'],
         undefined,
-        true,
-      ),
+        true
+      )
     ).toThrow(/arrow functions/i);
 
     expect(() =>
@@ -931,8 +909,8 @@ describe('seamless transform tooling', () => {
         },
         ['temperature'],
         undefined,
-        true,
-      ),
+        true
+      )
     ).toThrow(/Run `traigent migrate seamless`|Babel plugin/i);
   });
 
@@ -945,7 +923,7 @@ describe('seamless transform tooling', () => {
     };
 
     expect(
-      resolveSeamlessFunction(pretransformed, ['temperature'], undefined, false),
+      resolveSeamlessFunction(pretransformed, ['temperature'], undefined, false)
     ).toMatchObject({
       resolution: {
         path: 'pretransformed',
@@ -969,8 +947,7 @@ describe('seamless transform tooling', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: '0.8:x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async function answer(question: string) {
       const temperature = defaults.temperature;
@@ -981,7 +958,7 @@ describe('seamless transform tooling', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 2,
-      }),
+      })
     ).rejects.toThrow(/self-contained functions|Babel plugin/i);
   });
 
@@ -996,8 +973,8 @@ describe('seamless transform tooling', () => {
         },
         ['temperature'],
         undefined,
-        true,
-      ),
+        true
+      )
     ).toThrow(/disabled by default|trusted local code/i);
   });
 });

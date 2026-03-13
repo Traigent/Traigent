@@ -48,8 +48,8 @@ describe('native repetition aggregation', () => {
           { accuracy: Number.NaN, notes: null },
           { accuracy: Number.POSITIVE_INFINITY, notes: 'ignored' },
         ],
-        'mean',
-      ),
+        'mean'
+      )
     ).toEqual({
       accuracy: null,
       notes: null,

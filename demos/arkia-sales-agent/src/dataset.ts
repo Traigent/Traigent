@@ -20,8 +20,8 @@ export interface Message {
 
 export interface ConversationExample {
   id: string;
-  customer_query: string;           // The main query being evaluated
-  messages: Message[];              // Conversation history (for memory)
+  customer_query: string; // The main query being evaluated
+  messages: Message[]; // Conversation history (for memory)
   intent: 'flight_inquiry' | 'price_negotiation' | 'booking_intent' | 'support' | 'complaint';
   destination: string;
   /**
@@ -32,9 +32,9 @@ export interface ConversationExample {
    */
   difficulty: 'easy' | 'medium' | 'hard';
   expected_quality: {
-    min_relevancy: number;          // Minimum acceptable relevancy
-    min_completeness: number;       // Minimum acceptable completeness
-    should_upsell: boolean;         // Should agent try to upsell?
+    min_relevancy: number; // Minimum acceptable relevancy
+    min_completeness: number; // Minimum acceptable completeness
+    should_upsell: boolean; // Should agent try to upsell?
     urgency_level: 'low' | 'medium' | 'high';
   };
   /** Expected output for accuracy measurement (used by SDK for scoring) */
@@ -68,7 +68,10 @@ function loadDatasetFromJsonl(): ConversationExample[] {
 
   try {
     const content = readFileSync(datasetPath, 'utf-8');
-    const lines = content.trim().split('\n').filter(line => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim());
 
     return lines.map((line): ConversationExample => {
       const entry: DatasetEntry = JSON.parse(line);
@@ -103,10 +106,7 @@ function loadDatasetFromJsonl(): ConversationExample[] {
  * Create synthetic conversation history for an example.
  * Adds context turns based on the intent type.
  */
-function createConversationHistory(
-  customerQuery: string,
-  intent: string
-): Message[] {
+function createConversationHistory(customerQuery: string, intent: string): Message[] {
   const messages: Message[] = [];
 
   // Add contextual opening based on intent
@@ -114,19 +114,29 @@ function createConversationHistory(
     case 'flight_inquiry':
       messages.push(
         { role: 'customer', content: 'Hi, I am looking for flight information' },
-        { role: 'agent', content: 'Hello! I would be happy to help you find the perfect flight. What destination are you interested in?' }
+        {
+          role: 'agent',
+          content:
+            'Hello! I would be happy to help you find the perfect flight. What destination are you interested in?',
+        }
       );
       break;
     case 'price_negotiation':
       messages.push(
         { role: 'customer', content: 'I saw your prices online' },
-        { role: 'agent', content: 'Thank you for considering Arkia! How can I assist you with pricing today?' }
+        {
+          role: 'agent',
+          content: 'Thank you for considering Arkia! How can I assist you with pricing today?',
+        }
       );
       break;
     case 'booking_intent':
       messages.push(
         { role: 'customer', content: 'I am ready to book a trip' },
-        { role: 'agent', content: 'Wonderful! I will help you complete your booking. What would you like to book?' }
+        {
+          role: 'agent',
+          content: 'Wonderful! I will help you complete your booking. What would you like to book?',
+        }
       );
       break;
     case 'support':
@@ -138,7 +148,11 @@ function createConversationHistory(
     case 'complaint':
       messages.push(
         { role: 'customer', content: 'I need to speak to someone about a problem' },
-        { role: 'agent', content: 'I am sorry to hear you had an issue. Please tell me what happened and I will do my best to help.' }
+        {
+          role: 'agent',
+          content:
+            'I am sorry to hear you had an issue. Please tell me what happened and I will do my best to help.',
+        }
       );
       break;
     default:
@@ -178,7 +192,7 @@ export const SALES_DATASET: ConversationExample[] = loadDatasetFromJsonl();
  * ```
  */
 export function getDatasetSubset(indices: number[]): ConversationExample[] {
-  return indices.map(i => SALES_DATASET[i]).filter(Boolean);
+  return indices.map((i) => SALES_DATASET[i]).filter(Boolean);
 }
 
 /**

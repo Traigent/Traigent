@@ -146,11 +146,7 @@ describe('DatasetMismatchError', () => {
   });
 
   it('should create with expected and actual hashes', () => {
-    const error = new DatasetMismatchError(
-      'Dataset hash mismatch',
-      'abc123',
-      'def456'
-    );
+    const error = new DatasetMismatchError('Dataset hash mismatch', 'abc123', 'def456');
 
     expect(error.expectedHash).toBe('abc123');
     expect(error.actualHash).toBe('def456');

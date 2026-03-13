@@ -38,8 +38,7 @@ export const optimizedSupportAgent = optimize({
   },
   evaluation: {
     data: evaluationRows,
-    scoringFunction: (output, expectedOutput) =>
-      exactMatchScore(output.text, expectedOutput),
+    scoringFunction: (output, expectedOutput) => exactMatchScore(output.text, expectedOutput),
     metricFunctions: {
       cost: (output) =>
         output.configUsed.model === 'accurate'

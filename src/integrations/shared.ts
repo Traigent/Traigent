@@ -43,9 +43,7 @@ const FRAMEWORK_PARAM_MAPS: Record<FrameworkTarget, FrameworkOverrideMap> = {
   },
 };
 
-export function getFrameworkOverrides(
-  target: FrameworkTarget,
-): Record<string, unknown> {
+export function getFrameworkOverrides(target: FrameworkTarget): Record<string, unknown> {
   const config = TrialContext.getConfigOrUndefined()?.config;
   if (!config) {
     return {};
@@ -66,12 +64,10 @@ export function getFrameworkOverrides(
 export function estimateModelCostBreakdown(
   model: string,
   inputTokens: number,
-  outputTokens: number,
+  outputTokens: number
 ): { inputCost: number; outputCost: number; totalCost: number } {
   const modelLower = model.toLowerCase();
-  const sortedPrefixes = Object.keys(MODEL_COSTS).sort(
-    (left, right) => right.length - left.length,
-  );
+  const sortedPrefixes = Object.keys(MODEL_COSTS).sort((left, right) => right.length - left.length);
 
   for (const prefix of sortedPrefixes) {
     if (!modelLower.includes(prefix)) {
@@ -100,7 +96,7 @@ export function estimateModelCostBreakdown(
 export function estimateModelCost(
   model: string,
   inputTokens: number,
-  outputTokens: number,
+  outputTokens: number
 ): number {
   return estimateModelCostBreakdown(model, inputTokens, outputTokens).totalCost;
 }
@@ -109,13 +105,13 @@ export function recordProviderUsage(
   model: string,
   inputTokens: number,
   outputTokens: number,
-  latencySeconds: number,
+  latencySeconds: number
 ): void {
   const totalTokens = inputTokens + outputTokens;
   const { inputCost, outputCost, totalCost } = estimateModelCostBreakdown(
     model,
     inputTokens,
-    outputTokens,
+    outputTokens
   );
   recordRuntimeMetrics({
     input_tokens: inputTokens,

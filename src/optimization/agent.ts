@@ -19,11 +19,11 @@ type ContextCustomEvaluator = (context: EvaluationContext) => Metrics | Promise<
 type LegacyCustomEvaluator = (
   agentFn: (input: unknown) => unknown | Promise<unknown>,
   config: TrialConfig['config'],
-  row: unknown,
+  row: unknown
 ) => Metrics | Promise<Metrics>;
 
 function isLegacyCustomEvaluator(
-  customEvaluator: AgentCustomEvaluator | undefined,
+  customEvaluator: AgentCustomEvaluator | undefined
 ): customEvaluator is LegacyCustomEvaluator {
   if (!customEvaluator) {
     return false;
@@ -32,13 +32,13 @@ function isLegacyCustomEvaluator(
 }
 
 function isContextCustomEvaluator(
-  customEvaluator: AgentCustomEvaluator | undefined,
+  customEvaluator: AgentCustomEvaluator | undefined
 ): customEvaluator is ContextCustomEvaluator {
   return Boolean(customEvaluator) && !isLegacyCustomEvaluator(customEvaluator);
 }
 
 export async function resolveEvaluationRows(
-  spec: Pick<NormalizedOptimizationSpec, 'evaluation'>,
+  spec: Pick<NormalizedOptimizationSpec, 'evaluation'>
 ): Promise<readonly unknown[]> {
   if (spec.evaluation?.data) {
     return spec.evaluation.data;
@@ -48,14 +48,11 @@ export async function resolveEvaluationRows(
   }
 
   throw new ValidationError(
-    'optimize() requires evaluation.data or evaluation.loadData for agent optimization.',
+    'optimize() requires evaluation.data or evaluation.loadData for agent optimization.'
   );
 }
 
-function getInputFromRow(
-  row: unknown,
-  inputField: string | undefined,
-): unknown {
+function getInputFromRow(row: unknown, inputField: string | undefined): unknown {
   if (inputField === undefined) {
     if (isPlainObject(row) && 'input' in row) {
       return row['input'];
@@ -64,23 +61,16 @@ function getInputFromRow(
   }
 
   if (!isPlainObject(row) || !(inputField in row)) {
-    throw new ValidationError(
-      `Evaluation row is missing input field "${inputField}".`,
-    );
+    throw new ValidationError(`Evaluation row is missing input field "${inputField}".`);
   }
 
   return row[inputField];
 }
 
-function getExpectedOutputFromRow(
-  row: unknown,
-  expectedField: string | undefined,
-): unknown {
+function getExpectedOutputFromRow(row: unknown, expectedField: string | undefined): unknown {
   if (expectedField !== undefined) {
     if (!isPlainObject(row) || !(expectedField in row)) {
-      throw new ValidationError(
-        `Evaluation row is missing expected field "${expectedField}".`,
-      );
+      throw new ValidationError(`Evaluation row is missing expected field "${expectedField}".`);
     }
     return row[expectedField];
   }
@@ -97,7 +87,7 @@ function getExpectedOutputFromRow(
 
 function getAggregationStrategy(
   aggregation: AggregationStrategy | EvaluationAggregationMap | undefined,
-  metric: string,
+  metric: string
 ): AggregationStrategy {
   if (!aggregation) {
     if (
@@ -121,10 +111,7 @@ function getAggregationStrategy(
   return aggregation[metric] ?? aggregation.default ?? 'mean';
 }
 
-function aggregateValues(
-  values: number[],
-  strategy: AggregationStrategy,
-): number {
+function aggregateValues(values: number[], strategy: AggregationStrategy): number {
   if (values.length === 0) {
     return 0;
   }
@@ -149,10 +136,7 @@ function aggregateValues(
   }
 }
 
-function mergeParameterConfig(
-  args: readonly unknown[],
-  config: TrialConfig['config'],
-): unknown[] {
+function mergeParameterConfig(args: readonly unknown[], config: TrialConfig['config']): unknown[] {
   if (args.length === 0) {
     return [cloneAndFreezePlainValue({ ...config })];
   }
@@ -171,7 +155,7 @@ function mergeParameterConfig(
 
   if (!isPlainObject(currentConfig)) {
     throw new ValidationError(
-      'Parameter injection expects the second argument to be an object config.',
+      'Parameter injection expects the second argument to be an object config.'
     );
   }
 
@@ -187,7 +171,7 @@ export function invokeFunctionWithConfig<T extends AnyFunction>(
   thisArg: unknown,
   args: readonly unknown[],
   config: TrialConfig['config'],
-  injectionMode: InjectionMode,
+  injectionMode: InjectionMode
 ): ReturnType<T> {
   if (injectionMode === 'parameter') {
     return fn.apply(thisArg, mergeParameterConfig(args, config)) as ReturnType<T>;
@@ -199,7 +183,7 @@ export function invokeFunctionWithConfig<T extends AnyFunction>(
 async function mapWithConcurrency<T, U>(
   values: readonly T[],
   concurrency: number,
-  worker: (value: T, index: number) => Promise<U>,
+  worker: (value: T, index: number) => Promise<U>
 ): Promise<U[]> {
   if (values.length === 0) {
     return [];
@@ -216,28 +200,19 @@ async function mapWithConcurrency<T, U>(
   const results = new Array<U>(values.length);
   let nextIndex = 0;
 
-  const runners = Array.from(
-    { length: Math.min(concurrency, values.length) },
-    async () => {
-      while (nextIndex < values.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        results[currentIndex] = await worker(
-          values[currentIndex]!,
-          currentIndex,
-        );
-      }
-    },
-  );
+  const runners = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(values[currentIndex]!, currentIndex);
+    }
+  });
 
   await Promise.all(runners);
   return results;
 }
 
-function selectRows(
-  rows: readonly unknown[],
-  trialConfig: TrialConfig,
-): readonly unknown[] {
+function selectRows(rows: readonly unknown[], trialConfig: TrialConfig): readonly unknown[] {
   if (trialConfig.dataset_subset.inline_rows) {
     return trialConfig.dataset_subset.inline_rows;
   }
@@ -254,18 +229,12 @@ function getPrimaryObjectiveMetric(spec: NormalizedOptimizationSpec): string {
   return spec.objectives[0]?.metric ?? 'accuracy';
 }
 
-function ensureExpectedOutputIfNeeded(
-  row: unknown,
-  spec: NormalizedOptimizationSpec,
-): unknown {
-  const expectedOutput = getExpectedOutputFromRow(
-    row,
-    spec.evaluation?.expectedField,
-  );
+function ensureExpectedOutputIfNeeded(row: unknown, spec: NormalizedOptimizationSpec): unknown {
+  const expectedOutput = getExpectedOutputFromRow(row, spec.evaluation?.expectedField);
 
   if (expectedOutput === undefined && spec.evaluation?.scoringFunction) {
     throw new ValidationError(
-      'Evaluation rows must include an expected output field for the configured evaluator.',
+      'Evaluation rows must include an expected output field for the configured evaluator.'
     );
   }
 
@@ -277,7 +246,7 @@ async function evaluateExample(
   row: unknown,
   output: unknown,
   runtimeMetrics: Metrics,
-  config: TrialConfig['config'],
+  config: TrialConfig['config']
 ): Promise<Metrics> {
   const expectedOutput = ensureExpectedOutputIfNeeded(row, spec);
 
@@ -303,7 +272,7 @@ async function evaluateExample(
       output,
       expectedOutput,
       runtimeMetrics,
-      row,
+      row
     );
   }
 
@@ -321,7 +290,7 @@ async function evaluateExample(
 
 function aggregateMetrics(
   spec: NormalizedOptimizationSpec,
-  exampleMetrics: readonly Metrics[],
+  exampleMetrics: readonly Metrics[]
 ): Metrics {
   const aggregated: Metrics = {};
   const metricNames = new Set<string>();
@@ -344,105 +313,88 @@ function aggregateMetrics(
 
     aggregated[metricName] = aggregateValues(
       values,
-      getAggregationStrategy(spec.evaluation?.aggregation, metricName),
+      getAggregationStrategy(spec.evaluation?.aggregation, metricName)
     );
   }
 
   return aggregated;
 }
 
-function isObjectiveMetricSatisfied(
-  metrics: Metrics,
-  metricName: string,
-): boolean {
+function isObjectiveMetricSatisfied(metrics: Metrics, metricName: string): boolean {
   return typeof metrics[metricName] === 'number' && Number.isFinite(metrics[metricName]);
 }
 
-function validateObjectiveMetrics(
-  spec: NormalizedOptimizationSpec,
-  metrics: Metrics,
-): void {
+function validateObjectiveMetrics(spec: NormalizedOptimizationSpec, metrics: Metrics): void {
   for (const objective of spec.objectives) {
     if (!isObjectiveMetricSatisfied(metrics, objective.metric)) {
       throw new ValidationError(
-        `Agent evaluation did not produce numeric metric "${objective.metric}".`,
+        `Agent evaluation did not produce numeric metric "${objective.metric}".`
       );
     }
   }
 }
 
-function shouldCollectMetricSamples(
-  spec: NormalizedOptimizationSpec,
-): boolean {
+function shouldCollectMetricSamples(spec: NormalizedOptimizationSpec): boolean {
   return spec.promotionPolicy !== undefined;
 }
 
 export function createAgentTrialFunction<T extends AnyFunction>(
   agentFn: T,
   spec: NormalizedOptimizationSpec,
-  rows: readonly unknown[],
+  rows: readonly unknown[]
 ): (trialConfig: TrialConfig) => Promise<NativeTrialFunctionResult> {
   return async function runAgentTrial(
-    trialConfig: TrialConfig,
+    trialConfig: TrialConfig
   ): Promise<NativeTrialFunctionResult> {
     const selectedRows = selectRows(rows, trialConfig);
     const exampleMetrics = await mapWithConcurrency(
       selectedRows,
       spec.execution.exampleConcurrency,
       async (row) => {
-      const agentInput = getInputFromRow(row, spec.evaluation?.inputField);
-      const startedAt = Date.now();
-      const customEvaluator = spec.evaluation?.customEvaluator;
-      const runAgentWithConfig = (input: unknown): unknown | Promise<unknown> =>
-        invokeFunctionWithConfig(
-          agentFn,
-          undefined,
-          [input],
-          trialConfig.config,
-          spec.injection.mode,
-        );
-
-      if (isLegacyCustomEvaluator(customEvaluator)) {
-        const { result: metricsResult, metrics: collectedMetrics } =
-          await withRuntimeMetricsCollector(async () =>
-            customEvaluator(
-              runAgentWithConfig,
-              { ...trialConfig.config },
-              row,
-            ),
+        const agentInput = getInputFromRow(row, spec.evaluation?.inputField);
+        const startedAt = Date.now();
+        const customEvaluator = spec.evaluation?.customEvaluator;
+        const runAgentWithConfig = (input: unknown): unknown | Promise<unknown> =>
+          invokeFunctionWithConfig(
+            agentFn,
+            undefined,
+            [input],
+            trialConfig.config,
+            spec.injection.mode
           );
 
-        const metrics: Metrics = {
-          ...collectedMetrics,
-          ...((metricsResult ?? {}) as Metrics),
-        };
+        if (isLegacyCustomEvaluator(customEvaluator)) {
+          const { result: metricsResult, metrics: collectedMetrics } =
+            await withRuntimeMetricsCollector(async () =>
+              customEvaluator(runAgentWithConfig, { ...trialConfig.config }, row)
+            );
 
-        if (typeof metrics['latency'] !== 'number') {
-          metrics['latency'] = (Date.now() - startedAt) / 1000;
+          const metrics: Metrics = {
+            ...collectedMetrics,
+            ...((metricsResult ?? {}) as Metrics),
+          };
+
+          if (typeof metrics['latency'] !== 'number') {
+            metrics['latency'] = (Date.now() - startedAt) / 1000;
+          }
+
+          return metrics;
         }
 
-        return metrics;
+        const { result: output, metrics: collectedMetrics } = await withRuntimeMetricsCollector(
+          async () => runAgentWithConfig(agentInput)
+        );
+
+        const runtimeMetrics: Metrics = {
+          ...collectedMetrics,
+          latency:
+            typeof collectedMetrics['latency'] === 'number'
+              ? (collectedMetrics['latency'] as number)
+              : (Date.now() - startedAt) / 1000,
+        };
+
+        return evaluateExample(spec, row, output, runtimeMetrics, trialConfig.config);
       }
-
-      const { result: output, metrics: collectedMetrics } =
-        await withRuntimeMetricsCollector(async () => runAgentWithConfig(agentInput));
-
-      const runtimeMetrics: Metrics = {
-        ...collectedMetrics,
-        latency:
-          typeof collectedMetrics['latency'] === 'number'
-            ? (collectedMetrics['latency'] as number)
-            : (Date.now() - startedAt) / 1000,
-      };
-
-      return evaluateExample(
-        spec,
-        row,
-        output,
-        runtimeMetrics,
-        trialConfig.config,
-      );
-    },
     );
 
     const aggregatedMetrics = aggregateMetrics(spec, exampleMetrics);

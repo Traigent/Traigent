@@ -5,15 +5,9 @@ import * as t from '@babel/types';
 
 import { ValidationError } from '../core/errors.js';
 import { getTrialParam } from '../core/context.js';
-import {
-  type FrameworkTarget,
-  type SeamlessResolution,
-} from '../optimization/types.js';
+import { type FrameworkTarget, type SeamlessResolution } from '../optimization/types.js';
 import { resolveRegisteredFrameworkTargets } from '../integrations/registry.js';
-import {
-  transformSeamlessFunctionPath,
-  type SeamlessDiagnostic,
-} from './transform.js';
+import { transformSeamlessFunctionPath, type SeamlessDiagnostic } from './transform.js';
 
 const ALLOWED_GLOBAL_IDENTIFIERS = new Set([
   'Array',
@@ -36,8 +30,7 @@ const ALLOWED_GLOBAL_IDENTIFIERS = new Set([
 type AnyFunction = (...args: any[]) => any;
 const traverse = traverseModule.default ?? traverseModule;
 const generate = generatorModule.default ?? generatorModule;
-const RUNTIME_SEAMLESS_OPT_IN_ENV =
-  'TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS';
+const RUNTIME_SEAMLESS_OPT_IN_ENV = 'TRAIGENT_ENABLE_EXPERIMENTAL_RUNTIME_SEAMLESS';
 
 export interface ResolvedSeamlessFunction<T extends AnyFunction> {
   fn: T;
@@ -50,9 +43,7 @@ function isAlreadyTransformed(fn: AnyFunction): boolean {
 }
 
 function collectFreeIdentifiers(
-  fnPath:
-    | NodePath<t.FunctionExpression>
-    | NodePath<t.FunctionDeclaration>,
+  fnPath: NodePath<t.FunctionExpression> | NodePath<t.FunctionDeclaration>
 ): string[] {
   const free = new Set<string>();
 
@@ -92,10 +83,7 @@ function createFunctionFromSource<T extends AnyFunction>(code: string): T {
   // local functions after AST-based rewrite validation. It is not intended as a
   // sandbox for untrusted code; prefer the codemod or build-time plugin in any
   // environment where the function source is not fully trusted.
-  return new Function(
-    'getTrialParam',
-    `return (${code});`,
-  )(getTrialParam) as T;
+  return new Function('getTrialParam', `return (${code});`)(getTrialParam) as T;
 }
 
 function isRuntimeSeamlessOptedIn(): boolean {
@@ -106,7 +94,7 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
   fn: T,
   configKeys: readonly string[],
   frameworkTargets: readonly FrameworkTarget[] | undefined,
-  autoOverrideFrameworks: boolean,
+  autoOverrideFrameworks: boolean
 ): ResolvedSeamlessFunction<T> {
   const resolvedTargets = autoOverrideFrameworks
     ? resolveRegisteredFrameworkTargets(frameworkTargets)
@@ -132,8 +120,7 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
       fn,
       resolution: {
         path: 'pretransformed',
-        reason:
-          'Using a pre-transformed seamless function (codemod or build-time rewrite).',
+        reason: 'Using a pre-transformed seamless function (codemod or build-time rewrite).',
         experimental: false,
       },
     };
@@ -174,7 +161,7 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
 
       if (initPath.isArrowFunctionExpression()) {
         throw new ValidationError(
-          'Experimental runtime seamless rewriting does not support arrow functions. Use `traigent migrate seamless` or the Babel plugin instead.',
+          'Experimental runtime seamless rewriting does not support arrow functions. Use `traigent migrate seamless` or the Babel plugin instead.'
         );
       }
 
@@ -184,16 +171,14 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
         new Set(configKeys),
         'getTrialParam',
         '<runtime>',
-        diagnostics,
+        diagnostics
       );
       const freeIdentifiers = collectFreeIdentifiers(
-        initPath as unknown as
-          | NodePath<t.FunctionExpression>
-          | NodePath<t.FunctionDeclaration>,
+        initPath as unknown as NodePath<t.FunctionExpression> | NodePath<t.FunctionDeclaration>
       );
       if (freeIdentifiers.length > 0) {
         throw new ValidationError(
-          `Experimental runtime seamless rewriting only supports self-contained functions. Unsupported free identifiers: ${freeIdentifiers.join(', ')}.`,
+          `Experimental runtime seamless rewriting only supports self-contained functions. Unsupported free identifiers: ${freeIdentifiers.join(', ')}.`
         );
       }
 
@@ -204,13 +189,13 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
 
   if (!transformedCode || rewrittenCount === 0) {
     throw new ValidationError(
-      'Seamless injection requires a wrapped framework target or transformed tuned-variable function. Run `traigent migrate seamless` or use the Babel plugin for non-framework tuned variables.',
+      'Seamless injection requires a wrapped framework target or transformed tuned-variable function. Run `traigent migrate seamless` or use the Babel plugin for non-framework tuned variables.'
     );
   }
 
   if (!isRuntimeSeamlessOptedIn()) {
     throw new ValidationError(
-      `Experimental runtime seamless rewriting is disabled by default. Set ${RUNTIME_SEAMLESS_OPT_IN_ENV}=1 only for trusted local code, or use \`traigent migrate seamless\` / the Babel plugin instead.`,
+      `Experimental runtime seamless rewriting is disabled by default. Set ${RUNTIME_SEAMLESS_OPT_IN_ENV}=1 only for trusted local code, or use \`traigent migrate seamless\` / the Babel plugin instead.`
     );
   }
 
@@ -218,8 +203,7 @@ export function resolveSeamlessFunction<T extends AnyFunction>(
     fn: createFunctionFromSource<T>(transformedCode),
     resolution: {
       path: 'runtime',
-      reason:
-        'Using experimental runtime seamless rewriting for a self-contained function.',
+      reason: 'Using experimental runtime seamless rewriting for a self-contained function.',
       experimental: true,
     },
   };

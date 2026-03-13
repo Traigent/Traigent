@@ -13,27 +13,22 @@ import {
 
 export function getObjectiveMetric(
   trial: OptimizationTrialRecord,
-  objective: NormalizedObjectiveDefinition,
+  objective: NormalizedObjectiveDefinition
 ): number {
   const value = trial.metrics[objective.metric];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new ValidationError(
-      `Trial "${trial.trialId}" is missing numeric metric "${objective.metric}".`,
+      `Trial "${trial.trialId}" is missing numeric metric "${objective.metric}".`
     );
   }
   return value;
 }
 
-function objectiveScoreValue(
-  value: number,
-  objective: NormalizedObjectiveDefinition,
-): number {
+function objectiveScoreValue(value: number, objective: NormalizedObjectiveDefinition): number {
   if (objective.direction === 'band') {
     const band = objective.band;
     if (!band) {
-      throw new ValidationError(
-        `Objective "${objective.metric}" is missing band metadata.`,
-      );
+      throw new ValidationError(`Objective "${objective.metric}" is missing band metadata.`);
     }
     if (value < band.low) {
       return -(band.low - value);
@@ -51,14 +46,12 @@ function compareObjectiveWithTolerance(
   candidateValue: number,
   incumbentValue: number,
   objective: NormalizedObjectiveDefinition,
-  epsilon: number,
+  epsilon: number
 ): -1 | 0 | 1 {
   if (objective.direction === 'band') {
     const band = objective.band;
     if (!band) {
-      throw new ValidationError(
-        `Objective "${objective.metric}" is missing band metadata.`,
-      );
+      throw new ValidationError(`Objective "${objective.metric}" is missing band metadata.`);
     }
     const candidateDeviation =
       candidateValue < band.low
@@ -105,7 +98,7 @@ function compareTieBreakerMetric(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   metric: string,
-  direction: 'maximize' | 'minimize',
+  direction: 'maximize' | 'minimize'
 ): -1 | 0 | 1 {
   const candidateValue = candidate.metrics[metric];
   const incumbentValue = incumbent.metrics[metric];
@@ -141,13 +134,13 @@ function compareTrialsWithPromotionPolicy(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   objectives: readonly NormalizedObjectiveDefinition[],
-  policy: TvlPromotionPolicy,
+  policy: TvlPromotionPolicy
 ): -1 | 0 | 1 {
   const statisticalComparison = compareTrialsWithStatisticalPromotion(
     candidate,
     incumbent,
     objectives,
-    policy,
+    policy
   );
   if (statisticalComparison !== undefined) {
     return statisticalComparison;
@@ -162,7 +155,7 @@ function compareTrialsWithPromotionPolicy(
       getObjectiveMetric(candidate, objective),
       getObjectiveMetric(incumbent, objective),
       objective,
-      epsilon,
+      epsilon
     );
     if (comparison > 0) {
       candidateBetter = true;
@@ -180,12 +173,7 @@ function compareTrialsWithPromotionPolicy(
 
   if (policy.tieBreakers) {
     for (const [metric, direction] of Object.entries(policy.tieBreakers)) {
-      const comparison = compareTieBreakerMetric(
-        candidate,
-        incumbent,
-        metric,
-        direction,
-      );
+      const comparison = compareTieBreakerMetric(candidate, incumbent, metric, direction);
       if (comparison !== 0) {
         return comparison;
       }
@@ -199,7 +187,7 @@ function compareTrialsWithPromotionPolicy(
 export function selectBestTrialWithPromotionDecision(
   trials: OptimizationTrialRecord[],
   objectives: readonly NormalizedObjectiveDefinition[],
-  promotionPolicy?: TvlPromotionPolicy,
+  promotionPolicy?: TvlPromotionPolicy
 ): { bestTrial: OptimizationTrialRecord | null; promotionDecision?: PromotionDecision } {
   const completedTrials = getCompletedTrials(trials);
   if (completedTrials.length === 0) {
@@ -217,27 +205,15 @@ export function selectBestTrialWithPromotionDecision(
     bestTrial,
     undefined,
     objectives,
-    promotionPolicy,
+    promotionPolicy
   );
 
   for (const candidate of completedTrials.slice(1)) {
-    const decision = buildPromotionDecision(
-      candidate,
-      bestTrial,
-      objectives,
-      promotionPolicy,
-    );
+    const decision = buildPromotionDecision(candidate, bestTrial, objectives, promotionPolicy);
     if (decision) {
       candidate.promotionDecision = decision;
     }
-    if (
-      compareTrialsWithPromotionPolicy(
-        candidate,
-        bestTrial,
-        objectives,
-        promotionPolicy,
-      ) > 0
-    ) {
+    if (compareTrialsWithPromotionPolicy(candidate, bestTrial, objectives, promotionPolicy) > 0) {
       bestTrial = candidate;
       lastDecision = decision;
     }
@@ -251,7 +227,7 @@ export function selectBestTrialWithPromotionDecision(
 
 export function computeSearchScore(
   metrics: OptimizationTrialRecord['metrics'],
-  objectives: readonly NormalizedObjectiveDefinition[],
+  objectives: readonly NormalizedObjectiveDefinition[]
 ): number {
   let weightedTotal = 0;
   let totalWeight = 0;
@@ -260,7 +236,7 @@ export function computeSearchScore(
     const value = metrics[objective.metric];
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw new ValidationError(
-        `Trial metrics are missing numeric objective "${objective.metric}".`,
+        `Trial metrics are missing numeric objective "${objective.metric}".`
       );
     }
     const signedValue = objectiveScoreValue(value, objective);
@@ -274,32 +250,28 @@ export function computeSearchScore(
 export function selectBestTrial(
   trials: OptimizationTrialRecord[],
   objectives: readonly NormalizedObjectiveDefinition[],
-  promotionPolicy?: TvlPromotionPolicy,
+  promotionPolicy?: TvlPromotionPolicy
 ): OptimizationTrialRecord | null {
   const completedTrials = getCompletedTrials(trials);
   if (completedTrials.length === 0) return null;
 
   if (promotionPolicy) {
-    return selectBestTrialWithPromotionDecision(
-      trials,
-      objectives,
-      promotionPolicy,
-    ).bestTrial;
+    return selectBestTrialWithPromotionDecision(trials, objectives, promotionPolicy).bestTrial;
   }
 
   const ranges = objectives.map((objective) => {
     const values = completedTrials.map((trial) =>
-      objectiveScoreValue(getObjectiveMetric(trial, objective), objective),
+      objectiveScoreValue(getObjectiveMetric(trial, objective), objective)
     );
     return {
       objective,
       min: values.reduce(
         (currentMinimum, value) => Math.min(currentMinimum, value),
-        Number.POSITIVE_INFINITY,
+        Number.POSITIVE_INFINITY
       ),
       max: values.reduce(
         (currentMaximum, value) => Math.max(currentMaximum, value),
-        Number.NEGATIVE_INFINITY,
+        Number.NEGATIVE_INFINITY
       ),
     };
   });
@@ -314,7 +286,7 @@ export function selectBestTrial(
     for (const range of ranges) {
       const value = objectiveScoreValue(
         getObjectiveMetric(trial, range.objective),
-        range.objective,
+        range.objective
       );
       let normalized = 1;
 
@@ -344,7 +316,7 @@ export function hasPlateau(
         window: number;
         minImprovement: number;
       }
-    | undefined,
+    | undefined
 ): boolean {
   const completedTrials = getCompletedTrials(trials);
   if (!plateau || completedTrials.length <= plateau.window) {

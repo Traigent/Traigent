@@ -349,6 +349,7 @@ export const CLIRequestSchema = z.object({
 ```
 
 **NDJSON Request Example:**
+
 ```json
 {
   "version": "1.0",
@@ -383,11 +384,13 @@ export const CLIRequestSchema = z.object({
 async function processRequest(line: string, trialFn: UserTrialFunction): Promise<void> {
   const lineBytes = Buffer.byteLength(line, 'utf8');
   if (lineBytes > MAX_PAYLOAD_SIZE) {
-    sendResponse(createErrorResponse('unknown', 'Payload too large', {errorCode: 'PAYLOAD_TOO_LARGE'}));
+    sendResponse(
+      createErrorResponse('unknown', 'Payload too large', { errorCode: 'PAYLOAD_TOO_LARGE' })
+    );
     return;
   }
 
-  const request = parseRequest(line);  // Zod validation
+  const request = parseRequest(line); // Zod validation
 
   switch (request.action) {
     case 'run_trial':
@@ -497,9 +500,9 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
 export async function realLLMCall(config: LLMConfig): Promise<LLMResponse> {
   const response = await fetch('https://api.groq.com/...', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
     body: JSON.stringify({
-      model: config.model,  // "groq/llama-3.1-8b-instant"
+      model: config.model, // "groq/llama-3.1-8b-instant"
       temperature: config.temperature,
       messages: config.messages,
     }),
@@ -531,13 +534,14 @@ function sendResponse(response: CLIResponse): void {
   const ok = process.stdout.write(line);
   if (!ok) {
     draining = true;
-    rl?.pause();  // Backpressure
+    rl?.pause(); // Backpressure
     process.stdout.once('drain', flushWriteQueue);
   }
 }
 ```
 
 **NDJSON Response Example:**
+
 ```json
 {
   "version": "1.1",
@@ -646,19 +650,19 @@ User Script (run_with_python.py:285)
 ```typescript
 // Defined in: src/dtos/trial.ts
 interface TrialConfig {
-  trial_id: string;           // "js_trial_4ffe457b"
-  trial_number: number;       // 1
-  experiment_run_id: string;  // "uuid"
+  trial_id: string; // "js_trial_4ffe457b"
+  trial_number: number; // 1
+  experiment_run_id: string; // "uuid"
   config: {
-    model: string;            // "groq/llama-3.1-8b-instant"
-    temperature: number;      // 0.0
-    system_prompt: string;    // "consultative"
-    memory_turns: number;     // 2
-    tool_set: string;         // "enhanced"
+    model: string; // "groq/llama-3.1-8b-instant"
+    temperature: number; // 0.0
+    system_prompt: string; // "consultative"
+    memory_turns: number; // 2
+    tool_set: string; // "enhanced"
   };
   dataset_subset: {
-    indices: number[];        // [0, 1, 2, ..., 49]
-    total: number;            // 50
+    indices: number[]; // [0, 1, 2, ..., 49]
+    total: number; // 50
   };
 }
 ```
@@ -699,16 +703,16 @@ class EvaluationResult:
 
 ## Error Codes Reference
 
-| Code | Location | Meaning |
-|------|----------|---------|
-| `TIMEOUT` | [runner.ts](../src/cli/runner.ts) | Trial exceeded timeout_ms |
-| `VALIDATION_ERROR` | [runner.ts](../src/cli/runner.ts) | Zod schema validation failed |
-| `BUSY` | [runner.ts](../src/cli/runner.ts) | Another trial already running |
-| `CANCELLED` | [runner.ts](../src/cli/runner.ts) | Trial cancelled via cancel action |
-| `USER_FUNCTION_ERROR` | [runner.ts](../src/cli/runner.ts) | User's runTrial() threw |
-| `MODULE_LOAD_ERROR` | [runner.ts](../src/cli/runner.ts) | Failed to load JS module |
-| `PROTOCOL_ERROR` | [protocol.ts](../src/cli/protocol.ts) | NDJSON parse/validation failed |
-| `PAYLOAD_TOO_LARGE` | [runner.ts](../src/cli/runner.ts) | Request > 10MB |
+| Code                  | Location                              | Meaning                           |
+| --------------------- | ------------------------------------- | --------------------------------- |
+| `TIMEOUT`             | [runner.ts](../src/cli/runner.ts)     | Trial exceeded timeout_ms         |
+| `VALIDATION_ERROR`    | [runner.ts](../src/cli/runner.ts)     | Zod schema validation failed      |
+| `BUSY`                | [runner.ts](../src/cli/runner.ts)     | Another trial already running     |
+| `CANCELLED`           | [runner.ts](../src/cli/runner.ts)     | Trial cancelled via cancel action |
+| `USER_FUNCTION_ERROR` | [runner.ts](../src/cli/runner.ts)     | User's runTrial() threw           |
+| `MODULE_LOAD_ERROR`   | [runner.ts](../src/cli/runner.ts)     | Failed to load JS module          |
+| `PROTOCOL_ERROR`      | [protocol.ts](../src/cli/protocol.ts) | NDJSON parse/validation failed    |
+| `PAYLOAD_TOO_LARGE`   | [runner.ts](../src/cli/runner.ts)     | Request > 10MB                    |
 
 ---
 
@@ -716,30 +720,30 @@ class EvaluationResult:
 
 ### Python SDK (Traigent)
 
-| File | Purpose |
-|------|---------|
-| [traigent/api/decorators.py](../../../Traigent/traigent/api/decorators.py) | `@traigent.optimize` decorator |
-| [traigent/core/optimized_function.py](../../../Traigent/traigent/core/optimized_function.py) | `OptimizedFunction` class |
-| [traigent/core/orchestrator.py](../../../Traigent/traigent/core/orchestrator.py) | Trial loop orchestration |
-| [traigent/evaluators/js_evaluator.py](../../../Traigent/traigent/evaluators/js_evaluator.py) | JS runtime evaluator |
-| [traigent/bridges/js_bridge.py](../../../Traigent/traigent/bridges/js_bridge.py) | Node.js subprocess manager |
-| [traigent/bridges/process_pool.py](../../../Traigent/traigent/bridges/process_pool.py) | Worker pool for parallelism |
+| File                                                                                         | Purpose                        |
+| -------------------------------------------------------------------------------------------- | ------------------------------ |
+| [traigent/api/decorators.py](../../../Traigent/traigent/api/decorators.py)                   | `@traigent.optimize` decorator |
+| [traigent/core/optimized_function.py](../../../Traigent/traigent/core/optimized_function.py) | `OptimizedFunction` class      |
+| [traigent/core/orchestrator.py](../../../Traigent/traigent/core/orchestrator.py)             | Trial loop orchestration       |
+| [traigent/evaluators/js_evaluator.py](../../../Traigent/traigent/evaluators/js_evaluator.py) | JS runtime evaluator           |
+| [traigent/bridges/js_bridge.py](../../../Traigent/traigent/bridges/js_bridge.py)             | Node.js subprocess manager     |
+| [traigent/bridges/process_pool.py](../../../Traigent/traigent/bridges/process_pool.py)       | Worker pool for parallelism    |
 
 ### TypeScript SDK (traigent-js)
 
-| File | Purpose |
-|------|---------|
-| [src/cli/runner.ts](../src/cli/runner.ts) | CLI entry point, request handling |
-| [src/cli/protocol.ts](../src/cli/protocol.ts) | NDJSON schema definitions |
-| [src/core/context.ts](../src/core/context.ts) | Trial context (AsyncLocalStorage) |
-| [src/dtos/trial.ts](../src/dtos/trial.ts) | Trial config/result types |
-| [src/dtos/measures.ts](../src/dtos/measures.ts) | Metric sanitization |
+| File                                            | Purpose                           |
+| ----------------------------------------------- | --------------------------------- |
+| [src/cli/runner.ts](../src/cli/runner.ts)       | CLI entry point, request handling |
+| [src/cli/protocol.ts](../src/cli/protocol.ts)   | NDJSON schema definitions         |
+| [src/core/context.ts](../src/core/context.ts)   | Trial context (AsyncLocalStorage) |
+| [src/dtos/trial.ts](../src/dtos/trial.ts)       | Trial config/result types         |
+| [src/dtos/measures.ts](../src/dtos/measures.ts) | Metric sanitization               |
 
 ### Demo Application
 
-| File | Purpose |
-|------|---------|
+| File                                                                                        | Purpose                    |
+| ------------------------------------------------------------------------------------------- | -------------------------- |
 | [demos/arkia-sales-agent/run_with_python.py](../demos/arkia-sales-agent/run_with_python.py) | Python orchestrator script |
-| [demos/arkia-sales-agent/src/trial.ts](../demos/arkia-sales-agent/src/trial.ts) | Trial function entry |
-| [demos/arkia-sales-agent/src/agent.ts](../demos/arkia-sales-agent/src/agent.ts) | Agent logic (mock/real) |
-| [demos/arkia-sales-agent/src/real-llm.ts](../demos/arkia-sales-agent/src/real-llm.ts) | Real LLM API calls |
+| [demos/arkia-sales-agent/src/trial.ts](../demos/arkia-sales-agent/src/trial.ts)             | Trial function entry       |
+| [demos/arkia-sales-agent/src/agent.ts](../demos/arkia-sales-agent/src/agent.ts)             | Agent logic (mock/real)    |
+| [demos/arkia-sales-agent/src/real-llm.ts](../demos/arkia-sales-agent/src/real-llm.ts)       | Real LLM API calls         |

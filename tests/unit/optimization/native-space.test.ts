@@ -20,7 +20,7 @@ import {
 import type { NormalizedOptimizationSpec } from '../../../src/optimization/types.js';
 
 function createNormalizedSpec(
-  overrides: Partial<NormalizedOptimizationSpec> = {},
+  overrides: Partial<NormalizedOptimizationSpec> = {}
 ): NormalizedOptimizationSpec {
   return {
     configurationSpace: {
@@ -81,7 +81,7 @@ describe('native-space helpers', () => {
     });
     expect(stableJson({ b: 2, a: 1 })).toBe('{"a":1,"b":2}');
     expect(configKey({ retries: 2, model: 'fast' })).toBe(
-      stableJson({ retries: 2, model: 'fast' }),
+      stableJson({ retries: 2, model: 'fast' })
     );
     expect(hashJson({ a: 1, b: 2 })).toBe(hashJson({ b: 2, a: 1 }));
   });
@@ -93,9 +93,11 @@ describe('native-space helpers', () => {
       },
     });
 
-    expect(getOrderedParameterEntries(spec.configurationSpace).map(([name]) => name)).toEqual(
-      ['retries', 'temperature', 'model'],
-    );
+    expect(getOrderedParameterEntries(spec.configurationSpace).map(([name]) => name)).toEqual([
+      'retries',
+      'temperature',
+      'model',
+    ]);
     expect(applyDefaultConfig(spec, { model: 'best' })).toEqual({
       retries: 3,
       model: 'best',
@@ -110,7 +112,7 @@ describe('native-space helpers', () => {
         max: 5,
         step: 2,
         scale: 'linear',
-      }),
+      })
     ).toEqual([1, 3, 5]);
 
     expect(
@@ -120,7 +122,7 @@ describe('native-space helpers', () => {
         max: 20,
         step: 2,
         scale: 'log',
-      }),
+      })
     ).toEqual([1, 2, 4, 8, 16, 20]);
 
     expect(() =>
@@ -130,7 +132,7 @@ describe('native-space helpers', () => {
         max: 20,
         step: 1,
         scale: 'log',
-      }),
+      })
     ).toThrowError(ValidationError);
   });
 
@@ -142,7 +144,7 @@ describe('native-space helpers', () => {
         max: 1,
         step: 0.5,
         scale: 'linear',
-      }),
+      })
     ).toEqual([0, 0.5, 1]);
 
     expect(
@@ -152,7 +154,7 @@ describe('native-space helpers', () => {
         max: 1,
         step: 10,
         scale: 'log',
-      }),
+      })
     ).toEqual([0.001, 0.01, 0.1, 1]);
 
     expect(() =>
@@ -161,7 +163,7 @@ describe('native-space helpers', () => {
         min: 0,
         max: 1,
         scale: 'linear',
-      }),
+      })
     ).toThrowError(ValidationError);
   });
 
@@ -169,10 +171,7 @@ describe('native-space helpers', () => {
     const spec = createNormalizedSpec();
     const entries = getOrderedParameterEntries(spec.configurationSpace);
 
-    expect(buildDiscreteValues('model', spec.configurationSpace.model!)).toEqual([
-      'fast',
-      'best',
-    ]);
+    expect(buildDiscreteValues('model', spec.configurationSpace.model!)).toEqual(['fast', 'best']);
     expect(discreteCardinality(entries)).toBe(18);
     expect(
       discreteCardinality([
@@ -185,7 +184,7 @@ describe('native-space helpers', () => {
             scale: 'linear',
           },
         ],
-      ]),
+      ])
     ).toBeNull();
   });
 
@@ -195,27 +194,27 @@ describe('native-space helpers', () => {
     const sampledEnum = sampleParameter(
       'model',
       { type: 'enum', values: ['fast', 'best'] },
-      random,
+      random
     );
     const sampledInt = sampleParameter(
       'retries',
       { type: 'int', min: 1, max: 5, step: 2, scale: 'linear' },
-      random,
+      random
     );
     const sampledLogInt = sampleParameter(
       'depth',
       { type: 'int', min: 1, max: 64, scale: 'log' },
-      random,
+      random
     );
     const sampledFloat = sampleParameter(
       'temperature',
       { type: 'float', min: 0, max: 1, scale: 'linear' },
-      random,
+      random
     );
     const sampledLogFloat = sampleParameter(
       'learning_rate',
       { type: 'float', min: 0.001, max: 1, scale: 'log', step: 10 },
-      random,
+      random
     );
 
     expect(['fast', 'best']).toContain(sampledEnum);
@@ -234,7 +233,7 @@ describe('native-space helpers', () => {
       cartesianProduct([
         ['model', ['fast', 'best']],
         ['retries', [1, 2]],
-      ]),
+      ])
     ).toEqual([
       { model: 'fast', retries: 1 },
       { model: 'fast', retries: 2 },
@@ -245,7 +244,7 @@ describe('native-space helpers', () => {
     const random = new PythonRandom(7);
     const sampled = sampleCandidateConfig(
       getOrderedParameterEntries(createNormalizedSpec().configurationSpace),
-      random,
+      random
     );
 
     expect(sampled.model).toMatch(/fast|best/);
@@ -254,11 +253,8 @@ describe('native-space helpers', () => {
   });
 
   it('rejects unsupported discrete parameter types', () => {
-    expect(() =>
-      buildDiscreteValues(
-        'unsupported',
-        { type: 'custom' } as never,
-      ),
-    ).toThrowError(ValidationError);
+    expect(() => buildDiscreteValues('unsupported', { type: 'custom' } as never)).toThrowError(
+      ValidationError
+    );
   });
 });

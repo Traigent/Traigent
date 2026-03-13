@@ -11,10 +11,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: [
         'src/**/*.d.ts',
-        'src/**/index.ts',  // Re-export files
-        'src/integrations/openai/**',  // Placeholder module
-        'src/integrations/vercel-ai/**',  // Not yet implemented
-        'src/cli/runner.ts',  // CLI entry point with side effects (tested via integration)
+        'src/**/index.ts', // Re-export files
+        'src/integrations/openai/**', // Placeholder module
+        'src/integrations/vercel-ai/**', // Not yet implemented
+        'src/cli/runner.ts', // CLI entry point with side effects (tested via integration)
       ],
       thresholds: {
         lines: 85,

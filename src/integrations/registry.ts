@@ -1,7 +1,4 @@
-import type {
-  FrameworkAutoOverrideStatus,
-  FrameworkTarget,
-} from '../optimization/types.js';
+import type { FrameworkAutoOverrideStatus, FrameworkTarget } from '../optimization/types.js';
 
 const activeFrameworkTargets = new Set<FrameworkTarget>();
 
@@ -10,17 +7,17 @@ export function registerFrameworkTarget(target: FrameworkTarget): void {
 }
 
 export function hasRegisteredFrameworkTarget(
-  targets: readonly FrameworkTarget[] | undefined,
+  targets: readonly FrameworkTarget[] | undefined
 ): boolean {
   return resolveRegisteredFrameworkTargets(targets).length > 0;
 }
 
 export function getRegisteredFrameworkTargets(): FrameworkTarget[] {
-  return [...activeFrameworkTargets].sort();
+  return [...activeFrameworkTargets].sort((left, right) => left.localeCompare(right));
 }
 
 export function resolveRegisteredFrameworkTargets(
-  targets: readonly FrameworkTarget[] | undefined,
+  targets: readonly FrameworkTarget[] | undefined
 ): FrameworkTarget[] {
   if (!targets || targets.length === 0) {
     return getRegisteredFrameworkTargets();
@@ -31,13 +28,11 @@ export function resolveRegisteredFrameworkTargets(
 
 export function describeFrameworkAutoOverride(
   targets: readonly FrameworkTarget[] | undefined,
-  autoOverrideFrameworks = true,
+  autoOverrideFrameworks = true
 ): FrameworkAutoOverrideStatus {
   const activeTargets = getRegisteredFrameworkTargets();
   const requestedTargets = targets ? [...targets] : undefined;
-  const selectedTargets = autoOverrideFrameworks
-    ? resolveRegisteredFrameworkTargets(targets)
-    : [];
+  const selectedTargets = autoOverrideFrameworks ? resolveRegisteredFrameworkTargets(targets) : [];
 
   if (!autoOverrideFrameworks) {
     return {
@@ -46,8 +41,7 @@ export function describeFrameworkAutoOverride(
       activeTargets,
       selectedTargets,
       enabled: false,
-      reason:
-        'Framework auto-override is disabled for this seamless configuration.',
+      reason: 'Framework auto-override is disabled for this seamless configuration.',
     };
   }
 
@@ -58,8 +52,7 @@ export function describeFrameworkAutoOverride(
       activeTargets,
       selectedTargets,
       enabled: false,
-      reason:
-        'No wrapped framework targets are currently registered for seamless interception.',
+      reason: 'No wrapped framework targets are currently registered for seamless interception.',
     };
   }
 
@@ -70,8 +63,7 @@ export function describeFrameworkAutoOverride(
       activeTargets,
       selectedTargets,
       enabled: false,
-      reason:
-        'None of the requested framework targets are currently registered.',
+      reason: 'None of the requested framework targets are currently registered.',
     };
   }
 

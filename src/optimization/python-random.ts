@@ -71,9 +71,7 @@ export class PythonRandom {
     this.state[0] = int32(seed);
     for (let i = 1; i < N; i += 1) {
       const previous = this.state[i - 1]!;
-      this.state[i] = int32(
-        multiply32(previous ^ (previous >>> 30), 1812433253) + i,
-      );
+      this.state[i] = int32(multiply32(previous ^ (previous >>> 30), 1812433253) + i);
     }
     this.index = N;
   }
@@ -88,10 +86,7 @@ export class PythonRandom {
     for (; k > 0; k -= 1) {
       const previous = this.state[i - 1]!;
       this.state[i] = int32(
-        (this.state[i]! ^
-          multiply32(previous ^ (previous >>> 30), 1664525)) +
-          words[j]! +
-          j,
+        (this.state[i]! ^ multiply32(previous ^ (previous >>> 30), 1664525)) + words[j]! + j
       );
       i += 1;
       j += 1;
@@ -108,8 +103,7 @@ export class PythonRandom {
     for (k = N - 1; k > 0; k -= 1) {
       const previous = this.state[i - 1]!;
       this.state[i] = int32(
-        (this.state[i]! ^
-          multiply32(previous ^ (previous >>> 30), 1566083941)) - i,
+        (this.state[i]! ^ multiply32(previous ^ (previous >>> 30), 1566083941)) - i
       );
       i += 1;
 

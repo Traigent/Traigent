@@ -7,33 +7,29 @@ import type {
   SafetyConstraint,
 } from './types.js';
 import type { CandidateConfig } from './native-space.js';
-import {
-  buildPromotionDecision,
-  getPromotionRejectionReason,
-} from './native-promotion.js';
+import { buildPromotionDecision, getPromotionRejectionReason } from './native-promotion.js';
 
 export function constraintName(
   constraint: OptimizationConstraint | SafetyConstraint,
-  fallback: string,
+  fallback: string
 ): string {
   return constraint.name || fallback;
 }
 
 export function constraintRequiresMetrics(
-  constraint: OptimizationConstraint | SafetyConstraint,
+  constraint: OptimizationConstraint | SafetyConstraint
 ): boolean {
   // Prefer an explicit marker when present. Arity is only a convenience
   // fallback for simple callbacks and is fragile with default/rest params.
   return (
-    constraint.length >= 2 ||
-    (constraint as { requiresMetrics?: boolean }).requiresMetrics === true
+    constraint.length >= 2 || (constraint as { requiresMetrics?: boolean }).requiresMetrics === true
   );
 }
 
 export function evaluatePreTrialConstraints(
   spec: NormalizedOptimizationSpec,
   config: CandidateConfig,
-  toErrorMessage: (error: unknown) => string,
+  toErrorMessage: (error: unknown) => string
 ): boolean {
   for (const constraint of spec.constraints) {
     if (constraintRequiresMetrics(constraint)) {
@@ -45,7 +41,7 @@ export function evaluatePreTrialConstraints(
       passed = constraint(config);
     } catch (error) {
       throw new ValidationError(
-        `Constraint "${constraintName(constraint, 'constraint')}" failed during pre-trial validation: ${toErrorMessage(error)}`,
+        `Constraint "${constraintName(constraint, 'constraint')}" failed during pre-trial validation: ${toErrorMessage(error)}`
       );
     }
 
@@ -61,7 +57,7 @@ export function validatePostTrialConstraints(
   spec: NormalizedOptimizationSpec,
   config: CandidateConfig,
   metrics: Metrics,
-  toErrorMessage: (error: unknown) => string,
+  toErrorMessage: (error: unknown) => string
 ): string | undefined {
   for (const constraint of spec.constraints) {
     if (!constraintRequiresMetrics(constraint)) {
@@ -97,21 +93,19 @@ export function validatePostTrialConstraints(
 }
 
 export function getCompletedTrials(
-  trials: readonly OptimizationTrialRecord[],
+  trials: readonly OptimizationTrialRecord[]
 ): OptimizationTrialRecord[] {
   return trials.filter((trial) => trial.status !== 'rejected');
 }
 
-export function applyPostTrialGuards<T extends {
-  status: 'completed' | 'rejected' | 'timeout' | 'error' | 'cancelled';
-  actualCostUsd: number;
-  evaluatedExamples: number;
-  record?: OptimizationTrialRecord;
-}>(
-  spec: NormalizedOptimizationSpec,
-  outcome: T,
-  toErrorMessage: (error: unknown) => string,
-): T {
+export function applyPostTrialGuards<
+  T extends {
+    status: 'completed' | 'rejected' | 'timeout' | 'error' | 'cancelled';
+    actualCostUsd: number;
+    evaluatedExamples: number;
+    record?: OptimizationTrialRecord;
+  },
+>(spec: NormalizedOptimizationSpec, outcome: T, toErrorMessage: (error: unknown) => string): T {
   if (outcome.status !== 'completed' || !outcome.record) {
     return outcome;
   }
@@ -120,13 +114,13 @@ export function applyPostTrialGuards<T extends {
     spec,
     outcome.record.config,
     outcome.record.metrics,
-    toErrorMessage,
+    toErrorMessage
   );
 
   if (!rejectionReason) {
     const promotionRejectionReason = getPromotionRejectionReason(
       outcome.record,
-      spec.promotionPolicy,
+      spec.promotionPolicy
     );
     if (!promotionRejectionReason) {
       return outcome;
@@ -136,7 +130,7 @@ export function applyPostTrialGuards<T extends {
       outcome.record,
       undefined,
       spec.objectives,
-      spec.promotionPolicy,
+      spec.promotionPolicy
     );
 
     return {

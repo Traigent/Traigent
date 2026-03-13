@@ -14,7 +14,7 @@ import type {
 function createTrial(
   trialId: string,
   metrics: OptimizationTrialRecord['metrics'],
-  metadata?: OptimizationTrialRecord['metadata'],
+  metadata?: OptimizationTrialRecord['metadata']
 ): OptimizationTrialRecord {
   return {
     trialId,
@@ -35,12 +35,10 @@ describe('native scoring helpers', () => {
       weight: 1,
     };
 
-    expect(getObjectiveMetric(createTrial('trial-1', { accuracy: 0.9 }), objective)).toBe(
-      0.9,
-    );
+    expect(getObjectiveMetric(createTrial('trial-1', { accuracy: 0.9 }), objective)).toBe(0.9);
 
     expect(() =>
-      getObjectiveMetric(createTrial('trial-2', { accuracy: Number.NaN }), objective),
+      getObjectiveMetric(createTrial('trial-2', { accuracy: Number.NaN }), objective)
     ).toThrow(/missing numeric metric "accuracy"/i);
   });
 
@@ -80,21 +78,18 @@ describe('native scoring helpers', () => {
       weight: 1,
     };
 
-    expect(() =>
-      computeSearchScore({ response_length: 150 }, [missingBand]),
-    ).toThrow(ValidationError);
+    expect(() => computeSearchScore({ response_length: 150 }, [missingBand])).toThrow(
+      ValidationError
+    );
 
     expect(() =>
-      computeSearchScore(
-        { accuracy: 0.9 },
-        [
-          {
-            metric: 'latency',
-            direction: 'minimize',
-            weight: 1,
-          },
-        ],
-      ),
+      computeSearchScore({ accuracy: 0.9 }, [
+        {
+          metric: 'latency',
+          direction: 'minimize',
+          weight: 1,
+        },
+      ])
     ).toThrow(/missing numeric objective "latency"/i);
   });
 
@@ -108,7 +103,7 @@ describe('native scoring helpers', () => {
       [
         { metric: 'accuracy', direction: 'maximize', weight: 1 },
         { metric: 'latency', direction: 'minimize', weight: 1 },
-      ],
+      ]
     );
 
     expect(best?.trialId).toBe('trial-3');
@@ -141,7 +136,7 @@ describe('native scoring helpers', () => {
         tieBreakers: {
           cost: 'minimize',
         },
-      },
+      }
     );
 
     expect(best?.trialId).toBe('trial-2');
@@ -156,8 +151,8 @@ describe('native scoring helpers', () => {
             status: 'rejected',
           },
         ],
-        [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
-      ),
+        [{ metric: 'accuracy', direction: 'maximize', weight: 1 }]
+      )
     ).toBeNull();
   });
 
@@ -172,7 +167,7 @@ describe('native scoring helpers', () => {
         tieBreakers: {
           cost: 'minimize',
         },
-      },
+      }
     );
 
     expect(best?.trialId).toBe('trial-1');
@@ -196,7 +191,7 @@ describe('native scoring helpers', () => {
         tieBreakers: {
           cost: 'minimize',
         },
-      },
+      }
     );
 
     expect(tied?.trialId).toBe('trial-2');
@@ -211,7 +206,7 @@ describe('native scoring helpers', () => {
         tieBreakers: {
           cost: 'minimize',
         },
-      },
+      }
     );
 
     expect(stable?.trialId).toBe('trial-1');
@@ -227,7 +222,7 @@ describe('native scoring helpers', () => {
             metricSamples: {
               accuracy: [0.7, 0.77, 0.82, 0.73, 0.79],
             },
-          },
+          }
         ),
         createTrial(
           'trial-2',
@@ -236,7 +231,7 @@ describe('native scoring helpers', () => {
             metricSamples: {
               accuracy: [0.84, 0.91, 0.93, 0.89, 0.92],
             },
-          },
+          }
         ),
       ],
       [{ metric: 'accuracy', direction: 'maximize', weight: 1 }],
@@ -245,7 +240,7 @@ describe('native scoring helpers', () => {
         minEffect: {
           accuracy: 0.01,
         },
-      },
+      }
     );
 
     expect(best?.trialId).toBe('trial-2');
@@ -261,7 +256,7 @@ describe('native scoring helpers', () => {
             metricSamples: {
               consistency: [0.7, 0.72, 0.68, 0.71, 0.69],
             },
-          },
+          }
         ),
         createTrial(
           'trial-2',
@@ -270,7 +265,7 @@ describe('native scoring helpers', () => {
             metricSamples: {
               consistency: [0.89, 0.9, 0.88, 0.91, 0.89],
             },
-          },
+          }
         ),
       ],
       [
@@ -288,7 +283,7 @@ describe('native scoring helpers', () => {
       ],
       {
         alpha: 0.05,
-      },
+      }
     );
 
     expect(best?.trialId).toBe('trial-2');

@@ -171,11 +171,7 @@ describe('TrialResultPayloadSchema', () => {
 
 describe('createSuccessResult()', () => {
   it('should create a success result with correct structure', () => {
-    const result = createSuccessResult(
-      'trial-123',
-      { accuracy: 0.95, latency: 100 },
-      1.5
-    );
+    const result = createSuccessResult('trial-123', { accuracy: 0.95, latency: 100 }, 1.5);
 
     expect(result).toEqual({
       trial_id: 'trial-123',
@@ -190,12 +186,7 @@ describe('createSuccessResult()', () => {
   });
 
   it('should include metadata when provided', () => {
-    const result = createSuccessResult(
-      'trial-123',
-      { accuracy: 0.95 },
-      1.0,
-      { custom: 'data' }
-    );
+    const result = createSuccessResult('trial-123', { accuracy: 0.95 }, 1.0, { custom: 'data' });
 
     expect(result.metadata).toEqual({ custom: 'data' });
   });
@@ -203,13 +194,7 @@ describe('createSuccessResult()', () => {
 
 describe('createFailureResult()', () => {
   it('should create a failure result with error details', () => {
-    const result = createFailureResult(
-      'trial-123',
-      'Connection timeout',
-      'TIMEOUT',
-      true,
-      0.5
-    );
+    const result = createFailureResult('trial-123', 'Connection timeout', 'TIMEOUT', true, 0.5);
 
     expect(result).toEqual({
       trial_id: 'trial-123',

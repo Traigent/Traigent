@@ -4,10 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  loadTvlSpec,
-  parseTvlSpec,
-} from '../../../src/optimization/tvl.js';
+import { loadTvlSpec, parseTvlSpec } from '../../../src/optimization/tvl.js';
 
 describe('TVL loading', () => {
   it('parses the supported TVL subset into native spec + optimize options', () => {
@@ -98,7 +95,7 @@ promotion_policy:
         'promotion-policy',
         'constraints',
         'exploration-strategy',
-      ]),
+      ])
     );
     expect(parsed.nativeCompatibility.warnings).toEqual(
       expect.arrayContaining([
@@ -107,7 +104,7 @@ promotion_policy:
         expect.stringContaining('promotion-policy:'),
         expect.stringContaining('constraints:'),
         expect.stringContaining('exploration-strategy:'),
-      ]),
+      ])
     );
     expect(parsed.nativeCompatibility.items).toEqual(
       expect.arrayContaining([
@@ -121,7 +118,7 @@ promotion_policy:
           status: 'hybrid-only',
           used: false,
         }),
-      ]),
+      ])
     );
     expect(parsed.spec).toMatchObject({
       configurationSpace: {
@@ -211,7 +208,7 @@ objectives:
   - name: accuracy
     direction: maximize
 `,
-      'utf8',
+      'utf8'
     );
 
     const loaded = await loadTvlSpec({ path });
@@ -231,9 +228,7 @@ objectives:
 `);
 
     expect(parsed.nativeCompatibility.usedFeatures).toEqual(['tvars']);
-    expect(parsed.nativeCompatibility.warnings).toEqual([
-      expect.stringContaining('tvars:'),
-    ]);
+    expect(parsed.nativeCompatibility.warnings).toEqual([expect.stringContaining('tvars:')]);
     expect(parsed.nativeCompatibility.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ feature: 'tvars', used: true }),
@@ -250,7 +245,7 @@ objectives:
           feature: 'exploration-strategy',
           used: false,
         }),
-      ]),
+      ])
     );
   });
 
@@ -409,7 +404,7 @@ objectives:
     direction: maximize
 promotion_policy:
   min_effect: []
-`),
+`)
     ).toThrow(/min_effect must be an object/i);
 
     const metadataOnly = parseTvlSpec(`
@@ -462,7 +457,7 @@ objectives:
     direction: maximize
 promotion_policy:
   dominance: strict_pareto
-`),
+`)
     ).toThrow(/dominance must be "epsilon_pareto"/i);
 
     expect(() =>
@@ -476,7 +471,7 @@ objectives:
     direction: maximize
 promotion_policy:
   chance_constraints: {}
-`),
+`)
     ).toThrow(/chance_constraints must be an array/i);
 
     expect(() =>
@@ -491,7 +486,7 @@ objectives:
 promotion_policy:
   chance_constraints:
     - 1
-`),
+`)
     ).toThrow(/chance_constraints\[0\] must be an object/i);
 
     expect(() =>
@@ -506,7 +501,7 @@ objectives:
 exploration:
   budgets:
     max_trials: 0
-`),
+`)
     ).toThrow(/max_trials must be a positive integer/i);
 
     expect(() =>
@@ -521,7 +516,7 @@ objectives:
 exploration:
   budgets:
     max_wallclock_s: -1
-`),
+`)
     ).toThrow(/max_wallclock_s must be a positive number/i);
 
     expect(() =>
@@ -536,7 +531,7 @@ objectives:
 exploration:
   budgets:
     max_spend_usd: 0
-`),
+`)
     ).toThrow(/max_spend_usd must be a positive number/i);
 
     expect(() =>
@@ -551,7 +546,7 @@ objectives:
 exploration:
   strategy:
     type: annealing
-`),
+`)
     ).toThrow(/not supported by the native JS SDK/i);
 
     expect(() =>
@@ -565,7 +560,7 @@ objectives:
     direction: maximize
 promotion_policy:
   adjust: bonferroni
-`),
+`)
     ).toThrow(/adjust must be "none" or "BH"/i);
 
     expect(() =>
@@ -580,7 +575,7 @@ objectives:
 promotion_policy:
   min_effect:
     accuracy: -0.1
-`),
+`)
     ).toThrow(/min_effect\.accuracy must be non-negative/i);
 
     expect(() =>
@@ -597,7 +592,7 @@ promotion_policy:
     - name: latency
       threshold: 0.1
       confidence: 0
-`),
+`)
     ).toThrow(/confidence must be in \(0, 1\]/i);
 
     expect(() =>
@@ -611,7 +606,7 @@ objectives:
     direction: maximize
 promotion_policy:
   alpha: 1.2
-`),
+`)
     ).toThrow(/promotion_policy\.alpha must be in \(0, 1\)/i);
 
     expect(() =>
@@ -624,7 +619,7 @@ objectives:
   - name: accuracy
     direction: maximize
 promotion_policy: nope
-`),
+`)
     ).toThrow(/promotion_policy must be an object/i);
 
     expect(() =>
@@ -639,10 +634,8 @@ objectives:
 promotion_policy:
   tie_breakers:
     accuracy: lower
-`),
-    ).toThrow(
-      /promotion_policy\.tie_breakers\.accuracy must be "maximize" or "minimize"/i,
-    );
+`)
+    ).toThrow(/promotion_policy\.tie_breakers\.accuracy must be "maximize" or "minimize"/i);
 
     expect(() =>
       parseTvlSpec(`
@@ -655,7 +648,7 @@ objectives:
     direction: maximize
 promotion_policy:
   tie_breakers: []
-`),
+`)
     ).toThrow(/tie_breakers must be an object/i);
   });
 
@@ -671,7 +664,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/non-empty array/i);
 
     expect(() =>
@@ -684,7 +677,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/non-empty string/i);
 
     expect(() =>
@@ -700,7 +693,7 @@ objectives:
       low: 12
       high: 18
       alpha: 1
-`),
+`)
     ).toThrow(/band\.alpha must be in \(0, 1\)/i);
 
     expect(() =>
@@ -713,7 +706,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/must use integers for int variables/i);
 
     expect(() =>
@@ -723,7 +716,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/tvars\[0\]\.name must be a non-empty string/i);
   });
 
@@ -737,7 +730,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/tvars\[0\]\.type must be a non-empty string/i);
 
     expect(() =>
@@ -751,7 +744,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/must be a non-empty array/i);
 
     expect(() =>
@@ -763,7 +756,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/must provide a non-empty values array for callable variables/i);
 
     expect(() =>
@@ -776,7 +769,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/must provide a non-empty values array/i);
 
     expect(() =>
@@ -789,7 +782,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/range must contain exactly two numeric values/i);
 
     expect(() =>
@@ -803,7 +796,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/step must be an integer for int variables/i);
 
     expect(() =>
@@ -819,7 +812,7 @@ objectives:
       target:
         center: 0.8
         tol: 0
-`),
+`)
     ).toThrow(/target\.tol must be positive/i);
 
     expect(() =>
@@ -834,7 +827,7 @@ objectives:
     band:
       low: 0.8
       high: 0.8
-`),
+`)
     ).toThrow(/requires low < high/i);
 
     expect(() =>
@@ -847,7 +840,7 @@ tvars:
 objectives:
   - name: stability
     band: {}
-`),
+`)
     ).toThrow(/must provide target, low\/high, or center\/tol/i);
 
     expect(() =>
@@ -860,7 +853,7 @@ objectives:
   - name: accuracy
     direction: maximize
 constraints: []
-`),
+`)
     ).toThrow(/constraints must be an object/i);
 
     expect(() =>
@@ -874,7 +867,7 @@ objectives:
     direction: maximize
 constraints:
   structural: {}
-`),
+`)
     ).toThrow(/constraints\.structural must be an array/i);
 
     expect(() =>
@@ -888,7 +881,7 @@ objectives:
     direction: maximize
 constraints:
   derived: {}
-`),
+`)
     ).toThrow(/constraints\.derived must be an array/i);
 
     expect(() =>
@@ -903,7 +896,7 @@ objectives:
 constraints:
   structural:
     - id: missing_parts
-`),
+`)
     ).toThrow(/must provide expr, require, or when\/then/i);
 
     expect(() =>
@@ -918,7 +911,7 @@ objectives:
 constraints:
   derived:
     - id: missing_expr
-`),
+`)
     ).toThrow(/must provide expr or require/i);
   });
 
@@ -930,7 +923,7 @@ tvars: nope
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/tvars must be a non-empty array/i);
     expect(() =>
       parseTvlSpec(`
@@ -941,7 +934,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-`),
+`)
     ).toThrow(/not supported by the native JS SDK/i);
     expect(() =>
       parseTvlSpec(`
@@ -953,7 +946,7 @@ objectives:
   - name: stability
     band:
       target: [0.9]
-`),
+`)
     ).toThrow(/must contain exactly two values/i);
     expect(() =>
       parseTvlSpec(`
@@ -967,7 +960,7 @@ objectives:
 exploration:
   strategy:
     type: annealing
-`),
+`)
     ).toThrow(/exploration\.strategy type "annealing" is not supported/i);
     expect(() =>
       parseTvlSpec(`
@@ -980,7 +973,7 @@ objectives:
     direction: maximize
 exploration:
   strategy: pareto_optimal
-`),
+`)
     ).toThrow(/hybrid\/server optimization/i);
     expect(() =>
       parseTvlSpec(`
@@ -994,7 +987,7 @@ objectives:
 exploration:
   strategy:
     type: nsga2
-`),
+`)
     ).toThrow(/hybrid\/server optimization/i);
     expect(() =>
       parseTvlSpec(`
@@ -1010,7 +1003,7 @@ promotion_policy:
     - name: " "
       threshold: 1
       confidence: 0.9
-`),
+`)
     ).toThrow(/chance_constraints\[0\]\.name must be a non-empty string/i);
     expect(() =>
       parseTvlSpec(`
@@ -1024,7 +1017,7 @@ objectives:
 constraints:
   structural:
     - expr: process.exit(1)
-`),
+`)
     ).toThrow(/unsupported syntax "CallExpression"/i);
     expect(() =>
       parseTvlSpec(`
@@ -1038,7 +1031,7 @@ objectives:
 constraints:
   structural:
     - expr: params['constructor']
-`),
+`)
     ).toThrow(/cannot use computed property access/i);
     expect(() =>
       parseTvlSpec(`
@@ -1052,10 +1045,8 @@ objectives:
 constraints:
   structural:
     - expr: ({}).constructor.constructor("return process")()
-`),
+`)
     ).toThrow(/unsupported syntax/i);
-    expect(loadTvlSpec({})).rejects.toThrow(
-      /requires either path or source/i,
-    );
+    expect(loadTvlSpec({})).rejects.toThrow(/requires either path or source/i);
   });
 });

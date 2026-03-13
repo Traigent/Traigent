@@ -22,7 +22,7 @@ function asFiniteNumberArray(value: unknown): number[] | undefined {
     return undefined;
   }
   const numericValues = value.filter(
-    (entry): entry is number => typeof entry === 'number' && Number.isFinite(entry),
+    (entry): entry is number => typeof entry === 'number' && Number.isFinite(entry)
   );
   return numericValues.length === value.length ? numericValues : undefined;
 }
@@ -33,7 +33,7 @@ function isBinarySampleSeries(values: readonly number[]): boolean {
 
 export function getTrialMetricSamples(
   trial: OptimizationTrialRecord,
-  metricName: string,
+  metricName: string
 ): number[] | undefined {
   const metadata = isPlainObject(trial.metadata) ? trial.metadata : undefined;
   const metricSamples = metadata?.['metricSamples'];
@@ -46,7 +46,7 @@ export function getTrialMetricSamples(
 
 function getExplicitChanceConstraintCounts(
   trial: OptimizationTrialRecord,
-  metricName: string,
+  metricName: string
 ): ChanceConstraintCounts | undefined {
   const metadata = isPlainObject(trial.metadata) ? trial.metadata : undefined;
   const rawCounts = metadata?.['chanceConstraintCounts'];
@@ -71,7 +71,7 @@ function getExplicitChanceConstraintCounts(
     successes > trials
   ) {
     throw new ValidationError(
-      `Trial "${trial.trialId}" has invalid chanceConstraintCounts for "${metricName}".`,
+      `Trial "${trial.trialId}" has invalid chanceConstraintCounts for "${metricName}".`
     );
   }
 
@@ -80,7 +80,7 @@ function getExplicitChanceConstraintCounts(
 
 function deriveChanceConstraintCountsFromSamples(
   trial: OptimizationTrialRecord,
-  metricName: string,
+  metricName: string
 ): ChanceConstraintCounts | undefined {
   const samples = getTrialMetricSamples(trial, metricName);
   if (!samples || samples.length === 0) {
@@ -90,16 +90,13 @@ function deriveChanceConstraintCountsFromSamples(
     return undefined;
   }
 
-  const successes = samples.reduce(
-    (sum: number, value: number) => sum + value,
-    0,
-  );
+  const successes = samples.reduce((sum: number, value: number) => sum + value, 0);
   return { successes, trials: samples.length };
 }
 
 function getChanceConstraintCounts(
   trial: OptimizationTrialRecord,
-  metricName: string,
+  metricName: string
 ): ChanceConstraintCounts | undefined {
   return (
     getExplicitChanceConstraintCounts(trial, metricName) ??
@@ -127,29 +124,17 @@ function inverseNormalCdf(p: number): number {
   const d2 = 0.189269;
   const d3 = 0.001308;
 
-  return -(
-    t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t * t)
-  );
+  return -(t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t * t));
 }
 
 function logGamma(value: number): number {
   const coefficients = [
-    676.5203681218851,
-    -1259.1392167224028,
-    771.3234287776531,
-    -176.6150291621406,
-    12.507343278686905,
-    -0.13857109526572012,
-    9.984369578019572e-6,
-    1.5056327351493116e-7,
+    676.5203681218851, -1259.1392167224028, 771.3234287776531, -176.6150291621406,
+    12.507343278686905, -0.13857109526572012, 9.984369578019572e-6, 1.5056327351493116e-7,
   ];
 
   if (value < 0.5) {
-    return (
-      Math.log(Math.PI) -
-      Math.log(Math.sin(Math.PI * value)) -
-      logGamma(1 - value)
-    );
+    return Math.log(Math.PI) - Math.log(Math.sin(Math.PI * value)) - logGamma(1 - value);
   }
 
   let x = 0.9999999999998099;
@@ -159,12 +144,7 @@ function logGamma(value: number): number {
   }
 
   const t = shifted + coefficients.length - 0.5;
-  return (
-    0.5 * Math.log(2 * Math.PI) +
-    (shifted + 0.5) * Math.log(t) -
-    t +
-    Math.log(x)
-  );
+  return 0.5 * Math.log(2 * Math.PI) + (shifted + 0.5) * Math.log(t) - t + Math.log(x);
 }
 
 function logBeta(alpha: number, beta: number): number {
@@ -173,8 +153,7 @@ function logBeta(alpha: number, beta: number): number {
 
 function computeBetaCoefficient(x: number, alpha: number, beta: number): number {
   try {
-    const logBt =
-      alpha * Math.log(x) + beta * Math.log(1 - x) - logBeta(alpha, beta);
+    const logBt = alpha * Math.log(x) + beta * Math.log(1 - x) - logBeta(alpha, beta);
     return Math.exp(logBt);
   } catch {
     return 0;
@@ -185,7 +164,7 @@ function cfStep(
   aa: number,
   c: number,
   d: number,
-  fpMin: number,
+  fpMin: number
 ): { c: number; d: number; delta: number } {
   let nextD = 1 + aa * d;
   if (Math.abs(nextD) < fpMin) {
@@ -241,7 +220,7 @@ function regularizedBeta(x: number, alpha: number, beta: number): number {
     ({ c, d } = cfStep(aa, c, d, fpMin));
     fraction *= d * c;
 
-    aa = (-((alpha + m) * (qab + m) * x)) / ((alpha + m2) * (qap + m2));
+    aa = -((alpha + m) * (qab + m) * x) / ((alpha + m2) * (qap + m2));
     const step = cfStep(aa, c, d, fpMin);
     c = step.c;
     d = step.d;
@@ -260,9 +239,7 @@ function betaPdf(x: number, alpha: number, beta: number): number {
   }
   try {
     const logValue =
-      (alpha - 1) * Math.log(x) +
-      (beta - 1) * Math.log(1 - x) -
-      logBeta(alpha, beta);
+      (alpha - 1) * Math.log(x) + (beta - 1) * Math.log(1 - x) - logBeta(alpha, beta);
     return Math.exp(logValue);
   } catch {
     return 0;
@@ -278,9 +255,7 @@ function betaQuantileApprox(p: number, alpha: number, beta: number): number {
   }
 
   const mean = alpha / (alpha + beta);
-  const variance =
-    (alpha * beta) /
-    ((alpha + beta) ** 2 * (alpha + beta + 1));
+  const variance = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1));
   const standardDeviation = Math.sqrt(variance);
   const z = inverseNormalCdf(p);
   let x = Math.max(0.001, Math.min(0.999, mean + z * standardDeviation));
@@ -305,20 +280,16 @@ function betaQuantileApprox(p: number, alpha: number, beta: number): number {
 export function clopperPearsonLowerBound(
   successes: number,
   trials: number,
-  confidence: number,
+  confidence: number
 ): number {
   if (trials <= 0) {
     throw new ValidationError(`trials must be positive, got ${trials}`);
   }
   if (successes < 0 || successes > trials) {
-    throw new ValidationError(
-      `successes must be in [0, ${trials}], got ${successes}`,
-    );
+    throw new ValidationError(`successes must be in [0, ${trials}], got ${successes}`);
   }
   if (confidence <= 0 || confidence >= 1) {
-    throw new ValidationError(
-      `confidence must be in (0, 1), got ${confidence}`,
-    );
+    throw new ValidationError(`confidence must be in (0, 1), got ${confidence}`);
   }
 
   if (successes === 0) {
@@ -337,18 +308,14 @@ export function clopperPearsonLowerBound(
   const denominator = 1 + (z * z) / trials;
   const center = (pHat + (z * z) / (2 * trials)) / denominator;
   const margin =
-    (z *
-      Math.sqrt(
-        (pHat * (1 - pHat)) / trials + (z * z) / (4 * trials * trials),
-      )) /
-    denominator;
+    (z * Math.sqrt((pHat * (1 - pHat)) / trials + (z * z) / (4 * trials * trials))) / denominator;
 
   return Math.max(0, center - margin);
 }
 
 export function evaluatePromotionChanceConstraints(
   trial: OptimizationTrialRecord,
-  policy: TvlPromotionPolicy | undefined,
+  policy: TvlPromotionPolicy | undefined
 ): PromotionChanceConstraintResult[] {
   if (!policy?.chanceConstraints || policy.chanceConstraints.length === 0) {
     return [];
@@ -371,7 +338,7 @@ export function evaluatePromotionChanceConstraints(
     const lowerBound = clopperPearsonLowerBound(
       counts.successes,
       counts.trials,
-      constraint.confidence,
+      constraint.confidence
     );
     return {
       name: constraint.name,
@@ -386,7 +353,7 @@ export function evaluatePromotionChanceConstraints(
 
 export function getPromotionRejectionReason(
   trial: OptimizationTrialRecord,
-  policy: TvlPromotionPolicy | undefined,
+  policy: TvlPromotionPolicy | undefined
 ): string | undefined {
   const results = evaluatePromotionChanceConstraints(trial, policy);
   if (results.length === 0) {
@@ -426,10 +393,7 @@ function sampleVariance(values: readonly number[], meanValue: number): number {
   if (values.length <= 1) {
     return 0;
   }
-  return (
-    values.reduce((sum, value) => sum + (value - meanValue) ** 2, 0) /
-    (values.length - 1)
-  );
+  return values.reduce((sum, value) => sum + (value - meanValue) ** 2, 0) / (values.length - 1);
 }
 
 export function benjaminiHochbergAdjust(pValues: readonly number[]): number[] {
@@ -492,10 +456,7 @@ function erfApprox(x: number): number {
 
   const t = 1 / (1 + p * absoluteX);
   const y =
-    1 -
-    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) *
-      t *
-      Math.exp(-absoluteX * absoluteX));
+    1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absoluteX * absoluteX);
   return sign * y;
 }
 
@@ -507,20 +468,15 @@ function pairedComparisonTest(
   candidateSamples: readonly number[],
   incumbentSamples: readonly number[],
   epsilon: number,
-  direction: 'greater' | 'less',
+  direction: 'greater' | 'less'
 ): PairedComparisonResult {
-  if (
-    candidateSamples.length === 0 ||
-    candidateSamples.length !== incumbentSamples.length
-  ) {
+  if (candidateSamples.length === 0 || candidateSamples.length !== incumbentSamples.length) {
     throw new ValidationError(
-      'Paired promotion comparison requires equal-length non-empty samples.',
+      'Paired promotion comparison requires equal-length non-empty samples.'
     );
   }
 
-  const differences = candidateSamples.map(
-    (value, index) => value - incumbentSamples[index]!,
-  );
+  const differences = candidateSamples.map((value, index) => value - incumbentSamples[index]!);
   const differenceMean = mean(differences);
   const differenceVariance = sampleVariance(differences, differenceMean);
   const standardError =
@@ -530,10 +486,7 @@ function pairedComparisonTest(
   const degreesOfFreedom = Math.max(1, differences.length - 1);
 
   if (standardError < 1e-15) {
-    const reject =
-      direction === 'greater'
-        ? differenceMean > epsilon
-        : differenceMean < -epsilon;
+    const reject = direction === 'greater' ? differenceMean > epsilon : differenceMean < -epsilon;
     return {
       pValue: reject ? 0 : 1,
       effectSize: differenceMean,
@@ -565,7 +518,7 @@ interface TostResult {
 function tostEquivalenceTest(
   samples: readonly number[],
   band: { low: number; high: number },
-  alpha: number,
+  alpha: number
 ): TostResult {
   if (samples.length === 0) {
     throw new ValidationError('Cannot perform TOST on empty samples.');
@@ -612,7 +565,7 @@ function compareBandedWithTost(
   incumbentSamples: readonly number[],
   band: { low: number; high: number },
   alpha: number,
-  epsilon: number,
+  epsilon: number
 ): PairedComparisonResult & { candidateBetter: boolean } {
   const candidateTost = tostEquivalenceTest(candidateSamples, band, alpha);
   const incumbentTost = tostEquivalenceTest(incumbentSamples, band, alpha);
@@ -645,9 +598,8 @@ function compareBandedWithTost(
     0,
     Math.min(
       1,
-      0.5 *
-        (1 + (candidateDistance - incumbentDistance) / Math.max(incumbentDistance, 1e-10)),
-    ),
+      0.5 * (1 + (candidateDistance - incumbentDistance) / Math.max(incumbentDistance, 1e-10))
+    )
   );
 
   return {
@@ -661,7 +613,7 @@ function compareObjectiveStatistically(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   objective: NormalizedObjectiveDefinition,
-  policy: TvlPromotionPolicy,
+  policy: TvlPromotionPolicy
 ): StatisticalObjectiveResult | undefined {
   const candidateSamples = getTrialMetricSamples(candidate, objective.metric);
   const incumbentSamples = getTrialMetricSamples(incumbent, objective.metric);
@@ -677,16 +629,14 @@ function compareObjectiveStatistically(
   const epsilon = policy.minEffect?.[objective.metric] ?? 0;
   if (objective.direction === 'band') {
     if (!objective.band) {
-      throw new ValidationError(
-        `Objective "${objective.metric}" is missing band metadata.`,
-      );
+      throw new ValidationError(`Objective "${objective.metric}" is missing band metadata.`);
     }
     const comparison = compareBandedWithTost(
       candidateSamples,
       incumbentSamples,
       objective.band,
       objective.band.alpha,
-      epsilon,
+      epsilon
     );
     return {
       name: objective.metric,
@@ -704,17 +654,14 @@ function compareObjectiveStatistically(
     candidateSamples,
     incumbentSamples,
     epsilon,
-    objective.direction === 'maximize' ? 'greater' : 'less',
+    objective.direction === 'maximize' ? 'greater' : 'less'
   );
   return {
     name: objective.metric,
     direction: objective.direction,
     candidateBetter: comparison.pValue < (policy.alpha ?? 0.05),
     pValue: comparison.pValue,
-    effectSize:
-      objective.direction === 'maximize'
-        ? comparison.effectSize
-        : -comparison.effectSize,
+    effectSize: objective.direction === 'maximize' ? comparison.effectSize : -comparison.effectSize,
     epsilon,
     candidateMean: mean(candidateSamples),
     incumbentMean: mean(incumbentSamples),
@@ -725,7 +672,7 @@ function buildDeterministicObjectiveResults(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   objectives: readonly NormalizedObjectiveDefinition[],
-  policy: TvlPromotionPolicy,
+  policy: TvlPromotionPolicy
 ): PromotionObjectiveResult[] {
   return objectives.map((objective) => {
     const candidateMean = Number(candidate.metrics[objective.metric]);
@@ -737,9 +684,7 @@ function buildDeterministicObjectiveResults(
     if (objective.direction === 'band') {
       const band = objective.band;
       if (!band) {
-        throw new ValidationError(
-          `Objective "${objective.metric}" is missing band metadata.`,
-        );
+        throw new ValidationError(`Objective "${objective.metric}" is missing band metadata.`);
       }
       const center = (band.low + band.high) / 2;
       const candidateDistance = Math.abs(candidateMean - center);
@@ -771,7 +716,7 @@ function compareTieBreakerValues(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   metric: string,
-  direction: 'maximize' | 'minimize',
+  direction: 'maximize' | 'minimize'
 ): -1 | 0 | 1 {
   const candidateValue = candidate.metrics[metric];
   const incumbentValue = incumbent.metrics[metric];
@@ -805,17 +750,14 @@ function compareTieBreakerValues(
 
 function evaluateObjectiveResults(
   objectiveResults: readonly PromotionObjectiveResult[],
-  alpha: number,
+  alpha: number
 ): { anyBetter: boolean; anyWorse: boolean; dominanceSatisfied: boolean } {
   let anyBetter = false;
   let anyWorse = false;
 
   for (const result of objectiveResults) {
     const adjustedPValue = result.adjustedPValue ?? result.pValue;
-    if (
-      result.candidateBetter &&
-      (adjustedPValue === undefined || adjustedPValue < alpha)
-    ) {
+    if (result.candidateBetter && (adjustedPValue === undefined || adjustedPValue < alpha)) {
       anyBetter = true;
     } else if (!result.candidateBetter && result.effectSize < -result.epsilon) {
       anyWorse = true;
@@ -832,7 +774,7 @@ function evaluateObjectiveResults(
 function createNoDecision(
   reason: string,
   candidateTrialId?: string,
-  incumbentTrialId?: string,
+  incumbentTrialId?: string
 ): PromotionDecision {
   return {
     decision: 'no_decision',
@@ -851,7 +793,7 @@ export function buildPromotionDecision(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord | undefined,
   objectives: readonly NormalizedObjectiveDefinition[],
-  policy: TvlPromotionPolicy | undefined,
+  policy: TvlPromotionPolicy | undefined
 ): PromotionDecision | undefined {
   if (!policy) {
     return undefined;
@@ -877,17 +819,13 @@ export function buildPromotionDecision(
     return createNoDecision(
       'No incumbent trial available for promotion comparison.',
       candidate.trialId,
-      undefined,
+      undefined
     );
   }
 
   const statisticalResults = objectives
-    .map((objective) =>
-      compareObjectiveStatistically(candidate, incumbent, objective, policy),
-    )
-    .filter(
-      (result): result is StatisticalObjectiveResult => result !== undefined,
-    );
+    .map((objective) => compareObjectiveStatistically(candidate, incumbent, objective, policy))
+    .filter((result): result is StatisticalObjectiveResult => result !== undefined);
 
   const alpha = policy.alpha ?? 0.05;
 
@@ -911,15 +849,9 @@ export function buildPromotionDecision(
     })) satisfies PromotionObjectiveResult[];
 
     const adjustedPValues = Object.fromEntries(
-      objectiveResults.map((result) => [
-        result.name,
-        result.adjustedPValue ?? result.pValue ?? 1,
-      ]),
+      objectiveResults.map((result) => [result.name, result.adjustedPValue ?? result.pValue ?? 1])
     );
-    const { anyWorse, dominanceSatisfied } = evaluateObjectiveResults(
-      objectiveResults,
-      alpha,
-    );
+    const { anyWorse, dominanceSatisfied } = evaluateObjectiveResults(objectiveResults, alpha);
 
     if (dominanceSatisfied || anyWorse) {
       return {
@@ -941,12 +873,9 @@ export function buildPromotionDecision(
       candidate,
       incumbent,
       objectives,
-      policy,
+      policy
     );
-    const deterministicEvaluation = evaluateObjectiveResults(
-      deterministicObjectiveResults,
-      alpha,
-    );
+    const deterministicEvaluation = evaluateObjectiveResults(deterministicObjectiveResults, alpha);
     if (deterministicEvaluation.dominanceSatisfied) {
       return {
         decision: 'promote',
@@ -978,12 +907,7 @@ export function buildPromotionDecision(
 
     if (policy.tieBreakers) {
       for (const [metric, direction] of Object.entries(policy.tieBreakers)) {
-        const comparison = compareTieBreakerValues(
-          candidate,
-          incumbent,
-          metric,
-          direction,
-        );
+        const comparison = compareTieBreakerValues(candidate, incumbent, metric, direction);
         if (comparison > 0) {
           return {
             decision: 'promote',
@@ -1015,7 +939,8 @@ export function buildPromotionDecision(
 
     return {
       decision: 'no_decision',
-      reason: 'Statistical promotion produced no decision and deterministic fallback did not separate the trials.',
+      reason:
+        'Statistical promotion produced no decision and deterministic fallback did not separate the trials.',
       objectiveResults,
       chanceResults,
       adjustedPValues,
@@ -1030,21 +955,13 @@ export function buildPromotionDecision(
     candidate,
     incumbent,
     objectives,
-    policy,
+    policy
   );
-  const { anyWorse, dominanceSatisfied } = evaluateObjectiveResults(
-    objectiveResults,
-    alpha,
-  );
+  const { anyWorse, dominanceSatisfied } = evaluateObjectiveResults(objectiveResults, alpha);
 
   if (!dominanceSatisfied && !anyWorse && policy.tieBreakers) {
     for (const [metric, direction] of Object.entries(policy.tieBreakers)) {
-      const comparison = compareTieBreakerValues(
-        candidate,
-        incumbent,
-        metric,
-        direction,
-      );
+      const comparison = compareTieBreakerValues(candidate, incumbent, metric, direction);
       if (comparison > 0) {
         return {
           decision: 'promote',
@@ -1075,11 +992,7 @@ export function buildPromotionDecision(
   }
 
   return {
-    decision: dominanceSatisfied
-      ? 'promote'
-      : anyWorse
-        ? 'reject'
-        : 'no_decision',
+    decision: dominanceSatisfied ? 'promote' : anyWorse ? 'reject' : 'no_decision',
     reason: dominanceSatisfied
       ? 'Candidate satisfies deterministic promotion criteria.'
       : anyWorse
@@ -1099,7 +1012,7 @@ export function compareTrialsWithStatisticalPromotion(
   candidate: OptimizationTrialRecord,
   incumbent: OptimizationTrialRecord,
   objectives: readonly NormalizedObjectiveDefinition[],
-  policy: TvlPromotionPolicy,
+  policy: TvlPromotionPolicy
 ): -1 | 0 | 1 | undefined {
   const decision = buildPromotionDecision(candidate, incumbent, objectives, policy);
   if (!decision || decision.method !== 'statistical') {

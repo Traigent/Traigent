@@ -31,10 +31,7 @@ const classifySentiment = optimize({
   const quality = Math.max(0.5, qualityBase - temperature * 0.1);
 
   return {
-    label:
-      model === 'accurate' || String(rowInput.text).includes('love')
-        ? 'positive'
-        : 'neutral',
+    label: model === 'accurate' || String(rowInput.text).includes('love') ? 'positive' : 'neutral',
     quality,
     cost: model === 'accurate' ? 0.18 : 0.06,
     latency: model === 'accurate' ? 0.9 : 0.35,

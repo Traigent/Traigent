@@ -40,9 +40,7 @@ export interface TrialFunctionResult {
 /**
  * User-defined trial function signature.
  */
-export type TrialFunction = (
-  config: TrialConfig,
-) => Promise<TrialFunctionResult>;
+export type TrialFunction = (config: TrialConfig) => Promise<TrialFunctionResult>;
 
 /**
  * Configuration for the Traigent JS SDK.

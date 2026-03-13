@@ -18,6 +18,18 @@ This checkout is native-first. It supports hybrid spec authoring via
 npm install @traigent/sdk
 ```
 
+## Supported Runtime Policy
+
+- Supported Node versions: `18`, `20`, and `22`
+- `main` is the supported release line
+- experimental runtime seamless rewriting is trusted-local only and remains explicitly opt-in
+
+## Release and Security
+
+- release process: [docs/RELEASING.md](./docs/RELEASING.md)
+- security reporting: [SECURITY.md](./SECURITY.md)
+- required branch protection: [docs/BRANCH_PROTECTION.md](./docs/BRANCH_PROTECTION.md)
+
 ## Native Node Optimization
 
 The primary JS path is a plain agent function plus an `evaluation` block. The

@@ -21,8 +21,8 @@ console.log(
       trialCount: result.trials.length,
     },
     null,
-    2,
-  ),
+    2
+  )
 );
 
 console.log('\n=== Applying best config for future normal calls ===');

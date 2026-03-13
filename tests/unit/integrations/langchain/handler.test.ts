@@ -389,10 +389,7 @@ describe('TraigentHandler', () => {
 
     it('should include individual call details', async () => {
       await handler.handleLLMStart(mockSerializedLLM, ['prompt'], 'run-1');
-      await handler.handleLLMEnd(
-        createMockLLMResult({ modelName: 'gpt-4' }),
-        'run-1'
-      );
+      await handler.handleLLMEnd(createMockLLMResult({ modelName: 'gpt-4' }), 'run-1');
 
       const metrics = handler.getMetrics();
 

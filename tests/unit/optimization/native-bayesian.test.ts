@@ -8,7 +8,7 @@ import type {
 } from '../../../src/optimization/types.js';
 
 function createNormalizedSpec(
-  overrides: Partial<NormalizedOptimizationSpec> = {},
+  overrides: Partial<NormalizedOptimizationSpec> = {}
 ): NormalizedOptimizationSpec {
   return {
     configurationSpace: {
@@ -48,7 +48,7 @@ function trial(
   trialId: string,
   config: Record<string, unknown>,
   accuracy: number,
-  status: OptimizationTrialRecord['status'] = 'completed',
+  status: OptimizationTrialRecord['status'] = 'completed'
 ): OptimizationTrialRecord {
   return {
     trialId,
@@ -76,7 +76,7 @@ describe('native-bayesian suggestion', () => {
       [trial('1', { model: 'a' }, 0.1), trial('2', { model: 'b' }, 0.2)],
       new PythonRandom(1),
       10,
-      () => true,
+      () => true
     );
 
     expect(result).toEqual({ config: null, exhaustive: true });
@@ -92,13 +92,7 @@ describe('native-bayesian suggestion', () => {
       },
     });
 
-    const result = suggestBayesianConfig(
-      spec,
-      [],
-      new PythonRandom(42),
-      10,
-      () => true,
-    );
+    const result = suggestBayesianConfig(spec, [], new PythonRandom(42), 10, () => true);
 
     expect(result.exhaustive).toBe(false);
     expect(result.config).not.toBeNull();
@@ -118,7 +112,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(7),
       20,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);
@@ -138,13 +132,7 @@ describe('native-bayesian suggestion', () => {
       },
     });
 
-    const result = suggestBayesianConfig(
-      spec,
-      [],
-      new PythonRandom(3),
-      10,
-      () => false,
-    );
+    const result = suggestBayesianConfig(spec, [], new PythonRandom(3), 10, () => false);
 
     expect(result).toEqual({ config: null, exhaustive: false });
   });
@@ -167,7 +155,7 @@ describe('native-bayesian suggestion', () => {
       [trial('1', { model: 'a', systemPrompt: 'keep-it-short' }, 0.1)],
       new PythonRandom(9),
       10,
-      () => true,
+      () => true
     );
 
     expect(result.config).not.toBeNull();
@@ -201,7 +189,7 @@ describe('native-bayesian suggestion', () => {
       () => {
         attempts += 1;
         return attempts > 256;
-      },
+      }
     );
 
     expect(result.exhaustive).toBe(false);
@@ -245,7 +233,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(21),
       30,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);
@@ -285,7 +273,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(31),
       30,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);
@@ -327,7 +315,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(11),
       30,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);
@@ -359,7 +347,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(27),
       30,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);
@@ -401,7 +389,7 @@ describe('native-bayesian suggestion', () => {
       ],
       new PythonRandom(4),
       30,
-      () => true,
+      () => true
     );
 
     expect(result.exhaustive).toBe(false);

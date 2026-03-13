@@ -10,7 +10,10 @@ import {
 import { optimize, param } from '../../../src/optimization/spec.js';
 import type { TrialConfig } from '../../../src/dtos/trial.js';
 
-function createTrialConfig(config: Record<string, unknown>, overrides: Partial<TrialConfig> = {}): TrialConfig {
+function createTrialConfig(
+  config: Record<string, unknown>,
+  overrides: Partial<TrialConfig> = {}
+): TrialConfig {
   return {
     trial_id: 'trial-agent',
     trial_number: 1,
@@ -32,7 +35,7 @@ describe('agent optimization helpers', () => {
         evaluation: {
           data: [{ input: 'x' }],
         },
-      }),
+      })
     ).resolves.toEqual([{ input: 'x' }]);
 
     await expect(
@@ -40,11 +43,11 @@ describe('agent optimization helpers', () => {
         evaluation: {
           loadData: async () => [{ input: 'y' }],
         },
-      }),
+      })
     ).resolves.toEqual([{ input: 'y' }]);
 
     await expect(resolveEvaluationRows({ evaluation: undefined })).rejects.toThrow(
-      /requires evaluation\.data or evaluation\.loadData/i,
+      /requires evaluation\.data or evaluation\.loadData/i
     );
   });
 
@@ -55,8 +58,8 @@ describe('agent optimization helpers', () => {
         undefined,
         [],
         { model: 'best' },
-        'parameter',
-      ),
+        'parameter'
+      )
     ).toEqual({ model: 'best' });
 
     expect(
@@ -65,8 +68,8 @@ describe('agent optimization helpers', () => {
         undefined,
         ['hello'],
         { tone: 'friendly' },
-        'parameter',
-      ),
+        'parameter'
+      )
     ).toEqual(['hello', { tone: 'friendly' }]);
 
     expect(() =>
@@ -75,8 +78,8 @@ describe('agent optimization helpers', () => {
         undefined,
         ['hello', 'bad-config'],
         { tone: 'friendly' },
-        'parameter',
-      ),
+        'parameter'
+      )
     ).toThrow(/second argument to be an object config/i);
   });
 
@@ -91,8 +94,8 @@ describe('agent optimization helpers', () => {
         undefined,
         ['hello'],
         { tone: 'friendly', nested: { retries: 2 } },
-        'parameter',
-      ),
+        'parameter'
+      )
     ).toThrow(TypeError);
   });
 
@@ -103,8 +106,8 @@ describe('agent optimization helpers', () => {
         undefined,
         ['hello', new Date()],
         { tone: 'friendly' },
-        'parameter',
-      ),
+        'parameter'
+      )
     ).toThrow(/second argument to be an object config/i);
   });
 
@@ -212,9 +215,7 @@ describe('agent optimization helpers', () => {
         mode: 'parameter',
       },
     })(async (input: string, config?: { tone?: string }) =>
-      config?.tone === 'loud'
-        ? `${String(input).toUpperCase()}!`
-        : String(input).toUpperCase(),
+      config?.tone === 'loud' ? `${String(input).toUpperCase()}!` : String(input).toUpperCase()
     );
 
     const result = await wrapped.optimize({
@@ -247,13 +248,13 @@ describe('agent optimization helpers', () => {
     })(async (input: string) => input.toUpperCase());
 
     const normalizedSpec = (await import('../../../src/optimization/spec.js')).getOptimizationSpec(
-      wrapped,
+      wrapped
     )!;
 
     const trialFn = createAgentTrialFunction(
       async (input: string) => input.toUpperCase(),
       normalizedSpec,
-      [{ input: 'unused', output: 'UNUSED' }],
+      [{ input: 'unused', output: 'UNUSED' }]
     );
 
     const result = await TrialContext.run(
@@ -268,7 +269,7 @@ describe('agent optimization helpers', () => {
               { input: 'second', output: 'SECOND', score: 0.8 },
             ],
           },
-        },
+        }
       ),
       () =>
         trialFn(
@@ -283,9 +284,9 @@ describe('agent optimization helpers', () => {
                   { input: 'second', output: 'SECOND', score: 0.8 },
                 ],
               },
-            },
-          ),
-        ),
+            }
+          )
+        )
     );
 
     expect(result.metrics.accuracy).toBe(1);
@@ -309,7 +310,7 @@ describe('agent optimization helpers', () => {
       missingInput.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/missing input field "prompt"/i);
 
     const missingExpected = optimize({
@@ -328,7 +329,7 @@ describe('agent optimization helpers', () => {
       missingExpected.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/missing expected field "output"/i);
   });
 

@@ -23,8 +23,8 @@ const MODEL_COSTS: Record<string, [number, number]> = {
 
 /** Simulated accuracy based on model and prompt type */
 const MODEL_ACCURACY: Record<string, Record<string, number>> = {
-  'gpt-3.5-turbo': { concise: 0.70, detailed: 0.75, cot: 0.78 },
-  'gpt-4o-mini': { concise: 0.80, detailed: 0.85, cot: 0.88 },
+  'gpt-3.5-turbo': { concise: 0.7, detailed: 0.75, cot: 0.78 },
+  'gpt-4o-mini': { concise: 0.8, detailed: 0.85, cot: 0.88 },
   'gpt-4o': { concise: 0.88, detailed: 0.92, cot: 0.95 },
 };
 
@@ -47,7 +47,7 @@ function mockLLMCall(
   const baseAccuracy = MODEL_ACCURACY[config.model]?.[config.system_prompt] ?? 0.7;
 
   // Temperature affects consistency - lower is more deterministic
-  const tempFactor = 1 - (config.temperature * 0.1);
+  const tempFactor = 1 - config.temperature * 0.1;
   const accuracy = baseAccuracy * tempFactor;
 
   // Add some randomness for realistic simulation
@@ -70,7 +70,7 @@ function mockLLMCall(
 
 function getWrongPrediction(correct: string): string {
   const options = ['positive', 'negative', 'neutral'];
-  const wrong = options.filter(o => o !== correct);
+  const wrong = options.filter((o) => o !== correct);
   return wrong[Math.floor(Math.random() * wrong.length)];
 }
 
@@ -112,7 +112,9 @@ export async function runSentimentAgent(
 
     // Log each prediction
     const status = result.correct ? '[OK]' : '[X] ';
-    logger(`  ${status} "${example.input.text.substring(0, 40)}..." => ${result.prediction} (expected: ${example.output})`);
+    logger(
+      `  ${status} "${example.input.text.substring(0, 40)}..." => ${result.prediction} (expected: ${example.output})`
+    );
   }
 
   const accuracy = correctCount / examples.length;

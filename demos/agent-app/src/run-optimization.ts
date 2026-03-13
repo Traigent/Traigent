@@ -77,7 +77,7 @@ async function createSession(maxTrials: number): Promise<SessionInfo | null> {
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': TRAIGENT_API_KEY,
-        'Authorization': `Bearer ${TRAIGENT_API_KEY}`,
+        Authorization: `Bearer ${TRAIGENT_API_KEY}`,
       },
       body: JSON.stringify(payload),
     });
@@ -130,10 +130,7 @@ function sampleDatasetIndices(subsetSize: number): number[] {
 /**
  * Submit trial result to Traigent backend via session endpoint.
  */
-async function submitTrialResult(
-  sessionInfo: SessionInfo,
-  result: TrialResult
-): Promise<boolean> {
+async function submitTrialResult(sessionInfo: SessionInfo, result: TrialResult): Promise<boolean> {
   // Use the session results endpoint (same as Python SDK)
   const url = `${TRAIGENT_API_URL}/sessions/${sessionInfo.session_id}/results`;
 
@@ -149,7 +146,9 @@ async function submitTrialResult(
     },
   };
 
-  console.log(`\n[BACKEND] Submitting trial ${result.trial_id} to session ${sessionInfo.session_id}`);
+  console.log(
+    `\n[BACKEND] Submitting trial ${result.trial_id} to session ${sessionInfo.session_id}`
+  );
 
   if (!TRAIGENT_API_KEY) {
     console.log('[BACKEND] No API key configured - skipping actual submission');
@@ -163,7 +162,7 @@ async function submitTrialResult(
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': TRAIGENT_API_KEY,
-        'Authorization': `Bearer ${TRAIGENT_API_KEY}`,
+        Authorization: `Bearer ${TRAIGENT_API_KEY}`,
       },
       body: JSON.stringify(payload),
     });
@@ -284,7 +283,9 @@ async function runOptimization(maxTrials: number = 6): Promise<void> {
     const acc = (r.metrics.accuracy * 100).toFixed(1).padStart(6) + '%';
     const cost = ('$' + r.metrics.cost.toFixed(6)).padStart(9);
     const lat = r.metrics.latency_ms.toFixed(0).padStart(5) + 'ms';
-    console.log(`|   ${r.trial_number}   | ${model} | ${temp} | ${prompt} | ${acc} | ${cost} | ${lat} |`);
+    console.log(
+      `|   ${r.trial_number}   | ${model} | ${temp} | ${prompt} | ${acc} | ${cost} | ${lat} |`
+    );
   }
   console.log('-'.repeat(90));
 

@@ -48,12 +48,12 @@ result = asyncio.run(optimize_js_agent.optimize())
 
 The NDJSON protocol supports these actions:
 
-| Action       | Description                                  |
-| ------------ | -------------------------------------------- |
-| `run_trial`  | Execute a trial with the given configuration |
-| `ping`       | Health check / keepalive                     |
-| `shutdown`   | Graceful termination                         |
-| `cancel`     | Cancel an in-flight trial                    |
+| Action      | Description                                  |
+| ----------- | -------------------------------------------- |
+| `run_trial` | Execute a trial with the given configuration |
+| `ping`      | Health check / keepalive                     |
+| `shutdown`  | Graceful termination                         |
+| `cancel`    | Cancel an in-flight trial                    |
 
 ### Handling Cancellation
 
@@ -89,6 +89,7 @@ export async function runTrial(config: TrialConfig): Promise<TrialResult> {
 ```
 
 **Cancellation methods:**
+
 - `TrialContext.isCancelled()`: Returns `true` if cancellation was requested
 - `TrialContext.checkCancellation()`: Throws `CancellationError` if cancelled
 

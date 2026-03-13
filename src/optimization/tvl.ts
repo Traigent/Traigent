@@ -40,29 +40,22 @@ function normalizeTvarType(type: string, field: string): string {
   return normalized;
 }
 
-function parseTvarDomain(
-  name: string,
-  type: string,
-  domain: unknown,
-): ParameterDefinition {
+function parseTvarDomain(name: string, type: string, domain: unknown): ParameterDefinition {
   const domainObject = isPlainObject(domain) ? domain : {};
   const domainObjectAny = domainObject as any;
   const domainValues = Array.isArray(domain) ? domain : domainObjectAny.values;
-  const scale =
-    domainObjectAny.log === true || domainObjectAny.scale === 'log'
-      ? 'log'
-      : 'linear';
+  const scale = domainObjectAny.log === true || domainObjectAny.scale === 'log' ? 'log' : 'linear';
 
   if (type.startsWith('tuple')) {
     if (!Array.isArray(domainValues) || domainValues.length === 0) {
       throw new ValidationError(
-        `tvars.${name}.domain must provide a non-empty values array for tuple variables.`,
+        `tvars.${name}.domain must provide a non-empty values array for tuple variables.`
       );
     }
     for (const [index, value] of domainValues.entries()) {
       if (!Array.isArray(value) || value.length === 0) {
         throw new ValidationError(
-          `tvars.${name}.domain.values[${index}] must be a non-empty array.`,
+          `tvars.${name}.domain.values[${index}] must be a non-empty array.`
         );
       }
     }
@@ -75,13 +68,13 @@ function parseTvarDomain(
   if (type.startsWith('callable')) {
     if (!Array.isArray(domainValues) || domainValues.length === 0) {
       throw new ValidationError(
-        `tvars.${name}.domain must provide a non-empty values array for callable variables.`,
+        `tvars.${name}.domain must provide a non-empty values array for callable variables.`
       );
     }
     for (const [index, value] of domainValues.entries()) {
       if (typeof value !== 'string' || value.trim().length === 0) {
         throw new ValidationError(
-          `tvars.${name}.domain.values[${index}] must be a non-empty string.`,
+          `tvars.${name}.domain.values[${index}] must be a non-empty string.`
         );
       }
     }
@@ -103,9 +96,7 @@ function parseTvarDomain(
     case 'enum[float]':
     case 'enum[bool]': {
       if (!Array.isArray(domainValues) || domainValues.length === 0) {
-        throw new ValidationError(
-          `tvars.${name}.domain must provide a non-empty values array.`,
-        );
+        throw new ValidationError(`tvars.${name}.domain must provide a non-empty values array.`);
       }
       return {
         type: 'enum',
@@ -121,7 +112,7 @@ function parseTvarDomain(
           : undefined;
       if (!range || range.length !== 2) {
         throw new ValidationError(
-          `tvars.${name}.domain.range must contain exactly two numeric values.`,
+          `tvars.${name}.domain.range must contain exactly two numeric values.`
         );
       }
 
@@ -135,12 +126,12 @@ function parseTvarDomain(
       if (type === 'int') {
         if (!Number.isInteger(min) || !Number.isInteger(max)) {
           throw new ValidationError(
-            `tvars.${name}.domain.range must use integers for int variables.`,
+            `tvars.${name}.domain.range must use integers for int variables.`
           );
         }
         if (step !== undefined && !Number.isInteger(step)) {
           throw new ValidationError(
-            `tvars.${name}.domain.step must be an integer for int variables.`,
+            `tvars.${name}.domain.step must be an integer for int variables.`
           );
         }
         return {
@@ -162,7 +153,7 @@ function parseTvarDomain(
     }
     default:
       throw new ValidationError(
-        `TVL variable "${name}" type "${type}" is not supported by the native JS SDK.`,
+        `TVL variable "${name}" type "${type}" is not supported by the native JS SDK.`
       );
   }
 }
@@ -196,7 +187,7 @@ function parseTvars(raw: unknown): {
     configurationSpace[name] = parseTvarDomain(
       name,
       normalizeTvarType(type, `tvars[${index}].type`),
-      entryAny.domain,
+      entryAny.domain
     );
 
     if (entryAny.default !== undefined) {
@@ -209,7 +200,7 @@ function parseTvars(raw: unknown): {
 
 function normalizeBandTarget(
   band: Record<string, unknown>,
-  field: string,
+  field: string
 ): { low: number; high: number } {
   const bandAny = band as any;
   if (Array.isArray(bandAny.target)) {
@@ -257,9 +248,7 @@ function normalizeBandTarget(
     };
   }
 
-  throw new ValidationError(
-    `${field} must provide target, low/high, or center/tol.`,
-  );
+  throw new ValidationError(`${field} must provide target, low/high, or center/tol.`);
 }
 
 function parseObjectives(raw: unknown): ObjectiveInput[] {
@@ -284,8 +273,7 @@ function parseObjectives(raw: unknown): ObjectiveInput[] {
       }
 
       const band = normalizeBandTarget(entryAny.band, `objectives[${index}].band`);
-      const test =
-        entryAny.band.test === undefined ? 'TOST' : String(entryAny.band.test);
+      const test = entryAny.band.test === undefined ? 'TOST' : String(entryAny.band.test);
       if (test !== 'TOST') {
         throw new ValidationError(`objectives[${index}].band.test must be "TOST".`);
       }
@@ -295,9 +283,7 @@ function parseObjectives(raw: unknown): ObjectiveInput[] {
           ? 0.05
           : toFiniteNumber(entryAny.band.alpha, `objectives[${index}].band.alpha`);
       if (alpha <= 0 || alpha >= 1) {
-        throw new ValidationError(
-          `objectives[${index}].band.alpha must be in (0, 1).`,
-        );
+        throw new ValidationError(`objectives[${index}].band.alpha must be in (0, 1).`);
       }
 
       return {
@@ -306,19 +292,14 @@ function parseObjectives(raw: unknown): ObjectiveInput[] {
         band,
         ...(entryAny.weight !== undefined
           ? {
-              weight: toFiniteNumber(
-                entryAny.weight,
-                `objectives[${index}].weight`,
-              ),
+              weight: toFiniteNumber(entryAny.weight, `objectives[${index}].weight`),
             }
           : {}),
       };
     }
 
     if (entryAny.direction !== 'maximize' && entryAny.direction !== 'minimize') {
-      throw new ValidationError(
-        `objectives[${index}].direction must be "maximize" or "minimize".`,
-      );
+      throw new ValidationError(`objectives[${index}].direction must be "maximize" or "minimize".`);
     }
 
     return {
@@ -364,17 +345,11 @@ function parseStructuralConstraints(raw: unknown): OptimizationConstraint[] {
       return compileTvlConstraint(id, entryAny.require, errorMessage, 'expr');
     }
     if (typeof entryAny.when === 'string' && typeof entryAny.then === 'string') {
-      return compileTvlConstraint(
-        id,
-        entryAny.then,
-        errorMessage,
-        'implication',
-        entryAny.when,
-      );
+      return compileTvlConstraint(id, entryAny.then, errorMessage, 'implication', entryAny.when);
     }
 
     throw new ValidationError(
-      `constraints.structural[${index}] must provide expr, require, or when/then.`,
+      `constraints.structural[${index}] must provide expr, require, or when/then.`
     );
   });
 }
@@ -409,16 +384,9 @@ function parseDerivedConstraints(raw: unknown): OptimizationConstraint[] {
           ? entryAny.require
           : undefined;
     if (!expression) {
-      throw new ValidationError(
-        `constraints.derived[${index}] must provide expr or require.`,
-      );
+      throw new ValidationError(`constraints.derived[${index}] must provide expr or require.`);
     }
-    const constraint = compileTvlConstraint(
-      id,
-      expression,
-      errorMessage,
-      'expr',
-    );
+    const constraint = compileTvlConstraint(id, expression, errorMessage, 'expr');
     constraint.requiresMetrics = true;
     return constraint;
   });
@@ -439,9 +407,7 @@ function parseConstraints(raw: unknown): OptimizationConstraint[] {
   ];
 }
 
-function parseExplorationStrategy(
-  raw: unknown,
-): Partial<Pick<NativeOptimizeOptions, 'algorithm'>> {
+function parseExplorationStrategy(raw: unknown): Partial<Pick<NativeOptimizeOptions, 'algorithm'>> {
   if (!isPlainObject(raw)) {
     return {};
   }
@@ -463,21 +429,18 @@ function parseExplorationStrategy(
   if (normalized === 'random') {
     return { algorithm: 'random' };
   }
-  if (
-    normalized === 'bayesian' ||
-    normalized === 'pareto-optimal'
-  ) {
+  if (normalized === 'bayesian' || normalized === 'pareto-optimal') {
     return { algorithm: 'bayesian' };
   }
 
   if (normalized === 'pareto_optimal' || normalized === 'nsga2') {
     throw new ValidationError(
-      `exploration.strategy type "${strategyType}" is only supported in hybrid/server optimization, not the native JS runtime.`,
+      `exploration.strategy type "${strategyType}" is only supported in hybrid/server optimization, not the native JS runtime.`
     );
   }
 
   throw new ValidationError(
-    `exploration.strategy type "${strategyType}" is not supported by the native JS SDK.`,
+    `exploration.strategy type "${strategyType}" is not supported by the native JS SDK.`
   );
 }
 
@@ -485,9 +448,7 @@ function parseExplorationBudgets(raw: unknown): {
   optimizeOptions: Partial<Pick<NativeOptimizeOptions, 'algorithm' | 'maxTrials'>>;
   specPatch: Pick<OptimizationSpec, 'budget' | 'execution'>;
 } {
-  const optimizeOptions: Partial<
-    Pick<NativeOptimizeOptions, 'algorithm' | 'maxTrials'>
-  > = {};
+  const optimizeOptions: Partial<Pick<NativeOptimizeOptions, 'algorithm' | 'maxTrials'>> = {};
   const specFields = {} as Pick<OptimizationSpec, 'budget' | 'execution'>;
 
   if (!isPlainObject(raw) || !isPlainObject((raw as any).budgets)) {
@@ -501,30 +462,26 @@ function parseExplorationBudgets(raw: unknown): {
   if (budgets['max_trials'] !== undefined) {
     optimizeOptions.maxTrials = toPositiveInteger(
       budgets['max_trials'],
-      'exploration.budgets.max_trials',
+      'exploration.budgets.max_trials'
     );
   }
   if (budgets['max_spend_usd'] !== undefined) {
     const maxCostUsd = toFiniteNumber(
       budgets['max_spend_usd'],
-      'exploration.budgets.max_spend_usd',
+      'exploration.budgets.max_spend_usd'
     );
     if (maxCostUsd <= 0) {
-      throw new ValidationError(
-        'exploration.budgets.max_spend_usd must be a positive number.',
-      );
+      throw new ValidationError('exploration.budgets.max_spend_usd must be a positive number.');
     }
     specFields.budget = { maxCostUsd };
   }
   if (budgets['max_wallclock_s'] !== undefined) {
     const seconds = toFiniteNumber(
       budgets['max_wallclock_s'],
-      'exploration.budgets.max_wallclock_s',
+      'exploration.budgets.max_wallclock_s'
     );
     if (seconds <= 0) {
-      throw new ValidationError(
-        'exploration.budgets.max_wallclock_s must be a positive number.',
-      );
+      throw new ValidationError('exploration.budgets.max_wallclock_s must be a positive number.');
     }
     specFields.execution = {
       maxWallclockMs: Math.round(seconds * 1000),
@@ -550,9 +507,7 @@ function parsePromotionPolicy(raw: unknown): TvlPromotionPolicy | undefined {
 
   if (rawAny.dominance !== undefined) {
     if (rawAny.dominance !== 'epsilon_pareto') {
-      throw new ValidationError(
-        'promotion_policy.dominance must be "epsilon_pareto".',
-      );
+      throw new ValidationError('promotion_policy.dominance must be "epsilon_pareto".');
     }
     normalized.dominance = 'epsilon_pareto';
   }
@@ -567,9 +522,7 @@ function parsePromotionPolicy(raw: unknown): TvlPromotionPolicy | undefined {
 
   if (rawAny.adjust !== undefined) {
     if (rawAny.adjust !== 'none' && rawAny.adjust !== 'BH') {
-      throw new ValidationError(
-        'promotion_policy.adjust must be "none" or "BH".',
-      );
+      throw new ValidationError('promotion_policy.adjust must be "none" or "BH".');
     }
     normalized.adjust = rawAny.adjust;
   }
@@ -580,75 +533,68 @@ function parsePromotionPolicy(raw: unknown): TvlPromotionPolicy | undefined {
     }
     normalized.minEffect = Object.fromEntries(
       Object.entries(rawAny.min_effect).map(([metric, value]) => {
-        const numeric = toFiniteNumber(
-          value,
-          `promotion_policy.min_effect.${metric}`,
-        );
+        const numeric = toFiniteNumber(value, `promotion_policy.min_effect.${metric}`);
         if (numeric < 0) {
-          throw new ValidationError(
-            `promotion_policy.min_effect.${metric} must be non-negative.`,
-          );
+          throw new ValidationError(`promotion_policy.min_effect.${metric} must be non-negative.`);
         }
         return [metric, numeric];
-      }),
+      })
     );
   }
 
   if (rawAny.tie_breakers !== undefined) {
     if (!isPlainObject(rawAny.tie_breakers)) {
-      throw new ValidationError(
-        'promotion_policy.tie_breakers must be an object.',
-      );
+      throw new ValidationError('promotion_policy.tie_breakers must be an object.');
     }
     normalized.tieBreakers = Object.fromEntries(
       Object.entries(rawAny.tie_breakers).map(([metric, value]) => {
         if (value !== 'maximize' && value !== 'minimize') {
           throw new ValidationError(
-            `promotion_policy.tie_breakers.${metric} must be "maximize" or "minimize".`,
+            `promotion_policy.tie_breakers.${metric} must be "maximize" or "minimize".`
           );
         }
         return [metric, value];
-      }),
+      })
     );
   }
 
   if (rawAny.chance_constraints !== undefined) {
     if (!Array.isArray(rawAny.chance_constraints)) {
-      throw new ValidationError(
-        'promotion_policy.chance_constraints must be an array.',
-      );
+      throw new ValidationError('promotion_policy.chance_constraints must be an array.');
     }
-    normalized.chanceConstraints = rawAny.chance_constraints.map((entry: unknown, index: number) => {
-      if (!isPlainObject(entry)) {
-        throw new ValidationError(
-          `promotion_policy.chance_constraints[${index}] must be an object.`,
+    normalized.chanceConstraints = rawAny.chance_constraints.map(
+      (entry: unknown, index: number) => {
+        if (!isPlainObject(entry)) {
+          throw new ValidationError(
+            `promotion_policy.chance_constraints[${index}] must be an object.`
+          );
+        }
+        const entryAny = entry as any;
+        if (typeof entryAny.name !== 'string' || entryAny.name.trim().length === 0) {
+          throw new ValidationError(
+            `promotion_policy.chance_constraints[${index}].name must be a non-empty string.`
+          );
+        }
+        const threshold = toFiniteNumber(
+          entryAny.threshold,
+          `promotion_policy.chance_constraints[${index}].threshold`
         );
-      }
-      const entryAny = entry as any;
-      if (typeof entryAny.name !== 'string' || entryAny.name.trim().length === 0) {
-        throw new ValidationError(
-          `promotion_policy.chance_constraints[${index}].name must be a non-empty string.`,
+        const confidence = toFiniteNumber(
+          entryAny.confidence,
+          `promotion_policy.chance_constraints[${index}].confidence`
         );
+        if (confidence <= 0 || confidence > 1) {
+          throw new ValidationError(
+            `promotion_policy.chance_constraints[${index}].confidence must be in (0, 1].`
+          );
+        }
+        return {
+          name: entryAny.name.trim(),
+          threshold,
+          confidence,
+        };
       }
-      const threshold = toFiniteNumber(
-        entryAny.threshold,
-        `promotion_policy.chance_constraints[${index}].threshold`,
-      );
-      const confidence = toFiniteNumber(
-        entryAny.confidence,
-        `promotion_policy.chance_constraints[${index}].confidence`,
-      );
-      if (confidence <= 0 || confidence > 1) {
-        throw new ValidationError(
-          `promotion_policy.chance_constraints[${index}].confidence must be in (0, 1].`,
-        );
-      }
-      return {
-        name: entryAny.name.trim(),
-        threshold,
-        confidence,
-      };
-    });
+    );
     // Native JS preserves chance constraints in TVL metadata, but statistical
     // enforcement is still deferred pending a Python-style promotion layer.
   }
@@ -663,9 +609,7 @@ function extractSpecHeader(raw: Record<string, unknown>): {
   const rawAny = raw as any;
   const spec = isPlainObject(rawAny.spec) ? (rawAny.spec as any) : {};
   const moduleId =
-    typeof spec.id === 'string' && spec.id.trim().length > 0
-      ? spec.id.trim()
-      : undefined;
+    typeof spec.id === 'string' && spec.id.trim().length > 0 ? spec.id.trim() : undefined;
   const tvlVersion =
     typeof rawAny.tvl_version === 'string' || typeof rawAny.tvl_version === 'number'
       ? String(rawAny.tvl_version)
@@ -677,7 +621,7 @@ function extractSpecHeader(raw: Record<string, unknown>): {
 }
 
 export function getNativeTvlCompatibilityReport(
-  usedFeatures: Partial<Record<string, boolean>> = {},
+  usedFeatures: Partial<Record<string, boolean>> = {}
 ): NativeTvlCompatibilityReport {
   const items: NativeTvlCompatibilityReport['items'] = [
     {
@@ -744,9 +688,7 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
   const { configurationSpace, defaultConfig } = parseTvars(parsedAny.tvars);
   const objectives = parseObjectives(parsedAny.objectives);
   const constraints = parseConstraints(parsedAny.constraints);
-  const promotionPolicy = parsePromotionPolicy(
-    parsedAny.promotion_policy ?? undefined,
-  );
+  const promotionPolicy = parsePromotionPolicy(parsedAny.promotion_policy ?? undefined);
   const strategy = parseExplorationStrategy(parsedAny.exploration);
   const budgets = parseExplorationBudgets(parsedAny.exploration);
   const { moduleId, tvlVersion } = extractSpecHeader(parsed);
@@ -761,11 +703,12 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
         typeof objective === 'object' &&
         objective !== null &&
         'band' in objective &&
-        objective.band !== undefined,
+        objective.band !== undefined
     ),
     'promotion-policy': promotionPolicy !== undefined,
     constraints: constraints.length > 0,
-    'exploration-strategy': isPlainObject(parsedAny['exploration']) &&
+    'exploration-strategy':
+      isPlainObject(parsedAny['exploration']) &&
       (typeof parsedAny['exploration']['strategy'] === 'string' ||
         (isPlainObject(parsedAny['exploration']['strategy']) &&
           typeof parsedAny['exploration']['strategy']['type'] === 'string')),
@@ -795,9 +738,7 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
     nativeCompatibility: getNativeTvlCompatibilityReport(usedFeatures),
     metadata: {
       ...(isPlainObject(parsedAny['metadata']) ? parsedAny['metadata'] : {}),
-      ...(parsedAny['promotion'] !== undefined
-        ? { legacyPromotion: parsedAny['promotion'] }
-        : {}),
+      ...(parsedAny['promotion'] !== undefined ? { legacyPromotion: parsedAny['promotion'] } : {}),
       ...(isPlainObject(parsedAny['exploration'])
         ? {
             strategyType:
@@ -814,11 +755,8 @@ export function parseTvlSpec(source: string): TvlSpecArtifact {
   };
 }
 
-export async function loadTvlSpec(
-  input: string | TvlLoadOptions,
-): Promise<TvlSpecArtifact> {
-  const options =
-    typeof input === 'string' ? ({ path: input } satisfies TvlLoadOptions) : input;
+export async function loadTvlSpec(input: string | TvlLoadOptions): Promise<TvlSpecArtifact> {
+  const options = typeof input === 'string' ? ({ path: input } satisfies TvlLoadOptions) : input;
 
   if (options.path) {
     const source = await readFile(options.path, 'utf8');

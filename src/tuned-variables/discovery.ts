@@ -7,10 +7,7 @@ import * as t from '@babel/types';
 import type { ParameterDefinition } from '../optimization/types.js';
 
 const traverse = traverseModule.default ?? traverseModule;
-const PARSER_PLUGINS: NonNullable<Parameters<typeof parse>[1]>['plugins'] = [
-  'typescript',
-  'jsx',
-];
+const PARSER_PLUGINS: NonNullable<Parameters<typeof parse>[1]>['plugins'] = ['typescript', 'jsx'];
 
 const COMMON_TUNABLE_NAMES = new Set([
   'model',
@@ -108,9 +105,7 @@ interface LiteralInfo {
   value: unknown;
 }
 
-function isSupportedLiteralExpression(
-  node: t.Node | null | undefined,
-): node is t.Expression {
+function isSupportedLiteralExpression(node: t.Node | null | undefined): node is t.Expression {
   if (!node) {
     return false;
   }
@@ -125,10 +120,7 @@ function isSupportedLiteralExpression(
   }
 
   if (t.isUnaryExpression(node)) {
-    return (
-      (node.operator === '-' || node.operator === '+') &&
-      t.isNumericLiteral(node.argument)
-    );
+    return (node.operator === '-' || node.operator === '+') && t.isNumericLiteral(node.argument);
   }
 
   if (t.isTemplateLiteral(node)) {
@@ -180,8 +172,7 @@ function literalToInfo(node: t.Expression): LiteralInfo {
     return { kind: 'null', value: null };
   }
   if (t.isUnaryExpression(node) && t.isNumericLiteral(node.argument)) {
-    const value =
-      node.operator === '-' ? -node.argument.value : node.argument.value;
+    const value = node.operator === '-' ? -node.argument.value : node.argument.value;
     return {
       kind: Number.isInteger(value) ? 'int' : 'float',
       value,
@@ -197,9 +188,7 @@ function literalToInfo(node: t.Expression): LiteralInfo {
     return {
       kind: 'array',
       value: node.elements.map((element) =>
-        element && !t.isSpreadElement(element)
-          ? literalToInfo(element).value
-          : undefined,
+        element && !t.isSpreadElement(element) ? literalToInfo(element).value : undefined
       ),
     };
   }
@@ -212,10 +201,7 @@ function literalToInfo(node: t.Expression): LiteralInfo {
       let key: string;
       if (t.isIdentifier(property.key)) {
         key = property.key.name;
-      } else if (
-        t.isStringLiteral(property.key) ||
-        t.isNumericLiteral(property.key)
-      ) {
+      } else if (t.isStringLiteral(property.key) || t.isNumericLiteral(property.key)) {
         key = String(property.key.value);
       } else {
         continue;
@@ -280,7 +266,7 @@ function inferSuggestedDefinition(info: LiteralInfo): {
 }
 
 function getStaticPropertyKey(
-  property: t.ObjectProperty | t.ObjectMethod | t.ClassMethod | t.ClassProperty,
+  property: t.ObjectProperty | t.ObjectMethod | t.ClassMethod | t.ClassProperty
 ): string | undefined {
   if (property.computed) {
     return undefined;
@@ -288,10 +274,7 @@ function getStaticPropertyKey(
   if (t.isIdentifier(property.key)) {
     return property.key.name;
   }
-  if (
-    t.isStringLiteral(property.key) ||
-    t.isNumericLiteral(property.key)
-  ) {
+  if (t.isStringLiteral(property.key) || t.isNumericLiteral(property.key)) {
     return String(property.key.value);
   }
   return undefined;
@@ -309,7 +292,7 @@ function getCalleeName(callee: t.Expression | t.V8IntrinsicIdentifier): string |
 
 function classifyCandidate(
   name: string,
-  binding: NonNullable<ReturnType<NodePath<t.Identifier>['scope']['getBinding']>>,
+  binding: NonNullable<ReturnType<NodePath<t.Identifier>['scope']['getBinding']>>
 ): { confidence: TunedVariableConfidence; reason: string } | undefined {
   if (binding.referencePaths.length === 0) {
     return undefined;
@@ -319,10 +302,7 @@ function classifyCandidate(
 
   for (const referencePath of binding.referencePaths) {
     const propertyPath = referencePath.parentPath;
-    if (
-      propertyPath?.isObjectProperty() &&
-      propertyPath.get('value') === referencePath
-    ) {
+    if (propertyPath?.isObjectProperty() && propertyPath.get('value') === referencePath) {
       const key = getStaticPropertyKey(propertyPath.node);
       if (key && COMMON_TUNABLE_KEYS.has(key)) {
         return {
@@ -348,11 +328,7 @@ function classifyCandidate(
       mediumReason ??= 'Interpolated into a template literal.';
     }
 
-    if (
-      referencePath.findParent(
-        (path) => path.isBinaryExpression() || path.isTemplateLiteral(),
-      )
-    ) {
+    if (referencePath.findParent((path) => path.isBinaryExpression() || path.isTemplateLiteral())) {
       mediumReason ??= 'Used in composed prompt or request content.';
     }
   }
@@ -384,7 +360,7 @@ function getFunctionName(
   functionPath:
     | NodePath<t.FunctionDeclaration>
     | NodePath<t.FunctionExpression>
-    | NodePath<t.ArrowFunctionExpression>,
+    | NodePath<t.ArrowFunctionExpression>
 ): string {
   if ('id' in functionPath.node && functionPath.node.id && t.isIdentifier(functionPath.node.id)) {
     return functionPath.node.id.name;
@@ -403,7 +379,7 @@ function analyzeFunctionPath(
     | NodePath<t.FunctionDeclaration>
     | NodePath<t.FunctionExpression>
     | NodePath<t.ArrowFunctionExpression>,
-  options: DiscoverTunedVariablesOptions,
+  options: DiscoverTunedVariablesOptions
 ): TunedVariableDiscoveryResult {
   const functionName = getFunctionName(functionPath);
   const warnings: string[] = [];
@@ -431,9 +407,7 @@ function analyzeFunctionPath(
       }
 
       if (binding.constantViolations.length > 0) {
-        warnings.push(
-          `Skipped "${name}" because it is reassigned or mutated after declaration.`,
-        );
+        warnings.push(`Skipped "${name}" because it is reassigned or mutated after declaration.`);
         return;
       }
 
@@ -446,10 +420,7 @@ function analyzeFunctionPath(
         return;
       }
 
-      if (
-        classification.confidence === 'low' &&
-        !options.includeLowConfidence
-      ) {
+      if (classification.confidence === 'low' && !options.includeLowConfidence) {
         return;
       }
 
@@ -494,7 +465,7 @@ function parseSource(source: string) {
 
 function collectFunctionPaths(
   source: string,
-  functionName?: string,
+  functionName?: string
 ):
   | Array<
       | NodePath<t.FunctionDeclaration>
@@ -515,7 +486,7 @@ function collectFunctionPaths(
         pathToRegister:
           | NodePath<t.FunctionDeclaration>
           | NodePath<t.FunctionExpression>
-          | NodePath<t.ArrowFunctionExpression>,
+          | NodePath<t.ArrowFunctionExpression>
       ) => {
         if (!functionName || getFunctionName(pathToRegister) === functionName) {
           functionPaths.push(pathToRegister);
@@ -523,9 +494,7 @@ function collectFunctionPaths(
       };
 
       const registerDeclaration = (
-        declarationPath:
-          | NodePath<t.FunctionDeclaration>
-          | NodePath<t.VariableDeclaration>,
+        declarationPath: NodePath<t.FunctionDeclaration> | NodePath<t.VariableDeclaration>
       ) => {
         if (declarationPath.isFunctionDeclaration()) {
           registerFunctionPath(declarationPath);
@@ -534,10 +503,7 @@ function collectFunctionPaths(
 
         for (const declarator of declarationPath.get('declarations')) {
           const initPath = declarator.get('init');
-          if (
-            initPath.isFunctionExpression() ||
-            initPath.isArrowFunctionExpression()
-          ) {
+          if (initPath.isFunctionExpression() || initPath.isArrowFunctionExpression()) {
             registerFunctionPath(initPath);
           }
         }
@@ -566,10 +532,7 @@ function collectFunctionPaths(
         }
 
         const declarationPath = childPath.get('declaration');
-        if (
-          declarationPath.isFunctionDeclaration() ||
-          declarationPath.isVariableDeclaration()
-        ) {
+        if (declarationPath.isFunctionDeclaration() || declarationPath.isVariableDeclaration()) {
           registerDeclaration(declarationPath);
         }
       }
@@ -582,7 +545,7 @@ function collectFunctionPaths(
 
 export function discoverTunedVariables(
   fn: (...args: any[]) => any,
-  options: Omit<DiscoverTunedVariablesOptions, 'functionName'> = {},
+  options: Omit<DiscoverTunedVariablesOptions, 'functionName'> = {}
 ): TunedVariableDiscoveryResult {
   const source = Function.prototype.toString.call(fn);
   const wrappedSource = `const __traigent_target = ${source};`;
@@ -605,20 +568,15 @@ export function discoverTunedVariables(
 
 export function discoverTunedVariablesFromSource(
   source: string,
-  options: DiscoverTunedVariablesOptions = {},
+  options: DiscoverTunedVariablesOptions = {}
 ): TunedVariableDiscoveryResult[] {
   const functionPaths = collectFunctionPaths(source, options.functionName);
-  return functionPaths.map((functionPath) =>
-    analyzeFunctionPath(functionPath, options),
-  );
+  return functionPaths.map((functionPath) => analyzeFunctionPath(functionPath, options));
 }
 
 export function discoverTunedVariablesFromFile(
   filePath: string,
-  options: DiscoverTunedVariablesOptions = {},
+  options: DiscoverTunedVariablesOptions = {}
 ): TunedVariableDiscoveryResult[] {
-  return discoverTunedVariablesFromSource(
-    readFileSync(filePath, 'utf8'),
-    options,
-  );
+  return discoverTunedVariablesFromSource(readFileSync(filePath, 'utf8'), options);
 }

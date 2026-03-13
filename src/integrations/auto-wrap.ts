@@ -1,9 +1,6 @@
 import { createTraigentOpenAI } from './openai/index.js';
 import { withTraigentModel } from './langchain/index.js';
-import type {
-  FrameworkAutoOverrideStatus,
-  FrameworkTarget,
-} from '../optimization/types.js';
+import type { FrameworkAutoOverrideStatus, FrameworkTarget } from '../optimization/types.js';
 import { describeFrameworkAutoOverride } from './registry.js';
 import { withTraigent } from './vercel-ai/index.js';
 
@@ -45,16 +42,11 @@ function isOpenAIClientLike(value: unknown): boolean {
 
   const chat = value['chat'];
   const responses = value['responses'];
-  const completions =
-    chat && isObjectLike(chat) ? (chat['completions'] as unknown) : undefined;
+  const completions = chat && isObjectLike(chat) ? (chat['completions'] as unknown) : undefined;
 
   return Boolean(
-    (completions &&
-      isObjectLike(completions) &&
-      typeof completions['create'] === 'function') ||
-    (responses &&
-      isObjectLike(responses) &&
-      typeof responses['create'] === 'function')
+    (completions && isObjectLike(completions) && typeof completions['create'] === 'function') ||
+    (responses && isObjectLike(responses) && typeof responses['create'] === 'function')
   );
 }
 
@@ -86,8 +78,7 @@ function isVercelLanguageModelLike(value: unknown): boolean {
 
   return (
     typeof value['modelId'] === 'string' &&
-    (typeof value['doGenerate'] === 'function' ||
-      typeof value['doStream'] === 'function')
+    (typeof value['doGenerate'] === 'function' || typeof value['doStream'] === 'function')
   );
 }
 
@@ -124,7 +115,7 @@ function discoverFrameworkTargetsInternal(
   value: unknown,
   path: string,
   discovered: DiscoveredFrameworkTarget[],
-  seen: WeakSet<object>,
+  seen: WeakSet<object>
 ): void {
   if (!isObjectLike(value)) {
     return;
@@ -144,12 +135,7 @@ function discoverFrameworkTargetsInternal(
 
   if (Array.isArray(value)) {
     value.forEach((entry, index) => {
-      discoverFrameworkTargetsInternal(
-        entry,
-        formatChildPath(path, index),
-        discovered,
-        seen,
-      );
+      discoverFrameworkTargetsInternal(entry, formatChildPath(path, index), discovered, seen);
     });
     return;
   }
@@ -159,12 +145,7 @@ function discoverFrameworkTargetsInternal(
   }
 
   Object.entries(value).forEach(([key, entry]) => {
-    discoverFrameworkTargetsInternal(
-      entry,
-      formatChildPath(path, key),
-      discovered,
-      seen,
-    );
+    discoverFrameworkTargetsInternal(entry, formatChildPath(path, key), discovered, seen);
   });
 }
 
@@ -176,9 +157,7 @@ function discoverFrameworkTargetsInternal(
  * - nested arrays and plain-object graphs are traversed
  * - arbitrary module state or non-plain container instances are not scanned
  */
-export function discoverFrameworkTargets(
-  value: unknown,
-): DiscoveredFrameworkTarget[] {
+export function discoverFrameworkTargets(value: unknown): DiscoveredFrameworkTarget[] {
   const discovered: DiscoveredFrameworkTarget[] = [];
   discoverFrameworkTargetsInternal(value, '<root>', discovered, new WeakSet());
   return discovered;
@@ -261,7 +240,7 @@ export function autoWrapFrameworkTargets<T>(value: T): T {
  */
 export function prepareFrameworkTargets<T>(
   value: T,
-  options: PrepareFrameworkTargetsOptions = {},
+  options: PrepareFrameworkTargetsOptions = {}
 ): PreparedFrameworkTargets<T> {
   const wrapped = autoWrapFrameworkTargets(value);
   return {
@@ -269,7 +248,7 @@ export function prepareFrameworkTargets<T>(
     discovered: discoverFrameworkTargets(value),
     autoOverrideStatus: describeFrameworkAutoOverride(
       options.frameworkTargets,
-      options.autoOverrideFrameworks ?? true,
+      options.autoOverrideFrameworks ?? true
     ),
   };
 }

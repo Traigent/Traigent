@@ -5,11 +5,7 @@ import { PythonRandom } from '../../../src/optimization/python-random.js';
 describe('PythonRandom', () => {
   it('replays the same sequence after serialize/restore', () => {
     const original = new PythonRandom(42);
-    const firstValues = [
-      original.random(),
-      original.randint(1, 10),
-      original.uniform(-1, 1),
-    ];
+    const firstValues = [original.random(), original.randint(1, 10), original.uniform(-1, 1)];
 
     const restored = new PythonRandom(original.serialize());
     const nextOriginal = [original.random(), original.randint(5, 9), original.choice(['a', 'b'])];
@@ -24,9 +20,7 @@ describe('PythonRandom', () => {
 
     const samples = Array.from({ length: 8 }, () => random.randBelow(8));
 
-    expect(samples.every((value) => Number.isInteger(value) && value >= 0 && value < 8)).toBe(
-      true,
-    );
+    expect(samples.every((value) => Number.isInteger(value) && value >= 0 && value < 8)).toBe(true);
   });
 
   it('validates constructor and public argument errors', () => {
@@ -35,7 +29,7 @@ describe('PythonRandom', () => {
         new PythonRandom({
           index: 0,
           state: [1, 2, 3],
-        } as never),
+        } as never)
     ).toThrow(/invalid serialized python random state/i);
 
     const random = new PythonRandom(0);

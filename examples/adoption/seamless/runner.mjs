@@ -12,7 +12,4 @@ console.log('bestConfig', result.bestConfig);
 console.log('bestMetrics', result.bestMetrics);
 
 optimizedAnswerQuestion.applyBestConfig(result);
-console.log(
-  'postApply',
-  await optimizedAnswerQuestion('What is the capital of France?'),
-);
+console.log('postApply', await optimizedAnswerQuestion('What is the capital of France?'));

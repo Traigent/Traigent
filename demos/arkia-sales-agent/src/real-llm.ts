@@ -115,7 +115,12 @@ export async function realLLMCall(
 
     return {
       response,
-      metrics: { latency_ms: latency, input_tokens: inputTokens, output_tokens: outputTokens, cost },
+      metrics: {
+        latency_ms: latency,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cost,
+      },
     };
   } catch (error) {
     console.error(`[MASTRA ERROR] ${error instanceof Error ? error.message : error}`);
@@ -183,6 +188,12 @@ Agent: "${response}"
     };
   } catch (error) {
     console.error(`[MASTRA EVAL ERROR] ${error instanceof Error ? error.message : error}`);
-    return { relevancy: 0.7, completeness: 0.7, tone_consistency: 0.7, conversion_score: 0.5, eval_cost: 0 };
+    return {
+      relevancy: 0.7,
+      completeness: 0.7,
+      tone_consistency: 0.7,
+      conversion_score: 0.5,
+      eval_cost: 0,
+    };
   }
 }

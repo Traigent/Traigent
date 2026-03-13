@@ -1,10 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import {
-  transformSeamlessSource,
-  type SeamlessDiagnostic,
-} from '../seamless/transform.js';
+import { transformSeamlessSource, type SeamlessDiagnostic } from '../seamless/transform.js';
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.js',
@@ -54,7 +51,7 @@ async function collectFiles(inputPath: string): Promise<string[]> {
   const nestedFiles = await Promise.all(
     entries
       .filter((entry) => entry.name !== 'node_modules' && entry.name !== 'dist')
-      .map((entry) => collectFiles(path.join(inputPath, entry.name))),
+      .map((entry) => collectFiles(path.join(inputPath, entry.name)))
   );
 
   return nestedFiles.flat();
@@ -62,13 +59,13 @@ async function collectFiles(inputPath: string): Promise<string[]> {
 
 export async function runSeamlessMigration(
   paths: readonly string[],
-  options: SeamlessMigrationOptions,
+  options: SeamlessMigrationOptions
 ): Promise<SeamlessMigrationResult> {
   const cwd = options.cwd ?? process.cwd();
   const resolvedPaths = paths.length > 0 ? paths : ['.'];
   const files = (
     await Promise.all(
-      resolvedPaths.map((targetPath) => collectFiles(path.resolve(cwd, targetPath))),
+      resolvedPaths.map((targetPath) => collectFiles(path.resolve(cwd, targetPath)))
     )
   ).flat();
 
@@ -78,7 +75,7 @@ export async function runSeamlessMigration(
     const source = await fs.readFile(file, 'utf8');
     const transformed = transformSeamlessSource(source, { filename: file });
     const rejectedCount = transformed.diagnostics.filter(
-      (diagnostic) => diagnostic.kind === 'rejected',
+      (diagnostic) => diagnostic.kind === 'rejected'
     ).length;
     const blocked = rejectedCount > 0;
     const changed = transformed.changed && !blocked;
@@ -106,16 +103,11 @@ export async function runSeamlessMigration(
     totalFiles: files.length,
     changedFiles: results.filter((result) => result.changed).length,
     blockedFiles: results.filter((result) => result.blocked).length,
-    rewrittenCount: results.reduce(
-      (total, result) => total + result.rewrittenCount,
-      0,
-    ),
+    rewrittenCount: results.reduce((total, result) => total + result.rewrittenCount, 0),
     rejectedCount: results.reduce(
       (total, result) =>
-        total +
-        result.diagnostics.filter((diagnostic) => diagnostic.kind === 'rejected')
-          .length,
-      0,
+        total + result.diagnostics.filter((diagnostic) => diagnostic.kind === 'rejected').length,
+      0
     ),
   };
 }

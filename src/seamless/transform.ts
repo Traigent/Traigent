@@ -5,10 +5,7 @@ import * as t from '@babel/types';
 
 const traverse = traverseModule.default ?? traverseModule;
 const generate = generatorModule.default ?? generatorModule;
-const PARSER_PLUGINS: NonNullable<Parameters<typeof parse>[1]>['plugins'] = [
-  'typescript',
-  'jsx',
-];
+const PARSER_PLUGINS: NonNullable<Parameters<typeof parse>[1]>['plugins'] = ['typescript', 'jsx'];
 
 type LocalImportMap = Map<string, string>;
 
@@ -53,7 +50,7 @@ function createDiagnostic(
   node: t.Node | null | undefined,
   filename: string | undefined,
   functionName?: string,
-  key?: string,
+  key?: string
 ): SeamlessDiagnostic {
   return {
     kind,
@@ -67,7 +64,7 @@ function createDiagnostic(
 }
 
 function isStaticKeyName(
-  property: t.ObjectProperty | t.ObjectMethod | t.ClassMethod | t.ClassProperty,
+  property: t.ObjectProperty | t.ObjectMethod | t.ClassMethod | t.ClassProperty
 ): string | undefined {
   if (property.computed) {
     return undefined;
@@ -85,7 +82,7 @@ function isStaticKeyName(
 }
 
 function getConfigKeysFromSpecObject(
-  specNode: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
+  specNode: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined
 ): Set<string> | undefined {
   if (!specNode || !t.isObjectExpression(specNode)) {
     return undefined;
@@ -139,27 +136,18 @@ function getImportDetails(programPath: NodePath<t.Program>): {
     }
 
     const source = statementPath.node.source.value;
-    importPathsBySource.set(source, [
-      ...(importPathsBySource.get(source) ?? []),
-      statementPath,
-    ]);
+    importPathsBySource.set(source, [...(importPathsBySource.get(source) ?? []), statementPath]);
 
     for (const specifier of statementPath.node.specifiers) {
       if (!t.isImportSpecifier(specifier)) {
         continue;
       }
 
-      if (
-        t.isIdentifier(specifier.imported) &&
-        specifier.imported.name === 'optimize'
-      ) {
+      if (t.isIdentifier(specifier.imported) && specifier.imported.name === 'optimize') {
         optimizeImports.set(specifier.local.name, source);
       }
 
-      if (
-        t.isIdentifier(specifier.imported) &&
-        specifier.imported.name === 'getTrialParam'
-      ) {
+      if (t.isIdentifier(specifier.imported) && specifier.imported.name === 'getTrialParam') {
         getterImports.set(source, specifier.local.name);
       }
     }
@@ -177,7 +165,7 @@ function getNodeKey(node: t.Node): string {
 }
 
 function resolveFunctionPath(
-  targetPath: NodePath<t.Node>,
+  targetPath: NodePath<t.Node>
 ):
   | NodePath<t.FunctionDeclaration>
   | NodePath<t.FunctionExpression>
@@ -209,10 +197,7 @@ function resolveFunctionPath(
   }
 
   const initPath = binding.path.get('init');
-  if (
-    initPath.isFunctionExpression() ||
-    initPath.isArrowFunctionExpression()
-  ) {
+  if (initPath.isFunctionExpression() || initPath.isArrowFunctionExpression()) {
     return initPath;
   }
 
@@ -222,12 +207,9 @@ function resolveFunctionPath(
 function makeGetterCall(
   getterLocalName: string,
   key: string,
-  fallback: t.Expression,
+  fallback: t.Expression
 ): t.CallExpression {
-  return t.callExpression(t.identifier(getterLocalName), [
-    t.stringLiteral(key),
-    fallback,
-  ]);
+  return t.callExpression(t.identifier(getterLocalName), [t.stringLiteral(key), fallback]);
 }
 
 function isSupportedLiteralExpression(node: t.Node | null | undefined): node is t.Expression {
@@ -245,10 +227,7 @@ function isSupportedLiteralExpression(node: t.Node | null | undefined): node is 
   }
 
   if (t.isUnaryExpression(node)) {
-    return (
-      (node.operator === '-' || node.operator === '+') &&
-      t.isNumericLiteral(node.argument)
-    );
+    return (node.operator === '-' || node.operator === '+') && t.isNumericLiteral(node.argument);
   }
 
   if (t.isTemplateLiteral(node)) {
@@ -303,16 +282,14 @@ function getPatternIdentifiers(pattern: t.LVal): string[] {
 
   if (t.isArrayPattern(pattern)) {
     return pattern.elements.flatMap((element) =>
-      element ? getPatternIdentifiers(element as t.LVal) : [],
+      element ? getPatternIdentifiers(element as t.LVal) : []
     );
   }
 
   if (t.isObjectPattern(pattern)) {
     return pattern.properties.flatMap((property) => {
       if (t.isRestElement(property)) {
-        return t.isLVal(property.argument)
-          ? getPatternIdentifiers(property.argument)
-          : [];
+        return t.isLVal(property.argument) ? getPatternIdentifiers(property.argument) : [];
       }
 
       if (t.isObjectProperty(property)) {
@@ -334,14 +311,12 @@ export function transformSeamlessFunctionPath(
   configKeys: Set<string>,
   getterLocalName: string,
   filename: string | undefined,
-  diagnostics: SeamlessDiagnostic[],
+  diagnostics: SeamlessDiagnostic[]
 ): number {
   const pendingRewrites: PendingRewrite[] = [];
   const localDiagnostics: SeamlessDiagnostic[] = [];
   const functionName =
-    ('id' in functionPath.node &&
-    functionPath.node.id &&
-    t.isIdentifier(functionPath.node.id)
+    ('id' in functionPath.node && functionPath.node.id && t.isIdentifier(functionPath.node.id)
       ? functionPath.node.id.name
       : undefined) ||
     (functionPath.parentPath.isVariableDeclarator() &&
@@ -373,8 +348,8 @@ export function transformSeamlessFunctionPath(
             path.node,
             filename,
             functionName,
-            matchedName,
-          ),
+            matchedName
+          )
         );
         return;
       }
@@ -387,8 +362,8 @@ export function transformSeamlessFunctionPath(
             path.node,
             filename,
             functionName,
-            matchedName,
-          ),
+            matchedName
+          )
         );
         return;
       }
@@ -403,11 +378,7 @@ export function transformSeamlessFunctionPath(
       const originalInitializer = path.node.init;
       pendingRewrites.push({
         apply: () => {
-          path.node.init = makeGetterCall(
-            getterLocalName,
-            matchedName,
-            originalInitializer,
-          );
+          path.node.init = makeGetterCall(getterLocalName, matchedName, originalInitializer);
         },
         diagnostic: createDiagnostic(
           'rewritten',
@@ -415,15 +386,12 @@ export function transformSeamlessFunctionPath(
           path.node,
           filename,
           functionName,
-          matchedName,
+          matchedName
         ),
       });
     },
     AssignmentExpression(path) {
-      if (
-        !t.isIdentifier(path.node.left) ||
-        !configKeys.has(path.node.left.name)
-      ) {
+      if (!t.isIdentifier(path.node.left) || !configKeys.has(path.node.left.name)) {
         return;
       }
 
@@ -436,8 +404,8 @@ export function transformSeamlessFunctionPath(
             path.node,
             filename,
             functionName,
-            key,
-          ),
+            key
+          )
         );
         return;
       }
@@ -450,8 +418,8 @@ export function transformSeamlessFunctionPath(
             path.node,
             filename,
             functionName,
-            key,
-          ),
+            key
+          )
         );
         return;
       }
@@ -459,11 +427,7 @@ export function transformSeamlessFunctionPath(
       const originalRightHandSide = path.node.right;
       pendingRewrites.push({
         apply: () => {
-          path.node.right = makeGetterCall(
-            getterLocalName,
-            key,
-            originalRightHandSide,
-          );
+          path.node.right = makeGetterCall(getterLocalName, key, originalRightHandSide);
         },
         diagnostic: createDiagnostic(
           'rewritten',
@@ -471,15 +435,12 @@ export function transformSeamlessFunctionPath(
           path.node,
           filename,
           functionName,
-          key,
+          key
         ),
       });
     },
     UpdateExpression(path) {
-      if (
-        t.isIdentifier(path.node.argument) &&
-        configKeys.has(path.node.argument.name)
-      ) {
+      if (t.isIdentifier(path.node.argument) && configKeys.has(path.node.argument.name)) {
         localDiagnostics.push(
           createDiagnostic(
             'rejected',
@@ -487,15 +448,15 @@ export function transformSeamlessFunctionPath(
             path.node,
             filename,
             functionName,
-            path.node.argument.name,
-          ),
+            path.node.argument.name
+          )
         );
       }
     },
   });
 
   const rejectedDiagnostics = localDiagnostics.filter(
-    (diagnostic) => diagnostic.kind === 'rejected',
+    (diagnostic) => diagnostic.kind === 'rejected'
   );
 
   if (rejectedDiagnostics.length > 0) {
@@ -507,8 +468,8 @@ export function transformSeamlessFunctionPath(
           `Skipped seamless rewrite for function "${functionName}" because unsupported tuned-variable patterns were found. No partial rewrite was applied.`,
           functionPath.node,
           filename,
-          functionName,
-        ),
+          functionName
+        )
       );
     }
     return 0;
@@ -522,10 +483,7 @@ export function transformSeamlessFunctionPath(
   return pendingRewrites.length;
 }
 
-function resolveGetterLocalName(
-  importSource: string,
-  getterImports: LocalImportMap,
-): string {
+function resolveGetterLocalName(importSource: string, getterImports: LocalImportMap): string {
   return getterImports.get(importSource) ?? 'getTrialParam';
 }
 
@@ -534,7 +492,7 @@ function addGetterImport(
   importSource: string,
   getterLocalName: string,
   getterImports: LocalImportMap,
-  importPathsBySource: Map<string, NodePath<t.ImportDeclaration>[]>,
+  importPathsBySource: Map<string, NodePath<t.ImportDeclaration>[]>
 ): void {
   if (getterImports.has(importSource)) {
     return;
@@ -543,10 +501,7 @@ function addGetterImport(
   const importPaths = importPathsBySource.get(importSource);
   if (importPaths && importPaths.length > 0) {
     importPaths[0]!.node.specifiers.push(
-      t.importSpecifier(
-        t.identifier(getterLocalName),
-        t.identifier('getTrialParam'),
-      ),
+      t.importSpecifier(t.identifier(getterLocalName), t.identifier('getTrialParam'))
     );
     getterImports.set(importSource, getterLocalName);
     return;
@@ -555,28 +510,19 @@ function addGetterImport(
   programPath.unshiftContainer(
     'body',
     t.importDeclaration(
-      [
-        t.importSpecifier(
-          t.identifier(getterLocalName),
-          t.identifier('getTrialParam'),
-        ),
-      ],
-      t.stringLiteral(importSource),
-    ),
+      [t.importSpecifier(t.identifier(getterLocalName), t.identifier('getTrialParam'))],
+      t.stringLiteral(importSource)
+    )
   );
   getterImports.set(importSource, getterLocalName);
 }
 
 export function transformSeamlessProgram(
   programPath: NodePath<t.Program>,
-  options: TransformProgramOptions = {},
+  options: TransformProgramOptions = {}
 ): SeamlessTransformResult {
   const diagnostics: SeamlessDiagnostic[] = [];
-  const {
-    optimizeImports,
-    getterImports,
-    importPathsBySource,
-  } = getImportDetails(programPath);
+  const { optimizeImports, getterImports, importPathsBySource } = getImportDetails(programPath);
   const requests = new Map<string, RewriteRequest>();
 
   programPath.traverse({
@@ -603,8 +549,8 @@ export function transformSeamlessProgram(
             'rejected',
             'Skipping seamless rewrite because optimize() spec is not a static object literal with configurationSpace keys.',
             innerCall.arguments[0] as t.Node | undefined,
-            options.filename,
-          ),
+            options.filename
+          )
         );
         return;
       }
@@ -621,8 +567,8 @@ export function transformSeamlessProgram(
             'rejected',
             'Skipping seamless rewrite because optimize() target is not a directly resolvable local function.',
             targetPath.node,
-            options.filename,
-          ),
+            options.filename
+          )
         );
         return;
       }
@@ -648,17 +594,14 @@ export function transformSeamlessProgram(
   let rewrittenCount = 0;
 
   for (const request of requests.values()) {
-    const getterLocalName = resolveGetterLocalName(
-      request.importSource,
-      getterImports,
-    );
+    const getterLocalName = resolveGetterLocalName(request.importSource, getterImports);
 
     const rewritten = transformSeamlessFunctionPath(
       request.functionPath,
       request.configKeys,
       getterLocalName,
       options.filename,
-      diagnostics,
+      diagnostics
     );
     if (rewritten > 0) {
       addGetterImport(
@@ -666,7 +609,7 @@ export function transformSeamlessProgram(
         request.importSource,
         getterLocalName,
         getterImports,
-        importPathsBySource,
+        importPathsBySource
       );
       changed = true;
       rewrittenCount += rewritten;
@@ -688,7 +631,7 @@ export function transformSeamlessProgram(
 
 export function transformSeamlessSource(
   source: string,
-  options: TransformProgramOptions = {},
+  options: TransformProgramOptions = {}
 ): SeamlessTransformResult {
   const ast = parse(source, {
     sourceType: 'module',

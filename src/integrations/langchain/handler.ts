@@ -88,17 +88,11 @@ const MODEL_COSTS: Record<string, [number, number]> = {
  * Sorts prefixes by length (longest first) to ensure specific models like
  * gpt-4o-mini match before generic prefixes like gpt-4o.
  */
-function estimateCost(
-  model: string,
-  inputTokens: number,
-  outputTokens: number
-): number {
+function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
   const modelLower = model.toLowerCase();
 
   // Sort by prefix length descending to match specific models first
-  const sortedPrefixes = Object.keys(MODEL_COSTS).sort(
-    (a, b) => b.length - a.length
-  );
+  const sortedPrefixes = Object.keys(MODEL_COSTS).sort((a, b) => b.length - a.length);
 
   for (const prefix of sortedPrefixes) {
     if (modelLower.includes(prefix)) {
@@ -140,11 +134,7 @@ export class TraigentHandler implements Partial<BaseCallbackHandler> {
   /**
    * Called at the start of an LLM call.
    */
-  async handleLLMStart(
-    _llm: Serialized,
-    _prompts: string[],
-    runId: string
-  ): Promise<void> {
+  async handleLLMStart(_llm: Serialized, _prompts: string[], runId: string): Promise<void> {
     this.startTimes.set(runId, Date.now());
   }
 

@@ -1,24 +1,15 @@
 import assert from 'node:assert/strict';
 import process from 'node:process';
 
-import {
-  getTrialConfig,
-  getTrialParam,
-  optimize,
-  param,
-} from '../dist/index.js';
+import { getTrialConfig, getTrialParam, optimize, param } from '../dist/index.js';
 
-const backendUrl =
-  process.env.TRAIGENT_BACKEND_URL ?? process.env.TRAIGENT_API_URL;
+const backendUrl = process.env.TRAIGENT_BACKEND_URL ?? process.env.TRAIGENT_API_URL;
 const apiKey = process.env.TRAIGENT_API_KEY;
-const maxTrials = Number.parseInt(
-  process.env.TRAIGENT_HYBRID_SMOKE_MAX_TRIALS ?? '4',
-  10,
-);
+const maxTrials = Number.parseInt(process.env.TRAIGENT_HYBRID_SMOKE_MAX_TRIALS ?? '4', 10);
 
 if (!backendUrl || !apiKey) {
   throw new Error(
-    'Set TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL) and TRAIGENT_API_KEY before running the hybrid live smoke test.',
+    'Set TRAIGENT_BACKEND_URL (or TRAIGENT_API_URL) and TRAIGENT_API_KEY before running the hybrid live smoke test.'
   );
 }
 
@@ -86,14 +77,14 @@ const result = await runTrial.optimize({
 
 if (['error', 'timeout', 'cancelled'].includes(result.stopReason)) {
   throw new Error(
-    `Hybrid live smoke failed with stopReason=${result.stopReason}: ${result.errorMessage ?? 'no backend error message provided'}`,
+    `Hybrid live smoke failed with stopReason=${result.stopReason}: ${result.errorMessage ?? 'no backend error message provided'}`
   );
 }
 
 assert.equal(result.mode, 'hybrid');
 assert.ok(
   result.sessionId,
-  `Expected a sessionId from the backend. stopReason=${result.stopReason}`,
+  `Expected a sessionId from the backend. stopReason=${result.stopReason}`
 );
 assert.ok(result.trials.length > 0);
 assert.ok(result.bestConfig && typeof result.bestConfig === 'object');
@@ -111,6 +102,6 @@ console.log(
       metadata: result.metadata,
     },
     null,
-    2,
-  ),
+    2
+  )
 );

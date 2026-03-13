@@ -22,7 +22,8 @@ export const MEASURE_KEY_PATTERN = /^[a-zA-Z_]\w*$/;
  * Zod schema for a single measure key.
  */
 export const MeasureKeySchema = z.string().regex(MEASURE_KEY_PATTERN, {
-  message: 'Measure key must be a valid Python identifier (e.g., "accuracy_score", not "accuracy-score")',
+  message:
+    'Measure key must be a valid Python identifier (e.g., "accuracy_score", not "accuracy-score")',
 });
 
 /**
@@ -44,11 +45,7 @@ export type MeasuresDict = z.infer<typeof MeasuresDictSchema>;
 /**
  * Handle validation error based on strict mode.
  */
-function handleValidationError(
-  msg: string,
-  strict: boolean,
-  warn: (msg: string) => void
-): void {
+function handleValidationError(msg: string, strict: boolean, warn: (msg: string) => void): void {
   if (strict) {
     throw new Error(msg);
   }
@@ -135,10 +132,7 @@ export function mergeMeasures(...dicts: MeasuresDict[]): MeasuresDict {
  * Add a prefix to all measure keys.
  * Useful for namespacing metrics from different sources.
  */
-export function prefixMeasures(
-  dict: MeasuresDict,
-  prefix: string
-): MeasuresDict {
+export function prefixMeasures(dict: MeasuresDict, prefix: string): MeasuresDict {
   const result: MeasuresDict = {};
 
   for (const [key, value] of Object.entries(dict)) {

@@ -1,0 +1,36 @@
+name: Hybrid Backend Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  hybrid-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Check smoke configuration
+        id: config
+        run: |
+          if [ -z "${{ secrets.TRAIGENT_API_KEY }}" ] || { [ -z "${{ secrets.TRAIGENT_BACKEND_URL }}" ] && [ -z "${{ secrets.TRAIGENT_API_URL }}" ]; }; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Hybrid smoke is not configured; skipping."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.config.outputs.configured == 'true'
+        run: npm ci
+      - if: steps.config.outputs.configured == 'true'
+        run: npm run build
+      - if: steps.config.outputs.configured == 'true'
+        env:
+          TRAIGENT_BACKEND_URL: ${{ secrets.TRAIGENT_BACKEND_URL }}
+          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
+          TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
+        run: node scripts/ci/hybrid-backend-smoke.mjs

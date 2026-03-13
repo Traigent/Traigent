@@ -9,16 +9,12 @@ describe('TVL expression compiler', () => {
       'logical',
       'params.model = "accurate" and not (metrics.accuracy < 0.8)',
       undefined,
-      'expr',
+      'expr'
     );
 
     expect(constraint.requiresMetrics).toBe(true);
-    expect(
-      constraint({ model: 'accurate' }, { accuracy: 0.9 }),
-    ).toBe(true);
-    expect(
-      constraint({ model: 'accurate' }, { accuracy: 0.5 }),
-    ).toBe(false);
+    expect(constraint({ model: 'accurate' }, { accuracy: 0.9 })).toBe(true);
+    expect(constraint({ model: 'accurate' }, { accuracy: 0.5 })).toBe(false);
     expect(constraint({ model: 'cheap' }, { accuracy: 0.9 })).toBe(false);
   });
 
@@ -28,7 +24,7 @@ describe('TVL expression compiler', () => {
       'params.retries <= 3',
       undefined,
       'implication',
-      'params.model = "accurate"',
+      'params.model = "accurate"'
     );
 
     expect(constraint.requiresMetrics).toBe(false);
@@ -42,7 +38,7 @@ describe('TVL expression compiler', () => {
       'mathy',
       '((params.retries + 1) % 2 == 0) or (+metrics.latency < 3 and -(params.offset) == -2) or params.optional == undefined or params.value != null',
       undefined,
-      'expr',
+      'expr'
     );
 
     expect(
@@ -55,8 +51,8 @@ describe('TVL expression compiler', () => {
         },
         {
           latency: 2,
-        },
-      ),
+        }
+      )
     ).toBe(true);
   });
 
@@ -65,7 +61,7 @@ describe('TVL expression compiler', () => {
       'nullable',
       'params.missing.value == undefined',
       undefined,
-      'expr',
+      'expr'
     );
     expect(nullable({})).toBe(true);
 
@@ -74,7 +70,7 @@ describe('TVL expression compiler', () => {
       'params.retries <= 2',
       undefined,
       'implication',
-      'metrics.accuracy >= 0.8',
+      'metrics.accuracy >= 0.8'
     );
     expect(implication.requiresMetrics).toBe(true);
     expect(implication({ retries: 5 }, { accuracy: 0.5 })).toBe(true);
@@ -86,7 +82,7 @@ describe('TVL expression compiler', () => {
       'operators',
       'params.low <= metrics.high and params.high >= metrics.low and params.left !== params.right and params.mode != "cheap" and params.count / 2 == 3 and params.count * 2 >= 12 and params.count - 3 === 3',
       undefined,
-      'expr',
+      'expr'
     );
 
     expect(
@@ -102,37 +98,32 @@ describe('TVL expression compiler', () => {
         {
           high: 5,
           low: 1,
-        },
-      ),
+        }
+      )
     ).toBe(true);
   });
 
   it('rejects unsupported identifiers, computed access, and call expressions', () => {
-    expect(() =>
-      compileTvlConstraint('bad-id', 'process.exit(1)', undefined, 'expr'),
-    ).toThrow(/unsupported syntax "CallExpression"/i);
+    expect(() => compileTvlConstraint('bad-id', 'process.exit(1)', undefined, 'expr')).toThrow(
+      /unsupported syntax "CallExpression"/i
+    );
 
     expect(() =>
-      compileTvlConstraint(
-        'computed',
-        'params["constructor"]',
-        undefined,
-        'expr',
-      ),
+      compileTvlConstraint('computed', 'params["constructor"]', undefined, 'expr')
     ).toThrow(/cannot use computed property access/i);
 
-    expect(() =>
-      compileTvlConstraint('other-id', 'window.location', undefined, 'expr'),
-    ).toThrow(/unsupported identifier "window"/i);
+    expect(() => compileTvlConstraint('other-id', 'window.location', undefined, 'expr')).toThrow(
+      /unsupported identifier "window"/i
+    );
   });
 
   it('rejects unsupported operators and malformed expressions', () => {
-    expect(() =>
-      compileTvlConstraint('bitwise', 'params.count & 1', undefined, 'expr'),
-    ).toThrow(/unsupported binary operator "&"/i);
+    expect(() => compileTvlConstraint('bitwise', 'params.count & 1', undefined, 'expr')).toThrow(
+      /unsupported binary operator "&"/i
+    );
 
     expect(() =>
-      compileTvlConstraint('unterminated', 'params.model = "x', undefined, 'expr'),
+      compileTvlConstraint('unterminated', 'params.model = "x', undefined, 'expr')
     ).toThrow(/terminate string literals|could not be parsed/i);
   });
 
@@ -141,22 +132,15 @@ describe('TVL expression compiler', () => {
       'runtime-failure',
       'params.token + 1 > 0',
       'friendly message',
-      'expr',
+      'expr'
     );
 
-    expect(() => constraint({ token: Symbol('boom') })).toThrow(
-      /friendly message/i,
-    );
+    expect(() => constraint({ token: Symbol('boom') })).toThrow(/friendly message/i);
   });
 
   it('rejects unsupported syntax nodes such as template literals', () => {
     expect(() =>
-      compileTvlConstraint(
-        'template',
-        'params.model === `${metrics.accuracy}`',
-        undefined,
-        'expr',
-      ),
+      compileTvlConstraint('template', 'params.model === `${metrics.accuracy}`', undefined, 'expr')
     ).toThrow(ValidationError);
   });
 });

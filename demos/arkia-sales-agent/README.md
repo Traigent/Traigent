@@ -34,31 +34,31 @@ arkia-sales-agent/
 
 ## Configuration Space
 
-| Parameter | Options | Impact |
-|-----------|---------|--------|
-| **model** | gpt-3.5-turbo, gpt-4o-mini, gpt-4o, groq/llama-3.3-70b-versatile, groq/llama-3.1-8b-instant | Quality vs Cost |
-| **temperature** | 0.0, 0.3, 0.5, 0.7 | Consistency vs Creativity |
-| **system_prompt** | sales_aggressive, consultative, informative | Conversion style |
-| **memory_turns** | 2, 5, 10, 15 | Context quality vs Token cost |
-| **tool_set** | minimal, standard, enhanced, full | Capability vs Token cost |
+| Parameter         | Options                                                                                     | Impact                        |
+| ----------------- | ------------------------------------------------------------------------------------------- | ----------------------------- |
+| **model**         | gpt-3.5-turbo, gpt-4o-mini, gpt-4o, groq/llama-3.3-70b-versatile, groq/llama-3.1-8b-instant | Quality vs Cost               |
+| **temperature**   | 0.0, 0.3, 0.5, 0.7                                                                          | Consistency vs Creativity     |
+| **system_prompt** | sales_aggressive, consultative, informative                                                 | Conversion style              |
+| **memory_turns**  | 2, 5, 10, 15                                                                                | Context quality vs Token cost |
+| **tool_set**      | minimal, standard, enhanced, full                                                           | Capability vs Token cost      |
 
 ### Tool Sets
 
-| Set | Tools | Token Cost | Conversion Boost |
-|-----|-------|------------|------------------|
-| minimal | search, price, book | ~300 tokens | Baseline |
-| standard | + availability, promotions | ~500 tokens | +8% |
-| enhanced | + customer history, destination info | ~700 tokens | +12% |
-| full | + packages, installments, upgrades | ~1000 tokens | +15% |
+| Set      | Tools                                | Token Cost   | Conversion Boost |
+| -------- | ------------------------------------ | ------------ | ---------------- |
+| minimal  | search, price, book                  | ~300 tokens  | Baseline         |
+| standard | + availability, promotions           | ~500 tokens  | +8%              |
+| enhanced | + customer history, destination info | ~700 tokens  | +12%             |
+| full     | + packages, installments, upgrades   | ~1000 tokens | +15%             |
 
 ## Model Comparison (Simulated)
 
-| Model | Quality | Cost/1M tokens | Latency | Best For |
-|-------|---------|----------------|---------|----------|
-| GPT-4o | Highest | $2.50/$10.00 | ~450ms | Maximum quality |
-| GPT-4o-mini | Good | $0.15/$0.60 | ~250ms | Balanced |
-| Groq Llama 70B | High | $0.59/$0.79 | ~80ms | Quality + Speed |
-| Groq Llama 8B | Moderate | $0.05/$0.08 | ~30ms | High volume |
+| Model          | Quality  | Cost/1M tokens | Latency | Best For        |
+| -------------- | -------- | -------------- | ------- | --------------- |
+| GPT-4o         | Highest  | $2.50/$10.00   | ~450ms  | Maximum quality |
+| GPT-4o-mini    | Good     | $0.15/$0.60    | ~250ms  | Balanced        |
+| Groq Llama 70B | High     | $0.59/$0.79    | ~80ms   | Quality + Speed |
+| Groq Llama 8B  | Moderate | $0.05/$0.08    | ~30ms   | High volume     |
 
 > **Note:** Costs are simulated values for demonstration. Actual pricing may vary.
 
@@ -66,9 +66,9 @@ arkia-sales-agent/
 
 ### Execution Time
 
-| Mode | Duration | Cost |
-|------|----------|------|
-| Local demo (`npm run dev`) | ~2 seconds | Free (mock) |
+| Mode                            | Duration   | Cost        |
+| ------------------------------- | ---------- | ----------- |
+| Local demo (`npm run dev`)      | ~2 seconds | Free (mock) |
 | Python optimization (24 trials) | ~5 minutes | Free (mock) |
 
 ### Local Demo (Traigent JS SDK chooses the configs)
@@ -133,15 +133,18 @@ margin_efficiency = conversion_score / (cost_per_conversation * 10000)
 Higher margin efficiency = better ROI. The formula scales by 10,000 for readability.
 
 ### Quality Metrics (Mastra-compatible)
+
 - `relevancy` - Answer relevancy (0-1)
 - `completeness` - Response completeness (0-1)
 - `tone_consistency` - Style consistency (0-1)
 
 ### Business Metrics
+
 - `conversion_score` - Sales conversion rate (0-1)
 - `margin_efficiency` - Conversion per dollar spent (higher is better)
 
 ### Cost Metrics
+
 - `cost` - Total LLM cost in USD
 - `cost_per_conversation` - Average cost per conversation
 - `input_tokens` / `output_tokens` - Token usage
@@ -149,6 +152,7 @@ Higher margin efficiency = better ROI. The formula scales by 10,000 for readabil
 ## Non-Determinism
 
 This demo includes simulated variance to model real LLM behavior:
+
 - Quality scores vary ±5% between runs
 - Token counts have slight randomness
 - Latency varies ±20%
@@ -166,7 +170,7 @@ const config: AgentConfig = {
   system_prompt: 'consultative',
   memory_turns: 5,
   tool_set: 'standard',
-  random_seed: 12345,  // Set for reproducible results
+  random_seed: 12345, // Set for reproducible results
 };
 ```
 
@@ -196,11 +200,11 @@ const response = await agent.generate(messages, { resourceId });
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | No* | OpenAI API key (only for real integration) |
-| `GROQ_API_KEY` | No* | Groq API key (only for real integration) |
-| `TRAIGENT_COST_APPROVED` | No | Set to `true` to skip cost approval prompt |
-| `TRAIGENT_EXECUTION_MODE` | No | `edge_analytics` (default) or `mock` |
+| Variable                  | Required | Description                                |
+| ------------------------- | -------- | ------------------------------------------ |
+| `OPENAI_API_KEY`          | No\*     | OpenAI API key (only for real integration) |
+| `GROQ_API_KEY`            | No\*     | Groq API key (only for real integration)   |
+| `TRAIGENT_COST_APPROVED`  | No       | Set to `true` to skip cost approval prompt |
+| `TRAIGENT_EXECUTION_MODE` | No       | `edge_analytics` (default) or `mock`       |
 
 \* This demo uses a mock implementation. API keys are only needed if you integrate real LLM calls.

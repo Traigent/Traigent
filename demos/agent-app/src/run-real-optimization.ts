@@ -10,11 +10,7 @@
  */
 
 import { SENTIMENT_DATASET, getDatasetSubset } from './dataset.js';
-import {
-  runRealSentimentAgent,
-  REAL_CONFIGURATION_SPACE,
-  type AgentConfig,
-} from './real-agent.js';
+import { runRealSentimentAgent, REAL_CONFIGURATION_SPACE, type AgentConfig } from './real-agent.js';
 
 // Get API keys from environment
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -56,7 +52,7 @@ async function createSession(maxTrials: number): Promise<SessionInfo | null> {
   const payload = {
     problem_statement: 'sentiment_classifier',
     dataset: {
-      examples: [],  // Privacy mode - no actual data sent
+      examples: [], // Privacy mode - no actual data sent
       metadata: {
         size: SENTIMENT_DATASET.length,
         privacy_mode: true,
@@ -97,7 +93,7 @@ async function createSession(maxTrials: number): Promise<SessionInfo | null> {
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': TRAIGENT_API_KEY,
-        'Authorization': `Bearer ${TRAIGENT_API_KEY}`,
+        Authorization: `Bearer ${TRAIGENT_API_KEY}`,
       },
       body: JSON.stringify(payload),
     });
@@ -114,7 +110,9 @@ async function createSession(maxTrials: number): Promise<SessionInfo | null> {
       return sessionInfo;
     } else {
       const text = await response.text();
-      console.log(`\x1b[31m[SESSION]\x1b[0m Failed to create session: ${response.status} - ${text}`);
+      console.log(
+        `\x1b[31m[SESSION]\x1b[0m Failed to create session: ${response.status} - ${text}`
+      );
       // Return mock session for offline mode
       const mockId = `local_${Date.now()}`;
       return {
@@ -145,7 +143,7 @@ async function submitTrialResult(
   const url = `${TRAIGENT_API_URL}/sessions/${sessionInfo.session_id}/results`;
 
   // Calculate weighted score (accuracy is primary, cost is secondary penalty)
-  const weightedScore = result.metrics.accuracy - (result.metrics.cost * 100);
+  const weightedScore = result.metrics.accuracy - result.metrics.cost * 100;
 
   const payload = {
     trial_id: result.trial_id,
@@ -209,7 +207,7 @@ async function submitTrialResult(
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': TRAIGENT_API_KEY,
-        'Authorization': `Bearer ${TRAIGENT_API_KEY}`,
+        Authorization: `Bearer ${TRAIGENT_API_KEY}`,
       },
       body: JSON.stringify(payload),
     });
@@ -297,13 +295,17 @@ async function runTrial(
 async function runOptimization(): Promise<void> {
   console.log('\n');
   console.log('\x1b[1m\x1b[36m' + '*'.repeat(80) + '\x1b[0m');
-  console.log('\x1b[1m\x1b[36m*  TRAIGENT REAL LLM OPTIMIZATION DEMO                                         *\x1b[0m');
+  console.log(
+    '\x1b[1m\x1b[36m*  TRAIGENT REAL LLM OPTIMIZATION DEMO                                         *\x1b[0m'
+  );
   console.log('\x1b[1m\x1b[36m' + '*'.repeat(80) + '\x1b[0m');
   console.log('\n\x1b[1mConfiguration Space:\x1b[0m');
   console.log(`  Models:      ${REAL_CONFIGURATION_SPACE.model.join(', ')}`);
   console.log(`  Temperature: ${REAL_CONFIGURATION_SPACE.temperature.join(', ')}`);
   console.log(`  Prompts:     ${REAL_CONFIGURATION_SPACE.system_prompt.join(', ')}`);
-  console.log(`\n\x1b[1mDataset:\x1b[0m ${SENTIMENT_DATASET.length} sentiment classification examples`);
+  console.log(
+    `\n\x1b[1mDataset:\x1b[0m ${SENTIMENT_DATASET.length} sentiment classification examples`
+  );
   console.log(`\x1b[1mBackend:\x1b[0m ${TRAIGENT_API_URL}`);
   console.log(`\x1b[1mAPI Key:\x1b[0m ${TRAIGENT_API_KEY ? '✓ configured' : '✗ not configured'}`);
 
@@ -341,7 +343,7 @@ async function runOptimization(): Promise<void> {
     // Pause between trials to avoid rate limiting
     if (i < configs.length - 1) {
       console.log('\n\x1b[90m[Waiting 2s before next trial...]\x1b[0m');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
@@ -352,7 +354,9 @@ async function runOptimization(): Promise<void> {
 function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
   console.log('\n\n');
   console.log('\x1b[1m\x1b[36m' + '*'.repeat(80) + '\x1b[0m');
-  console.log('\x1b[1m\x1b[36m*  OPTIMIZATION COMPLETE - RESULTS SUMMARY                                     *\x1b[0m');
+  console.log(
+    '\x1b[1m\x1b[36m*  OPTIMIZATION COMPLETE - RESULTS SUMMARY                                     *\x1b[0m'
+  );
   console.log('\x1b[1m\x1b[36m' + '*'.repeat(80) + '\x1b[0m');
 
   // Sort by accuracy descending
@@ -360,7 +364,9 @@ function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
 
   console.log('\n\x1b[1mAll Trial Results (sorted by accuracy):\x1b[0m');
   console.log('─'.repeat(115));
-  console.log('| \x1b[1mTrial\x1b[0m | \x1b[1mModel\x1b[0m                              | \x1b[1mTemp\x1b[0m | \x1b[1mPrompt\x1b[0m   | \x1b[1mAccuracy\x1b[0m | \x1b[1mCost\x1b[0m       | \x1b[1mLatency\x1b[0m  | \x1b[1mTokens\x1b[0m |');
+  console.log(
+    '| \x1b[1mTrial\x1b[0m | \x1b[1mModel\x1b[0m                              | \x1b[1mTemp\x1b[0m | \x1b[1mPrompt\x1b[0m   | \x1b[1mAccuracy\x1b[0m | \x1b[1mCost\x1b[0m       | \x1b[1mLatency\x1b[0m  | \x1b[1mTokens\x1b[0m |'
+  );
   console.log('─'.repeat(115));
 
   for (const r of sorted) {
@@ -368,11 +374,14 @@ function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
     const temp = r.config.temperature.toFixed(1);
     const prompt = r.config.system_prompt.padEnd(8);
     const acc = (r.metrics.accuracy * 100).toFixed(1).padStart(5) + '%';
-    const accColor = r.metrics.accuracy >= 0.9 ? '\x1b[32m' : r.metrics.accuracy >= 0.7 ? '\x1b[33m' : '\x1b[31m';
+    const accColor =
+      r.metrics.accuracy >= 0.9 ? '\x1b[32m' : r.metrics.accuracy >= 0.7 ? '\x1b[33m' : '\x1b[31m';
     const cost = ('$' + r.metrics.cost.toFixed(6)).padStart(10);
     const lat = r.metrics.latency_ms.toFixed(0).padStart(6) + 'ms';
     const tokens = (r.metrics.input_tokens + r.metrics.output_tokens).toString().padStart(6);
-    console.log(`|   ${r.trial_number.toString().padStart(2)}  | ${model} | ${temp} | ${prompt} | ${accColor}${acc}\x1b[0m | ${cost} | ${lat} | ${tokens} |`);
+    console.log(
+      `|   ${r.trial_number.toString().padStart(2)}  | ${model} | ${temp} | ${prompt} | ${accColor}${acc}\x1b[0m | ${cost} | ${lat} | ${tokens} |`
+    );
   }
   console.log('─'.repeat(115));
 
@@ -409,17 +418,20 @@ function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
   console.log('\n\x1b[1m═══ KEY INSIGHTS ═══\x1b[0m');
 
   // Accuracy improvement from prompt engineering
-  const conciseResults = results.filter(r => r.config.system_prompt === 'concise');
-  const cotResults = results.filter(r => r.config.system_prompt === 'cot');
+  const conciseResults = results.filter((r) => r.config.system_prompt === 'concise');
+  const cotResults = results.filter((r) => r.config.system_prompt === 'cot');
 
   if (conciseResults.length > 0 && cotResults.length > 0) {
-    const avgConcise = conciseResults.reduce((sum, r) => sum + r.metrics.accuracy, 0) / conciseResults.length;
+    const avgConcise =
+      conciseResults.reduce((sum, r) => sum + r.metrics.accuracy, 0) / conciseResults.length;
     const avgCot = cotResults.reduce((sum, r) => sum + r.metrics.accuracy, 0) / cotResults.length;
-    const improvement = ((avgCot - avgConcise) / avgConcise * 100);
+    const improvement = ((avgCot - avgConcise) / avgConcise) * 100;
     console.log(`\n  Chain-of-Thought vs Concise Prompts:`);
     console.log(`     Concise avg accuracy: ${(avgConcise * 100).toFixed(1)}%`);
     console.log(`     CoT avg accuracy:     ${(avgCot * 100).toFixed(1)}%`);
-    console.log(`     \x1b[1mDifference: ${improvement >= 0 ? '+' : ''}${improvement.toFixed(1)}%\x1b[0m`);
+    console.log(
+      `     \x1b[1mDifference: ${improvement >= 0 ? '+' : ''}${improvement.toFixed(1)}%\x1b[0m`
+    );
   }
 
   // Model comparison
@@ -432,10 +444,14 @@ function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
 
   console.log(`\n  Model Performance Summary:`);
   for (const [model, modelResults] of byModel.entries()) {
-    const avgAcc = modelResults.reduce((sum, r) => sum + r.metrics.accuracy, 0) / modelResults.length;
+    const avgAcc =
+      modelResults.reduce((sum, r) => sum + r.metrics.accuracy, 0) / modelResults.length;
     const avgCost = modelResults.reduce((sum, r) => sum + r.metrics.cost, 0) / modelResults.length;
-    const avgLat = modelResults.reduce((sum, r) => sum + r.metrics.latency_ms, 0) / modelResults.length;
-    console.log(`     ${model.padEnd(38)} - Acc: ${(avgAcc * 100).toFixed(1).padStart(5)}%, Cost: $${avgCost.toFixed(6)}, Lat: ${avgLat.toFixed(0)}ms`);
+    const avgLat =
+      modelResults.reduce((sum, r) => sum + r.metrics.latency_ms, 0) / modelResults.length;
+    console.log(
+      `     ${model.padEnd(38)} - Acc: ${(avgAcc * 100).toFixed(1).padStart(5)}%, Cost: $${avgCost.toFixed(6)}, Lat: ${avgLat.toFixed(0)}ms`
+    );
   }
 
   console.log(`\n\x1b[1m═══ VIEW IN FRONTEND ═══\x1b[0m`);
@@ -446,7 +462,7 @@ function printSummary(results: TrialResult[], sessionInfo: SessionInfo): void {
 }
 
 // Run the optimization
-runOptimization().catch(error => {
+runOptimization().catch((error) => {
   console.error('\x1b[31mFatal error:\x1b[0m', error);
   process.exit(1);
 });

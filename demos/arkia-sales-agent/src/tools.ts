@@ -29,7 +29,8 @@ export interface Tool {
 
 export const searchFlights: Tool = {
   name: 'search_flights',
-  description: 'Search for available flights between two cities on specific dates. Returns flight options with prices.',
+  description:
+    'Search for available flights between two cities on specific dates. Returns flight options with prices.',
   parameters: z.object({
     origin: z.string().describe('Origin airport code (e.g., TLV)'),
     destination: z.string().describe('Destination airport code (e.g., BCN)'),
@@ -38,7 +39,7 @@ export const searchFlights: Tool = {
     passengers: z.number().default(1).describe('Number of passengers'),
     cabin_class: z.enum(['economy', 'business', 'first']).default('economy'),
   }),
-  execute: async (params) => {
+  execute: async () => {
     // Mock implementation
     return {
       flights: [
@@ -57,7 +58,7 @@ export const getFlightPrice: Tool = {
     passengers: z.number().default(1),
     cabin_class: z.enum(['economy', 'business', 'first']).default('economy'),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       base_fare: 800,
       taxes: 150,
@@ -73,16 +74,18 @@ export const createBooking: Tool = {
   description: 'Create a flight booking reservation. Requires passenger details and payment.',
   parameters: z.object({
     flight_number: z.string(),
-    passengers: z.array(z.object({
-      first_name: z.string(),
-      last_name: z.string(),
-      passport_number: z.string(),
-      date_of_birth: z.string(),
-    })),
+    passengers: z.array(
+      z.object({
+        first_name: z.string(),
+        last_name: z.string(),
+        passport_number: z.string(),
+        date_of_birth: z.string(),
+      })
+    ),
     contact_email: z.string().email(),
     contact_phone: z.string(),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       booking_reference: 'ARK-' + Math.random().toString(36).substring(7).toUpperCase(),
       status: 'confirmed',
@@ -103,7 +106,7 @@ export const checkAvailability: Tool = {
     date: z.string(),
     cabin_class: z.enum(['economy', 'business', 'first']).default('economy'),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       available_seats: Math.floor(Math.random() * 20) + 5,
       total_capacity: 180,
@@ -120,7 +123,7 @@ export const getCustomerHistory: Tool = {
     phone: z.string().optional(),
     loyalty_number: z.string().optional(),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       customer_type: 'returning',
       total_bookings: 5,
@@ -138,7 +141,7 @@ export const getCurrentPromotions: Tool = {
     destination: z.string().optional(),
     travel_dates: z.string().optional(),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       promotions: [
         { code: 'SUMMER25', discount: '25%', valid_until: '2025-08-31' },
@@ -150,12 +153,13 @@ export const getCurrentPromotions: Tool = {
 
 export const getDestinationInfo: Tool = {
   name: 'get_destination_info',
-  description: 'Get information about a destination including weather, attractions, and travel requirements.',
+  description:
+    'Get information about a destination including weather, attractions, and travel requirements.',
   parameters: z.object({
     destination: z.string().describe('City or country name'),
     travel_date: z.string().optional(),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       weather: { temp: '25°C', conditions: 'Sunny' },
       attractions: ['Sagrada Familia', 'Park Güell', 'La Rambla'],
@@ -171,7 +175,8 @@ export const getDestinationInfo: Tool = {
 
 export const buildPackage: Tool = {
   name: 'build_vacation_package',
-  description: 'Build a complete vacation package with flights, hotels, and activities. Higher margin product.',
+  description:
+    'Build a complete vacation package with flights, hotels, and activities. Higher margin product.',
   parameters: z.object({
     destination: z.string(),
     departure_date: z.string(),
@@ -181,7 +186,7 @@ export const buildPackage: Tool = {
     include_transfers: z.boolean().default(true),
     include_activities: z.boolean().default(false),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       package_id: 'PKG-' + Math.random().toString(36).substring(7).toUpperCase(),
       flights: { outbound: 'IZ301', return: 'IZ302' },
@@ -200,7 +205,7 @@ export const calculateInstallments: Tool = {
     total_amount: z.number(),
     num_installments: z.enum(['3', '6', '12']),
   }),
-  execute: async (params) => {
+  execute: async () => {
     const total = (params as { total_amount: number }).total_amount;
     const num = parseInt((params as { num_installments: string }).num_installments);
     return {
@@ -218,7 +223,7 @@ export const upgradeOptions: Tool = {
     booking_reference: z.string().optional(),
     flight_number: z.string().optional(),
   }),
-  execute: async (params) => {
+  execute: async () => {
     return {
       seat_upgrades: [
         { type: 'Extra legroom', price: 150 },
@@ -238,11 +243,7 @@ export const upgradeOptions: Tool = {
 // ============================================================================
 
 /** Minimal tool set - lowest cost, basic functionality */
-export const TOOLS_MINIMAL = [
-  searchFlights,
-  getFlightPrice,
-  createBooking,
-];
+export const TOOLS_MINIMAL = [searchFlights, getFlightPrice, createBooking];
 
 /** Standard tool set - balanced cost/capability */
 export const TOOLS_STANDARD = [
@@ -280,10 +281,10 @@ export const TOOLS_FULL = [
 
 /** Tool set options for optimization */
 export const TOOL_SETS = {
-  minimal: TOOLS_MINIMAL,      // 3 tools, ~300 tokens in system prompt
-  standard: TOOLS_STANDARD,    // 5 tools, ~500 tokens in system prompt
-  enhanced: TOOLS_ENHANCED,    // 7 tools, ~700 tokens in system prompt
-  full: TOOLS_FULL,            // 10 tools, ~1000 tokens in system prompt
+  minimal: TOOLS_MINIMAL, // 3 tools, ~300 tokens in system prompt
+  standard: TOOLS_STANDARD, // 5 tools, ~500 tokens in system prompt
+  enhanced: TOOLS_ENHANCED, // 7 tools, ~700 tokens in system prompt
+  full: TOOLS_FULL, // 10 tools, ~1000 tokens in system prompt
 } as const;
 
 export type ToolSetName = keyof typeof TOOL_SETS;
@@ -303,8 +304,8 @@ export const TOOL_SET_TOKEN_COSTS: Record<ToolSetName, number> = {
  * (More tools = better agent = higher conversion, but diminishing returns)
  */
 export const TOOL_SET_CONVERSION_BOOST: Record<ToolSetName, number> = {
-  minimal: 1.0,      // Baseline
-  standard: 1.08,    // +8% conversion
-  enhanced: 1.12,    // +12% conversion
-  full: 1.15,        // +15% conversion (diminishing returns)
+  minimal: 1.0, // Baseline
+  standard: 1.08, // +8% conversion
+  enhanced: 1.12, // +12% conversion
+  full: 1.15, // +15% conversion (diminishing returns)
 };

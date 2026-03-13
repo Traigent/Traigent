@@ -30,9 +30,7 @@ export const DatasetSubsetSchema = z.object({
   /** Optional hash for reproducibility verification */
   hash: z.string().optional(),
   /** Inline data rows for direct data passing (v1.1) - max 100 rows */
-  inline_rows: z.array(z.record(z.string(), z.unknown()))
-    .max(MAX_INLINE_ROWS)
-    .optional(),
+  inline_rows: z.array(z.record(z.string(), z.unknown())).max(MAX_INLINE_ROWS).optional(),
 });
 
 export type DatasetSubset = z.infer<typeof DatasetSubsetSchema>;
@@ -85,12 +83,12 @@ export const ErrorCodeSchema = z.enum([
   'USER_FUNCTION_ERROR',
   'CANCELLED',
   // New error codes (v1.1)
-  'BUSY',               // Trial already running
-  'DATASET_MISMATCH',   // Hash verification failed
+  'BUSY', // Trial already running
+  'DATASET_MISMATCH', // Hash verification failed
   'UNSUPPORTED_ACTION', // Unknown protocol action
-  'PAYLOAD_TOO_LARGE',  // Request exceeds size limit
-  'MODULE_LOAD_ERROR',  // User module failed to load
-  'PROTOCOL_ERROR',     // NDJSON parse or protocol error
+  'PAYLOAD_TOO_LARGE', // Request exceeds size limit
+  'MODULE_LOAD_ERROR', // User module failed to load
+  'PROTOCOL_ERROR', // NDJSON parse or protocol error
 ]);
 
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;

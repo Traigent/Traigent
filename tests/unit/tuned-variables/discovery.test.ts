@@ -72,7 +72,7 @@ describe('discoverTunedVariablesFromSource', () => {
 
     expect(result?.candidates).toEqual([]);
     expect(result?.warnings).toContain(
-      'Skipped "temperature" because it is reassigned or mutated after declaration.',
+      'Skipped "temperature" because it is reassigned or mutated after declaration.'
     );
   });
 
@@ -180,7 +180,7 @@ describe('discoverTunedVariablesFromSource', () => {
           kind: 'null',
           supportedByConfigSpace: false,
         }),
-      ]),
+      ])
     );
   });
 
@@ -228,9 +228,7 @@ describe('discoverTunedVariablesFromSource', () => {
     });
 
     expect(result?.functionName).toBe('answerQuestion');
-    expect(result?.candidates.map((candidate) => candidate.name)).toEqual([
-      'model',
-    ]);
+    expect(result?.candidates.map((candidate) => candidate.name)).toEqual(['model']);
   });
 
   it('treats common tunable names as medium confidence even without call sinks', () => {
@@ -301,7 +299,7 @@ describe('discoverTunedVariablesFromSource', () => {
           name: 'temperature',
           kind: 'float',
         }),
-      ]),
+      ])
     );
   });
 
@@ -363,9 +361,7 @@ describe('discoverTunedVariables', () => {
     });
 
     expect(result.functionName).toBe('answerQuestion');
-    expect(result.candidates.map((candidate) => candidate.name)).toContain(
-      'model',
-    );
+    expect(result.candidates.map((candidate) => candidate.name)).toContain('model');
   });
 
   it('supports anonymous functions and preserves anonymous naming', () => {
@@ -374,7 +370,7 @@ describe('discoverTunedVariables', () => {
         const temperature = 0.2;
         return `${input}:${temperature}`;
       },
-      { includeLowConfidence: true },
+      { includeLowConfidence: true }
     );
 
     expect(result.functionName).toBe('anonymous');
@@ -397,7 +393,7 @@ describe('discoverTunedVariablesFromFile', () => {
           return retriever.search({ query, k: retrievalK });
         }
       `,
-      'utf8',
+      'utf8'
     );
 
     const [result] = discoverTunedVariablesFromFile(file, {

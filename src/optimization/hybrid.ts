@@ -1266,6 +1266,28 @@ interface HybridErrorPayload {
   error_code?: string;
 }
 
+function redactSensitiveText(text: string, apiKey: string, apiBase: string): string {
+  if (text === '') {
+    return text;
+  }
+
+  const redactions = new Set<string>([apiKey, `Bearer ${apiKey}`, apiBase, `${apiBase}/sessions`]);
+
+  let sanitized = text;
+  for (const secret of redactions) {
+    if (secret !== '') {
+      sanitized = sanitized.split(secret).join('[REDACTED]');
+    }
+  }
+
+  return sanitized
+    .replace(/Authorization\s*:\s*Bearer\s+[^\s",]+/gi, '[REDACTED_AUTH_HEADER]')
+    .replace(/X-API-Key\s*:\s*[^\s",]+/gi, '[REDACTED_API_KEY_HEADER]')
+    .replace(/Authorization/gi, '[REDACTED_AUTH_HEADER]')
+    .replace(/X-API-Key/gi, '[REDACTED_API_KEY_HEADER]')
+    .replace(/Bearer\s+[A-Za-z0-9._-]{8,}/g, 'Bearer [REDACTED]');
+}
+
 function parseHybridErrorPayload(raw: string): HybridErrorPayload | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -1467,7 +1489,8 @@ class HybridSessionClient {
       })) as HybridFetchResponse;
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const rawErrorText = await response.text();
+        const errorText = redactSensitiveText(rawErrorText, this.apiKey, this.apiBase);
         const compatibilityError = classifyHybridCompatibilityError(
           method,
           requestPath,

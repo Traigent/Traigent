@@ -30,8 +30,7 @@ describe('optimization spec helpers', () => {
       safetyConstraints: [(_config, metrics) => Number(metrics.accuracy) >= 0],
       evaluation: {
         data: [{ input: 'ok', output: 'OK' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (value: string) => value.toUpperCase());
 
@@ -72,8 +71,7 @@ describe('optimization spec helpers', () => {
       objectives: ['accuracy', 'cost'],
       evaluation: {
         data: [{ input: 'hello', output: 'hello' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (value: string) => value);
 
@@ -108,7 +106,7 @@ describe('optimization spec helpers', () => {
           model: param.enum(['gpt-4o-mini']),
         },
         objectives: ['quality'],
-      }),
+      })
     ).toThrow(ValidationError);
   });
 
@@ -149,8 +147,7 @@ describe('optimization spec helpers', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: 'x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (value: string) => value);
 
@@ -176,7 +173,7 @@ describe('optimization spec helpers', () => {
         promotionPolicy: {
           alpha: 1,
         },
-      }),
+      })
     ).toThrow(/promotionPolicy\.alpha must be in \(0, 1\)/i);
 
     expect(() =>
@@ -190,7 +187,7 @@ describe('optimization spec helpers', () => {
             cost: 'lower',
           },
         },
-      }),
+      })
     ).toThrow(/promotionPolicy\.tieBreakers\.cost must be "maximize" or "minimize"/i);
 
     expect(() =>
@@ -208,7 +205,7 @@ describe('optimization spec helpers', () => {
             },
           ],
         },
-      }),
+      })
     ).toThrow(/promotionPolicy\.chanceConstraints\[0\]\.confidence must be in \(0, 1\]/i);
   });
 
@@ -222,8 +219,7 @@ describe('optimization spec helpers', () => {
         data: [{ question: 'x', answer: 'y' }],
         inputField: 'question',
         expectedField: 'answer',
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
       injection: {
         mode: 'parameter',
@@ -248,7 +244,7 @@ describe('optimization spec helpers', () => {
           model: param.enum(['gpt-4o-mini']),
         },
         objectives: [123 as unknown as never],
-      }),
+      })
     ).toThrow(ValidationError);
   });
 
@@ -260,8 +256,7 @@ describe('optimization spec helpers', () => {
       objectives: ['accuracy'],
       evaluation: {
         data: [{ input: 'x', output: 'best' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async () => String(getTrialParam('model', 'fallback')));
 
@@ -288,11 +283,11 @@ describe('optimization spec helpers', () => {
       objectives: ['accuracy'],
       evaluation: {
         data: [{ input: 'x', output: 'best:eu' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
-    })(async () =>
-      `${String(getTrialParam('model', 'fallback'))}:${String(getTrialParam('region', 'missing'))}`,
+    })(
+      async () =>
+        `${String(getTrialParam('model', 'fallback'))}:${String(getTrialParam('region', 'missing'))}`
     );
 
     expect(wrapped.currentConfig()).toEqual({ model: 'best', region: 'eu' });
@@ -310,11 +305,10 @@ describe('optimization spec helpers', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: 'HELPFUL' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (_input: string, config?: { tone?: string }) =>
-      String(config?.tone ?? 'missing').toUpperCase(),
+      String(config?.tone ?? 'missing').toUpperCase()
     );
 
     const result = await wrapped.optimize({
@@ -337,8 +331,7 @@ describe('optimization spec helpers', () => {
       },
       evaluation: {
         data: [{ input: 'x', output: 'best' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async function answer() {
       const model = getTrialParam('model', 'cheap');
@@ -380,7 +373,7 @@ describe('optimization spec helpers', () => {
 
     expect(warningSpy).toHaveBeenCalledWith(
       expect.stringContaining('execution.contract="trial"'),
-      'DeprecationWarning',
+      'DeprecationWarning'
     );
 
     warningSpy.mockRestore();
@@ -398,7 +391,7 @@ describe('optimization spec helpers', () => {
           customEvaluator: async () => ({ accuracy: 1 }),
           scoringFunction: () => 1,
         },
-      }),
+      })
     ).toThrow(/customEvaluator/i);
   });
 
@@ -410,7 +403,7 @@ describe('optimization spec helpers', () => {
         },
         defaultConfig: 'bad' as unknown as never,
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/defaultConfig/i);
 
     expect(() =>
@@ -420,7 +413,7 @@ describe('optimization spec helpers', () => {
         },
         constraints: [true] as unknown as never,
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/constraints/i);
 
     expect(() =>
@@ -430,18 +423,16 @@ describe('optimization spec helpers', () => {
         },
         safetyConstraints: [true] as unknown as never,
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/safetyConstraints/i);
   });
 
   it('rejects log-scaled parameters with non-positive ranges or non-multiplicative steps', () => {
-    expect(() =>
-      param.float({ min: 0, max: 1, scale: 'log' }),
-    ).toThrow(/require min\/max > 0/i);
+    expect(() => param.float({ min: 0, max: 1, scale: 'log' })).toThrow(/require min\/max > 0/i);
 
-    expect(() =>
-      param.float({ min: 0.001, max: 1, scale: 'log', step: 1 }),
-    ).toThrow(/require step to be greater than 1/i);
+    expect(() => param.float({ min: 0.001, max: 1, scale: 'log', step: 1 })).toThrow(
+      /require step to be greater than 1/i
+    );
   });
 
   it('rejects invalid top-level spec shapes and validation edge cases', () => {
@@ -451,7 +442,7 @@ describe('optimization spec helpers', () => {
       optimize({
         configurationSpace: {},
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/at least one configuration parameter/i);
 
     expect(() =>
@@ -460,7 +451,7 @@ describe('optimization spec helpers', () => {
           model: param.enum(['a']),
         },
         objectives: [],
-      }),
+      })
     ).toThrow(/at least one objective/i);
 
     expect(() =>
@@ -472,7 +463,7 @@ describe('optimization spec helpers', () => {
         budget: {
           maxCostUsd: 0,
         },
-      }),
+      })
     ).toThrow(/positive number/i);
   });
 
@@ -488,7 +479,7 @@ describe('optimization spec helpers', () => {
           inputField: '',
           scoringFunction: () => 1,
         },
-      }),
+      })
     ).toThrow(/inputField/i);
 
     expect(() =>
@@ -500,7 +491,7 @@ describe('optimization spec helpers', () => {
         injection: {
           mode: 'invalid' as never,
         },
-      }),
+      })
     ).toThrow(/context", "parameter", or "seamless/i);
 
     expect(() =>
@@ -512,7 +503,7 @@ describe('optimization spec helpers', () => {
         execution: {
           mode: 'offline' as never,
         },
-      }),
+      })
     ).toThrow(/execution\.mode/i);
 
     expect(() =>
@@ -524,7 +515,7 @@ describe('optimization spec helpers', () => {
         execution: {
           contract: 'unknown' as never,
         },
-      }),
+      })
     ).toThrow(/execution\.contract/i);
 
     expect(() =>
@@ -536,7 +527,7 @@ describe('optimization spec helpers', () => {
         execution: {
           maxTotalExamples: 0,
         },
-      }),
+      })
     ).toThrow(/maxTotalExamples/i);
 
     expect(() =>
@@ -548,7 +539,7 @@ describe('optimization spec helpers', () => {
         execution: {
           exampleConcurrency: 0,
         },
-      }),
+      })
     ).toThrow(/exampleConcurrency/i);
 
     expect(() =>
@@ -560,7 +551,7 @@ describe('optimization spec helpers', () => {
         execution: {
           repsPerTrial: 0,
         },
-      }),
+      })
     ).toThrow(/repsPerTrial/i);
 
     expect(() =>
@@ -572,7 +563,7 @@ describe('optimization spec helpers', () => {
         execution: {
           repsAggregation: 'sum' as never,
         },
-      }),
+      })
     ).toThrow(/repsAggregation/i);
   });
 
@@ -583,7 +574,7 @@ describe('optimization spec helpers', () => {
           retries: param.int({ min: 0, max: 2 }),
         },
         objectives: ['cost'],
-      }),
+      })
     ).toMatchObject({
       configurationSpace: {
         retries: {
@@ -617,7 +608,7 @@ describe('optimization spec helpers', () => {
         trials: [],
         stopReason: 'error',
         totalCostUsd: 0,
-      }),
+      })
     ).toBeUndefined();
     expect(wrapped.currentConfig()).toBeUndefined();
 
@@ -639,7 +630,7 @@ describe('optimization spec helpers', () => {
       hybridWrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/not supported in this checkout/i);
   });
 
@@ -660,7 +651,7 @@ describe('optimization spec helpers', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/requires evaluation data to be a non-empty array/i);
   });
 
@@ -690,7 +681,7 @@ describe('optimization spec helpers', () => {
           'bad-name!': param.enum(['a']),
         },
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/valid identifier-like key/i);
 
     expect(() =>
@@ -704,7 +695,7 @@ describe('optimization spec helpers', () => {
           },
         },
         objectives: ['accuracy'],
-      }),
+      })
     ).toThrow(/step to be an integer/i);
   });
 
@@ -729,8 +720,8 @@ describe('optimization spec helpers', () => {
           config: { model: 'b' },
           dataset_subset: { indices: [0], total: 1 },
         },
-        () => wrapped(),
-      ),
+        () => wrapped()
+      )
     ).resolves.toBe('b');
 
     createTraigentOpenAI({

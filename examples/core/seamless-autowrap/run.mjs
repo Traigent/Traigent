@@ -40,8 +40,7 @@ const askQuestion = optimize({
         output: 'gpt-4o:0.2:hello',
       },
     ],
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
   },
 })(async (input) => wrapped.chatModel.invoke(input));
 
@@ -57,14 +56,13 @@ console.log(
     {
       discoveredTargets: prepared.discovered,
       frameworkAutoOverride:
-        prepared.autoOverrideStatus ??
-        describeFrameworkAutoOverride(undefined, true),
+        prepared.autoOverrideStatus ?? describeFrameworkAutoOverride(undefined, true),
       seamlessResolution: askQuestion.seamlessResolution(),
       bestConfig: result.bestConfig,
       bestMetrics: result.bestMetrics,
       appliedOutput: await askQuestion('hello'),
     },
     null,
-    2,
-  ),
+    2
+  )
 );

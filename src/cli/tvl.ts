@@ -10,7 +10,7 @@ export interface TvlInspectionResult {
 }
 
 function getObjectiveMetric(
-  objective: Awaited<ReturnType<typeof loadTvlSpec>>['spec']['objectives'][number],
+  objective: Awaited<ReturnType<typeof loadTvlSpec>>['spec']['objectives'][number]
 ): string {
   return typeof objective === 'string' ? objective : objective.metric;
 }
@@ -27,6 +27,6 @@ export async function inspectTvlFiles(paths: string[]): Promise<TvlInspectionRes
         warnings: [...loaded.nativeCompatibility.warnings],
         nativeCompatibility: loaded.nativeCompatibility,
       };
-    }),
+    })
   );
 }

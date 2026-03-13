@@ -18,11 +18,7 @@ export class TraigentError extends Error {
   /** Whether this error is retryable */
   readonly retryable: boolean;
 
-  constructor(
-    message: string,
-    code: ErrorCode,
-    retryable = false
-  ) {
+  constructor(message: string, code: ErrorCode, retryable = false) {
     super(message);
     this.name = this.constructor.name;
     this.code = code;
@@ -41,9 +37,7 @@ export class TraigentError extends Error {
  */
 export class TimeoutError extends TraigentError {
   constructor(message = 'Trial timeout', timeoutMs?: number) {
-    const fullMessage = timeoutMs
-      ? `${message} after ${timeoutMs}ms`
-      : message;
+    const fullMessage = timeoutMs ? `${message} after ${timeoutMs}ms` : message;
     super(fullMessage, 'TIMEOUT', true);
   }
 }
@@ -90,11 +84,7 @@ export class DatasetMismatchError extends TraigentError {
   readonly expectedHash?: string;
   readonly actualHash?: string;
 
-  constructor(
-    message: string,
-    expectedHash?: string,
-    actualHash?: string
-  ) {
+  constructor(message: string, expectedHash?: string, actualHash?: string) {
     super(message, 'DATASET_MISMATCH', false);
     this.expectedHash = expectedHash;
     this.actualHash = actualHash;

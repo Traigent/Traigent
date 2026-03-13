@@ -3,21 +3,16 @@ import { existsSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 
-import {
-  getTrialConfig,
-  getTrialParam,
-  optimize,
-  param,
-} from '../dist/index.js';
+import { getTrialConfig, getTrialParam, optimize, param } from '../dist/index.js';
 
 const pythonRepoRoot = resolve(process.cwd(), '../Traigent');
 const oracleScript = resolve(
   pythonRepoRoot,
-  'tests/cross_sdk_oracles/generate_native_js_oracles.py',
+  'tests/cross_sdk_oracles/generate_native_js_oracles.py'
 );
 const pythonBenchmarkScript = resolve(
   pythonRepoRoot,
-  'tests/cross_sdk_oracles/run_async_scheduler_benchmark.py',
+  'tests/cross_sdk_oracles/run_async_scheduler_benchmark.py'
 );
 
 function delay(ms) {
@@ -31,10 +26,7 @@ function percentile(values, pct) {
   const ordered = [...values].sort((left, right) => left - right);
   const index = Math.max(
     0,
-    Math.min(
-      ordered.length - 1,
-      Math.round((pct / 100) * (ordered.length - 1)),
-    ),
+    Math.min(ordered.length - 1, Math.round((pct / 100) * (ordered.length - 1)))
   );
   return ordered[index];
 }
@@ -116,7 +108,7 @@ async function runSingleJsBenchmark(spec, concurrency) {
       Object.entries(spec.configurationSpace).map(([name, definition]) => [
         name,
         toParamDefinition(definition),
-      ]),
+      ])
     ),
     objectives: ['latency'],
     evaluation: {
@@ -157,25 +149,18 @@ async function runSingleJsBenchmark(spec, concurrency) {
   const theoreticalMinMs =
     result.trials.reduce(
       (sum, trial) =>
-        sum +
-        spec.sleepScheduleMs[String(trial.config.lane)] +
-        Number(trial.config.slot) * 2,
-      0,
+        sum + spec.sleepScheduleMs[String(trial.config.lane)] + Number(trial.config.slot) * 2,
+      0
     ) / concurrency;
-  const uniqueConfigs = new Set(
-    result.trials.map((trial) => JSON.stringify(trial.config)),
-  );
+  const uniqueConfigs = new Set(result.trials.map((trial) => JSON.stringify(trial.config)));
 
   return {
     wallClockMs,
     throughput: result.trials.length / (wallClockMs / 1000),
     theoreticalMinMs,
     overheadRatio: wallClockMs / theoreticalMinMs,
-    duplicateConfigRate:
-      1 - uniqueConfigs.size / Math.max(result.trials.length, 1),
-    contextLeakCount: result.trials.filter(
-      (trial) => trial.metadata?.contextLeak === true,
-    ).length,
+    duplicateConfigRate: 1 - uniqueConfigs.size / Math.max(result.trials.length, 1),
+    contextLeakCount: result.trials.filter((trial) => trial.metadata?.contextLeak === true).length,
     rssDeltaMb: Math.max(rssAfterMb - rssBeforeMb, 0),
     bestConfig: result.bestConfig ?? {},
     bestLatency: Number(result.bestMetrics?.latency ?? 0),
@@ -255,6 +240,6 @@ console.log(
       comparison: compareBenchmarks(jsResults, pythonResults),
     },
     null,
-    2,
-  ),
+    2
+  )
 );

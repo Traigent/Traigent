@@ -1,8 +1,5 @@
 import type { Metrics } from '../dtos/trial.js';
-import type {
-  NormalizedOptimizationSpec,
-  OptimizationTrialRecord,
-} from './types.js';
+import type { NormalizedOptimizationSpec, OptimizationTrialRecord } from './types.js';
 import { ensureFiniteNumber } from './number-utils.js';
 
 export function normalizeCostMetrics(metrics: Metrics): Metrics {
@@ -13,24 +10,15 @@ export function normalizeCostMetrics(metrics: Metrics): Metrics {
   const cost = normalized['cost'];
 
   const normalizedInputCost =
-    typeof inputCost === 'number' && Number.isFinite(inputCost)
-      ? inputCost
-      : undefined;
+    typeof inputCost === 'number' && Number.isFinite(inputCost) ? inputCost : undefined;
   const normalizedOutputCost =
-    typeof outputCost === 'number' && Number.isFinite(outputCost)
-      ? outputCost
-      : undefined;
+    typeof outputCost === 'number' && Number.isFinite(outputCost) ? outputCost : undefined;
 
   let normalizedTotalCost =
-    typeof totalCost === 'number' && Number.isFinite(totalCost)
-      ? totalCost
-      : undefined;
+    typeof totalCost === 'number' && Number.isFinite(totalCost) ? totalCost : undefined;
 
   if (normalizedTotalCost === undefined) {
-    if (
-      normalizedInputCost !== undefined &&
-      normalizedOutputCost !== undefined
-    ) {
+    if (normalizedInputCost !== undefined && normalizedOutputCost !== undefined) {
       normalizedTotalCost = normalizedInputCost + normalizedOutputCost;
     } else if (typeof cost === 'number' && Number.isFinite(cost)) {
       normalizedTotalCost = cost;
@@ -67,7 +55,7 @@ export function extractTrialCost(metrics: Metrics): number {
 
 export function assertTrialCostMetricAvailable(
   spec: NormalizedOptimizationSpec,
-  trialRecord: OptimizationTrialRecord,
+  trialRecord: OptimizationTrialRecord
 ): void {
   if (spec.budget?.maxCostUsd !== undefined) {
     const costMetric =
@@ -76,7 +64,7 @@ export function assertTrialCostMetricAvailable(
         : trialRecord.metrics['cost'];
     ensureFiniteNumber(
       costMetric,
-      'budget.maxCostUsd requires every trial to return numeric metrics.total_cost or metrics.cost.',
+      'budget.maxCostUsd requires every trial to return numeric metrics.total_cost or metrics.cost.'
     );
   }
 }

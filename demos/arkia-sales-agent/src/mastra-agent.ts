@@ -115,17 +115,17 @@ export const MASTRA_SCORERS = {
     scale: '0-1 (higher is better)',
     use_case: 'Essential for sales - is the agent answering the question?',
   },
-  'completeness': {
+  completeness: {
     description: 'Does the response include all necessary information?',
     scale: '0-1 (higher is better)',
     use_case: 'Important for travel sales - includes all flight details?',
   },
-  'faithfulness': {
+  faithfulness: {
     description: 'Is the response grounded in provided context?',
     scale: '0-1 (higher is better)',
     use_case: 'Prevents hallucinated flight times or prices',
   },
-  'hallucination': {
+  hallucination: {
     description: 'Detects factual contradictions and unsupported claims',
     scale: '0-1 (lower is better)',
     use_case: 'Critical for travel - no fake deals or availability',
@@ -136,7 +136,7 @@ export const MASTRA_SCORERS = {
     scale: '0-1 (higher is better)',
     use_case: 'Maintains brand voice across conversations',
   },
-  'toxicity': {
+  toxicity: {
     description: 'Detects harmful or inappropriate content',
     scale: '0-1 (lower is better)',
     use_case: 'Customer safety and brand protection',
@@ -179,7 +179,13 @@ export const DEFAULT_EVAL_CONFIG: EvalConfig = {
 
 /** Production eval config */
 export const PRODUCTION_EVAL_CONFIG: EvalConfig = {
-  scorers: ['answer-relevancy', 'completeness', 'tone-consistency', 'hallucination', 'tool-call-accuracy'],
+  scorers: [
+    'answer-relevancy',
+    'completeness',
+    'tone-consistency',
+    'hallucination',
+    'tool-call-accuracy',
+  ],
   judge_model: 'groq/llama-3.3-70b-versatile', // Higher quality
   sample_rate: 0.1, // Sample 10% for cost efficiency
 };
@@ -217,7 +223,7 @@ export async function evaluateWithMastraEvals(
   _input: string,
   _output: string,
   _context?: string,
-  judgeModel: EvalModelName = 'groq/llama-3.1-8b-instant',
+  judgeModel: EvalModelName = 'groq/llama-3.1-8b-instant'
 ): Promise<{
   relevancy: number;
   completeness: number;
@@ -229,8 +235,7 @@ export async function evaluateWithMastraEvals(
   const model = EVAL_MODELS[judgeModel];
 
   // Mock implementation - simulates quality based on model capability
-  const qualityFactor = model.quality === 'highest' ? 1.0 :
-                        model.quality === 'high' ? 0.95 : 0.85;
+  const qualityFactor = model.quality === 'highest' ? 1.0 : model.quality === 'high' ? 0.95 : 0.85;
 
   // Estimate eval cost (~500 tokens per eval)
   const evalCost = (500 * model.cost_per_1m) / 1_000_000;

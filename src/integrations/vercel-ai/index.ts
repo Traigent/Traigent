@@ -1,11 +1,7 @@
 import { experimental_wrapLanguageModel, type LanguageModel } from 'ai';
 
 import { registerFrameworkTarget } from '../registry.js';
-import {
-  ensurePositiveDuration,
-  getFrameworkOverrides,
-  recordProviderUsage,
-} from '../shared.js';
+import { ensurePositiveDuration, getFrameworkOverrides, recordProviderUsage } from '../shared.js';
 
 const TRAIGENT_WRAPPED = Symbol.for('traigent.vercel-ai.wrapped');
 const wrappedModelCache = new WeakMap<object, object>();
@@ -32,9 +28,7 @@ function getUsage(result: unknown): {
   const usageRecord = usage as Record<string, unknown>;
   return {
     promptTokens:
-      typeof usageRecord['promptTokens'] === 'number'
-        ? (usageRecord['promptTokens'] as number)
-        : 0,
+      typeof usageRecord['promptTokens'] === 'number' ? (usageRecord['promptTokens'] as number) : 0,
     completionTokens:
       typeof usageRecord['completionTokens'] === 'number'
         ? (usageRecord['completionTokens'] as number)
@@ -42,10 +36,7 @@ function getUsage(result: unknown): {
   };
 }
 
-function getModelName(
-  params: Record<string, unknown>,
-  model: LanguageModel,
-): string {
+function getModelName(params: Record<string, unknown>, model: LanguageModel): string {
   return String(params['modelId'] ?? model.modelId);
 }
 
@@ -79,7 +70,7 @@ export function withTraigent<T extends LanguageModel>(model: T): T {
           getModelName(params as Record<string, unknown>, model),
           promptTokens,
           completionTokens,
-          ensurePositiveDuration(Date.now() - startedAt),
+          ensurePositiveDuration(Date.now() - startedAt)
         );
         return result;
       },
@@ -91,7 +82,7 @@ export function withTraigent<T extends LanguageModel>(model: T): T {
           getModelName(params as Record<string, unknown>, model),
           promptTokens,
           completionTokens,
-          ensurePositiveDuration(Date.now() - startedAt),
+          ensurePositiveDuration(Date.now() - startedAt)
         );
         return result;
       },

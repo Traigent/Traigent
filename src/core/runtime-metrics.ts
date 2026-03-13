@@ -7,7 +7,7 @@ type RuntimeMetricsStore = Record<string, number>;
 const runtimeMetricsStorage = new AsyncLocalStorage<RuntimeMetricsStore>();
 
 export async function withRuntimeMetricsCollector<T>(
-  fn: () => Promise<T> | T,
+  fn: () => Promise<T> | T
 ): Promise<{ result: T; metrics: Metrics }> {
   const store: RuntimeMetricsStore = {};
   const result = await runtimeMetricsStorage.run(store, () => Promise.resolve(fn()));

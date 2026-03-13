@@ -13,6 +13,9 @@ content here is specific to the JS SDK project and this native-first checkout.
 - [JS_PARITY_ROADMAP.md](./JS_PARITY_ROADMAP.md) for the prioritized native-vs-hybrid execution roadmap
 - [CROSS_SDK_VALIDATION.md](./CROSS_SDK_VALIDATION.md) for cross-SDK test strategy
 - [SCHEMA_ALIGNMENT_AUDIT.md](./SCHEMA_ALIGNMENT_AUDIT.md) for JS SDK vs TraigentSchema entity alignment
+- [RELEASING.md](./RELEASING.md) for the Changesets-based release flow
+- [BRANCH_PROTECTION.md](./BRANCH_PROTECTION.md) for required `main` branch protection checks
+- [SONAR_TRIAGE.md](./SONAR_TRIAGE.md) for current static-analysis triage and follow-up
 
 ## Current Branch Reality
 

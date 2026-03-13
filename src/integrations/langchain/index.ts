@@ -13,9 +13,5 @@
  * console.log(handler.toMeasuresDict());
  * ```
  */
-export {
-  TraigentHandler,
-  type LLMCallMetrics,
-  type TraigentHandlerMetrics,
-} from './handler.js';
+export { TraigentHandler, type LLMCallMetrics, type TraigentHandlerMetrics } from './handler.js';
 export { withTraigentModel } from './model.js';

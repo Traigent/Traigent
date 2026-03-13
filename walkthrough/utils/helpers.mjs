@@ -1,21 +1,20 @@
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const WALKTHROUGH_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const WALKTHROUGH_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export async function loadWalkthroughDataset(name) {
-  const raw = await readFile(resolve(WALKTHROUGH_ROOT, "datasets", name), "utf8");
+  const raw = await readFile(resolve(WALKTHROUGH_ROOT, 'datasets', name), 'utf8');
   return raw
     .trim()
-    .split("\n")
+    .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
 
 export function subsetRows(rows, trialConfig) {
-  const indices =
-    trialConfig.dataset_subset?.indices ?? rows.map((_, index) => index);
+  const indices = trialConfig.dataset_subset?.indices ?? rows.map((_, index) => index);
   return indices.map((index) => rows[index]);
 }
 
@@ -29,8 +28,8 @@ export function normalizeText(value) {
   return String(value)
     .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ");
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 export function exactMatchScore(actual, expected) {
@@ -48,8 +47,8 @@ export function printOptimizationSummary(name, result) {
         trialCount: result.trials.length,
       },
       null,
-      2,
-    ),
+      2
+    )
   );
 }
 
@@ -57,8 +56,8 @@ export function resolveRealProviderConfig() {
   if (process.env.OPENROUTER_API_KEY) {
     return {
       apiKey: process.env.OPENROUTER_API_KEY,
-      baseURL: "https://openrouter.ai/api/v1",
-      defaultModel: "openai/gpt-4o-mini",
+      baseURL: 'https://openrouter.ai/api/v1',
+      defaultModel: 'openai/gpt-4o-mini',
     };
   }
 
@@ -66,7 +65,7 @@ export function resolveRealProviderConfig() {
     return {
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: undefined,
-      defaultModel: "gpt-4o-mini",
+      defaultModel: 'gpt-4o-mini',
     };
   }
 

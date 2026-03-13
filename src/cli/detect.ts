@@ -15,7 +15,7 @@ export interface DetectTunedVariablesFileResult {
 
 export function detectTunedVariablesInFiles(
   files: readonly string[],
-  options: DetectTunedVariablesOptions = {},
+  options: DetectTunedVariablesOptions = {}
 ): DetectTunedVariablesFileResult[] {
   return files.map((file) => ({
     file,

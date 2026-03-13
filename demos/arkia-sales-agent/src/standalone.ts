@@ -10,11 +10,7 @@ import 'dotenv/config';
 import { DEFAULT_CONFIG, runSalesAgent, type AgentConfig } from './agent.js';
 import { SALES_DATASET, getDatasetStats } from './dataset.js';
 import { REAL_MODE } from './real-llm.js';
-import {
-  deriveDeterministicSeed,
-  resolveDemoDatasetSize,
-  runArkiaOptimization,
-} from './trial.js';
+import { deriveDeterministicSeed, resolveDemoDatasetSize, runArkiaOptimization } from './trial.js';
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -33,7 +29,7 @@ function toAgentConfig(config: Record<string, unknown> | null): AgentConfig | nu
     model: String(config.model ?? DEFAULT_CONFIG.model) as AgentConfig['model'],
     temperature: Number(config.temperature ?? DEFAULT_CONFIG.temperature),
     system_prompt: String(
-      config.system_prompt ?? DEFAULT_CONFIG.system_prompt,
+      config.system_prompt ?? DEFAULT_CONFIG.system_prompt
     ) as AgentConfig['system_prompt'],
     memory_turns: Number(config.memory_turns ?? DEFAULT_CONFIG.memory_turns),
     tool_set: String(config.tool_set ?? DEFAULT_CONFIG.tool_set) as AgentConfig['tool_set'],
@@ -44,7 +40,7 @@ function toAgentConfig(config: Record<string, unknown> | null): AgentConfig | nu
 async function evaluateNamedConfig(
   name: string,
   examples: typeof SALES_DATASET,
-  config: AgentConfig,
+  config: AgentConfig
 ) {
   console.log(`\n${'#'.repeat(70)}`);
   console.log(`# ${name}`);
@@ -80,14 +76,12 @@ async function main() {
 
   const baselineConfig: AgentConfig = {
     ...DEFAULT_CONFIG,
-    random_seed: deriveDeterministicSeed(
-      DEFAULT_CONFIG as unknown as Record<string, unknown>,
-    ),
+    random_seed: deriveDeterministicSeed(DEFAULT_CONFIG as unknown as Record<string, unknown>),
   };
   const baseline = await evaluateNamedConfig(
     'BASELINE: Current default Arkia config',
     demoExamples,
-    baselineConfig,
+    baselineConfig
   );
 
   console.log(`\n${'='.repeat(70)}`);
@@ -109,7 +103,7 @@ async function main() {
   const best = await evaluateNamedConfig(
     'BEST CONFIG REPLAY: SDK-selected Arkia config',
     demoExamples,
-    bestConfig,
+    bestConfig
   );
 
   console.log(`\n${'='.repeat(70)}`);
@@ -120,16 +114,14 @@ async function main() {
   console.log(`Optimizer best config: ${JSON.stringify(optimizationResult.bestConfig)}`);
   console.log('\nBaseline vs Best:');
   console.log(
-    `  Conversion: ${formatPercent(baseline.avg_conversion_score)} -> ${formatPercent(best.avg_conversion_score)}`,
+    `  Conversion: ${formatPercent(baseline.avg_conversion_score)} -> ${formatPercent(best.avg_conversion_score)}`
   );
   console.log(
-    `  Margin efficiency: ${baseline.margin_efficiency.toFixed(2)} -> ${best.margin_efficiency.toFixed(2)}`,
+    `  Margin efficiency: ${baseline.margin_efficiency.toFixed(2)} -> ${best.margin_efficiency.toFixed(2)}`
   );
+  console.log(`  Total cost: ${formatUsd(baseline.total_cost)} -> ${formatUsd(best.total_cost)}`);
   console.log(
-    `  Total cost: ${formatUsd(baseline.total_cost)} -> ${formatUsd(best.total_cost)}`,
-  );
-  console.log(
-    `  Avg latency: ${baseline.avg_latency_ms.toFixed(0)}ms -> ${best.avg_latency_ms.toFixed(0)}ms`,
+    `  Avg latency: ${baseline.avg_latency_ms.toFixed(0)}ms -> ${best.avg_latency_ms.toFixed(0)}ms`
   );
 
   const elapsed = Date.now() - startTime;

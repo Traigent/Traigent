@@ -24,7 +24,7 @@ import type {
 
 function vectorizeConfig(
   config: CandidateConfig,
-  entries: [string, ParameterDefinition][],
+  entries: [string, ParameterDefinition][]
 ): number[] {
   const vector: number[] = [];
 
@@ -40,23 +40,18 @@ function vectorizeConfig(
       }
       case 'int':
       case 'float': {
-        const value =
-          typeof rawValue === 'number'
-            ? rawValue
-            : Number(rawValue ?? definition.min);
+        const value = typeof rawValue === 'number' ? rawValue : Number(rawValue ?? definition.min);
         if (definition.scale === 'log') {
           ensureLogBounds(name, definition);
           const minLog = Math.log10(definition.min);
           const maxLog = Math.log10(definition.max);
           const currentLog = Math.log10(clamp(value, definition.min, definition.max));
-          vector.push(
-            maxLog === minLog ? 0 : (currentLog - minLog) / (maxLog - minLog),
-          );
+          vector.push(maxLog === minLog ? 0 : (currentLog - minLog) / (maxLog - minLog));
         } else {
           vector.push(
             definition.max === definition.min
               ? 0
-              : (value - definition.min) / (definition.max - definition.min),
+              : (value - definition.min) / (definition.max - definition.min)
           );
         }
         break;
@@ -79,7 +74,7 @@ function euclideanDistance(left: number[], right: number[]): number {
 function estimateBayesianAcquisition(
   candidate: number[],
   observedVectors: number[][],
-  observedScores: number[],
+  observedScores: number[]
 ): number {
   if (observedVectors.length === 0) {
     return 0;
@@ -116,7 +111,7 @@ function estimateBayesianAcquisition(
 function sampleLogValue(
   name: string,
   definition: FloatParamDefinition | IntParamDefinition,
-  random: PythonRandom,
+  random: PythonRandom
 ): number {
   ensureLogBounds(name, definition);
   const minLog = Math.log10(definition.min);
@@ -128,7 +123,7 @@ function sampleLogValue(
 function buildBayesianLocalCandidate(
   baseline: CandidateConfig,
   entries: [string, ParameterDefinition][],
-  random: PythonRandom,
+  random: PythonRandom
 ): CandidateConfig {
   const candidate: CandidateConfig = {};
 
@@ -145,14 +140,13 @@ function buildBayesianLocalCandidate(
         break;
       }
       case 'int': {
-        const center =
-          typeof baselineValue === 'number' ? baselineValue : definition.min;
+        const center = typeof baselineValue === 'number' ? baselineValue : definition.min;
         if (definition.scale === 'log') {
           const sampled = sampleLogValue(name, definition, random);
           candidate[name] = clamp(
             Math.round((center + sampled) / 2),
             definition.min,
-            definition.max,
+            definition.max
           );
           break;
         }
@@ -166,14 +160,13 @@ function buildBayesianLocalCandidate(
                   ...definition,
                   min: lower,
                   max: upper,
-                }),
+                })
               )
             : random.randint(lower, upper);
         break;
       }
       case 'float': {
-        const center =
-          typeof baselineValue === 'number' ? baselineValue : definition.min;
+        const center = typeof baselineValue === 'number' ? baselineValue : definition.min;
         if (definition.scale === 'log') {
           const sampled = sampleLogValue(name, definition, random);
           const mixed = Math.sqrt(center * sampled);
@@ -184,15 +177,12 @@ function buildBayesianLocalCandidate(
                     ...definition,
                     min: Math.min(center, sampled),
                     max: Math.max(center, sampled),
-                  }),
+                  })
                 )
               : roundToPrecision(clamp(mixed, definition.min, definition.max));
           break;
         }
-        const span = Math.max(
-          (definition.max - definition.min) / 6,
-          definition.step ?? 0.01,
-        );
+        const span = Math.max((definition.max - definition.min) / 6, definition.step ?? 0.01);
         const lower = clamp(center - span, definition.min, definition.max);
         const upper = clamp(center + span, definition.min, definition.max);
         const sampled = random.uniform(lower, upper);
@@ -200,12 +190,9 @@ function buildBayesianLocalCandidate(
           candidate[name] = roundToPrecision(sampled);
         } else {
           const snapped =
-            Math.round((sampled - definition.min) / definition.step) *
-              definition.step +
+            Math.round((sampled - definition.min) / definition.step) * definition.step +
             definition.min;
-          candidate[name] = roundToPrecision(
-            clamp(snapped, definition.min, definition.max),
-          );
+          candidate[name] = roundToPrecision(clamp(snapped, definition.min, definition.max));
         }
         break;
       }
@@ -222,8 +209,8 @@ export function suggestBayesianConfig(
   maxTrials: number,
   evaluatePreTrialConstraints: (
     spec: NormalizedOptimizationSpec,
-    config: CandidateConfig,
-  ) => boolean,
+    config: CandidateConfig
+  ) => boolean
 ): { config: CandidateConfig | null; exhaustive: boolean } {
   const entries = getOrderedParameterEntries(spec.configurationSpace);
   const seen = new Set(trials.map((trial) => configKey(trial.config)));
@@ -238,25 +225,20 @@ export function suggestBayesianConfig(
   if (trials.length < initialRandomSamples) {
     for (let attempt = 0; attempt < 512; attempt += 1) {
       const candidate = applyDefaultConfig(spec, sampleCandidateConfig(entries, random));
-      if (
-        !seen.has(configKey(candidate)) &&
-        evaluatePreTrialConstraints(spec, candidate)
-      ) {
+      if (!seen.has(configKey(candidate)) && evaluatePreTrialConstraints(spec, candidate)) {
         return { config: candidate, exhaustive: false };
       }
     }
   }
 
-  const observedVectors = completedTrials.map((trial) =>
-    vectorizeConfig(trial.config, entries),
-  );
+  const observedVectors = completedTrials.map((trial) => vectorizeConfig(trial.config, entries));
   const observedScores = completedTrials.map((trial) =>
-    computeSearchScore(trial.metrics, spec.objectives),
+    computeSearchScore(trial.metrics, spec.objectives)
   );
   const sortedByScore = [...completedTrials].sort(
     (left, right) =>
       computeSearchScore(right.metrics, spec.objectives) -
-      computeSearchScore(left.metrics, spec.objectives),
+      computeSearchScore(left.metrics, spec.objectives)
   );
 
   let bestCandidate: CandidateConfig | null = null;
@@ -271,22 +253,16 @@ export function suggestBayesianConfig(
     const candidate =
       baseline === undefined
         ? applyDefaultConfig(spec, sampleCandidateConfig(entries, random))
-        : applyDefaultConfig(
-            spec,
-            buildBayesianLocalCandidate(baseline, entries, random),
-          );
+        : applyDefaultConfig(spec, buildBayesianLocalCandidate(baseline, entries, random));
 
-    if (
-      seen.has(configKey(candidate)) ||
-      !evaluatePreTrialConstraints(spec, candidate)
-    ) {
+    if (seen.has(configKey(candidate)) || !evaluatePreTrialConstraints(spec, candidate)) {
       continue;
     }
 
     const acquisition = estimateBayesianAcquisition(
       vectorizeConfig(candidate, entries),
       observedVectors,
-      observedScores,
+      observedScores
     );
 
     if (acquisition > bestAcquisition) {
@@ -298,10 +274,7 @@ export function suggestBayesianConfig(
   if (!bestCandidate) {
     for (let attempt = 0; attempt < 1024; attempt += 1) {
       const candidate = applyDefaultConfig(spec, sampleCandidateConfig(entries, random));
-      if (
-        !seen.has(configKey(candidate)) &&
-        evaluatePreTrialConstraints(spec, candidate)
-      ) {
+      if (!seen.has(configKey(candidate)) && evaluatePreTrialConstraints(spec, candidate)) {
         return { config: candidate, exhaustive: false };
       }
     }

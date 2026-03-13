@@ -80,9 +80,7 @@ describe('sanitizeMeasures()', () => {
     const result = sanitizeMeasures(input, { warn });
 
     expect(result).toEqual({ valid_key: 0.5 });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Invalid measure key')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Invalid measure key'));
   });
 
   it('should filter out non-numeric values with warning', () => {
@@ -92,17 +90,13 @@ describe('sanitizeMeasures()', () => {
     const result = sanitizeMeasures(input as Record<string, unknown>, { warn });
 
     expect(result).toEqual({ accuracy: 0.95 });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Non-numeric measure value')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Non-numeric measure value'));
   });
 
   it('should throw in strict mode for invalid keys', () => {
     const input = { 'invalid-key': 0.5 };
 
-    expect(() => sanitizeMeasures(input, { strict: true })).toThrow(
-      'Invalid measure key'
-    );
+    expect(() => sanitizeMeasures(input, { strict: true })).toThrow('Invalid measure key');
   });
 
   it('should truncate to MAX_MEASURES_KEYS', () => {
@@ -115,9 +109,7 @@ describe('sanitizeMeasures()', () => {
     const result = sanitizeMeasures(input, { warn });
 
     expect(Object.keys(result).length).toBe(MAX_MEASURES_KEYS);
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('truncating')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('truncating'));
   });
 
   it('should throw in strict mode for too many keys', () => {
@@ -126,9 +118,7 @@ describe('sanitizeMeasures()', () => {
       input[`metric_${i}`] = i;
     }
 
-    expect(() => sanitizeMeasures(input, { strict: true })).toThrow(
-      'truncating'
-    );
+    expect(() => sanitizeMeasures(input, { strict: true })).toThrow('truncating');
   });
 
   it('should throw in strict mode for non-numeric values', () => {
@@ -157,9 +147,7 @@ describe('sanitizeMeasures()', () => {
     const input = { valid: 0.5, invalid: Number.POSITIVE_INFINITY };
     const result = sanitizeMeasures(input, { warn });
     expect(result).toEqual({ valid: 0.5 });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Non-numeric measure value')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Non-numeric measure value'));
   });
 });
 

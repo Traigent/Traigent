@@ -30,7 +30,7 @@ interface OraclePayload {
 const pythonRepoRoot = resolve(process.cwd(), '../Traigent');
 const oracleScript = resolve(
   pythonRepoRoot,
-  'tests/cross_sdk_oracles/generate_native_js_oracles.py',
+  'tests/cross_sdk_oracles/generate_native_js_oracles.py'
 );
 
 function loadOraclePayload():
@@ -66,10 +66,7 @@ function loadOraclePayload():
   }
 }
 
-function getFixture(
-  payload: OraclePayload,
-  name: string,
-): OracleFixture {
+function getFixture(payload: OraclePayload, name: string): OracleFixture {
   const fixture = payload.fixtures.find((candidate) => candidate.case === name);
   if (!fixture) {
     throw new Error(`Missing oracle fixture "${name}".`);
@@ -113,7 +110,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
         Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
           name,
           toParamDefinition(definition),
-        ]),
+        ])
       ),
       objectives: fixture.spec.objectives,
       evaluation: {
@@ -121,8 +118,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        accuracy:
-          Number(trialConfig.config.alpha) + Number(trialConfig.config.beta) / 100,
+        accuracy: Number(trialConfig.config.alpha) + Number(trialConfig.config.beta) / 100,
       },
     }));
 
@@ -144,7 +140,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
         Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
           name,
           toParamDefinition(definition),
-        ]),
+        ])
       ),
       objectives: fixture.spec.objectives,
       evaluation: {
@@ -173,7 +169,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
         Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
           name,
           toParamDefinition(definition),
-        ]),
+        ])
       ),
       objectives: fixture.spec.objectives,
       budget: fixture.spec.budget,
@@ -217,7 +213,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
         Object.entries(fixture.spec.configurationSpace).map(([name, definition]) => [
           name,
           toParamDefinition(definition),
-        ]),
+        ])
       ),
       objectives: fixture.spec.objectives,
       evaluation: {
@@ -232,8 +228,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
       const r = 6;
       const s = 10;
       const t = 1 / (8 * Math.PI);
-      const score =
-        -(a * (y - b * x ** 2 + c * x - r) ** 2 + s * (1 - t) * Math.cos(x) + s);
+      const score = -(a * (y - b * x ** 2 + c * x - r) ** 2 + s * (1 - t) * Math.cos(x) + s);
       return {
         metrics: {
           score,
@@ -249,7 +244,7 @@ maybeDescribe('cross-SDK oracle parity', () => {
 
     expect(result.stopReason).toBe(fixture.normalized_stop_reason);
     expect(Number(result.bestMetrics?.score)).toBeGreaterThanOrEqual(
-      Number(fixture.best_metrics?.score) * 0.95,
+      Number(fixture.best_metrics?.score) * 0.95
     );
   });
 });

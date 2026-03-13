@@ -9,7 +9,7 @@ import {
 import type { NormalizedOptimizationSpec } from '../../../src/optimization/types.js';
 
 function createNormalizedSpec(
-  overrides: Partial<NormalizedOptimizationSpec> = {},
+  overrides: Partial<NormalizedOptimizationSpec> = {}
 ): NormalizedOptimizationSpec {
   return {
     configurationSpace: {
@@ -44,7 +44,7 @@ describe('native cost helpers', () => {
       normalizeCostMetrics({
         input_cost: 0.2,
         output_cost: 0.3,
-      }),
+      })
     ).toEqual({
       input_cost: 0.2,
       output_cost: 0.3,
@@ -55,7 +55,7 @@ describe('native cost helpers', () => {
     expect(
       normalizeCostMetrics({
         cost: 0.7,
-      }),
+      })
     ).toEqual({
       cost: 0.7,
       total_cost: 0.7,
@@ -83,7 +83,7 @@ describe('native cost helpers', () => {
         metrics: { accuracy: 0.9 },
         status: 'completed',
         metadata: {},
-      }),
+      })
     ).toThrowError(ValidationError);
   });
 });

@@ -25,8 +25,7 @@ const answerQuestion = optimize({
   },
   evaluation: {
     data: rows,
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
     metricFunctions: {
       cost: (_output, _expectedOutput, _runtimeMetrics, row) =>
         row.input.includes('capital') ? 0.2 : 0.1,
@@ -62,7 +61,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         trialCount: result.trials.length,
       },
       null,
-      2,
-    ),
+      2
+    )
   );
 }

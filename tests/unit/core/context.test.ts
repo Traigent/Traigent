@@ -160,18 +160,26 @@ describe('TrialContext', () => {
     it('should return false when abort signal is not aborted', async () => {
       const abortController = new AbortController();
 
-      await TrialContext.run(createMockConfig(), async () => {
-        expect(TrialContext.isCancelled()).toBe(false);
-      }, abortController.signal);
+      await TrialContext.run(
+        createMockConfig(),
+        async () => {
+          expect(TrialContext.isCancelled()).toBe(false);
+        },
+        abortController.signal
+      );
     });
 
     it('should return true when abort signal is aborted', async () => {
       const abortController = new AbortController();
       abortController.abort();
 
-      await TrialContext.run(createMockConfig(), async () => {
-        expect(TrialContext.isCancelled()).toBe(true);
-      }, abortController.signal);
+      await TrialContext.run(
+        createMockConfig(),
+        async () => {
+          expect(TrialContext.isCancelled()).toBe(true);
+        },
+        abortController.signal
+      );
     });
 
     it('should return false when no abort signal is provided', async () => {
@@ -189,19 +197,27 @@ describe('TrialContext', () => {
     it('should not throw when not cancelled', async () => {
       const abortController = new AbortController();
 
-      await TrialContext.run(createMockConfig(), async () => {
-        expect(() => TrialContext.checkCancellation()).not.toThrow();
-      }, abortController.signal);
+      await TrialContext.run(
+        createMockConfig(),
+        async () => {
+          expect(() => TrialContext.checkCancellation()).not.toThrow();
+        },
+        abortController.signal
+      );
     });
 
     it('should throw TrialCancelledError when cancelled', async () => {
       const abortController = new AbortController();
       abortController.abort();
 
-      await TrialContext.run(createMockConfig(), async () => {
-        expect(() => TrialContext.checkCancellation()).toThrow(TrialCancelledError);
-        expect(() => TrialContext.checkCancellation()).toThrow('Trial was cancelled');
-      }, abortController.signal);
+      await TrialContext.run(
+        createMockConfig(),
+        async () => {
+          expect(() => TrialContext.checkCancellation()).toThrow(TrialCancelledError);
+          expect(() => TrialContext.checkCancellation()).toThrow('Trial was cancelled');
+        },
+        abortController.signal
+      );
     });
   });
 
@@ -209,9 +225,13 @@ describe('TrialContext', () => {
     it('should return abort signal when provided', async () => {
       const abortController = new AbortController();
 
-      await TrialContext.run(createMockConfig(), async () => {
-        expect(TrialContext.getAbortSignal()).toBe(abortController.signal);
-      }, abortController.signal);
+      await TrialContext.run(
+        createMockConfig(),
+        async () => {
+          expect(TrialContext.getAbortSignal()).toBe(abortController.signal);
+        },
+        abortController.signal
+      );
     });
 
     it('should return undefined when no abort signal is provided', async () => {

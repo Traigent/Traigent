@@ -33,7 +33,7 @@ function branin(x: number, y: number): number {
 }
 
 function createNormalizedSpec(
-  overrides: Partial<NormalizedOptimizationSpec> = {},
+  overrides: Partial<NormalizedOptimizationSpec> = {}
 ): NormalizedOptimizationSpec {
   return {
     configurationSpace: {
@@ -146,12 +146,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        cost:
-          trialConfig.config.model === 'a'
-            ? 0.1
-            : trialConfig.config.model === 'b'
-              ? 0.2
-              : 0.3,
+        cost: trialConfig.config.model === 'a' ? 0.1 : trialConfig.config.model === 'b' ? 0.2 : 0.3,
       },
     }));
 
@@ -167,7 +162,7 @@ describe('native optimize()', () => {
     });
 
     expect(first.trials.map((trial) => trial.config)).toEqual(
-      second.trials.map((trial) => trial.config),
+      second.trials.map((trial) => trial.config)
     );
   });
 
@@ -200,11 +195,7 @@ describe('native optimize()', () => {
     });
 
     expect(result.trials.map((trial) => trial.config.learning_rate)).toEqual([
-      0.00001,
-      0.0001,
-      0.001,
-      0.01,
-      0.1,
+      0.00001, 0.0001, 0.001, 0.01, 0.1,
     ]);
     expect(result.stopReason).toBe('completed');
   });
@@ -231,7 +222,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 2,
-      }),
+      })
     ).rejects.toThrow(/float parameters to define step/i);
   });
 
@@ -260,9 +251,9 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(
-      /budget\.maxCostUsd requires every trial to return numeric metrics\.total_cost or metrics\.cost/i,
+      /budget\.maxCostUsd requires every trial to return numeric metrics\.total_cost or metrics\.cost/i
     );
   });
 
@@ -318,7 +309,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(ValidationError);
   });
 
@@ -339,12 +330,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        cost:
-          trialConfig.config.model === 'a'
-            ? 0.1
-            : trialConfig.config.model === 'b'
-              ? 0.2
-              : 0.3,
+        cost: trialConfig.config.model === 'a' ? 0.1 : trialConfig.config.model === 'b' ? 0.2 : 0.3,
       },
     }));
 
@@ -411,10 +397,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        accuracy:
-          trialConfig.config.model === 'b' && trialConfig.config.region === 'eu'
-            ? 1
-            : 0,
+        accuracy: trialConfig.config.model === 'b' && trialConfig.config.region === 'eu' ? 1 : 0,
       },
     }));
 
@@ -435,9 +418,7 @@ describe('native optimize()', () => {
       configurationSpace: {
         model: param.enum(['a', 'b', 'c']),
       },
-      constraints: [
-        (config) => config.model !== 'b',
-      ],
+      constraints: [(config) => config.model !== 'b'],
       objectives: ['accuracy'],
       execution: {
         contract: 'trial',
@@ -467,9 +448,7 @@ describe('native optimize()', () => {
       configurationSpace: {
         model: param.enum(['a', 'b', 'c']),
       },
-      constraints: [
-        (_config, metrics) => Number(metrics.cost) < 0.25,
-      ],
+      constraints: [(_config, metrics) => Number(metrics.cost) < 0.25],
       objectives: ['cost'],
       execution: {
         contract: 'trial',
@@ -479,12 +458,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        cost:
-          trialConfig.config.model === 'a'
-            ? 0.1
-            : trialConfig.config.model === 'b'
-              ? 0.3
-              : 0.2,
+        cost: trialConfig.config.model === 'a' ? 0.1 : trialConfig.config.model === 'b' ? 0.3 : 0.2,
       },
     }));
 
@@ -508,9 +482,7 @@ describe('native optimize()', () => {
       configurationSpace: {
         model: param.enum(['safe', 'unsafe']),
       },
-      safetyConstraints: [
-        (_config, metrics) => Number(metrics.faithfulness) >= 0.9,
-      ],
+      safetyConstraints: [(_config, metrics) => Number(metrics.faithfulness) >= 0.9],
       objectives: ['accuracy'],
       execution: {
         contract: 'trial',
@@ -532,10 +504,7 @@ describe('native optimize()', () => {
     });
 
     expect(result.stopReason).toBe('completed');
-    expect(result.trials.map((trial) => trial.status)).toEqual([
-      'completed',
-      'rejected',
-    ]);
+    expect(result.trials.map((trial) => trial.status)).toEqual(['completed', 'rejected']);
     expect(result.bestConfig).toEqual({ model: 'safe' });
     expect(result.totalCostUsd).toBeCloseTo(0.1, 10);
   });
@@ -563,7 +532,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 2,
-      }),
+      })
     ).rejects.toThrow(/No valid configurations satisfy the configured constraints/i);
   });
 
@@ -594,7 +563,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/broken pre-check/i);
   });
 
@@ -848,7 +817,7 @@ describe('native optimize()', () => {
         algorithm: 'bayesian',
         maxTrials: 4,
         trialConcurrency: 2,
-      }),
+      })
     ).rejects.toThrow(/does not support trialConcurrency > 1/i);
   });
 
@@ -961,7 +930,7 @@ describe('native optimize()', () => {
     expect(resumed.bestMetrics).toEqual(uninterrupted.bestMetrics);
     expect(resumed.stopReason).toEqual(uninterrupted.stopReason);
     expect(resumed.trials.map((trial) => trial.config)).toEqual(
-      uninterrupted.trials.map((trial) => trial.config),
+      uninterrupted.trials.map((trial) => trial.config)
     );
 
     await rm(checkpointDir, { recursive: true, force: true });
@@ -1067,8 +1036,7 @@ describe('native optimize()', () => {
           { input: 'What is 2+2?', output: '4' },
           { input: 'What is the capital of France?', output: 'Paris' },
         ],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (question: string) => {
       const model = String(getTrialParam('model', 'cheap'));
@@ -1097,11 +1065,8 @@ describe('native optimize()', () => {
         mode: 'parameter',
       },
       evaluation: {
-        data: [
-          { input: { question: 'hi' }, output: 'friendly:hi' },
-        ],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        data: [{ input: { question: 'hi' }, output: 'friendly:hi' }],
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (input: { question: string }, config?: { tone?: string }) => {
       return `${config?.tone ?? 'plain'}:${input.question}`;
@@ -1125,8 +1090,7 @@ describe('native optimize()', () => {
       objectives: ['accuracy', 'cost'],
       evaluation: {
         data: [{ input: 'x', output: 'x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
         metricFunctions: {
           cost: (output) => (output === 'x' ? 0.1 : 0.4),
         },
@@ -1163,7 +1127,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/accuracy/i);
   });
 
@@ -1176,8 +1140,7 @@ describe('native optimize()', () => {
       evaluation: {
         data: [{ input: 'x' }],
         metricFunctions: {
-          cost: (_output, _expectedOutput, runtimeMetrics) =>
-            runtimeMetrics.latency ?? 0.5,
+          cost: (_output, _expectedOutput, runtimeMetrics) => runtimeMetrics.latency ?? 0.5,
         },
       },
     })(async () => 'x');
@@ -1249,11 +1212,10 @@ describe('native optimize()', () => {
         loadData,
         inputField: 'question',
         expectedField: 'answer',
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (input: string, config?: { tone?: string }) =>
-      config?.tone === 'loud' ? input.toUpperCase() : input.toLowerCase(),
+      config?.tone === 'loud' ? input.toUpperCase() : input.toLowerCase()
     );
 
     const result = await wrapped.optimize({
@@ -1278,11 +1240,10 @@ describe('native optimize()', () => {
         data: [{ question: 'hello', answer: 'HELLO' }],
         inputField: 'question',
         expectedField: 'answer',
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
     })(async (input: string, config?: { tone?: string }) =>
-      config?.tone === 'loud' ? input.toUpperCase() : input.toLowerCase(),
+      config?.tone === 'loud' ? input.toUpperCase() : input.toLowerCase()
     );
 
     const result = await wrapped.optimize({
@@ -1311,21 +1272,23 @@ describe('native optimize()', () => {
       },
     }));
 
-    await expect(wrapped.optimize(undefined as unknown as never)).rejects.toThrow(/options are required/i);
+    await expect(wrapped.optimize(undefined as unknown as never)).rejects.toThrow(
+      /options are required/i
+    );
     await expect(wrapped.optimize({ algorithm: 'bad' as never, maxTrials: 1 })).rejects.toThrow(
-      /only supports algorithm/i,
+      /only supports algorithm/i
     );
     await expect(wrapped.optimize({ algorithm: 'grid', maxTrials: 0 })).rejects.toThrow(
-      /positive integer/i,
+      /positive integer/i
     );
     await expect(
-      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, randomSeed: -1 }),
+      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, randomSeed: -1 })
     ).rejects.toThrow(/randomSeed/i);
     await expect(
-      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, timeoutMs: 0 }),
+      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, timeoutMs: 0 })
     ).rejects.toThrow(/timeoutMs/i);
     await expect(
-      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, trialConcurrency: 0 }),
+      wrapped.optimize({ algorithm: 'grid', maxTrials: 1, trialConcurrency: 0 })
     ).rejects.toThrow(/trialConcurrency/i);
     await expect(
       wrapped.optimize({
@@ -1335,7 +1298,7 @@ describe('native optimize()', () => {
           window: 0,
           minImprovement: 0,
         },
-      }),
+      })
     ).rejects.toThrow(/plateau\.window/i);
     await expect(
       wrapped.optimize({
@@ -1345,7 +1308,7 @@ describe('native optimize()', () => {
           window: 1,
           minImprovement: -1,
         },
-      }),
+      })
     ).rejects.toThrow(/plateau\.minImprovement/i);
     await expect(
       wrapped.optimize({
@@ -1354,7 +1317,7 @@ describe('native optimize()', () => {
         checkpoint: {
           key: '',
         },
-      }),
+      })
     ).rejects.toThrow(/checkpoint\.key/i);
     await expect(
       wrapped.optimize({
@@ -1364,7 +1327,7 @@ describe('native optimize()', () => {
           key: 'ok',
           dir: '',
         },
-      }),
+      })
     ).rejects.toThrow(/checkpoint\.dir/i);
   });
 
@@ -1387,7 +1350,7 @@ describe('native optimize()', () => {
       missingData.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/requires spec\.evaluation\.data or spec\.evaluation\.loadData/i);
 
     const emptyData = optimize({
@@ -1411,7 +1374,7 @@ describe('native optimize()', () => {
       emptyData.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/non-empty array/i);
   });
 
@@ -1437,7 +1400,7 @@ describe('native optimize()', () => {
       wrapped.optimize({
         algorithm: 'grid',
         maxTrials: 1,
-      }),
+      })
     ).rejects.toThrow(/trial metrics are invalid/i);
   });
 
@@ -1582,7 +1545,7 @@ describe('native optimize()', () => {
           dir: checkpointDir,
           resume: true,
         },
-      }),
+      })
     ).rejects.toThrow(/does not match the current spec\/options/i);
 
     await rm(checkpointDir, { recursive: true, force: true });
@@ -1609,7 +1572,7 @@ describe('native optimize()', () => {
         algorithm: 'grid',
         maxTrials: 2,
         signal: controller.signal,
-      },
+      }
     );
 
     expect(cancelled.stopReason).toBe('cancelled');
@@ -1630,7 +1593,7 @@ describe('native optimize()', () => {
           dir: checkpointDir,
           resume: true,
         },
-      },
+      }
     );
 
     expect(resumedWithoutFile.stopReason).toBe('completed');
@@ -1660,8 +1623,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 4,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/log-scaled int parameters to define a multiplicative step/i);
 
     await expect(
@@ -1685,8 +1648,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 4,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/multiplicative step greater than 1/i);
   });
 
@@ -1702,7 +1665,7 @@ describe('native optimize()', () => {
         algorithm: 'random',
         maxTrials: 10,
         randomSeed: 1,
-      },
+      }
     );
 
     expect(result.stopReason).toBe('completed');
@@ -1730,8 +1693,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 4,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/positive integer step/i);
 
     await expect(
@@ -1754,8 +1717,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 4,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/positive finite step/i);
 
     await expect(
@@ -1778,8 +1741,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 4,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/log-scaled float parameters to define a multiplicative step/i);
 
     const linearIntResult = await runNativeOptimization(
@@ -1801,7 +1764,7 @@ describe('native optimize()', () => {
       {
         algorithm: 'grid',
         maxTrials: 10,
-      },
+      }
     );
 
     expect(linearIntResult.trials.map((trial) => trial.config.retries)).toEqual([0, 2, 3]);
@@ -1819,8 +1782,8 @@ describe('native optimize()', () => {
         {
           algorithm: 'grid',
           maxTrials: 2,
-        },
-      ),
+        }
+      )
     ).rejects.toThrow(/missing numeric metric "accuracy"/i);
   });
 
@@ -1847,7 +1810,7 @@ describe('native optimize()', () => {
         algorithm: 'bayesian',
         maxTrials: 2,
         timeoutMs: 1,
-      },
+      }
     );
 
     expect(timeoutResult.stopReason).toBe('timeout');
@@ -1867,7 +1830,7 @@ describe('native optimize()', () => {
       {
         algorithm: 'bayesian',
         maxTrials: 5,
-      },
+      }
     );
 
     expect(budgetResult.stopReason).toBe('budget');
@@ -1894,7 +1857,7 @@ describe('native optimize()', () => {
           window: 2,
           minImprovement: 0.01,
         },
-      },
+      }
     );
 
     expect(plateauResult.stopReason).toBe('plateau');
@@ -1905,9 +1868,7 @@ describe('native optimize()', () => {
       configurationSpace: {
         model: param.enum(['a', 'b', 'c']),
       },
-      constraints: [
-        (_config, metrics) => Number(metrics.cost) < 0.25,
-      ],
+      constraints: [(_config, metrics) => Number(metrics.cost) < 0.25],
       objectives: ['cost'],
       execution: {
         contract: 'trial',
@@ -1917,12 +1878,7 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => ({
       metrics: {
-        cost:
-          trialConfig.config.model === 'a'
-            ? 0.1
-            : trialConfig.config.model === 'b'
-              ? 0.3
-              : 0.2,
+        cost: trialConfig.config.model === 'a' ? 0.1 : trialConfig.config.model === 'b' ? 0.3 : 0.2,
       },
     }));
 
@@ -2256,8 +2212,7 @@ exploration:
           { input: 'c', expected_output: 'ok' },
           { input: 'd', expected_output: 'ok' },
         ],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
         metricFunctions: {
           safety: (output) => (output === 'ok' ? 1 : 0),
         },
@@ -2273,11 +2228,9 @@ exploration:
     });
 
     expect(result.bestConfig).toEqual({ variant: 'safe' });
-    expect(result.trials.find((trial) => trial.config.variant === 'unsafe')).toMatchObject(
-      {
-        status: 'rejected',
-      },
-    );
+    expect(result.trials.find((trial) => trial.config.variant === 'unsafe')).toMatchObject({
+      status: 'rejected',
+    });
   });
 
   it('reports baseline trial counts when no promotionPolicy is configured', async () => {
@@ -2288,8 +2241,7 @@ exploration:
       objectives: ['accuracy'],
       evaluation: {
         data: [{ input: 'x', expected_output: 'x' }],
-        scoringFunction: (output, expectedOutput) =>
-          output === expectedOutput ? 1 : 0,
+        scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
       },
       injection: {
         mode: 'parameter',

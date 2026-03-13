@@ -26,7 +26,7 @@ export function canonicalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalize(nested)]),
+        .map(([key, nested]) => [key, canonicalize(nested)])
     );
   }
   return value;
@@ -50,7 +50,7 @@ function hasActiveDefaultConfig(spec: NormalizedOptimizationSpec): boolean {
 
 export function applyDefaultConfig(
   spec: NormalizedOptimizationSpec,
-  config: CandidateConfig,
+  config: CandidateConfig
 ): CandidateConfig {
   if (!hasActiveDefaultConfig(spec)) {
     return { ...config };
@@ -62,7 +62,7 @@ export function applyDefaultConfig(
 }
 
 export function getOrderedParameterEntries(
-  configurationSpace: NormalizedOptimizationSpec['configurationSpace'],
+  configurationSpace: NormalizedOptimizationSpec['configurationSpace']
 ): [string, ParameterDefinition][] {
   const names = Object.keys(configurationSpace).sort((left, right) => {
     if (left === 'model' && right !== 'model') return 1;
@@ -75,11 +75,11 @@ export function getOrderedParameterEntries(
 
 export function ensureLogBounds(
   name: string,
-  definition: FloatParamDefinition | IntParamDefinition,
+  definition: FloatParamDefinition | IntParamDefinition
 ): void {
   if (definition.min <= 0 || definition.max <= 0) {
     throw new ValidationError(
-      `Log-scaled parameter "${name}" requires min and max to be greater than 0.`,
+      `Log-scaled parameter "${name}" requires min and max to be greater than 0.`
     );
   }
 }
@@ -88,7 +88,7 @@ function buildLinearIntValues(definition: IntParamDefinition): number[] {
   const step = definition.step ?? 1;
   if (!Number.isInteger(step) || step <= 0) {
     throw new ValidationError(
-      'Grid search requires int parameters to use a positive integer step.',
+      'Grid search requires int parameters to use a positive integer step.'
     );
   }
 
@@ -104,19 +104,16 @@ function buildLinearIntValues(definition: IntParamDefinition): number[] {
   return [...new Set(values)];
 }
 
-export function buildLogIntValues(
-  name: string,
-  definition: IntParamDefinition,
-): number[] {
+export function buildLogIntValues(name: string, definition: IntParamDefinition): number[] {
   ensureLogBounds(name, definition);
   if (definition.step === undefined) {
     throw new ValidationError(
-      'Grid search requires log-scaled int parameters to define a multiplicative step.',
+      'Grid search requires log-scaled int parameters to define a multiplicative step.'
     );
   }
   if (!Number.isFinite(definition.step) || definition.step <= 1) {
     throw new ValidationError(
-      'Grid search requires log-scaled int parameters to use a multiplicative step greater than 1.',
+      'Grid search requires log-scaled int parameters to use a multiplicative step greater than 1.'
     );
   }
 
@@ -128,7 +125,7 @@ export function buildLogIntValues(
     const next = Math.round(current * definition.step);
     if (next <= current) {
       throw new ValidationError(
-        `Log-scaled int parameter "${name}" requires step to advance the range.`,
+        `Log-scaled int parameter "${name}" requires step to advance the range.`
       );
     }
     current = next;
@@ -141,10 +138,7 @@ export function buildLogIntValues(
   return [...new Set(values)];
 }
 
-export function buildIntValues(
-  name: string,
-  definition: IntParamDefinition,
-): number[] {
+export function buildIntValues(name: string, definition: IntParamDefinition): number[] {
   if (definition.scale === 'log') {
     return buildLogIntValues(name, definition);
   }
@@ -153,33 +147,25 @@ export function buildIntValues(
 
 function buildLinearFloatValues(definition: FloatParamDefinition): number[] {
   if (definition.step === undefined) {
-    throw new ValidationError(
-      'Grid search requires float parameters to define step.',
-    );
+    throw new ValidationError('Grid search requires float parameters to define step.');
   }
   if (definition.step <= 0 || !Number.isFinite(definition.step)) {
     throw new ValidationError(
-      'Grid search requires float parameters to use a positive finite step.',
+      'Grid search requires float parameters to use a positive finite step.'
     );
   }
 
   const values: number[] = [];
   const epsilon = definition.step / 1000;
-  for (
-    let value = definition.min;
-    value <= definition.max + epsilon;
-    value += definition.step
-  ) {
+  for (let value = definition.min; value <= definition.max + epsilon; value += definition.step) {
     values.push(
       roundToPrecision(
         clamp(
-          definition.min +
-            Math.round((value - definition.min) / definition.step) *
-              definition.step,
+          definition.min + Math.round((value - definition.min) / definition.step) * definition.step,
           definition.min,
-          definition.max,
-        ),
-      ),
+          definition.max
+        )
+      )
     );
   }
 
@@ -190,19 +176,16 @@ function buildLinearFloatValues(definition: FloatParamDefinition): number[] {
   return [...new Set(values)];
 }
 
-export function buildLogFloatValues(
-  name: string,
-  definition: FloatParamDefinition,
-): number[] {
+export function buildLogFloatValues(name: string, definition: FloatParamDefinition): number[] {
   ensureLogBounds(name, definition);
   if (definition.step === undefined) {
     throw new ValidationError(
-      'Grid search requires log-scaled float parameters to define a multiplicative step.',
+      'Grid search requires log-scaled float parameters to define a multiplicative step.'
     );
   }
   if (!Number.isFinite(definition.step) || definition.step <= 1) {
     throw new ValidationError(
-      'Grid search requires log-scaled float parameters to use a multiplicative step greater than 1.',
+      'Grid search requires log-scaled float parameters to use a multiplicative step greater than 1.'
     );
   }
 
@@ -213,7 +196,7 @@ export function buildLogFloatValues(
     const next = current * definition.step;
     if (next <= current) {
       throw new ValidationError(
-        `Log-scaled float parameter "${name}" requires step to advance the range.`,
+        `Log-scaled float parameter "${name}" requires step to advance the range.`
       );
     }
     current = next;
@@ -226,20 +209,14 @@ export function buildLogFloatValues(
   return [...new Set(values)];
 }
 
-export function buildFloatValues(
-  name: string,
-  definition: FloatParamDefinition,
-): number[] {
+export function buildFloatValues(name: string, definition: FloatParamDefinition): number[] {
   if (definition.scale === 'log') {
     return buildLogFloatValues(name, definition);
   }
   return buildLinearFloatValues(definition);
 }
 
-export function buildDiscreteValues(
-  name: string,
-  definition: ParameterDefinition,
-): unknown[] {
+export function buildDiscreteValues(name: string, definition: ParameterDefinition): unknown[] {
   switch (definition.type) {
     case 'enum':
       return [...definition.values];
@@ -269,9 +246,7 @@ function isDiscreteSpace(entries: [string, ParameterDefinition][]): boolean {
   return entries.every(([, definition]) => isDiscreteDefinition(definition));
 }
 
-export function discreteCardinality(
-  entries: [string, ParameterDefinition][],
-): number | null {
+export function discreteCardinality(entries: [string, ParameterDefinition][]): number | null {
   if (!isDiscreteSpace(entries)) {
     return null;
   }
@@ -285,7 +260,7 @@ export function discreteCardinality(
 function sampleLogValue(
   name: string,
   definition: FloatParamDefinition | IntParamDefinition,
-  random: PythonRandom,
+  random: PythonRandom
 ): number {
   ensureLogBounds(name, definition);
   const minLog = Math.log10(definition.min);
@@ -297,7 +272,7 @@ function sampleLogValue(
 export function sampleParameter(
   name: string,
   definition: ParameterDefinition,
-  random: PythonRandom,
+  random: PythonRandom
 ): unknown {
   switch (definition.type) {
     case 'enum':
@@ -310,7 +285,7 @@ export function sampleParameter(
         return clamp(
           Math.round(sampleLogValue(name, definition, random)),
           definition.min,
-          definition.max,
+          definition.max
         );
       }
 
@@ -333,9 +308,7 @@ export function sampleParameter(
       }
 
       const snapped =
-        Math.round((sampled - definition.min) / definition.step) *
-          definition.step +
-        definition.min;
+        Math.round((sampled - definition.min) / definition.step) * definition.step + definition.min;
       return roundToPrecision(clamp(snapped, definition.min, definition.max));
     }
     default:
@@ -343,9 +316,7 @@ export function sampleParameter(
   }
 }
 
-export function cartesianProduct(
-  entries: [string, unknown[]][],
-): CandidateConfig[] {
+export function cartesianProduct(entries: [string, unknown[]][]): CandidateConfig[] {
   let product: CandidateConfig[] = [{}];
 
   for (const [name, values] of entries) {
@@ -363,12 +334,9 @@ export function cartesianProduct(
 
 export function sampleCandidateConfig(
   entries: [string, ParameterDefinition][],
-  random: PythonRandom,
+  random: PythonRandom
 ): CandidateConfig {
   return Object.fromEntries(
-    entries.map(([name, definition]) => [
-      name,
-      sampleParameter(name, definition, random),
-    ]),
+    entries.map(([name, definition]) => [name, sampleParameter(name, definition, random)])
   );
 }

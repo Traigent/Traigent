@@ -2,10 +2,7 @@ import type { Metrics } from '../dtos/trial.js';
 import type { RepetitionAggregationStrategy } from './types.js';
 import { normalizeCostMetrics } from './native-cost.js';
 
-function aggregateNumericValues(
-  values: number[],
-  strategy: RepetitionAggregationStrategy,
-): number {
+function aggregateNumericValues(values: number[], strategy: RepetitionAggregationStrategy): number {
   switch (strategy) {
     case 'median': {
       const sorted = [...values].sort((left, right) => left - right);
@@ -26,7 +23,7 @@ function aggregateNumericValues(
 
 export function aggregateRepetitionMetrics(
   metricsList: readonly Metrics[],
-  strategy: RepetitionAggregationStrategy,
+  strategy: RepetitionAggregationStrategy
 ): Metrics {
   const aggregated: Metrics = {};
   const metricNames = new Set<string>();
@@ -40,20 +37,15 @@ export function aggregateRepetitionMetrics(
   for (const metricName of metricNames) {
     const values = metricsList
       .map((metrics) => metrics[metricName])
-      .filter(
-        (value): value is number => typeof value === 'number' && Number.isFinite(value),
-      );
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
-    aggregated[metricName] =
-      values.length === 0 ? null : aggregateNumericValues(values, strategy);
+    aggregated[metricName] = values.length === 0 ? null : aggregateNumericValues(values, strategy);
   }
 
   return normalizeCostMetrics(aggregated);
 }
 
-export function collectMetricSamples(
-  metricsList: readonly Metrics[],
-): Record<string, number[]> {
+export function collectMetricSamples(metricsList: readonly Metrics[]): Record<string, number[]> {
   const collected: Record<string, number[]> = {};
 
   for (const metrics of metricsList) {
@@ -71,7 +63,7 @@ export function collectMetricSamples(
 }
 
 export function mergeMetricSamples(
-  sampleMaps: ReadonlyArray<Record<string, readonly number[]> | undefined>,
+  sampleMaps: ReadonlyArray<Record<string, readonly number[]> | undefined>
 ): Record<string, number[]> {
   const merged: Record<string, number[]> = {};
 

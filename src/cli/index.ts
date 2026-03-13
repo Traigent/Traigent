@@ -37,9 +37,7 @@ function formatDiagnostic(diagnostic: {
   column?: number;
 }): string {
   const location =
-    diagnostic.line !== undefined
-      ? `:${diagnostic.line}:${(diagnostic.column ?? 0) + 1}`
-      : '';
+    diagnostic.line !== undefined ? `:${diagnostic.line}:${(diagnostic.column ?? 0) + 1}` : '';
   return `  [${diagnostic.kind}]${location} ${diagnostic.message}`;
 }
 
@@ -101,20 +99,20 @@ async function main(): Promise<void> {
 
   for (const file of result.files) {
     console.error(
-      `[traigent] ${file.blocked ? 'blocked' : file.changed ? 'updated' : 'inspected'} ${file.file} (${file.rewrittenCount} rewrites, ${file.rejectedCount} rejected)`,
+      `[traigent] ${file.blocked ? 'blocked' : file.changed ? 'updated' : 'inspected'} ${file.file} (${file.rewrittenCount} rewrites, ${file.rejectedCount} rejected)`
     );
     for (const diagnostic of file.diagnostics) {
       console.error(formatDiagnostic(diagnostic));
     }
     if (file.blocked) {
       console.error(
-        '  [blocked] File was not modified because rejected seamless patterns were found. Fix them first or use explicit context/parameter injection.',
+        '  [blocked] File was not modified because rejected seamless patterns were found. Fix them first or use explicit context/parameter injection.'
       );
     }
   }
 
   console.error(
-    `[traigent] processed=${result.totalFiles} changed=${result.changedFiles} blocked=${result.blockedFiles} rewritten=${result.rewrittenCount} rejected=${result.rejectedCount}`,
+    `[traigent] processed=${result.totalFiles} changed=${result.changedFiles} blocked=${result.blockedFiles} rewritten=${result.rewrittenCount} rejected=${result.rejectedCount}`
   );
 
   if (result.rejectedCount > 0) {

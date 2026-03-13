@@ -31,8 +31,7 @@ export const optimizedAnswerQuestion = optimize({
       { input: 'What is the capital of France?', output: 'Paris' },
       { input: 'What is 2+2?', output: 'Helpful answer' },
     ],
-    scoringFunction: (output, expectedOutput) =>
-      output === expectedOutput ? 1 : 0,
+    scoringFunction: (output, expectedOutput) => (output === expectedOutput ? 1 : 0),
     metricFunctions: {
       cost: (output) => (output === 'Paris' ? 0.2 : 0.05),
     },

@@ -5,6 +5,7 @@ A demonstration of how a JavaScript agent can be optimized using Traigent, suppo
 ## Overview
 
 This demo shows:
+
 - A mock sentiment classification agent
 - Configuration optimization across model, temperature, and prompt type
 - **Two execution modes:**
@@ -13,10 +14,10 @@ This demo shows:
 
 ## Configuration Space
 
-| Parameter | Values |
-|-----------|--------|
-| Model | gpt-3.5-turbo, gpt-4o-mini, gpt-4o |
-| Temperature | 0.0, 0.3, 0.5, 0.7, 1.0 |
+| Parameter     | Values                                    |
+| ------------- | ----------------------------------------- |
+| Model         | gpt-3.5-turbo, gpt-4o-mini, gpt-4o        |
+| Temperature   | 0.0, 0.3, 0.5, 0.7, 1.0                   |
 | System Prompt | concise, detailed, cot (chain-of-thought) |
 
 ---
@@ -258,11 +259,11 @@ demos/agent-app/
 
 ## Comparison
 
-| Feature | Standalone JS | Python Orchestrator |
-|---------|--------------|---------------------|
-| Execution | Sequential | Parallel (4+ workers) |
-| Optimization | Random sampling | TPE, CMA-ES, etc. |
-| Budget enforcement | Manual | Automatic |
-| Early stopping | Manual | Configurable |
-| Analytics | Basic | Full Traigent integration |
-| Best for | Prototyping | Production |
+| Feature            | Standalone JS   | Python Orchestrator       |
+| ------------------ | --------------- | ------------------------- |
+| Execution          | Sequential      | Parallel (4+ workers)     |
+| Optimization       | Random sampling | TPE, CMA-ES, etc.         |
+| Budget enforcement | Manual          | Automatic                 |
+| Early stopping     | Manual          | Configurable              |
+| Analytics          | Basic           | Full Traigent integration |
+| Best for           | Prototyping     | Production                |

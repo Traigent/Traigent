@@ -1,6 +1,6 @@
-import OpenAI from "openai";
+import OpenAI from 'openai';
 
-import { optimize, param } from "../../dist/index.js";
+import { optimize, param } from '../../dist/index.js';
 import {
   average,
   exactMatchScore,
@@ -8,33 +8,33 @@ import {
   printOptimizationSummary,
   resolveRealProviderConfig,
   subsetRows,
-} from "./helpers.mjs";
+} from './helpers.mjs';
 
 const DATASET_BY_SCENARIO = {
-  tuning_qa: "simple_questions.jsonl",
-  zero_code_change: "simple_questions.jsonl",
-  parameter_mode: "simple_questions.jsonl",
-  multi_objective: "classification.jsonl",
-  rag_parallel: "rag_questions.jsonl",
+  tuning_qa: 'simple_questions.jsonl',
+  zero_code_change: 'simple_questions.jsonl',
+  parameter_mode: 'simple_questions.jsonl',
+  multi_objective: 'classification.jsonl',
+  rag_parallel: 'rag_questions.jsonl',
 };
 
 function scenarioConfigSpace(id) {
   switch (id) {
-    case "parameter_mode":
+    case 'parameter_mode':
       return {
-        model: param.enum(["cheap", "balanced", "accurate"]),
+        model: param.enum(['cheap', 'balanced', 'accurate']),
         temperature: param.float({ min: 0, max: 0.4, step: 0.2 }),
         max_tokens: param.int({ min: 64, max: 192, step: 64 }),
       };
-    case "rag_parallel":
+    case 'rag_parallel':
       return {
-        model: param.enum(["balanced", "accurate"]),
+        model: param.enum(['balanced', 'accurate']),
         retrieval_k: param.int({ min: 1, max: 4, step: 1 }),
-        retrieval_method: param.enum(["keyword", "dense"]),
+        retrieval_method: param.enum(['keyword', 'dense']),
       };
     default:
       return {
-        model: param.enum(["cheap", "balanced", "accurate"]),
+        model: param.enum(['cheap', 'balanced', 'accurate']),
         temperature: param.float({ min: 0, max: 0.4, step: 0.2 }),
       };
   }
@@ -42,47 +42,45 @@ function scenarioConfigSpace(id) {
 
 function scenarioObjectives(id) {
   switch (id) {
-    case "multi_objective":
+    case 'multi_objective':
       return [
-        { metric: "accuracy", direction: "maximize", weight: 2 },
-        { metric: "cost", direction: "minimize", weight: 1 },
-        { metric: "latency", direction: "minimize", weight: 1 },
+        { metric: 'accuracy', direction: 'maximize', weight: 2 },
+        { metric: 'cost', direction: 'minimize', weight: 1 },
+        { metric: 'latency', direction: 'minimize', weight: 1 },
       ];
     default:
-      return ["accuracy", "cost"];
+      return ['accuracy', 'cost'];
   }
 }
 
 function mockText(row, config, id) {
-  if (id === "rag_parallel") {
-    return Number(config.retrieval_k ?? 1) >= 2 ? row.output : "partial answer";
+  if (id === 'rag_parallel') {
+    return Number(config.retrieval_k ?? 1) >= 2 ? row.output : 'partial answer';
   }
-  if (id === "multi_objective") {
-    return config.model === "accurate" ? row.output : "neutral";
+  if (id === 'multi_objective') {
+    return config.model === 'accurate' ? row.output : 'neutral';
   }
-  return config.model === "cheap" ? "unknown" : row.output;
+  return config.model === 'cheap' ? 'unknown' : row.output;
 }
 
 function mockCost(config, id) {
-  if (id === "rag_parallel") {
+  if (id === 'rag_parallel') {
     return 0.06 + Number(config.retrieval_k ?? 1) * 0.02;
   }
-  return config.model === "accurate" ? 0.18 : config.model === "balanced" ? 0.1 : 0.05;
+  return config.model === 'accurate' ? 0.18 : config.model === 'balanced' ? 0.1 : 0.05;
 }
 
 function mockLatency(config, id) {
-  if (id === "rag_parallel") {
+  if (id === 'rag_parallel') {
     return 0.4 + Number(config.retrieval_k ?? 1) * 0.1;
   }
-  return config.model === "accurate" ? 1.1 : config.model === "balanced" ? 0.7 : 0.4;
+  return config.model === 'accurate' ? 1.1 : config.model === 'balanced' ? 0.7 : 0.4;
 }
 
 async function callRealModel(prompt, config) {
   const provider = resolveRealProviderConfig();
   if (!provider) {
-    throw new Error(
-      "Real walkthrough examples require OPENAI_API_KEY or OPENROUTER_API_KEY.",
-    );
+    throw new Error('Real walkthrough examples require OPENAI_API_KEY or OPENROUTER_API_KEY.');
   }
 
   const client = new OpenAI({
@@ -91,35 +89,31 @@ async function callRealModel(prompt, config) {
   });
 
   const model =
-    config.model === "accurate"
-      ? provider.defaultModel.replace("mini", "")
-      : provider.defaultModel;
+    config.model === 'accurate' ? provider.defaultModel.replace('mini', '') : provider.defaultModel;
 
   const started = Date.now();
   const response = await client.chat.completions.create({
     model,
     temperature: Number(config.temperature ?? 0.2),
     max_tokens: Number(config.max_tokens ?? 128),
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: 'user', content: prompt }],
   });
 
   return {
-    text: response.choices[0]?.message?.content ?? "",
+    text: response.choices[0]?.message?.content ?? '',
     latency: (Date.now() - started) / 1000,
     cost:
-      typeof response.usage?.total_tokens === "number"
-        ? response.usage.total_tokens * 0.000002
-        : 0,
+      typeof response.usage?.total_tokens === 'number' ? response.usage.total_tokens * 0.000002 : 0,
   };
 }
 
 function scoreRow(id, output, row) {
-  if (id === "multi_objective") {
+  if (id === 'multi_objective') {
     return row.output === output ? 1 : 0.6;
   }
-  if (id === "rag_parallel") {
+  if (id === 'rag_parallel') {
     if (output === row.output) return 1;
-    if (output === "partial answer") return 0.72;
+    if (output === 'partial answer') return 0.72;
     return 0.4;
   }
   return exactMatchScore(output, row.output);
@@ -132,7 +126,7 @@ export async function runScenario(id, mode) {
     configurationSpace: scenarioConfigSpace(id),
     objectives: scenarioObjectives(id),
     evaluation: { data: rows },
-    execution: { contract: "trial" },
+    execution: { contract: 'trial' },
   })(async (trialConfig) => {
     const selectedRows = subsetRows(rows, trialConfig);
     const outputs = [];
@@ -140,12 +134,9 @@ export async function runScenario(id, mode) {
     const latencies = [];
 
     for (const row of selectedRows) {
-      if (mode === "real") {
+      if (mode === 'real') {
         const prompt =
-          row.input.question ??
-          row.input.text ??
-          row.input.task ??
-          JSON.stringify(row.input);
+          row.input.question ?? row.input.text ?? row.input.task ?? JSON.stringify(row.input);
         const real = await callRealModel(prompt, trialConfig.config);
         outputs.push(real.text);
         costs.push(real.cost);
@@ -157,9 +148,7 @@ export async function runScenario(id, mode) {
       }
     }
 
-    const scores = selectedRows.map((row, index) =>
-      scoreRow(id, outputs[index], row),
-    );
+    const scores = selectedRows.map((row, index) => scoreRow(id, outputs[index], row));
 
     return {
       metrics: {
@@ -174,8 +163,8 @@ export async function runScenario(id, mode) {
   });
 
   const result = await wrapped.optimize({
-    algorithm: mode === "real" ? "random" : "grid",
-    maxTrials: mode === "real" ? 4 : 6,
+    algorithm: mode === 'real' ? 'random' : 'grid',
+    maxTrials: mode === 'real' ? 4 : 6,
     randomSeed: 7,
   });
 

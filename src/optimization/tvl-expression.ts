@@ -56,10 +56,7 @@ function normalizeConstraintExpressionSyntax(expression: string): string {
 
     if (IDENTIFIER_PATTERN.test(character)) {
       let end = index + 1;
-      while (
-        end < trimmed.length &&
-        IDENTIFIER_CONTINUATION_PATTERN.test(trimmed[end]!)
-      ) {
+      while (end < trimmed.length && IDENTIFIER_CONTINUATION_PATTERN.test(trimmed[end]!)) {
         end += 1;
       }
       const token = trimmed.slice(index, end);
@@ -106,11 +103,8 @@ function parseConstraintAst(expression: string, id: string): Expression {
       sourceType: 'script',
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'unknown parse failure';
-    throw new ValidationError(
-      `Constraint "${id}" could not be parsed: ${message}`,
-    );
+    const message = error instanceof Error ? error.message : 'unknown parse failure';
+    throw new ValidationError(`Constraint "${id}" could not be parsed: ${message}`);
   }
 }
 
@@ -121,33 +115,21 @@ function assertSupportedIdentifier(node: Identifier, id: string): void {
     node.name !== 'metrics' &&
     node.name !== 'undefined'
   ) {
-    throw new ValidationError(
-      `Constraint "${id}" uses unsupported identifier "${node.name}".`,
-    );
+    throw new ValidationError(`Constraint "${id}" uses unsupported identifier "${node.name}".`);
   }
 }
 
-function assertSupportedMemberExpression(
-  node: MemberExpression,
-  id: string,
-): void {
+function assertSupportedMemberExpression(node: MemberExpression, id: string): void {
   if (node.computed) {
-    throw new ValidationError(
-      `Constraint "${id}" cannot use computed property access.`,
-    );
+    throw new ValidationError(`Constraint "${id}" cannot use computed property access.`);
   }
   if (node.property.type !== 'Identifier') {
-    throw new ValidationError(
-      `Constraint "${id}" must use identifier-based property access.`,
-    );
+    throw new ValidationError(`Constraint "${id}" must use identifier-based property access.`);
   }
   assertSupportedExpressionNode(node.object as Expression, id);
 }
 
-function assertSupportedBinaryExpression(
-  node: BinaryExpression,
-  id: string,
-): void {
+function assertSupportedBinaryExpression(node: BinaryExpression, id: string): void {
   if (
     node.operator !== '===' &&
     node.operator !== '!==' &&
@@ -164,33 +146,27 @@ function assertSupportedBinaryExpression(
     node.operator !== '%'
   ) {
     throw new ValidationError(
-      `Constraint "${id}" uses unsupported binary operator "${node.operator}".`,
+      `Constraint "${id}" uses unsupported binary operator "${node.operator}".`
     );
   }
   assertSupportedExpressionNode(node.left as Expression, id);
   assertSupportedExpressionNode(node.right as Expression, id);
 }
 
-function assertSupportedLogicalExpression(
-  node: LogicalExpression,
-  id: string,
-): void {
+function assertSupportedLogicalExpression(node: LogicalExpression, id: string): void {
   if (node.operator !== '&&' && node.operator !== '||') {
     throw new ValidationError(
-      `Constraint "${id}" uses unsupported logical operator "${node.operator}".`,
+      `Constraint "${id}" uses unsupported logical operator "${node.operator}".`
     );
   }
   assertSupportedExpressionNode(node.left as Expression, id);
   assertSupportedExpressionNode(node.right as Expression, id);
 }
 
-function assertSupportedUnaryExpression(
-  node: UnaryExpression,
-  id: string,
-): void {
+function assertSupportedUnaryExpression(node: UnaryExpression, id: string): void {
   if (node.operator !== '!' && node.operator !== '+' && node.operator !== '-') {
     throw new ValidationError(
-      `Constraint "${id}" uses unsupported unary operator "${node.operator}".`,
+      `Constraint "${id}" uses unsupported unary operator "${node.operator}".`
     );
   }
   assertSupportedExpressionNode(node.argument, id);
@@ -219,9 +195,7 @@ function assertSupportedExpressionNode(node: Node, id: string): void {
       assertSupportedUnaryExpression(node, id);
       return;
     default:
-      throw new ValidationError(
-        `Constraint "${id}" uses unsupported syntax "${node.type}".`,
-      );
+      throw new ValidationError(`Constraint "${id}" uses unsupported syntax "${node.type}".`);
   }
 }
 
@@ -244,10 +218,7 @@ function expressionReferencesMetrics(node: Node): boolean {
   }
 }
 
-function evaluateMemberExpression(
-  node: MemberExpression,
-  scope: ConstraintScope,
-): unknown {
+function evaluateMemberExpression(node: MemberExpression, scope: ConstraintScope): unknown {
   const target = evaluateExpression(node.object as Expression, scope);
   if (target === null || target === undefined || typeof target !== 'object') {
     return undefined;
@@ -256,10 +227,7 @@ function evaluateMemberExpression(
   return (target as Record<string, unknown>)[property.name];
 }
 
-function evaluateBinaryExpression(
-  node: BinaryExpression,
-  scope: ConstraintScope,
-): unknown {
+function evaluateBinaryExpression(node: BinaryExpression, scope: ConstraintScope): unknown {
   const left = evaluateExpression(node.left as Expression, scope);
   const right = evaluateExpression(node.right as Expression, scope);
 
@@ -289,9 +257,7 @@ function evaluateBinaryExpression(
     case '%':
       return (left as number) % (right as number);
     default:
-      throw new ValidationError(
-        `Unsupported binary operator "${node.operator}".`,
-      );
+      throw new ValidationError(`Unsupported binary operator "${node.operator}".`);
   }
 }
 
@@ -320,11 +286,15 @@ function evaluateExpression(node: Expression, scope: ConstraintScope): unknown {
       return evaluateBinaryExpression(node, scope);
     case 'LogicalExpression':
       if (node.operator === '&&') {
-        return !!evaluateExpression(node.left as Expression, scope) &&
-          !!evaluateExpression(node.right as Expression, scope);
+        return (
+          !!evaluateExpression(node.left as Expression, scope) &&
+          !!evaluateExpression(node.right as Expression, scope)
+        );
       }
-      return !!evaluateExpression(node.left as Expression, scope) ||
-        !!evaluateExpression(node.right as Expression, scope);
+      return (
+        !!evaluateExpression(node.left as Expression, scope) ||
+        !!evaluateExpression(node.right as Expression, scope)
+      );
     case 'UnaryExpression': {
       const argument = evaluateExpression(node.argument, scope);
       switch (node.operator) {
@@ -335,9 +305,7 @@ function evaluateExpression(node: Expression, scope: ConstraintScope): unknown {
         case '-':
           return -Number(argument);
         default:
-          throw new ValidationError(
-            `Unsupported unary operator "${node.operator}".`,
-          );
+          throw new ValidationError(`Unsupported unary operator "${node.operator}".`);
       }
     }
     default:
@@ -350,14 +318,12 @@ export function compileTvlConstraint(
   expression: string,
   errorMessage: string | undefined,
   mode: 'expr' | 'implication',
-  whenExpression?: string,
+  whenExpression?: string
 ): OptimizationConstraint {
   const expressionAst = parseConstraintAst(expression, id);
   assertSupportedExpressionNode(expressionAst, id);
 
-  const whenAst = whenExpression
-    ? parseConstraintAst(whenExpression, id)
-    : undefined;
+  const whenAst = whenExpression ? parseConstraintAst(whenExpression, id) : undefined;
   if (whenAst) {
     assertSupportedExpressionNode(whenAst, id);
   }
@@ -366,10 +332,7 @@ export function compileTvlConstraint(
     expressionReferencesMetrics(expressionAst) ||
     (whenAst ? expressionReferencesMetrics(whenAst) : false);
 
-  const constraint = ((
-    config: Record<string, unknown>,
-    metrics?: Record<string, unknown>,
-  ) => {
+  const constraint = ((config: Record<string, unknown>, metrics?: Record<string, unknown>) => {
     try {
       if (mode === 'implication' && whenAst) {
         return (
@@ -380,12 +343,9 @@ export function compileTvlConstraint(
 
       return !!evaluateExpression(expressionAst, { config, metrics });
     } catch (error) {
-      const reason =
-        error instanceof Error ? error.message : 'unknown constraint failure';
+      const reason = error instanceof Error ? error.message : 'unknown constraint failure';
       throw new ValidationError(
-        errorMessage
-          ? `${errorMessage}: ${reason}`
-          : `Constraint "${id}" failed: ${reason}`,
+        errorMessage ? `${errorMessage}: ${reason}` : `Constraint "${id}" failed: ${reason}`
       );
     }
   }) as OptimizationConstraint;

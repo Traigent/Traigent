@@ -35,7 +35,7 @@ promotion_policy:
   min_effect:
     accuracy: 0.01
 `,
-      'utf8',
+      'utf8'
     );
 
     const [result] = await inspectTvlFiles([file]);
@@ -45,8 +45,8 @@ promotion_policy:
     expect(result.objectiveMetrics).toEqual(['accuracy', 'latency']);
     expect(result.usedFeatures).toContain('tvars');
     expect(result.usedFeatures).toContain('promotion-policy');
-    expect(result.nativeCompatibility.items.some((item) => item.feature === 'promotion-policy')).toBe(
-      true,
-    );
+    expect(
+      result.nativeCompatibility.items.some((item) => item.feature === 'promotion-policy')
+    ).toBe(true);
   });
 });

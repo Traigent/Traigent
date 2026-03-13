@@ -37,7 +37,6 @@ interface TrialResult {
  * and returns metrics for the optimizer.
  */
 export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
-
   // Extract agent config from trial parameters (with type assertions)
   const config = trialConfig.config;
   const agentConfig: AgentConfig = {
@@ -55,14 +54,10 @@ export async function runTrial(trialConfig: TrialConfig): Promise<TrialResult> {
     `[Trial ${trialConfig.trial_number}] Running with config:`,
     JSON.stringify(agentConfig)
   );
-  console.error(
-    `[Trial ${trialConfig.trial_number}] Processing ${examples.length} examples`
-  );
+  console.error(`[Trial ${trialConfig.trial_number}] Processing ${examples.length} examples`);
 
   // Run the agent - use stderr for logging to avoid NDJSON corruption
-  const result = await runSentimentAgent(examples, agentConfig, (msg) =>
-    console.error(msg)
-  );
+  const result = await runSentimentAgent(examples, agentConfig, (msg) => console.error(msg));
 
   // Return metrics for the optimizer
   return {
