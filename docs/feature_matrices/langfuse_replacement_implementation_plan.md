@@ -195,7 +195,7 @@ Backfill required:
 Customer-visible changes:
 - scheduled exports
 - export history/status
-- storage sinks
+- provider-neutral artifact storage
 - webhook automation
 
 Key work:
@@ -205,10 +205,16 @@ Key work:
   - explicit `privacy_mode` on export contracts
 - `TraigentBackend`
   - scheduled exports
-  - S3, GCS, and Azure Blob sinks
+  - provider-neutral artifact-store abstraction
+  - local sink first, cloud-specific adapters only when needed
   - export webhooks
   - privacy-safe manifest export by default
   - explicit materialized/raw-content export only when policy and environment allow it
+  - artifact-store contract kept deliberately small:
+    - `put(artifact_id, content_bytes, metadata) -> artifact_ref`
+    - `get(artifact_ref) -> content_bytes`
+    - `delete(artifact_ref) -> None`
+    - export-job tables remain the index; the sink does not own listing/query semantics
 - `Traigent`
   - export job client
 - `TraigentFrontend`
@@ -219,7 +225,7 @@ Acceptance:
 - scheduled and manual exports both work
 - every export artifact includes machine-readable privacy metadata
 - webhook delivery is idempotent and audited
-- sink configuration is validated before job execution
+- artifact-store configuration is validated before job execution
 
 ### Wave 3A: Core tenant/project enforcement completion
 
