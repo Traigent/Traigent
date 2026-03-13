@@ -124,6 +124,14 @@ class ConfigSpaceDiscovery:
         """Get declared measure names from cached response."""
         return self._cached_response.measures if self._cached_response else None
 
+    def get_estimated_tokens_per_example(self) -> dict[str, int] | None:
+        """Get optional per-example token estimate from cached response."""
+        if not self._cached_response:
+            return None
+        if self._cached_response.estimated_tokens_per_example is None:
+            return None
+        return self._cached_response.estimated_tokens_per_example.to_dict()
+
     def get_tvars(self) -> list[TVARDefinition]:
         """Get raw TVAR definitions from cached response.
 
@@ -295,6 +303,11 @@ class ConfigSpaceDiscovery:
             "promotion_policy": artifact.promotion_policy,
             "measures": list(response.measures or []),
             "derived_constraints": artifact.derived_constraints,
+            "estimated_tokens_per_example": (
+                response.estimated_tokens_per_example.to_dict()
+                if response.estimated_tokens_per_example is not None
+                else None
+            ),
         }
 
     async def build_tvl_artifact(self) -> dict[str, Any]:
