@@ -150,10 +150,10 @@ This file is the working checklist for the remaining execution waves.
 ## Release Validation / Security
 - `[x]` Early lightweight threat-model review after Wave 3A stabilization
 - `[x]` Threat-model review notes for Wave 3A/3B
-- `[~]` Cross-tenant/project monitoring and alerting
+- `[x]` Cross-tenant/project monitoring and alerting
 - `[x]` API reference for dashboards, roles, exports, retention/rate limits
 - `[x]` Migration/cutover notes for tenant/project enforcement
-- `[~]` Privacy-mode integration tests for all new beta surfaces
+- `[x]` Privacy-mode integration tests for all new beta surfaces
 - `[x]` Full CI and repo-wide validation rerun
 - `[x]` Changed-code coverage at or above 85%
 - `[ ]` Claude review after each completed wave
@@ -165,7 +165,8 @@ This file is the working checklist for the remaining execution waves.
 - Admin API keys are tenant-scoped in beta; cross-tenant operations are reserved for platform-admin JWT/internal tooling.
 - The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
 - The early lightweight threat-model review is captured in [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md); it found no new blockers but kept monitoring, privacy-mode integration coverage, and final audit-event completeness as explicit release-gate work.
-- Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts; remaining work is wiring this into the full beta monitoring/alerting release gate.
+- Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts as part of the beta monitoring/alerting release gate.
+- Release-gate integration coverage now exercises the real scope-monitoring helpers end-to-end through `/api/v1/audit/alerts` and `/api/v1/audit/health`, proving that tenant/project violations and dual-run discrepancies surface as alert metrics and health warnings.
 - Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
 - The backend export/enforcement checkpoint now measures at **88% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
 - Repo-wide validation has been rerun successfully across the active repos:
