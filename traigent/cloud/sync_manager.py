@@ -46,7 +46,7 @@ class SyncManager:
         self.config = config
         self.storage = LocalStorageManager(config.get_local_storage_path())
         self.api_key = api_key
-        self.base_url = BackendConfig.get_backend_api_url().rstrip("/")
+        self.base_url = BackendConfig.get_cloud_api_url().rstrip("/")
 
         # Setup HTTP client - always create a requests session for sync operations
         # Include both X-API-Key and Authorization for backward compatibility

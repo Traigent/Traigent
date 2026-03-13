@@ -148,11 +148,9 @@ class UnifiedAuthConfig:
 
     default_mode: AuthMode = AuthMode.API_KEY
     backend_base_url: str | None = (
-        None  # Will be set from BackendConfig if not provided
+        None  # Will be set from cloud backend config if not provided
     )
-    cloud_base_url: str = (
-        ""  # Resolved from BackendConfig.DEFAULT_PROD_URL in __post_init__
-    )
+    cloud_base_url: str = ""  # Resolved from cloud backend config in __post_init__
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True
@@ -166,9 +164,9 @@ class UnifiedAuthConfig:
         from traigent.config.backend_config import BackendConfig
 
         if self.backend_base_url is None:
-            self.backend_base_url = BackendConfig.get_backend_url()
+            self.backend_base_url = BackendConfig.get_cloud_backend_url()
         if not self.cloud_base_url:
-            self.cloud_base_url = BackendConfig.DEFAULT_PROD_URL
+            self.cloud_base_url = BackendConfig.get_cloud_backend_url()
 
 
 @dataclass
@@ -1435,7 +1433,9 @@ class AuthManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.build_api_base(
+            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+        )
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
