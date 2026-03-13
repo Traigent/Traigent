@@ -126,7 +126,6 @@ class TestTraigentCloudClient:
                 ),
                 patch.object(mock_cloud_client, "_submit_optimization") as mock_submit,
             ):
-
                 mock_submit.return_value = {
                     "best_config": {"param1": "value1", "param2": 0.5},
                     "best_metrics": {"accuracy": 0.85, "speed": 0.9},
@@ -170,7 +169,6 @@ class TestTraigentCloudClient:
                     side_effect=AuthenticationError("Not authenticated"),
                 ),
             ):
-
                 with pytest.raises(AuthenticationError, match="Not authenticated"):
                     async with mock_cloud_client:
                         pass  # The exception should be raised in __aenter__
@@ -208,7 +206,6 @@ class TestTraigentCloudClient:
                     "traigent.core.orchestrator.OptimizationOrchestrator"
                 ) as mock_orchestrator_class,
             ):
-
                 mock_optimizer = MagicMock()
                 mock_get_optimizer.return_value = mock_optimizer
 
@@ -265,7 +262,6 @@ class TestTraigentCloudClient:
                     side_effect=Exception("Network error"),
                 ),
             ):
-
                 async with client as c:
                     with pytest.raises(
                         CloudServiceError, match="Cloud optimization failed"

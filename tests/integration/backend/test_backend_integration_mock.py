@@ -90,19 +90,21 @@ class TestBackendIntegrationMocked:
 
             # Use backend client as async context manager
             async with backend_client:
-                session_id, token, optimizer_endpoint = (
-                    await backend_client.create_hybrid_session(
-                        problem_statement="test_function",
-                        search_space={
-                            "temperature": [0.1, 0.5, 0.9],
-                            "max_tokens": [100, 150, 200],
-                        },
-                        optimization_config={
-                            "objectives": ["maximize"],
-                            "max_trials": 10,
-                        },
-                        metadata={"dataset_metadata": {"size": 100}},
-                    )
+                (
+                    session_id,
+                    token,
+                    optimizer_endpoint,
+                ) = await backend_client.create_hybrid_session(
+                    problem_statement="test_function",
+                    search_space={
+                        "temperature": [0.1, 0.5, 0.9],
+                        "max_tokens": [100, 150, 200],
+                    },
+                    optimization_config={
+                        "objectives": ["maximize"],
+                        "max_trials": 10,
+                    },
+                    metadata={"dataset_metadata": {"size": 100}},
                 )
 
             # Should return valid session details
@@ -233,19 +235,21 @@ class TestBackendIntegrationMocked:
 
             # Use backend client as async context manager
             async with backend_client:
-                session_id, token, optimizer_endpoint = (
-                    await backend_client.create_hybrid_session(
-                        problem_statement="test_function",
-                        search_space={
-                            "temperature": [0.1, 0.5, 0.9],
-                            "max_tokens": [100, 150, 200],
-                        },
-                        optimization_config={
-                            "objectives": ["maximize"],
-                            "max_trials": 10,
-                        },
-                        metadata={"dataset_metadata": {"size": 100}},
-                    )
+                (
+                    session_id,
+                    token,
+                    optimizer_endpoint,
+                ) = await backend_client.create_hybrid_session(
+                    problem_statement="test_function",
+                    search_space={
+                        "temperature": [0.1, 0.5, 0.9],
+                        "max_tokens": [100, 150, 200],
+                    },
+                    optimization_config={
+                        "objectives": ["maximize"],
+                        "max_trials": 10,
+                    },
+                    metadata={"dataset_metadata": {"size": 100}},
                 )
 
             # Verify request structure for hybrid session endpoint
