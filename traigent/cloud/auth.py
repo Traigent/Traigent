@@ -224,7 +224,7 @@ class APIKey:
 
         if isinstance(value, datetime):
             dt = value
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             dt = datetime.fromtimestamp(float(value), tz=UTC)
         elif isinstance(value, str):
             raw = value.strip()
@@ -1086,7 +1086,7 @@ class AuthManager:
         expires_dt: datetime | None
         if isinstance(expires_at, datetime):
             expires_dt = expires_at
-        elif isinstance(expires_at, (int, float)):
+        elif isinstance(expires_at, int | float):
             expires_dt = datetime.fromtimestamp(expires_at, tz=UTC)
         else:
             expires_dt = None

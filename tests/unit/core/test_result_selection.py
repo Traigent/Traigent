@@ -30,7 +30,7 @@ class FakeTrial:
         per_metric_coverage = {
             metric_name: {"present": 1, "total": 1, "ratio": 1.0}
             for metric_name, metric_value in self.metrics.items()
-            if isinstance(metric_value, (int, float))
+            if isinstance(metric_value, int | float)
         }
         has_accuracy = "accuracy" in per_metric_coverage
         self.metadata["comparability"] = {
