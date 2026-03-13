@@ -264,6 +264,242 @@ class ProjectOptimizationOverviewDashboardDTO:
 
 
 @dataclass(frozen=True)
+class EvaluatorQualitySummaryCardsDTO:
+    evaluator_definitions_total: int
+    evaluator_runs_in_range: int
+    completed_runs_in_range: int
+    failed_runs_in_range: int
+    scored_runs_in_range: int
+    avg_numeric_score_in_range: float | None
+    total_cost_usd_in_range: float
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EvaluatorQualitySummaryCardsDTO:
+        return cls(
+            evaluator_definitions_total=int(payload["evaluator_definitions_total"]),
+            evaluator_runs_in_range=int(payload["evaluator_runs_in_range"]),
+            completed_runs_in_range=int(payload["completed_runs_in_range"]),
+            failed_runs_in_range=int(payload["failed_runs_in_range"]),
+            scored_runs_in_range=int(payload["scored_runs_in_range"]),
+            avg_numeric_score_in_range=(
+                float(payload["avg_numeric_score_in_range"])
+                if payload.get("avg_numeric_score_in_range") is not None
+                else None
+            ),
+            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+        )
+
+
+@dataclass(frozen=True)
+class EvaluatorQualityTrendPointDTO:
+    bucket_start: str
+    bucket_label: str
+    avg_numeric_score: float | None
+    scored_runs: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EvaluatorQualityTrendPointDTO:
+        return cls(
+            bucket_start=str(payload["bucket_start"]),
+            bucket_label=str(payload["bucket_label"]),
+            avg_numeric_score=(
+                float(payload["avg_numeric_score"])
+                if payload.get("avg_numeric_score") is not None
+                else None
+            ),
+            scored_runs=int(payload["scored_runs"]),
+        )
+
+
+@dataclass(frozen=True)
+class EvaluatorQualityEvaluatorDTO:
+    evaluator_id: str
+    name: str
+    target_type: str
+    measure_id: str
+    measure_label: str
+    run_count: int
+    completed_runs: int
+    failed_runs: int
+    scored_runs: int
+    avg_numeric_score: float | None
+    avg_latency_ms: float | None
+    total_cost_usd: float
+    last_run_at: str | None
+    privacy_classification: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EvaluatorQualityEvaluatorDTO:
+        return cls(
+            evaluator_id=str(payload["evaluator_id"]),
+            name=str(payload["name"]),
+            target_type=str(payload["target_type"]),
+            measure_id=str(payload["measure_id"]),
+            measure_label=str(payload["measure_label"]),
+            run_count=int(payload["run_count"]),
+            completed_runs=int(payload["completed_runs"]),
+            failed_runs=int(payload["failed_runs"]),
+            scored_runs=int(payload["scored_runs"]),
+            avg_numeric_score=(
+                float(payload["avg_numeric_score"])
+                if payload.get("avg_numeric_score") is not None
+                else None
+            ),
+            avg_latency_ms=(
+                float(payload["avg_latency_ms"])
+                if payload.get("avg_latency_ms") is not None
+                else None
+            ),
+            total_cost_usd=float(payload["total_cost_usd"]),
+            last_run_at=(
+                str(payload["last_run_at"])
+                if payload.get("last_run_at") is not None
+                else None
+            ),
+            privacy_classification=str(payload["privacy_classification"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectEvaluatorQualityDashboardDTO:
+    context: AnalyticsContextDTO
+    range_days: int
+    resolved_bucket: str
+    summary_cards: EvaluatorQualitySummaryCardsDTO
+    quality_trend: list[EvaluatorQualityTrendPointDTO]
+    recent_evaluators: list[EvaluatorQualityEvaluatorDTO]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectEvaluatorQualityDashboardDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            range_days=int(payload["range_days"]),
+            resolved_bucket=str(payload["resolved_bucket"]),
+            summary_cards=EvaluatorQualitySummaryCardsDTO.from_dict(
+                payload["summary_cards"]
+            ),
+            quality_trend=[
+                EvaluatorQualityTrendPointDTO.from_dict(item)
+                for item in payload["quality_trend"]
+            ],
+            recent_evaluators=[
+                EvaluatorQualityEvaluatorDTO.from_dict(item)
+                for item in payload["recent_evaluators"]
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class ProjectUsageSummaryCardsDTO:
+    experiment_runs_in_range: int
+    configuration_runs_in_range: int
+    priced_configuration_runs_in_range: int
+    unpriced_configuration_runs_in_range: int
+    total_cost_usd_in_range: float
+    total_tokens_in_range: int
+    avg_latency_ms_in_range: float
+    p95_latency_ms_in_range: float
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectUsageSummaryCardsDTO:
+        return cls(
+            experiment_runs_in_range=int(payload["experiment_runs_in_range"]),
+            configuration_runs_in_range=int(payload["configuration_runs_in_range"]),
+            priced_configuration_runs_in_range=int(
+                payload["priced_configuration_runs_in_range"]
+            ),
+            unpriced_configuration_runs_in_range=int(
+                payload["unpriced_configuration_runs_in_range"]
+            ),
+            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_tokens_in_range=int(payload["total_tokens_in_range"]),
+            avg_latency_ms_in_range=float(payload["avg_latency_ms_in_range"]),
+            p95_latency_ms_in_range=float(payload["p95_latency_ms_in_range"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectUsageTrendPointDTO:
+    bucket_start: str
+    bucket_label: str
+    cost_usd: float
+    total_tokens: int
+    avg_latency_ms: float | None
+    configuration_runs: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectUsageTrendPointDTO:
+        return cls(
+            bucket_start=str(payload["bucket_start"]),
+            bucket_label=str(payload["bucket_label"]),
+            cost_usd=float(payload["cost_usd"]),
+            total_tokens=int(payload["total_tokens"]),
+            avg_latency_ms=(
+                float(payload["avg_latency_ms"])
+                if payload.get("avg_latency_ms") is not None
+                else None
+            ),
+            configuration_runs=int(payload["configuration_runs"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectUsageExperimentDTO:
+    experiment_id: str
+    name: str
+    configuration_runs: int
+    total_cost_usd: float
+    total_tokens: int
+    avg_latency_ms: float | None
+    privacy_classification: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectUsageExperimentDTO:
+        return cls(
+            experiment_id=str(payload["experiment_id"]),
+            name=str(payload["name"]),
+            configuration_runs=int(payload["configuration_runs"]),
+            total_cost_usd=float(payload["total_cost_usd"]),
+            total_tokens=int(payload["total_tokens"]),
+            avg_latency_ms=(
+                float(payload["avg_latency_ms"])
+                if payload.get("avg_latency_ms") is not None
+                else None
+            ),
+            privacy_classification=str(payload["privacy_classification"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectUsageDashboardDTO:
+    context: AnalyticsContextDTO
+    range_days: int
+    resolved_bucket: str
+    summary_cards: ProjectUsageSummaryCardsDTO
+    usage_trend: list[ProjectUsageTrendPointDTO]
+    top_experiments: list[ProjectUsageExperimentDTO]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectUsageDashboardDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            range_days=int(payload["range_days"]),
+            resolved_bucket=str(payload["resolved_bucket"]),
+            summary_cards=ProjectUsageSummaryCardsDTO.from_dict(
+                payload["summary_cards"]
+            ),
+            usage_trend=[
+                ProjectUsageTrendPointDTO.from_dict(item)
+                for item in payload["usage_trend"]
+            ],
+            top_experiments=[
+                ProjectUsageExperimentDTO.from_dict(item)
+                for item in payload["top_experiments"]
+            ],
+        )
+
+
+@dataclass(frozen=True)
 class MeasureSummaryDTO:
     measure_key: str
     measure_id: str | None

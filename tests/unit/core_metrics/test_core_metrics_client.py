@@ -221,6 +221,98 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                     ],
                 }
             }
+        if path == "/analytics/dashboards/evaluator-quality?days=7&limit=2":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:18:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "range_days": 7,
+                    "resolved_bucket": "day",
+                    "summary_cards": {
+                        "evaluator_definitions_total": 2,
+                        "evaluator_runs_in_range": 4,
+                        "completed_runs_in_range": 3,
+                        "failed_runs_in_range": 1,
+                        "scored_runs_in_range": 2,
+                        "avg_numeric_score_in_range": 0.93,
+                        "total_cost_usd_in_range": 0.19,
+                    },
+                    "quality_trend": [
+                        {
+                            "bucket_start": "2026-03-12T00:00:00+00:00",
+                            "bucket_label": "2026-03-12",
+                            "avg_numeric_score": 0.93,
+                            "scored_runs": 2,
+                        }
+                    ],
+                    "recent_evaluators": [
+                        {
+                            "evaluator_id": "evaluator_1",
+                            "name": "Helpfulness Judge",
+                            "target_type": "configuration_run",
+                            "measure_id": "measure_helpfulness",
+                            "measure_label": "Helpfulness",
+                            "run_count": 4,
+                            "completed_runs": 3,
+                            "failed_runs": 1,
+                            "scored_runs": 2,
+                            "avg_numeric_score": 0.93,
+                            "avg_latency_ms": 112.5,
+                            "total_cost_usd": 0.19,
+                            "last_run_at": "2026-03-12T08:50:00Z",
+                            "privacy_classification": "aggregate_safe",
+                        }
+                    ],
+                }
+            }
+        if path == "/analytics/dashboards/project-usage?days=7&limit=3":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:19:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "range_days": 7,
+                    "resolved_bucket": "day",
+                    "summary_cards": {
+                        "experiment_runs_in_range": 5,
+                        "configuration_runs_in_range": 12,
+                        "priced_configuration_runs_in_range": 11,
+                        "unpriced_configuration_runs_in_range": 1,
+                        "total_cost_usd_in_range": 1.55,
+                        "total_tokens_in_range": 4321,
+                        "avg_latency_ms_in_range": 118.2,
+                        "p95_latency_ms_in_range": 205.0,
+                    },
+                    "usage_trend": [
+                        {
+                            "bucket_start": "2026-03-12T00:00:00+00:00",
+                            "bucket_label": "2026-03-12",
+                            "cost_usd": 1.55,
+                            "total_tokens": 4321,
+                            "avg_latency_ms": 118.2,
+                            "configuration_runs": 12,
+                        }
+                    ],
+                    "top_experiments": [
+                        {
+                            "experiment_id": "exp_1",
+                            "name": "Support Experiment",
+                            "configuration_runs": 9,
+                            "total_cost_usd": 1.23,
+                            "total_tokens": 3210,
+                            "avg_latency_ms": 111.0,
+                            "privacy_classification": "aggregate_safe",
+                        }
+                    ],
+                }
+            }
         if path == "/analytics/export-jobs?page=1&per_page=10":
             return {
                 "data": {
@@ -239,6 +331,7 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                             "export_mode": "manifest",
                             "privacy_mode": True,
                             "include_content": False,
+                            "retention_category": "export_artifact",
                             "record_count": 12,
                             "artifact_filename": "fine-tuning-manifest.json",
                             "artifact_content_type": "application/json",
@@ -247,6 +340,7 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                             "limit": 1000,
                             "requested_by": "user_123",
                             "requested_at": "2026-03-12T09:18:00Z",
+                            "expires_at": "2026-04-11T09:18:00Z",
                             "completed_at": "2026-03-12T09:18:02Z",
                             "error_message": None,
                         }
@@ -278,6 +372,7 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                         "export_mode": "manifest",
                         "privacy_mode": True,
                         "include_content": False,
+                        "retention_category": "export_artifact",
                         "record_count": 12,
                         "artifact_filename": "fine-tuning-manifest.json",
                         "artifact_content_type": "application/json",
@@ -286,6 +381,7 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                         "limit": 1000,
                         "requested_by": "user_123",
                         "requested_at": "2026-03-12T09:18:00Z",
+                        "expires_at": "2026-04-11T09:18:00Z",
                         "completed_at": "2026-03-12T09:18:02Z",
                         "error_message": None,
                     },
@@ -350,6 +446,8 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
     summary = client.get_analytics_summary(days=7)
     catalog = client.get_pricing_catalog()
     dashboard = client.get_optimization_overview_dashboard(days=7, limit=3)
+    evaluator_dashboard = client.get_evaluator_quality_dashboard(days=7, limit=2)
+    usage_dashboard = client.get_project_usage_dashboard(days=7, limit=3)
     export_jobs = client.list_export_jobs(page=1, per_page=10)
     export_job = client.get_export_job("export_job_1")
     trend = client.get_run_volume_trend(experiment_id="exp_1", days=7, bucket="day")
@@ -363,15 +461,27 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
         None,
         "json",
     )
-    assert calls[3] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
-    assert calls[4] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
-    assert calls[5] == (
+    assert calls[3] == (
+        "GET",
+        "/analytics/dashboards/evaluator-quality?days=7&limit=2",
+        None,
+        "json",
+    )
+    assert calls[4] == (
+        "GET",
+        "/analytics/dashboards/project-usage?days=7&limit=3",
+        None,
+        "json",
+    )
+    assert calls[5] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
+    assert calls[6] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
+    assert calls[7] == (
         "GET",
         "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day",
         None,
         "json",
     )
-    assert calls[6] == (
+    assert calls[8] == (
         "GET",
         "/analytics/distributions/measures/accuracy?experiment_id=exp_1&bins=5",
         None,
@@ -385,6 +495,12 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
     assert dashboard.summary_cards.unpriced_configuration_runs_in_range == 1
     assert dashboard.cost_source_breakdown.catalog_fallback == 1
     assert dashboard.recent_experiments[0].experiment_id == "exp_1"
+    assert evaluator_dashboard.summary_cards.evaluator_runs_in_range == 4
+    assert evaluator_dashboard.quality_trend[0].avg_numeric_score == pytest.approx(0.93)
+    assert evaluator_dashboard.recent_evaluators[0].name == "Helpfulness Judge"
+    assert usage_dashboard.summary_cards.configuration_runs_in_range == 12
+    assert usage_dashboard.usage_trend[0].total_tokens == 4321
+    assert usage_dashboard.top_experiments[0].experiment_id == "exp_1"
     assert export_jobs.pagination.total == 1
     assert export_jobs.items[0].job_id == "export_job_1"
     assert export_job.job.requested_by == "user_123"

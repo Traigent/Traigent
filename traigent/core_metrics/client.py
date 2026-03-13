@@ -15,11 +15,13 @@ from traigent.core_metrics.dtos import (
     FineTuningManifestDTO,
     ProjectAnalyticsSummaryDTO,
     ProjectAnalyticsTrendDTO,
+    ProjectEvaluatorQualityDashboardDTO,
     ProjectExportJobListDTO,
     ProjectExportJobResponseDTO,
     ProjectMeasureDistributionDTO,
     ProjectOptimizationOverviewDashboardDTO,
     ProjectPricingCatalogDTO,
+    ProjectUsageDashboardDTO,
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -83,6 +85,42 @@ class CoreMetricsClient:
         )
         return ProjectOptimizationOverviewDashboardDTO.from_dict(
             self._unwrap_data(payload, "optimization overview dashboard")
+        )
+
+    def get_evaluator_quality_dashboard(
+        self,
+        *,
+        days: int = 30,
+        limit: int = 5,
+    ) -> ProjectEvaluatorQualityDashboardDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/dashboards/evaluator-quality",
+                days=days,
+                limit=limit,
+            ),
+        )
+        return ProjectEvaluatorQualityDashboardDTO.from_dict(
+            self._unwrap_data(payload, "evaluator quality dashboard")
+        )
+
+    def get_project_usage_dashboard(
+        self,
+        *,
+        days: int = 30,
+        limit: int = 5,
+    ) -> ProjectUsageDashboardDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/dashboards/project-usage",
+                days=days,
+                limit=limit,
+            ),
+        )
+        return ProjectUsageDashboardDTO.from_dict(
+            self._unwrap_data(payload, "project usage dashboard")
         )
 
     def get_run_volume_trend(
