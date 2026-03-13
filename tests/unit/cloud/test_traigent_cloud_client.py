@@ -245,7 +245,8 @@ class TestTraigentCloudClient:
 
         async def run_test():
             client = TraigentCloudClient(
-                enable_fallback=False, api_key="tg_test_" + "x" * 56  # pragma: allowlist secret
+                enable_fallback=False,
+                api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
             )
 
             with (

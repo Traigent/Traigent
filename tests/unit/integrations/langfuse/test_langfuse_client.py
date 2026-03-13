@@ -904,9 +904,7 @@ class TestLangfuseClientAsync:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_wait_for_trace_async_avoids_deprecated_get_event_loop(
-        self, client
-    ):
+    async def test_wait_for_trace_async_avoids_deprecated_get_event_loop(self, client):
         """wait_for_trace_async should use the running loop, not get_event_loop."""
         with (
             patch(

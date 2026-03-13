@@ -228,7 +228,9 @@ class TestCloudIntegration:
             metadata={},
         )
 
-        with patch("traigent.core.orchestrator.OptimizationOrchestrator") as MockOrchestrator:
+        with patch(
+            "traigent.core.orchestrator.OptimizationOrchestrator"
+        ) as MockOrchestrator:
             mock_orchestrator = MockOrchestrator.return_value
             mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
 
@@ -335,7 +337,9 @@ class TestCloudIntegration:
             metadata={},
         )
 
-        with patch("traigent.core.orchestrator.OptimizationOrchestrator") as MockOrchestrator:
+        with patch(
+            "traigent.core.orchestrator.OptimizationOrchestrator"
+        ) as MockOrchestrator:
             mock_orchestrator = MockOrchestrator.return_value
             mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
 

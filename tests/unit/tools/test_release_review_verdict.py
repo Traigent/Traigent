@@ -590,7 +590,9 @@ def test_verdict_blocks_when_component_file_is_missing_from_secondary_coverage(
     )
 
 
-def test_verdict_blocks_when_file_review_artifact_lane_is_missing(tmp_path: Path) -> None:
+def test_verdict_blocks_when_file_review_artifact_lane_is_missing(
+    tmp_path: Path,
+) -> None:
     module = _load_verdict_module()
 
     run_dir = tmp_path / "run-missing-file-artifact-lane"

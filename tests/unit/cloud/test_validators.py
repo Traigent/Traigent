@@ -268,15 +268,27 @@ class TestValidateComparabilityMetadata:
         "payload,match",
         [
             ("not_a_dict", "comparability metadata must be an object"),
-            ({"total_examples": "3"}, "comparability.total_examples must be an integer"),
+            (
+                {"total_examples": "3"},
+                "comparability.total_examples must be an integer",
+            ),
             (
                 {"examples_with_primary_metric": "2"},
                 "comparability.examples_with_primary_metric must be an integer",
             ),
             ({"coverage_ratio": "0.5"}, "comparability.coverage_ratio must be numeric"),
-            ({"coverage_ratio": 1.2}, "comparability.coverage_ratio must be between 0 and 1"),
-            ({"ranking_eligible": "yes"}, "comparability.ranking_eligible must be boolean"),
-            ({"warning_codes": "MCI-001"}, "comparability.warning_codes must be an array"),
+            (
+                {"coverage_ratio": 1.2},
+                "comparability.coverage_ratio must be between 0 and 1",
+            ),
+            (
+                {"ranking_eligible": "yes"},
+                "comparability.ranking_eligible must be boolean",
+            ),
+            (
+                {"warning_codes": "MCI-001"},
+                "comparability.warning_codes must be an array",
+            ),
             (
                 {"warning_codes": [1, "MCI-002"]},
                 "comparability.warning_codes must contain only strings",
@@ -311,7 +323,9 @@ class TestValidateComparabilityMetadata:
             ),
         ],
     )
-    def test_invalid_comparability_metadata_raises(self, payload: object, match: str) -> None:
+    def test_invalid_comparability_metadata_raises(
+        self, payload: object, match: str
+    ) -> None:
         with pytest.raises(ValueError, match=match):
             validate_comparability_metadata(payload)
 
@@ -850,10 +864,14 @@ class TestValidateConfigurationRunSubmission:
                 }
             }
         }
-        with pytest.raises(ValueError, match="comparability.coverage_ratio must be numeric"):
+        with pytest.raises(
+            ValueError, match="comparability.coverage_ratio must be numeric"
+        ):
             validate_configuration_run_submission(data)
 
-    def test_submission_with_summary_stats_comparability_invalid_raises_error(self) -> None:
+    def test_submission_with_summary_stats_comparability_invalid_raises_error(
+        self,
+    ) -> None:
         """summary_stats.metadata.comparability is validated when provided."""
         data = {
             "summary_stats": {

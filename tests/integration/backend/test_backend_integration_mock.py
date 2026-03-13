@@ -26,7 +26,8 @@ class TestBackendIntegrationMocked:
     def backend_client(self, backend_config):
         """Create backend client instance."""
         return BackendIntegratedClient(
-            api_key="tg_" + "a" * 61,  # Valid 64-char format  # pragma: allowlist secret
+            api_key="tg_"
+            + "a" * 61,  # Valid 64-char format  # pragma: allowlist secret
             backend_config=backend_config,
             enable_fallback=True,
         )

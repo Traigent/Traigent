@@ -118,8 +118,101 @@ class TestBackendConfigStoredBackendUrl:
         ):
             result = BackendConfig.get_backend_url()
 
-        # Default is localhost:5000 (DEFAULT_PROD_URL = DEFAULT_LOCAL_URL)
+        # Default is DEFAULT_PROD_URL (cloud portal)
+        assert result == BackendConfig.DEFAULT_PROD_URL
+
+
+class TestBackendConfigDefaultBehavior:
+    """Verify default URL behavior for different environment configurations."""
+
+    def test_no_env_no_creds_defaults_to_cloud(self):
+        """External SDK user with no env vars should get cloud portal URL."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+        ):
+            result = BackendConfig.get_backend_url()
+
+        assert result == BackendConfig.DEFAULT_PROD_URL
+
+    def test_development_env_defaults_to_local(self):
+        """Internal dev with TRAIGENT_ENV=development should get localhost."""
+        with (
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_ENV": "development"},
+                clear=True,
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+        ):
+            result = BackendConfig.get_backend_url()
+
         assert "localhost" in result or "127.0.0.1" in result
+
+    def test_explicit_env_var_overrides_everything(self):
+        """TRAIGENT_BACKEND_URL should override all defaults."""
+        with (
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_BACKEND_URL": "https://custom.example.com"},
+                clear=True,
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value="https://stored.example.com",
+            ),
+        ):
+            result = BackendConfig.get_backend_url()
+
+        assert result == "https://custom.example.com"
+
+    def test_cloud_default_warns_without_any_credentials(self):
+        """Defaulting to cloud without any credentials should log a warning."""
+        from traigent.cloud.backend_components import BackendClientConfig
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+            patch(
+                "traigent.config.backend_config.BackendConfig.get_api_key",
+                return_value=None,
+            ),
+            patch("traigent.cloud.backend_components.logger") as mock_logger,
+        ):
+            BackendClientConfig()
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "no API key found" in warning_msg
+
+    def test_cloud_default_no_warning_with_stored_credentials(self):
+        """Should NOT warn when stored CLI credentials exist."""
+        from traigent.cloud.backend_components import BackendClientConfig
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+            patch(
+                "traigent.config.backend_config.BackendConfig.get_api_key",
+                return_value="tg_stored_key",
+            ),
+            patch("traigent.cloud.backend_components.logger") as mock_logger,
+        ):
+            BackendClientConfig()
+
+        mock_logger.warning.assert_not_called()
 
 
 class TestCliAuthPayload:

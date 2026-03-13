@@ -56,16 +56,22 @@ class BackendClientConfig:
         elif backend_env or api_env:
             self.backend_base_url = BackendConfig.get_backend_url()
         else:
-            backend_url = BackendConfig.get_backend_url()
+            self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
 
-            # Default to local backend when environment context is unspecified.
-            if (
-                backend_url == BackendConfig.DEFAULT_PROD_URL
-                and os.environ.get("TRAIGENT_ENV") is None
-            ):
-                backend_url = BackendConfig.get_default_local_url()
-
-            self.backend_base_url = backend_url.rstrip("/")
+        # Warn when defaulting to cloud without any credentials
+        if (
+            self.backend_base_url
+            and self.backend_base_url.rstrip("/")
+            == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
+            and not os.environ.get("TRAIGENT_API_KEY")
+            and not BackendConfig.get_api_key()
+        ):
+            logger.warning(
+                "Defaulting to Traigent cloud (%s) but no API key found. "
+                "Set TRAIGENT_API_KEY, run 'traigent auth login', or set "
+                "TRAIGENT_ENV=development for local mode.",
+                self.backend_base_url,
+            )
 
         if self.api_base_url is not None:
             if "://" not in self.api_base_url.strip():

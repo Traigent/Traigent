@@ -426,9 +426,7 @@ def test_execute_only_operational_objective_is_eligible():
         "derivation_path": "none",
         "ranking_eligible": False,
         "warning_codes": ["MCI-004"],
-        "per_metric_coverage": {
-            "total_cost": {"present": 3, "total": 3, "ratio": 1.0}
-        },
+        "per_metric_coverage": {"total_cost": {"present": 3, "total": 3, "ratio": 1.0}},
         "missing_example_ids": [],
     }
 

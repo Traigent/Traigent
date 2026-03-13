@@ -40,12 +40,12 @@ def test_backend_config():
     print(f"   Environment: {config['environment']}")
     print(f"   Configured Via: {config['configured_via']}")
     assert (
-        config["backend_url"] == "http://localhost:5000"
-    ), "Should default to local backend"
-    assert config["is_local"], "Default should be local"
+        config["backend_url"] == BackendConfig.DEFAULT_PROD_URL
+    ), "Should default to cloud portal"
+    assert not config["is_local"], "Default should be cloud"
     assert config["configured_via"] == "default"
     assert (
-        config["backend_api_url"] == "http://localhost:5000/api/v1"
+        config["backend_api_url"] == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
     ), "Default API base should include versioned path"
     print("   ✅ Default configuration working correctly\n")
 
