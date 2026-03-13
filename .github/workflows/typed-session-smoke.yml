@@ -19,11 +19,8 @@ jobs:
 
       - name: Check smoke configuration
         id: config
-        env:
-          TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
-          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
         run: |
-          if [ -z "$TRAIGENT_API_KEY" ] || [ -z "$TRAIGENT_API_URL" ]; then
+          if [ -z "${{ secrets.TRAIGENT_API_KEY }}" ] || [ -z "${{ secrets.TRAIGENT_API_URL }}" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "Typed session smoke is not configured; skipping."
           else
@@ -41,7 +38,7 @@ jobs:
         env:
           TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
         run: |
-          python - <<'PY'
+          HEALTH_URL=$(python - <<'PY'
           import os
           from urllib.parse import urlparse, urlunparse
 
@@ -50,10 +47,10 @@ jobs:
           path = parsed.path.removesuffix("/api/v1") or "/"
           health = urlunparse(parsed._replace(path=f"{path.rstrip('/')}/health", query="", fragment=""))
           print(health)
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
-              fh.write(f"TRAIGENT_SMOKE_HEALTH_URL={health}\n")
           PY
-          curl -sf --max-time 10 "$TRAIGENT_SMOKE_HEALTH_URL"
+          )
+          echo "Health URL: $HEALTH_URL"
+          curl -sf --max-time 10 "$HEALTH_URL"
 
       - if: steps.config.outputs.configured == 'true'
         name: Run typed session smoke
