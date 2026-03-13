@@ -585,6 +585,7 @@ class ProjectExportJobDTO:
     export_mode: str
     privacy_mode: bool
     include_content: bool
+    retention_category: str
     record_count: int
     artifact_filename: str
     artifact_content_type: str
@@ -593,6 +594,7 @@ class ProjectExportJobDTO:
     limit: int
     requested_by: str | None
     requested_at: str
+    expires_at: str | None
     completed_at: str | None
     error_message: str | None
 
@@ -606,6 +608,7 @@ class ProjectExportJobDTO:
             export_mode=str(payload["export_mode"]),
             privacy_mode=bool(payload["privacy_mode"]),
             include_content=bool(payload["include_content"]),
+            retention_category=str(payload["retention_category"]),
             record_count=int(payload["record_count"]),
             artifact_filename=str(payload["artifact_filename"]),
             artifact_content_type=str(payload["artifact_content_type"]),
@@ -626,6 +629,11 @@ class ProjectExportJobDTO:
                 else None
             ),
             requested_at=str(payload["requested_at"]),
+            expires_at=(
+                str(payload["expires_at"])
+                if payload.get("expires_at") is not None
+                else None
+            ),
             completed_at=(
                 str(payload["completed_at"])
                 if payload.get("completed_at") is not None

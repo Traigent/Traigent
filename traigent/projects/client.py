@@ -8,7 +8,12 @@ from urllib import error, request
 from urllib.parse import quote, urlencode
 
 from traigent.projects.config import ProjectManagementConfig
-from traigent.projects.dtos import ProjectDTO, ProjectListResponse
+from traigent.projects.dtos import (
+    ProjectDTO,
+    ProjectListResponse,
+    ProjectRateLimitPolicyDTO,
+    ProjectRetentionPolicyDTO,
+)
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -68,6 +73,52 @@ class ProjectManagementClient:
     def update_project(self, project_id: str, **fields: Any) -> ProjectDTO:
         payload = self._request_json("PATCH", f"/{quote(project_id, safe='')}", fields)
         return ProjectDTO.from_dict(self._unwrap_data(payload, "project update"))
+
+    def get_rate_limit_policy(self, project_id: str) -> ProjectRateLimitPolicyDTO:
+        payload = self._request_json(
+            "GET",
+            f"/{quote(project_id, safe='')}/policies/rate-limits",
+        )
+        return ProjectRateLimitPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project rate limit policy")
+        )
+
+    def update_rate_limit_policy(
+        self,
+        project_id: str,
+        **fields: Any,
+    ) -> ProjectRateLimitPolicyDTO:
+        payload = self._request_json(
+            "PATCH",
+            f"/{quote(project_id, safe='')}/policies/rate-limits",
+            fields,
+        )
+        return ProjectRateLimitPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project rate limit policy update")
+        )
+
+    def get_retention_policy(self, project_id: str) -> ProjectRetentionPolicyDTO:
+        payload = self._request_json(
+            "GET",
+            f"/{quote(project_id, safe='')}/policies/retention",
+        )
+        return ProjectRetentionPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project retention policy")
+        )
+
+    def update_retention_policy(
+        self,
+        project_id: str,
+        **fields: Any,
+    ) -> ProjectRetentionPolicyDTO:
+        payload = self._request_json(
+            "PATCH",
+            f"/{quote(project_id, safe='')}/policies/retention",
+            fields,
+        )
+        return ProjectRetentionPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project retention policy update")
+        )
 
     def _request_json(
         self, method: str, path: str, payload: dict[str, Any] | None = None

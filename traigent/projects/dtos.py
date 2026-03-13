@@ -71,3 +71,91 @@ class ProjectListResponse:
             ],
             pagination=PaginationInfo.from_dict(payload.get("pagination") or {}),
         )
+
+
+@dataclass(frozen=True)
+class ProjectRateLimitPolicySettingsDTO:
+    enabled: bool
+    api_calls_per_minute: int | None
+    evaluator_runs_per_hour: int | None
+    export_jobs_per_day: int | None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectRateLimitPolicySettingsDTO:
+        return cls(
+            enabled=bool(payload.get("enabled", True)),
+            api_calls_per_minute=(
+                int(payload["api_calls_per_minute"])
+                if payload.get("api_calls_per_minute") is not None
+                else None
+            ),
+            evaluator_runs_per_hour=(
+                int(payload["evaluator_runs_per_hour"])
+                if payload.get("evaluator_runs_per_hour") is not None
+                else None
+            ),
+            export_jobs_per_day=(
+                int(payload["export_jobs_per_day"])
+                if payload.get("export_jobs_per_day") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectRateLimitPolicyDTO:
+    tenant_id: str
+    project_id: str
+    updated_at: str | None
+    updated_by: str | None
+    policy: ProjectRateLimitPolicySettingsDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectRateLimitPolicyDTO:
+        return cls(
+            tenant_id=str(payload.get("tenant_id", "")),
+            project_id=str(payload.get("project_id", "")),
+            updated_at=payload.get("updated_at"),
+            updated_by=payload.get("updated_by"),
+            policy=ProjectRateLimitPolicySettingsDTO.from_dict(
+                payload.get("policy") or {}
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectRetentionPolicySettingsDTO:
+    export_artifact_retention_days: int
+    materialized_export_retention_days: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectRetentionPolicySettingsDTO:
+        return cls(
+            export_artifact_retention_days=int(
+                payload["export_artifact_retention_days"]
+            ),
+            materialized_export_retention_days=int(
+                payload["materialized_export_retention_days"]
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectRetentionPolicyDTO:
+    tenant_id: str
+    project_id: str
+    updated_at: str | None
+    updated_by: str | None
+    policy: ProjectRetentionPolicySettingsDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectRetentionPolicyDTO:
+        return cls(
+            tenant_id=str(payload.get("tenant_id", "")),
+            project_id=str(payload.get("project_id", "")),
+            updated_at=payload.get("updated_at"),
+            updated_by=payload.get("updated_by"),
+            policy=ProjectRetentionPolicySettingsDTO.from_dict(
+                payload.get("policy") or {}
+            ),
+        )

@@ -41,6 +41,62 @@ def test_project_management_client_crud_and_list() -> None:
                     },
                 }
             }
+        if method == "GET" and path.endswith("/policies/rate-limits"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "enabled": True,
+                        "api_calls_per_minute": 180,
+                        "evaluator_runs_per_hour": 24,
+                        "export_jobs_per_day": 8,
+                    },
+                }
+            }
+        if method == "PATCH" and path.endswith("/policies/rate-limits"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-12T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "enabled": True,
+                        "api_calls_per_minute": 240,
+                        "evaluator_runs_per_hour": 24,
+                        "export_jobs_per_day": 8,
+                    },
+                }
+            }
+        if method == "GET" and path.endswith("/policies/retention"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "export_artifact_retention_days": 30,
+                        "materialized_export_retention_days": 7,
+                    },
+                }
+            }
+        if method == "PATCH" and path.endswith("/policies/retention"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-12T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "export_artifact_retention_days": 45,
+                        "materialized_export_retention_days": 14,
+                    },
+                }
+            }
         return {
             "data": {
                 "id": "project_alpha",
@@ -63,15 +119,44 @@ def test_project_management_client_crud_and_list() -> None:
     created = client.create_project(name="Alpha", slug="alpha")
     fetched = client.get_project("project_alpha")
     updated = client.update_project("project_alpha", description="Primary project")
+    policy = client.get_rate_limit_policy("project_alpha")
+    updated_policy = client.update_rate_limit_policy(
+        "project_alpha", api_calls_per_minute=240
+    )
+    retention_policy = client.get_retention_policy("project_alpha")
+    updated_retention_policy = client.update_retention_policy(
+        "project_alpha",
+        export_artifact_retention_days=45,
+        materialized_export_retention_days=14,
+    )
 
     assert calls[0] == ("GET", "?page=1&per_page=20&search=alp", None)
     assert calls[1] == ("POST", "", {"name": "Alpha", "slug": "alpha", "description": None})
     assert calls[2] == ("GET", "/project_alpha", None)
     assert calls[3] == ("PATCH", "/project_alpha", {"description": "Primary project"})
+    assert calls[4] == ("GET", "/project_alpha/policies/rate-limits", None)
+    assert calls[5] == (
+        "PATCH",
+        "/project_alpha/policies/rate-limits",
+        {"api_calls_per_minute": 240},
+    )
+    assert calls[6] == ("GET", "/project_alpha/policies/retention", None)
+    assert calls[7] == (
+        "PATCH",
+        "/project_alpha/policies/retention",
+        {
+            "export_artifact_retention_days": 45,
+            "materialized_export_retention_days": 14,
+        },
+    )
     assert projects.items[0].slug == "alpha"
     assert created.id == "project_alpha"
     assert fetched.tenant_id == "tenant_acme"
     assert updated.description == "Primary project"
+    assert policy.policy.api_calls_per_minute == 180
+    assert updated_policy.policy.api_calls_per_minute == 240
+    assert retention_policy.policy.export_artifact_retention_days == 30
+    assert updated_retention_policy.policy.materialized_export_retention_days == 14
 
 
 def test_project_management_client_validates_override_response_shape() -> None:
