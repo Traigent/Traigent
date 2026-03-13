@@ -109,6 +109,207 @@ class TestEstimateOptimizationCost:
 
         assert cost == pytest.approx(40.5)
 
+    def test_model_pricing_exception_falls_back_to_conservative_pricing(self) -> None:
+        """Unexpected pricing lookup failures should preserve conservative approval."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=None,
+            max_total_examples=None,
+            model_name="gpt-4o-mini",
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=RuntimeError("pricing backend unavailable"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        assert cost == pytest.approx(40.5)
+
+    def test_candidate_models_use_most_expensive_known_model(self) -> None:
+        """When no fixed model is set, use the priciest candidate model."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o-mini", "gpt-4o"],
+        )
+        dataset = _FakeDataset()
+
+        def pricing(model: str) -> tuple[float, float, str]:
+            if model == "gpt-4o-mini":
+                return (0.15e-6, 0.6e-6, "litellm")
+            if model == "gpt-4o":
+                return (2.5e-6, 10.0e-6, "litellm")
+            raise AssertionError(f"unexpected model {model}")
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=pricing,
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base uses gpt-4o = (2000 * 2.5e-6) + (500 * 10e-6) = 0.01
+        # Total = 50 * 10 * 0.01 * 1.2 = 6.0
+        assert cost == pytest.approx(6.0)
+
+    def test_unknown_candidate_model_falls_back_to_conservative_pricing(self) -> None:
+        """Unknown candidate pricing should keep approval conservative."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o-mini", "unknown-private-model"],
+        )
+        dataset = _FakeDataset()
+
+        def pricing(model: str) -> tuple[float, float, str]:
+            if model == "gpt-4o-mini":
+                return (0.15e-6, 0.6e-6, "litellm")
+            raise UnknownModelError(model)
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=pricing,
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        assert cost == pytest.approx(40.5)
+
+    def test_candidate_model_pricing_exception_falls_back_to_conservative_pricing(
+        self,
+    ) -> None:
+        """Unexpected candidate pricing failures should preserve conservative approval."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o"],
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=RuntimeError("pricing backend unavailable"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        assert cost == pytest.approx(40.5)
+
+    def test_explicit_model_takes_precedence_over_candidate_models(self) -> None:
+        """A fixed run model should override config-space candidates."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            model_name="gpt-4o-mini",
+            candidate_models=["gpt-4o"],
+        )
+        dataset = _FakeDataset()
+
+        def pricing(model: str) -> tuple[float, float, str]:
+            if model == "gpt-4o-mini":
+                return (0.15e-6, 0.6e-6, "litellm")
+            if model == "gpt-4o":
+                return (2.5e-6, 10.0e-6, "litellm")
+            raise AssertionError(f"unexpected model {model}")
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=pricing,
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base uses explicit gpt-4o-mini = (2000 * 0.15e-6) + (500 * 0.6e-6) = 0.0006
+        # Total = 50 * 10 * 0.0006 * 1.2 = 0.36
+        assert cost == pytest.approx(0.36)
+
+    def test_estimated_tokens_reduce_hybrid_candidate_model_cost(self) -> None:
+        """Service-provided token estimates should replace generic 2000/500 defaults."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o-mini", "gpt-4o"],
+            estimated_input_tokens_per_example=100,
+            estimated_output_tokens_per_example=50,
+        )
+        dataset = _FakeDataset()
+
+        def pricing(model: str) -> tuple[float, float, str]:
+            if model == "gpt-4o-mini":
+                return (0.15e-6, 0.6e-6, "litellm")
+            if model == "gpt-4o":
+                return (2.5e-6, 10.0e-6, "litellm")
+            raise AssertionError(f"unexpected model {model}")
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=pricing,
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base uses gpt-4o with service estimate = (100 * 2.5e-6) + (50 * 10e-6) = 0.00075
+        # Total = 50 * 10 * 0.00075 * 1.2 = 0.45
+        assert cost == pytest.approx(0.45)
+
+    def test_estimated_tokens_apply_to_conservative_fallback_pricing(self) -> None:
+        """Token estimate metadata should still improve the conservative fallback."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            model_name="unknown-private-model",
+            estimated_input_tokens_per_example=100,
+            estimated_output_tokens_per_example=50,
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=UnknownModelError("unknown model"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base = (100 * 15e-6) + (50 * 75e-6) = 0.00525
+        # Total = 50 * 10 * 0.00525 * 1.2 = 3.15
+        assert cost == pytest.approx(3.15)
+
+    def test_zero_estimated_tokens_fall_back_to_default_token_assumptions(self) -> None:
+        """Zero token metadata must not produce a zero-cost approval estimate."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o"],
+            estimated_input_tokens_per_example=0,
+            estimated_output_tokens_per_example=0,
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            return_value=(2.5e-6, 10.0e-6, "litellm"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base falls back to default 2000/500 estimate = 0.01
+        # Total = 50 * 10 * 0.01 * 1.2 = 6.0
+        assert cost == pytest.approx(6.0)
+
 
 # ---------------------------------------------------------------------------
 # check_cost_approval

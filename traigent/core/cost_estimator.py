@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
@@ -31,6 +33,9 @@ class CostEstimator:
         max_trials: int | None,
         max_total_examples: int | None,
         model_name: str | None = None,
+        candidate_models: Sequence[str] | None = None,
+        estimated_input_tokens_per_example: int | None = None,
+        estimated_output_tokens_per_example: int | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -39,41 +44,148 @@ class CostEstimator:
             max_trials: Maximum number of trials
             max_total_examples: Global sample budget (None = unlimited)
             model_name: Primary model name for model-aware pricing estimation
+            candidate_models: Candidate model names from config space for
+                worst-case estimation when no fixed model is set for the run
+            estimated_input_tokens_per_example: Optional service-provided
+                per-example input token estimate
+            estimated_output_tokens_per_example: Optional service-provided
+                per-example output token estimate
         """
         self._cost_enforcer = cost_enforcer
         self._max_trials = max_trials
         self._max_total_examples = max_total_examples
         self._model_name = model_name
+        self._candidate_models = tuple(
+            dict.fromkeys(
+                model.strip()
+                for model in candidate_models or ()
+                if isinstance(model, str) and model.strip()
+            )
+        )
+        self._estimated_input_tokens_per_example = (
+            estimated_input_tokens_per_example
+            if isinstance(estimated_input_tokens_per_example, int)
+            and not isinstance(estimated_input_tokens_per_example, bool)
+            and estimated_input_tokens_per_example > 0
+            else None
+        )
+        self._estimated_output_tokens_per_example = (
+            estimated_output_tokens_per_example
+            if isinstance(estimated_output_tokens_per_example, int)
+            and not isinstance(estimated_output_tokens_per_example, bool)
+            and estimated_output_tokens_per_example > 0
+            else None
+        )
+
+    def _get_estimated_tokens_per_example(self) -> tuple[int, int]:
+        """Resolve per-example token estimate, preferring service metadata."""
+        return (
+            (
+                self._estimated_input_tokens_per_example
+                if self._estimated_input_tokens_per_example is not None
+                else _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
+            ),
+            (
+                self._estimated_output_tokens_per_example
+                if self._estimated_output_tokens_per_example is not None
+                else _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE
+            ),
+        )
+
+    def _base_cost_for_rates(self, input_rate: float, output_rate: float) -> float:
+        """Compute per-example base cost from token rates."""
+        input_tokens, output_tokens = self._get_estimated_tokens_per_example()
+        return float(input_tokens * input_rate + output_tokens * output_rate)
+
+    def _estimate_from_resolved_model(
+        self, model_name: str, source: str
+    ) -> tuple[float, str]:
+        """Compute a base estimate once model pricing is known."""
+        input_rate, output_rate, pricing_source = get_model_token_pricing(model_name)
+        base_cost = self._base_cost_for_rates(input_rate, output_rate)
+        if source == "fixed":
+            return base_cost, pricing_source
+        return base_cost, f"{pricing_source}:config_space_max({model_name})"
+
+    def _estimate_from_fixed_model(self) -> tuple[float, str] | None:
+        """Estimate using the explicit run model when available."""
+        if not self._model_name:
+            return None
+        try:
+            return self._estimate_from_resolved_model(self._model_name, "fixed")
+        except UnknownModelError:
+            logger.warning(
+                "Unknown model %r for pre-approval estimate; using conservative pricing.",
+                self._model_name,
+            )
+        except Exception:
+            logger.debug(
+                "Model-aware estimate failed for %r; using conservative pricing.",
+                self._model_name,
+                exc_info=True,
+            )
+        return None
+
+    def _collect_candidate_model_estimates(
+        self,
+    ) -> tuple[list[tuple[float, str]], list[str]]:
+        """Resolve pricing for candidate models from config space."""
+        candidate_costs: list[tuple[float, str]] = []
+        unresolved_candidates: list[str] = []
+
+        for candidate in self._candidate_models:
+            try:
+                base_cost, pricing_source = self._estimate_from_resolved_model(
+                    candidate,
+                    "candidate",
+                )
+                candidate_costs.append((base_cost, pricing_source))
+            except UnknownModelError:
+                unresolved_candidates.append(candidate)
+            except Exception:
+                logger.debug(
+                    "Model-aware estimate failed for candidate %r; using conservative pricing.",
+                    candidate,
+                    exc_info=True,
+                )
+                unresolved_candidates.append(candidate)
+
+        return candidate_costs, unresolved_candidates
+
+    def _estimate_from_candidate_models(self) -> tuple[float, str] | None:
+        """Estimate using the worst-case resolvable candidate model."""
+        if not self._candidate_models:
+            return None
+
+        candidate_costs, unresolved_candidates = (
+            self._collect_candidate_model_estimates()
+        )
+        if unresolved_candidates:
+            logger.warning(
+                "Unable to resolve pricing for candidate model(s) %s; using conservative pricing.",
+                sorted(unresolved_candidates),
+            )
+            return None
+        if not candidate_costs:
+            return None
+        return max(candidate_costs, key=lambda item: item[0])
+
+    def _estimate_with_conservative_fallback(self) -> tuple[float, str]:
+        """Estimate using conservative token pricing defaults."""
+        input_tokens, output_tokens = self._get_estimated_tokens_per_example()
+        conservative_cost = (
+            input_tokens * _CONSERVATIVE_INPUT_COST_PER_TOKEN
+            + output_tokens * _CONSERVATIVE_OUTPUT_COST_PER_TOKEN
+        )
+        return float(conservative_cost), "conservative_fallback"
 
     def _estimate_base_cost_per_example(self) -> tuple[float, str]:
         """Estimate per-example cost from model pricing with conservative fallback."""
-        if self._model_name:
-            try:
-                input_rate, output_rate, source = get_model_token_pricing(
-                    self._model_name
-                )
-                base_cost = (
-                    _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * input_rate
-                    + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * output_rate
-                )
-                return float(base_cost), source
-            except UnknownModelError:
-                logger.warning(
-                    "Unknown model %r for pre-approval estimate; using conservative pricing.",
-                    self._model_name,
-                )
-            except Exception:
-                logger.debug(
-                    "Model-aware estimate failed for %r; using conservative pricing.",
-                    self._model_name,
-                    exc_info=True,
-                )
-
-        conservative_cost = (
-            _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_INPUT_COST_PER_TOKEN
-            + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_OUTPUT_COST_PER_TOKEN
+        return (
+            self._estimate_from_fixed_model()
+            or self._estimate_from_candidate_models()
+            or self._estimate_with_conservative_fallback()
         )
-        return float(conservative_cost), "conservative_fallback"
 
     def check_cost_approval(self, dataset: Dataset) -> None:
         """Check cost approval before optimization.

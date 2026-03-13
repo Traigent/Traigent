@@ -62,6 +62,10 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
   }'
 ```
 
+The demo `config-space` response also includes optional `estimated_tokens_per_example`
+metadata so Traigent can make a tighter pre-run cost approval estimate in
+`hybrid_api` mode.
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
