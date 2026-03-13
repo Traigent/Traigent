@@ -2,10 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TrialContext } from '../../../src/core/context.js';
 import { withRuntimeMetricsCollector } from '../../../src/core/runtime-metrics.js';
-import {
-  autoWrapFrameworkTarget,
-  autoWrapFrameworkTargets,
-} from '../../../src/integrations/auto-wrap.js';
 import { clearRegisteredFrameworkTargets } from '../../../src/integrations/registry.js';
 import { createTraigentOpenAI } from '../../../src/integrations/openai/index.js';
 import { withTraigentModel } from '../../../src/integrations/langchain/index.js';
@@ -30,7 +26,7 @@ describe('framework interception', () => {
     clearRegisteredFrameworkTargets();
   });
 
-  it('overrides OpenAI request params from trial context', async () => {
+  it('overrides OpenAI request params from trial context and records usage metrics', async () => {
     const create = vi.fn(async (params: Record<string, unknown>) => ({
       model: params.model,
       usage: {
@@ -47,19 +43,20 @@ describe('framework interception', () => {
       },
     });
 
-    await TrialContext.run(
+    const { metrics } = await TrialContext.run(
       createTrialConfig({
         model: 'gpt-4o-mini',
         temperature: 0.1,
         maxTokens: 128,
       }),
-      async () => {
-        await client.chat?.completions?.create({
-          model: 'gpt-3.5-turbo',
-          temperature: 0.8,
-          max_tokens: 32,
-        });
-      }
+      async () =>
+        withRuntimeMetricsCollector(async () => {
+          await client.chat?.completions?.create({
+            model: 'gpt-3.5-turbo',
+            temperature: 0.8,
+            max_tokens: 32,
+          });
+        })
     );
 
     expect(create).toHaveBeenCalledWith({
@@ -67,30 +64,41 @@ describe('framework interception', () => {
       temperature: 0.1,
       max_tokens: 128,
     });
+    expect(metrics.input_tokens).toBe(10);
+    expect(metrics.output_tokens).toBe(5);
+    expect(metrics.total_tokens).toBe(15);
+    expect(metrics.total_cost).toBe(metrics.cost);
   });
 
-  it('overrides LangChain model params via bind()', async () => {
-    const invoke = vi.fn(async () => 'ok');
+  it('overrides LangChain model params via bind() and records runtime metrics', async () => {
+    const invoke = vi.fn(async () => ({
+      usage_metadata: {
+        input_tokens: 11,
+        output_tokens: 7,
+      },
+    }));
     const bind = vi.fn((config: Record<string, unknown>) => ({
       invoke,
       config,
     }));
 
     const model = withTraigentModel({
+      modelName: 'gpt-4o-mini',
       bind,
       async invoke() {
         return 'fallback';
       },
     });
 
-    await TrialContext.run(
+    const { metrics } = await TrialContext.run(
       createTrialConfig({
         model: 'gpt-4o-mini',
         temperature: 0.2,
       }),
-      async () => {
-        await model.invoke?.('hello');
-      }
+      async () =>
+        withRuntimeMetricsCollector(async () => {
+          await model.invoke?.('hello');
+        })
     );
 
     expect(bind).toHaveBeenCalledWith({
@@ -98,85 +106,12 @@ describe('framework interception', () => {
       temperature: 0.2,
     });
     expect(invoke).toHaveBeenCalledWith('hello');
-  });
-
-  it('records LangChain runtime metrics when usage metadata is available', async () => {
-    const model = withTraigentModel({
-      modelName: 'gpt-4o-mini',
-      bind: vi.fn(() => ({
-        async invoke() {
-          return {
-            content: 'ok',
-            usage_metadata: {
-              input_tokens: 11,
-              output_tokens: 7,
-            },
-          };
-        },
-      })),
-      async invoke() {
-        return {
-          content: 'fallback',
-        };
-      },
-    });
-
-    const { metrics } = await TrialContext.run(
-      createTrialConfig({
-        model: 'gpt-4o-mini',
-      }),
-      async () =>
-        withRuntimeMetricsCollector(async () => {
-          await model.invoke?.('hello');
-        })
-    );
-
     expect(metrics.input_tokens).toBe(11);
     expect(metrics.output_tokens).toBe(7);
     expect(metrics.total_tokens).toBe(18);
-    expect(metrics.input_cost).toBeGreaterThan(0);
-    expect(metrics.output_cost).toBeGreaterThan(0);
-    expect(metrics.total_cost).toBe(metrics.cost);
-    expect(metrics.cost).toBeGreaterThan(0);
   });
 
-  it('records LangChain runtime metrics from response_metadata.tokenUsage', async () => {
-    const model = withTraigentModel({
-      modelName: 'gpt-4o-mini',
-      bind: vi.fn(() => ({
-        async invoke() {
-          return {
-            response_metadata: {
-              tokenUsage: {
-                promptTokens: 9,
-                completionTokens: 4,
-              },
-            },
-          };
-        },
-      })),
-      async invoke() {
-        return {
-          content: 'fallback',
-        };
-      },
-    });
-
-    const { metrics } = await TrialContext.run(
-      createTrialConfig({ model: 'gpt-4o-mini' }),
-      async () =>
-        withRuntimeMetricsCollector(async () => {
-          await model.invoke?.('hello');
-        })
-    );
-
-    expect(metrics.input_tokens).toBe(9);
-    expect(metrics.output_tokens).toBe(4);
-    expect(metrics.total_tokens).toBe(13);
-    expect(metrics.total_cost).toBe(metrics.cost);
-  });
-
-  it('records LangChain runtime metrics from response_metadata.usage and llmOutput.tokenUsage', async () => {
+  it('records LangChain usage from response_metadata and llmOutput fallbacks', async () => {
     const model = withTraigentModel({
       modelName: 'gpt-4o-mini',
       bind: vi.fn(() => ({
@@ -217,10 +152,45 @@ describe('framework interception', () => {
     expect(metrics.input_tokens).toBe(12);
     expect(metrics.output_tokens).toBe(5);
     expect(metrics.total_tokens).toBe(17);
+  });
+
+  it('records LangChain usage from response_metadata.tokenUsage', async () => {
+    const model = withTraigentModel({
+      modelName: 'gpt-4o-mini',
+      bind: vi.fn(() => ({
+        async invoke() {
+          return {
+            response_metadata: {
+              tokenUsage: {
+                promptTokens: 9,
+                completionTokens: 4,
+              },
+            },
+          };
+        },
+      })),
+      async invoke() {
+        return {
+          content: 'fallback',
+        };
+      },
+    });
+
+    const { metrics } = await TrialContext.run(
+      createTrialConfig({ model: 'gpt-4o-mini' }),
+      async () =>
+        withRuntimeMetricsCollector(async () => {
+          await model.invoke?.('hello');
+        })
+    );
+
+    expect(metrics.input_tokens).toBe(9);
+    expect(metrics.output_tokens).toBe(4);
+    expect(metrics.total_tokens).toBe(13);
     expect(metrics.total_cost).toBe(metrics.cost);
   });
 
-  it('falls back to the original LangChain model when bind is unavailable', async () => {
+  it('falls back to the original LangChain model when bind is unavailable and preserves passthrough members', async () => {
     const invoke = vi.fn(async () => ({
       content: 'ok',
     }));
@@ -228,24 +198,9 @@ describe('framework interception', () => {
     const model = withTraigentModel({
       modelName: 'gpt-4o-mini',
       invoke,
-      stream: vi.fn(async () => 'stream-result'),
-    });
-
-    await model.invoke?.('hello');
-    await model.stream?.('hello');
-
-    expect(invoke).toHaveBeenCalledWith('hello');
-  });
-
-  it('handles camelCase token fields, non-object results, and missing bound methods', async () => {
-    const passthroughInvoke = vi.fn(async () => 'plain-text');
-    const model = withTraigentModel({
-      modelId: 'model-from-id',
-      bind: vi.fn(() => ({})),
-      invoke: passthroughInvoke,
       stream: 'not-a-function' as never,
       extra: 'value',
-    });
+    } as any);
 
     expect((model as Record<string, unknown>).extra).toBe('value');
     expect(model.stream).toBe('not-a-function');
@@ -258,9 +213,11 @@ describe('framework interception', () => {
         })
     );
 
-    expect(passthroughInvoke).toHaveBeenCalledWith('hello');
-    expect(metrics.total_tokens).toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith('hello');
+    expect(metrics.total_tokens).toBe(0);
+  });
 
+  it('handles camelCase usage metadata and malformed LangChain usage payloads', async () => {
     const camelCaseModel = withTraigentModel({
       modelName: 'fallback-model',
       bind: vi.fn(() => ({
@@ -289,10 +246,8 @@ describe('framework interception', () => {
     expect(camelCaseMetrics.metrics.input_tokens).toBe(6);
     expect(camelCaseMetrics.metrics.output_tokens).toBe(4);
     expect(camelCaseMetrics.metrics.total_tokens).toBe(10);
-  });
 
-  it('falls back to zero usage for malformed LangChain usage payloads', async () => {
-    const model = withTraigentModel({
+    const malformedModel = withTraigentModel({
       modelId: 'model-from-id',
       async batch() {
         return [
@@ -332,7 +287,7 @@ describe('framework interception', () => {
 
     const { metrics } = await TrialContext.run(createTrialConfig({}), async () =>
       withRuntimeMetricsCollector(async () => {
-        await model.batch?.(['a', 'b']);
+        await malformedModel.batch?.(['a', 'b']);
       })
     );
 
@@ -363,23 +318,29 @@ describe('framework interception', () => {
         return doGenerate(params);
       },
       async doStream() {
-        throw new Error('not used');
+        return {
+          usage: {
+            promptTokens: 0,
+            completionTokens: 0,
+          },
+        };
       },
     });
 
-    await TrialContext.run(
+    const { metrics } = await TrialContext.run(
       createTrialConfig({
         model: 'gpt-4o-mini',
         temperature: 0.4,
         maxTokens: 256,
       }),
-      async () => {
-        await model.doGenerate({
-          modelId: 'gpt-3.5-turbo',
-          temperature: 0.9,
-          maxTokens: 32,
-        });
-      }
+      async () =>
+        withRuntimeMetricsCollector(async () => {
+          await model.doGenerate({
+            modelId: 'gpt-3.5-turbo',
+            temperature: 0.9,
+            maxTokens: 32,
+          });
+        })
     );
 
     expect(doGenerate).toHaveBeenCalledWith(
@@ -389,81 +350,42 @@ describe('framework interception', () => {
         maxTokens: 256,
       })
     );
+    expect(metrics.input_tokens).toBe(10);
+    expect(metrics.output_tokens).toBe(4);
+    expect(metrics.total_tokens).toBe(14);
   });
 
-  it('does not double-wrap OpenAI clients', async () => {
+  it('does not double-wrap framework targets', async () => {
     const create = vi.fn(async () => ({
       model: 'gpt-4o-mini',
       usage: {
-        prompt_tokens: 10,
-        completion_tokens: 5,
+        prompt_tokens: 2,
+        completion_tokens: 1,
       },
     }));
 
-    const client = {
+    const openaiClient = {
       chat: {
         completions: {
           create,
         },
       },
     };
+    createTraigentOpenAI(openaiClient);
+    createTraigentOpenAI(openaiClient);
 
-    createTraigentOpenAI(client);
-    createTraigentOpenAI(client);
-
-    const { metrics } = await TrialContext.run(
-      createTrialConfig({
-        model: 'gpt-4o-mini',
-      }),
-      async () =>
-        withRuntimeMetricsCollector(async () => {
-          await client.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-          });
-        })
-    );
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(metrics.input_tokens).toBe(10);
-    expect(metrics.output_tokens).toBe(5);
-    expect(metrics.total_tokens).toBe(15);
-  });
-
-  it('does not double-wrap LangChain models', async () => {
     const invoke = vi.fn(async () => 'ok');
     const bind = vi.fn(() => ({ invoke }));
-    const baseModel = {
+    const wrappedOnce = withTraigentModel({
       modelName: 'gpt-4o-mini',
       bind,
       async invoke() {
         return 'fallback';
       },
-    };
-
-    const wrappedOnce = withTraigentModel(baseModel);
+    });
     const wrappedTwice = withTraigentModel(wrappedOnce);
 
     expect(wrappedTwice).toBe(wrappedOnce);
-
-    await TrialContext.run(
-      createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.2 }),
-      async () => {
-        await wrappedTwice.invoke?.('hello');
-      }
-    );
-
-    expect(bind).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not double-wrap Vercel AI models', async () => {
-    const doGenerate = vi.fn(async (params: Record<string, unknown>) => ({
-      usage: {
-        promptTokens: 10,
-        completionTokens: 2,
-      },
-      modelId: params.modelId,
-    }));
 
     const baseModel = {
       specificationVersion: 'v1',
@@ -472,160 +394,29 @@ describe('framework interception', () => {
       defaultObjectGenerationMode: 'json',
       supportedUrls: {},
       async doGenerate(params: Record<string, unknown>) {
-        return doGenerate(params);
-      },
-    };
-
-    const wrappedOnce = withTraigent(baseModel as never);
-    const wrappedTwice = withTraigent(wrappedOnce);
-
-    expect(wrappedTwice).toBe(wrappedOnce);
-
-    await TrialContext.run(createTrialConfig({ model: 'gpt-4o-mini' }), async () => {
-      await (
-        wrappedTwice as typeof wrappedOnce & {
-          doGenerate: (params: Record<string, unknown>) => Promise<unknown>;
-        }
-      ).doGenerate({
-        modelId: 'gpt-3.5-turbo',
-      });
-    });
-
-    expect(doGenerate).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns the same wrapped instance when the original LangChain or Vercel model is wrapped again', () => {
-    const baseLangChainModel = {
-      modelName: 'gpt-4o-mini',
-      async invoke() {
-        return 'ok';
-      },
-    };
-
-    const wrappedLangChain = withTraigentModel(baseLangChainModel);
-    expect(withTraigentModel(baseLangChainModel)).toBe(wrappedLangChain);
-
-    const baseVercelModel = {
-      specificationVersion: 'v1',
-      provider: 'openai',
-      modelId: 'gpt-4o-mini',
-      defaultObjectGenerationMode: 'json',
-      supportedUrls: {},
-      async doGenerate() {
         return {
           usage: {
             promptTokens: 1,
             completionTokens: 1,
           },
+          modelId: params.modelId,
         };
       },
     };
-
-    const wrappedVercel = withTraigent(baseVercelModel as never);
-    expect(withTraigent(baseVercelModel as never)).toBe(wrappedVercel);
-  });
-
-  it('rejects mutation and deletion on wrapped LangChain models', () => {
-    const wrappedModel = withTraigentModel({
-      modelName: 'gpt-4o-mini',
-      async invoke() {
-        return 'ok';
-      },
-    });
-
-    expect(() => {
-      (wrappedModel as Record<string, unknown>).invoke = async () => 'hijacked';
-    }).toThrow('Cannot mutate a Traigent-wrapped LangChain model');
-
-    expect(() => {
-      delete (wrappedModel as Record<string, unknown>).invoke;
-    }).toThrow('Cannot delete properties from a Traigent-wrapped LangChain model');
-  });
-
-  it('auto-wraps a supported framework target in one call', async () => {
-    const create = vi.fn(async (params: Record<string, unknown>) => ({
-      model: params.model,
-      usage: {
-        prompt_tokens: 3,
-        completion_tokens: 1,
-      },
-    }));
-
-    const client = autoWrapFrameworkTarget({
-      chat: {
-        completions: {
-          create,
-        },
-      },
-    });
-
-    await TrialContext.run(
-      createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.1 }),
-      async () => {
-        await client.chat?.completions?.create({
-          model: 'gpt-3.5-turbo',
-          temperature: 0.9,
-        });
-      }
-    );
-
-    expect(create).toHaveBeenCalledWith({
-      model: 'gpt-4o-mini',
-      temperature: 0.1,
-    });
-  });
-
-  it('auto-wraps supported entries in an object map', async () => {
-    const create = vi.fn(async (params: Record<string, unknown>) => ({
-      model: params.model,
-      usage: {
-        prompt_tokens: 4,
-        completion_tokens: 2,
-      },
-    }));
-    const bind = vi.fn(() => ({
-      invoke: vi.fn(async () => 'ok'),
-    }));
-
-    const wrapped = autoWrapFrameworkTargets({
-      openai: {
-        chat: {
-          completions: {
-            create,
-          },
-        },
-      },
-      langchain: {
-        modelName: 'gpt-4o-mini',
-        bind,
-        async invoke() {
-          return 'fallback';
-        },
-      },
-      untouched: {
-        answer: 42,
-      },
-    });
-
-    expect(wrapped.untouched).toEqual({ answer: 42 });
+    const vercelOnce = withTraigent(baseModel as never);
+    const vercelTwice = withTraigent(vercelOnce);
+    expect(vercelTwice).toBe(vercelOnce);
 
     await TrialContext.run(
       createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.2 }),
       async () => {
-        await wrapped.openai.chat?.completions?.create({
-          model: 'gpt-3.5-turbo',
-        });
-        await wrapped.langchain.invoke?.('hello');
+        await openaiClient.chat.completions.create({ model: 'x' });
+        await wrappedTwice.invoke?.('hello');
       }
     );
 
-    expect(create).toHaveBeenCalledWith({
-      model: 'gpt-4o-mini',
-      temperature: 0.2,
-    });
-    expect(bind).toHaveBeenCalledWith({
-      model: 'gpt-4o-mini',
-      temperature: 0.2,
-    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(bind).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 });

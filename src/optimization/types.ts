@@ -92,6 +92,27 @@ export type ParameterDefinition = EnumParamDefinition | FloatParamDefinition | I
 
 export interface OptimizationBudget {
   maxCostUsd?: number;
+  maxTrials?: number;
+  maxWallclockMs?: number;
+}
+
+export interface StructuralConstraintDefinition {
+  when?: string;
+  then?: string;
+  require?: string;
+  errorMessage?: string;
+  id?: string;
+}
+
+export interface DerivedConstraintDefinition {
+  require: string;
+  errorMessage?: string;
+  id?: string;
+}
+
+export interface OptimizationConstraints {
+  structural?: readonly StructuralConstraintDefinition[];
+  derived?: readonly DerivedConstraintDefinition[];
 }
 
 export type EvaluationScoringFunction<Row = unknown, Output = unknown> = (
@@ -189,7 +210,7 @@ export interface OptimizationSpec {
   budget?: OptimizationBudget;
   defaultConfig?: TrialConfig['config'];
   promotionPolicy?: TvlPromotionPolicy;
-  constraints?: readonly OptimizationConstraint[];
+  constraints?: readonly OptimizationConstraint[] | OptimizationConstraints;
   safetyConstraints?: readonly SafetyConstraint[];
   evaluation?: EvaluationSpec;
   injection?: InjectionSpec;
@@ -241,7 +262,7 @@ export interface NativeOptimizeOptions {
 }
 
 export interface HybridOptimizeOptions {
-  mode: 'hybrid';
+  mode?: 'hybrid';
   algorithm: 'optuna';
   maxTrials: number;
   backendUrl?: string;
@@ -250,9 +271,241 @@ export interface HybridOptimizeOptions {
   billingTier?: string;
   optimizationStrategy?: Record<string, unknown>;
   datasetMetadata?: Record<string, unknown>;
+  includeFullHistory?: boolean;
   timeoutMs?: number;
   requestTimeoutMs?: number;
   signal?: AbortSignal;
+}
+
+export interface OptimizationSessionRequestOptions {
+  /** Backend origin or a path-prefixed `/api/v1` base URL. */
+  backendUrl?: string;
+  apiKey?: string;
+  requestTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface OptimizationServiceStatusResponse {
+  status: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface BandTarget {
+  low?: number;
+  high?: number;
+  center?: number;
+  tol?: number;
+}
+
+export interface BandedObjectiveDefinition {
+  metric: string;
+  band: BandTarget;
+  test?: 'TOST';
+  alpha?: number;
+  weight?: number;
+}
+
+export interface OptimizationSessionCreateRequest {
+  functionName: string;
+  configurationSpace: Record<string, ParameterDefinition>;
+  objectives: readonly ObjectiveInput[];
+  datasetMetadata?: Record<string, unknown>;
+  maxTrials?: number;
+  budget?: OptimizationBudget;
+  constraints?: readonly OptimizationConstraint[];
+  defaultConfig?: Record<string, unknown>;
+  promotionPolicy?: TvlPromotionPolicy;
+  optimizationStrategy?: Record<string, unknown>;
+  userId?: string;
+  billingTier?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type OptimizationSessionLifecycleStatus =
+  | 'pending'
+  | 'created'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'PENDING'
+  | 'CREATED'
+  | 'ACTIVE'
+  | 'PAUSED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface OptimizationSessionCreationResponse {
+  sessionId: string;
+  status?: OptimizationSessionLifecycleStatus | string;
+  optimizationStrategy?: Record<string, unknown>;
+  estimatedDuration?: number;
+  billingEstimate?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionDatasetSubset {
+  indices: readonly number[];
+  selectionStrategy?: string;
+  confidenceLevel?: number;
+  estimatedRepresentativeness?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionTrialSuggestion {
+  trialId: string;
+  sessionId: string;
+  trialNumber: number;
+  config: TrialConfig['config'];
+  datasetSubset: OptimizationSessionDatasetSubset;
+  explorationType?: string;
+  priority?: number;
+  estimatedDuration?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionTrialResultInput {
+  sessionId?: string;
+  trialId: string;
+  metrics: Metrics;
+  duration: number;
+  status?: 'completed' | 'failed' | 'cancelled' | 'timeout';
+  outputsSample?: readonly unknown[] | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionNextTrialOptions extends OptimizationSessionRequestOptions {
+  previousResults?: readonly OptimizationSessionTrialResultInput[];
+  requestMetadata?: Record<string, unknown>;
+}
+
+export interface OptimizationSessionNextTrialResponse {
+  suggestion: OptimizationSessionTrialSuggestion | null;
+  shouldContinue: boolean;
+  reason?: string | null;
+  stopReason?: string | null;
+  sessionStatus?: OptimizationSessionLifecycleStatus | string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionSubmitResultResponse {
+  success: boolean;
+  continueOptimization?: boolean;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionListOptions extends OptimizationSessionRequestOptions {
+  /**
+   * Backend-defined `pattern` query parameter. The current backend applies
+   * substring-style matching.
+   */
+  pattern?: string;
+  status?: OptimizationSessionLifecycleStatus | string;
+}
+
+export interface OptimizationSessionDeleteOptions extends OptimizationSessionRequestOptions {
+  /**
+   * When true, delete related backend session artifacts in addition to the
+   * session itself. Defaults to false for the public helper.
+   */
+  cascade?: boolean;
+}
+
+export interface OptimizationSessionFinalizeOptions extends OptimizationSessionRequestOptions {
+  includeFullHistory?: boolean;
+}
+
+export interface OptimizationSessionStatusSummary {
+  completed?: number;
+  total?: number;
+  failed?: number;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionStatusMetadata {
+  function_name?: string;
+  dataset_size?: number;
+  objectives?: readonly string[];
+  created_at?: string | number;
+  experiment_id?: string;
+  experiment_run_id?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionStatusResponse {
+  sessionId: string;
+  status?: OptimizationSessionLifecycleStatus | string;
+  progress?: OptimizationSessionStatusSummary;
+  createdAt?: string | number;
+  functionName?: string;
+  datasetSize?: number;
+  objectives?: readonly string[];
+  experimentId?: string;
+  experimentRunId?: string;
+  metadata?: OptimizationSessionStatusMetadata;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionListResponse {
+  sessions: readonly OptimizationSessionStatusResponse[];
+  /**
+   * Backend-reported total count before SDK-side filtering of malformed entries.
+   * This may exceed `sessions.length`.
+   */
+  total: number;
+  [key: string]: unknown;
+}
+
+export interface OptimizationSessionDeleteResponse {
+  success: boolean;
+  sessionId: string;
+  deleted?: boolean;
+  cascade?: boolean;
+  message?: string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OptimizationConvergencePoint {
+  trial?: number;
+  score?: number;
+  [key: string]: unknown;
+}
+
+export interface OptimizationReportingTrialHistoryEntry {
+  session_id: string;
+  trial_id: string;
+  metrics: Metrics;
+  duration: number;
+  status: string;
+  outputs_sample?: readonly unknown[] | null;
+  error_message?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OptimizationReportingSummary {
+  totalTrials?: number;
+  successfulTrials?: number;
+  totalDuration?: number;
+  costSavings?: number;
+  convergenceHistory?: readonly OptimizationConvergencePoint[];
+  fullHistory?: readonly OptimizationReportingTrialHistoryEntry[];
+}
+
+export interface OptimizationSessionFinalizationResponse {
+  sessionId: string;
+  bestConfig?: TrialConfig['config'];
+  bestMetrics?: Metrics | null;
+  stopReason?: string | null;
+  reporting?: OptimizationReportingSummary;
+  metadata?: Record<string, unknown>;
 }
 
 export type OptimizeOptions = NativeOptimizeOptions | HybridOptimizeOptions;
@@ -275,7 +528,7 @@ export interface OptimizationResult {
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
   promotionDecision?: PromotionDecision;
-  reporting?: NativeOptimizationReportingSummary;
+  reporting?: NativeOptimizationReportingSummary | OptimizationReportingSummary;
   stopReason:
     | 'completed'
     | 'maxTrials'

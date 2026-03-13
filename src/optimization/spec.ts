@@ -48,7 +48,7 @@ type NativeTrialFunction = (trialConfig: TrialConfig) => Promise<NativeTrialFunc
 let hasWarnedAboutTrialContract = false;
 
 function isHybridOptimizeOptions(options: OptimizeOptions): options is HybridOptimizeOptions {
-  return options.mode === 'hybrid';
+  return options.mode === 'hybrid' || options.algorithm === 'optuna';
 }
 
 function normalizeWeight(weight: unknown): number {
@@ -192,6 +192,7 @@ function normalizeParameterDefinition(definition: ParameterDefinition): Paramete
         throw new ValidationError('enum parameters require a non-empty values array.');
       }
       return {
+        ...definition,
         type: 'enum',
         values: [...definition.values],
       } satisfies EnumParamDefinition;
@@ -257,7 +258,7 @@ function normalizeConstraintList(
     return [];
   }
   if (!Array.isArray(constraints)) {
-    throw new ValidationError('constraints must be an array of functions.');
+    return [];
   }
   for (const constraint of constraints) {
     if (typeof constraint !== 'function') {
@@ -491,6 +492,29 @@ function normalizeExecutionSpec(
   } satisfies NormalizedOptimizationSpec['execution'];
 }
 
+function inferExecutionContract(
+  spec: Pick<NormalizedOptimizationSpec, 'evaluation' | 'injection' | 'execution'>,
+  specInput: Pick<OptimizationSpec, 'execution'>
+): 'agent' | 'trial' {
+  if (specInput.execution?.contract) {
+    return spec.execution.contract;
+  }
+
+  if (
+    spec.evaluation?.scoringFunction ||
+    spec.evaluation?.metricFunctions ||
+    spec.evaluation?.customEvaluator ||
+    spec.evaluation?.inputField ||
+    spec.evaluation?.expectedField ||
+    spec.injection.mode === 'parameter' ||
+    spec.injection.mode === 'seamless'
+  ) {
+    return 'agent';
+  }
+
+  return 'trial';
+}
+
 export function normalizeOptimizationSpec(spec: OptimizationSpec): NormalizedOptimizationSpec {
   if (!spec || typeof spec !== 'object') {
     throw new ValidationError('Optimization spec must be an object.');
@@ -524,6 +548,18 @@ export function normalizeOptimizationSpec(spec: OptimizationSpec): NormalizedOpt
       spec.budget.maxCostUsd <= 0)
   ) {
     throw new ValidationError('budget.maxCostUsd must be a positive number.');
+  }
+  if (
+    spec.budget?.maxTrials !== undefined &&
+    (!Number.isInteger(spec.budget.maxTrials) || spec.budget.maxTrials <= 0)
+  ) {
+    throw new ValidationError('budget.maxTrials must be a positive integer.');
+  }
+  if (
+    spec.budget?.maxWallclockMs !== undefined &&
+    (!Number.isInteger(spec.budget.maxWallclockMs) || spec.budget.maxWallclockMs <= 0)
+  ) {
+    throw new ValidationError('budget.maxWallclockMs must be a positive integer.');
   }
 
   return {
@@ -708,10 +744,36 @@ export function optimize(specInput: OptimizationSpec) {
         throw new ValidationError('optimize() options are required.');
       }
 
+      const executionContract = inferExecutionContract(spec, specInput);
+
       if (isHybridOptimizeOptions(options)) {
+        if (executionContract === 'trial') {
+          emitTrialContractWarning();
+          return runHybridOptimization(
+            fn as unknown as NativeTrialFunction,
+            spec,
+            specInput,
+            options,
+            fn.name
+          );
+        }
+
+        const evaluationRows = await resolveEvaluationRows(spec);
+        if (!Array.isArray(evaluationRows) || evaluationRows.length === 0) {
+          throw new ValidationError('optimize() requires evaluation data to be a non-empty array.');
+        }
+
+        const hydratedSpec: NormalizedOptimizationSpec = {
+          ...spec,
+          evaluation: {
+            ...spec.evaluation,
+            data: evaluationRows,
+            loadData: undefined,
+          },
+        };
         return runHybridOptimization(
-          fn as unknown as NativeTrialFunction,
-          spec,
+          createAgentTrialFunction(getInvocationFunction(), hydratedSpec, evaluationRows),
+          hydratedSpec,
           specInput,
           options,
           fn.name
@@ -722,7 +784,7 @@ export function optimize(specInput: OptimizationSpec) {
         throw new ValidationError('execution.mode="hybrid" is not supported in this checkout.');
       }
 
-      if (spec.execution.contract === 'trial') {
+      if (executionContract === 'trial') {
         emitTrialContractWarning();
         return runNativeOptimization(fn as unknown as NativeTrialFunction, spec, options);
       }

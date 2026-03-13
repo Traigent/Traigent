@@ -42,7 +42,15 @@ export type {
 // Optimization exports
 export {
   optimize,
+  checkOptimizationServiceStatus,
+  createOptimizationSession,
+  deleteOptimizationSession,
+  finalizeOptimizationSession,
+  getNextOptimizationTrial,
+  getOptimizationSessionStatus,
+  listOptimizationSessions,
   param,
+  submitOptimizationTrialResult,
   getOptimizationSpec,
   getNativeTvlCompatibilityReport,
   toHybridConfigSpace,
