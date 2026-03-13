@@ -59,7 +59,7 @@ describe('framework interception', () => {
           temperature: 0.8,
           max_tokens: 32,
         });
-      },
+      }
     );
 
     expect(create).toHaveBeenCalledWith({
@@ -90,7 +90,7 @@ describe('framework interception', () => {
       }),
       async () => {
         await model.invoke?.('hello');
-      },
+      }
     );
 
     expect(bind).toHaveBeenCalledWith({
@@ -128,7 +128,7 @@ describe('framework interception', () => {
       async () =>
         withRuntimeMetricsCollector(async () => {
           await model.invoke?.('hello');
-        }),
+        })
     );
 
     expect(metrics.input_tokens).toBe(11);
@@ -167,7 +167,7 @@ describe('framework interception', () => {
       async () =>
         withRuntimeMetricsCollector(async () => {
           await model.invoke?.('hello');
-        }),
+        })
     );
 
     expect(metrics.input_tokens).toBe(9);
@@ -211,7 +211,7 @@ describe('framework interception', () => {
       async () =>
         withRuntimeMetricsCollector(async () => {
           await model.batch?.(['hello', 'world']);
-        }),
+        })
     );
 
     expect(metrics.input_tokens).toBe(12);
@@ -255,7 +255,7 @@ describe('framework interception', () => {
       async () =>
         withRuntimeMetricsCollector(async () => {
           await model.invoke?.('hello');
-        }),
+        })
     );
 
     expect(passthroughInvoke).toHaveBeenCalledWith('hello');
@@ -283,7 +283,7 @@ describe('framework interception', () => {
       async () =>
         withRuntimeMetricsCollector(async () => {
           await camelCaseModel.invoke?.('hello');
-        }),
+        })
     );
 
     expect(camelCaseMetrics.metrics.input_tokens).toBe(6);
@@ -330,12 +330,10 @@ describe('framework interception', () => {
       },
     });
 
-    const { metrics } = await TrialContext.run(
-      createTrialConfig({}),
-      async () =>
-        withRuntimeMetricsCollector(async () => {
-          await model.batch?.(['a', 'b']);
-        }),
+    const { metrics } = await TrialContext.run(createTrialConfig({}), async () =>
+      withRuntimeMetricsCollector(async () => {
+        await model.batch?.(['a', 'b']);
+      })
     );
 
     expect(metrics.input_tokens).toBe(0);
@@ -381,7 +379,7 @@ describe('framework interception', () => {
           temperature: 0.9,
           maxTokens: 32,
         });
-      },
+      }
     );
 
     expect(doGenerate).toHaveBeenCalledWith(
@@ -389,7 +387,7 @@ describe('framework interception', () => {
         modelId: 'gpt-4o-mini',
         temperature: 0.4,
         maxTokens: 256,
-      }),
+      })
     );
   });
 
@@ -422,7 +420,7 @@ describe('framework interception', () => {
           await client.chat.completions.create({
             model: 'gpt-3.5-turbo',
           });
-        }),
+        })
     );
 
     expect(create).toHaveBeenCalledTimes(1);
@@ -451,7 +449,7 @@ describe('framework interception', () => {
       createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.2 }),
       async () => {
         await wrappedTwice.invoke?.('hello');
-      },
+      }
     );
 
     expect(bind).toHaveBeenCalledTimes(1);
@@ -483,16 +481,15 @@ describe('framework interception', () => {
 
     expect(wrappedTwice).toBe(wrappedOnce);
 
-    await TrialContext.run(
-      createTrialConfig({ model: 'gpt-4o-mini' }),
-      async () => {
-        await (wrappedTwice as typeof wrappedOnce & {
+    await TrialContext.run(createTrialConfig({ model: 'gpt-4o-mini' }), async () => {
+      await (
+        wrappedTwice as typeof wrappedOnce & {
           doGenerate: (params: Record<string, unknown>) => Promise<unknown>;
-        }).doGenerate({
-          modelId: 'gpt-3.5-turbo',
-        });
-      },
-    );
+        }
+      ).doGenerate({
+        modelId: 'gpt-3.5-turbo',
+      });
+    });
 
     expect(doGenerate).toHaveBeenCalledTimes(1);
   });
@@ -528,6 +525,23 @@ describe('framework interception', () => {
     expect(withTraigent(baseVercelModel as never)).toBe(wrappedVercel);
   });
 
+  it('rejects mutation and deletion on wrapped LangChain models', () => {
+    const wrappedModel = withTraigentModel({
+      modelName: 'gpt-4o-mini',
+      async invoke() {
+        return 'ok';
+      },
+    });
+
+    expect(() => {
+      (wrappedModel as Record<string, unknown>).invoke = async () => 'hijacked';
+    }).toThrow('Cannot mutate a Traigent-wrapped LangChain model');
+
+    expect(() => {
+      delete (wrappedModel as Record<string, unknown>).invoke;
+    }).toThrow('Cannot delete properties from a Traigent-wrapped LangChain model');
+  });
+
   it('auto-wraps a supported framework target in one call', async () => {
     const create = vi.fn(async (params: Record<string, unknown>) => ({
       model: params.model,
@@ -552,7 +566,7 @@ describe('framework interception', () => {
           model: 'gpt-3.5-turbo',
           temperature: 0.9,
         });
-      },
+      }
     );
 
     expect(create).toHaveBeenCalledWith({
@@ -602,7 +616,7 @@ describe('framework interception', () => {
           model: 'gpt-3.5-turbo',
         });
         await wrapped.langchain.invoke?.('hello');
-      },
+      }
     );
 
     expect(create).toHaveBeenCalledWith({

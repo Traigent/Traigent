@@ -1,9 +1,12 @@
 /**
- * Unit tests for CLI runner functions.
+ * Unit tests for CLI runner building blocks.
  *
- * Note: The runner.ts file has module-level side effects (console redirection)
- * and a main() function that's hard to test directly. We focus on testing
- * the exported helper functions and protocol handling logic.
+ * The runner.ts file has module-level side effects (console redirection, top-level await)
+ * and private handler functions, so it cannot be imported directly.
+ * These tests validate the protocol, error classification, metrics, and context
+ * primitives that the runner combines at runtime.
+ *
+ * Full end-to-end testing is done via subprocess in tests/integration/runner.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -213,13 +216,21 @@ describe('Runner Integration Tests', () => {
       const response = createSuccessResponse('req-001', {
         protocol_version: PROTOCOL_VERSION,
         min_protocol_version: '1.0',
-        capabilities: ['warnings'],
-        supported_actions: ['run_trial', 'ping', 'shutdown', 'cancel', 'capabilities', 'validate_config'],
+        capabilities: ['warnings', 'json_schema_validation'],
+        supported_actions: [
+          'run_trial',
+          'ping',
+          'shutdown',
+          'cancel',
+          'capabilities',
+          'validate_config',
+        ],
       });
 
       expect(response.status).toBe('success');
       const payload = response.payload as { capabilities: string[] };
       expect(payload.capabilities).not.toContain('validate_config');
+      expect(payload.capabilities).toContain('json_schema_validation');
     });
 
     it('should create validate_config success response', () => {
@@ -245,12 +256,9 @@ describe('Runner Integration Tests', () => {
 
   describe('Trial Result Creation', () => {
     it('should create success result', () => {
-      const result = createSuccessResult(
-        'trial-123',
-        { accuracy: 0.95, latency_ms: 100 },
-        1.5,
-        { model: 'gpt-4' }
-      );
+      const result = createSuccessResult('trial-123', { accuracy: 0.95, latency_ms: 100 }, 1.5, {
+        model: 'gpt-4',
+      });
 
       expect(result.trial_id).toBe('trial-123');
       expect(result.status).toBe('completed');
@@ -276,13 +284,7 @@ describe('Runner Integration Tests', () => {
     });
 
     it('should create failure result with retryable flag', () => {
-      const result = createFailureResult(
-        'trial-123',
-        'Timeout',
-        'TIMEOUT',
-        true,
-        5.0
-      );
+      const result = createFailureResult('trial-123', 'Timeout', 'TIMEOUT', true, 5.0);
 
       expect(result.retryable).toBe(true);
       expect(result.error_code).toBe('TIMEOUT');
@@ -462,11 +464,10 @@ describe('Runner Integration Tests', () => {
     });
 
     it('should generate error response for protocol error', () => {
-      const response = createErrorResponse(
-        'req-001',
-        'Invalid JSON',
-        { errorCode: 'PROTOCOL_ERROR', retryable: false }
-      );
+      const response = createErrorResponse('req-001', 'Invalid JSON', {
+        errorCode: 'PROTOCOL_ERROR',
+        retryable: false,
+      });
 
       expect(response.status).toBe('error');
       const payload = response.payload as { error_code: string };
@@ -474,11 +475,10 @@ describe('Runner Integration Tests', () => {
     });
 
     it('should generate error response for unsupported action', () => {
-      const response = createErrorResponse(
-        'req-001',
-        'Unknown action: invalid_action',
-        { errorCode: 'UNSUPPORTED_ACTION', retryable: false }
-      );
+      const response = createErrorResponse('req-001', 'Unknown action: invalid_action', {
+        errorCode: 'UNSUPPORTED_ACTION',
+        retryable: false,
+      });
 
       expect(response.status).toBe('error');
       const payload = response.payload as { error_code: string };
@@ -487,11 +487,10 @@ describe('Runner Integration Tests', () => {
 
     it('should generate error response for busy state', () => {
       const error = new BusyError('Trial already running', 'trial-123');
-      const response = createErrorResponse(
-        'req-001',
-        error,
-        { errorCode: 'BUSY', retryable: true }
-      );
+      const response = createErrorResponse('req-001', error, {
+        errorCode: 'BUSY',
+        retryable: true,
+      });
 
       expect(response.status).toBe('error');
       const payload = response.payload as { error_code: string; retryable: boolean };
@@ -542,7 +541,7 @@ describe('Runner Integration Tests', () => {
       expect(parseResult.success).toBe(false);
 
       if (!parseResult.success) {
-        const issues = parseResult.error.issues.slice(0, 10).map(issue => ({
+        const issues = parseResult.error.issues.slice(0, 10).map((issue) => ({
           path: issue.path.join('.'),
           message: issue.message,
           code: issue.code,
@@ -568,11 +567,7 @@ describe('Runner Integration Tests', () => {
     });
 
     it('should handle zero duration', () => {
-      const result = createSuccessResult(
-        'trial-123',
-        { accuracy: 0.95 },
-        0
-      );
+      const result = createSuccessResult('trial-123', { accuracy: 0.95 }, 0);
 
       expect(result.duration).toBe(0);
     });

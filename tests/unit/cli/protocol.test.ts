@@ -41,6 +41,7 @@ describe('Protocol Constants', () => {
     expect(SUPPORTED_CAPABILITIES).toContain('inline_rows');
     expect(SUPPORTED_CAPABILITIES).toContain('warnings');
     expect(SUPPORTED_CAPABILITIES).toContain('error_details');
+    expect(SUPPORTED_CAPABILITIES).toContain('json_schema_validation');
   });
 });
 
@@ -395,6 +396,10 @@ describe('parseRequest()', () => {
     expect(() => parseRequest('not valid json')).toThrow();
   });
 
+  it('should throw on empty string', () => {
+    expect(() => parseRequest('')).toThrow();
+  });
+
   it('should throw on invalid request schema', () => {
     const line = JSON.stringify({ invalid: 'data' });
     expect(() => parseRequest(line)).toThrow();
@@ -418,11 +423,47 @@ describe('parseRequest()', () => {
     expect(() => parseRequest(line)).toThrow(/depth/i);
   });
 
+  it('should reject deeply nested arrays (DoS prevention)', () => {
+    let nested: unknown = 'deep';
+    for (let i = 0; i < 55; i++) {
+      nested = [nested];
+    }
+
+    const request = {
+      version: '1.0',
+      request_id: 'req-001',
+      action: 'ping',
+      payload: { data: nested },
+    };
+
+    const line = JSON.stringify(request);
+    expect(() => parseRequest(line)).toThrow(/depth/i);
+  });
+
   it('should accept moderately nested JSON', () => {
     // Create nested object with 10 levels (should pass)
     let nested: Record<string, unknown> = { value: 'moderate' };
     for (let i = 0; i < 10; i++) {
       nested = { nested };
+    }
+
+    const request = {
+      version: '1.0',
+      request_id: 'req-001',
+      action: 'ping',
+      payload: nested,
+    };
+
+    const line = JSON.stringify(request);
+    const result = parseRequest(line);
+    expect(result.action).toBe('ping');
+  });
+
+  it('should accept JSON at exactly max depth', () => {
+    // 50 levels deep should be accepted (boundary test)
+    let nested: Record<string, unknown> = { value: 'exact' };
+    for (let i = 0; i < 48; i++) {
+      nested = { n: nested };
     }
 
     const request = {
@@ -532,6 +573,50 @@ describe('createErrorResponse()', () => {
     process.env['NODE_ENV'] = 'production';
     const error = new Error('Prod error');
     const response = createErrorResponse('req-006', error);
+
+    const payload = response.payload as { stack?: string };
+    expect(payload.stack).toBeUndefined();
+  });
+
+  it('should truncate stack to 5 lines in non-production', () => {
+    process.env['NODE_ENV'] = 'development';
+    const error = new Error('Long stack');
+    // Ensure the error has a long stack trace
+    error.stack = Array.from({ length: 20 }, (_, i) => `  at function${i} (file.js:${i}:1)`).join(
+      '\n'
+    );
+    const response = createErrorResponse('req-007', error);
+
+    const payload = response.payload as { stack?: string };
+    expect(payload.stack).toBeDefined();
+    const lines = payload.stack!.split('\n');
+    expect(lines.length).toBeLessThanOrEqual(5);
+  });
+
+  it('should strip absolute paths from stack traces', () => {
+    process.env['NODE_ENV'] = 'development';
+    const error = new Error('Path leak');
+    error.stack = 'Error: Path leak\n  at foo (/home/user/secret/project/src/file.ts:10:5)';
+    const response = createErrorResponse('req-008', error);
+
+    const payload = response.payload as { stack?: string };
+    expect(payload.stack).toBeDefined();
+    expect(payload.stack).not.toContain('/home/user/secret/project/src/');
+  });
+
+  it('should handle Error with no stack', () => {
+    process.env['NODE_ENV'] = 'development';
+    const error = new Error('No stack');
+    error.stack = undefined;
+    const response = createErrorResponse('req-009', error);
+
+    const payload = response.payload as { stack?: string };
+    expect(payload.stack).toBeUndefined();
+  });
+
+  it('should not include stack for string errors', () => {
+    process.env['NODE_ENV'] = 'development';
+    const response = createErrorResponse('req-010', 'String error has no stack');
 
     const payload = response.payload as { stack?: string };
     expect(payload.stack).toBeUndefined();

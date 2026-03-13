@@ -1,9 +1,5 @@
 import { registerFrameworkTarget } from '../registry.js';
-import {
-  ensurePositiveDuration,
-  getFrameworkOverrides,
-  recordProviderUsage,
-} from '../shared.js';
+import { ensurePositiveDuration, getFrameworkOverrides, recordProviderUsage } from '../shared.js';
 
 const TRAIGENT_WRAPPED = Symbol.for('traigent.langchain.wrapped');
 const wrappedModelCache = new WeakMap<object, object>();
@@ -27,10 +23,7 @@ type TokenUsage = {
   outputTokens: number;
 };
 
-function getNumber(
-  record: Record<string, unknown>,
-  ...keys: string[]
-): number | undefined {
+function getNumber(record: Record<string, unknown>, ...keys: string[]): number | undefined {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -64,8 +57,7 @@ function getUsageFromSingleResult(result: unknown): TokenUsage {
       const usage = tokenUsage as Record<string, unknown>;
       return {
         inputTokens: getNumber(usage, 'promptTokens', 'input_tokens', 'inputTokens') ?? 0,
-        outputTokens:
-          getNumber(usage, 'completionTokens', 'output_tokens', 'outputTokens') ?? 0,
+        outputTokens: getNumber(usage, 'completionTokens', 'output_tokens', 'outputTokens') ?? 0,
       };
     }
 
@@ -73,8 +65,7 @@ function getUsageFromSingleResult(result: unknown): TokenUsage {
     if (usage && typeof usage === 'object') {
       const usageRecord = usage as Record<string, unknown>;
       return {
-        inputTokens:
-          getNumber(usageRecord, 'input_tokens', 'promptTokens', 'inputTokens') ?? 0,
+        inputTokens: getNumber(usageRecord, 'input_tokens', 'promptTokens', 'inputTokens') ?? 0,
         outputTokens:
           getNumber(usageRecord, 'output_tokens', 'completionTokens', 'outputTokens') ?? 0,
       };
@@ -88,8 +79,7 @@ function getUsageFromSingleResult(result: unknown): TokenUsage {
       const usage = tokenUsage as Record<string, unknown>;
       return {
         inputTokens: getNumber(usage, 'promptTokens', 'input_tokens', 'inputTokens') ?? 0,
-        outputTokens:
-          getNumber(usage, 'completionTokens', 'output_tokens', 'outputTokens') ?? 0,
+        outputTokens: getNumber(usage, 'completionTokens', 'output_tokens', 'outputTokens') ?? 0,
       };
     }
   }
@@ -109,17 +99,12 @@ function getUsageFromResult(result: unknown): TokenUsage {
       totals.outputTokens += usage.outputTokens;
       return totals;
     },
-    { inputTokens: 0, outputTokens: 0 },
+    { inputTokens: 0, outputTokens: 0 }
   );
 }
 
-function getModelName(
-  model: BindableLangChainModel,
-  overrides: Record<string, unknown>,
-): string {
-  return String(
-    overrides['model'] ?? model.model ?? model.modelName ?? model.modelId ?? 'unknown',
-  );
+function getModelName(model: BindableLangChainModel, overrides: Record<string, unknown>): string {
+  return String(overrides['model'] ?? model.model ?? model.modelName ?? model.modelId ?? 'unknown');
 }
 
 function bindIfNeeded<T extends BindableLangChainModel>(model: T): T {
@@ -146,11 +131,7 @@ export function withTraigentModel<T extends BindableLangChainModel>(model: T): T
   const wrapped = new Proxy(model, {
     get(target, property, receiver) {
       const originalValue = Reflect.get(target, property, receiver);
-      if (
-        property !== 'invoke' &&
-        property !== 'stream' &&
-        property !== 'batch'
-      ) {
+      if (property !== 'invoke' && property !== 'stream' && property !== 'batch') {
         return originalValue;
       }
 
@@ -173,11 +154,17 @@ export function withTraigentModel<T extends BindableLangChainModel>(model: T): T
             getModelName(target, overrides),
             usage.inputTokens,
             usage.outputTokens,
-            ensurePositiveDuration(Date.now() - startedAt),
+            ensurePositiveDuration(Date.now() - startedAt)
           );
           return result;
         });
       };
+    },
+    set() {
+      throw new TypeError('Cannot mutate a Traigent-wrapped LangChain model');
+    },
+    deleteProperty() {
+      throw new TypeError('Cannot delete properties from a Traigent-wrapped LangChain model');
     },
   }) as T;
 

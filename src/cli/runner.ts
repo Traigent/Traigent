@@ -59,6 +59,7 @@ import {
   type CLIRequest,
   type CLIResponse,
 } from './protocol.js';
+import { validateConfigPayload } from './config-validation.js';
 
 /** Start time for uptime calculation */
 const startTime = Date.now();
@@ -131,9 +132,7 @@ interface RunnerArgs {
 /**
  * User's trial function signature.
  */
-type UserTrialFunction = (
-  config: TrialConfig
-) => Promise<{
+type UserTrialFunction = (config: TrialConfig) => Promise<{
   metrics: Record<string, unknown>;
   duration?: number;
   metadata?: Record<string, unknown>;
@@ -240,7 +239,7 @@ function sendResponse(response: CLIResponse): void {
     // stdout buffer full - enable backpressure
     draining = true;
     if (rl) {
-      rl.pause();  // INPUT BACKPRESSURE: Stop reading while we drain
+      rl.pause(); // INPUT BACKPRESSURE: Stop reading while we drain
     }
     process.stdout.once('drain', flushWriteQueue);
   }
@@ -269,7 +268,9 @@ function calculateNormalizedDuration(
   if (durationSec !== undefined) {
     // Warn if it looks suspicious (> 1 hour suggests possible unit confusion)
     if (durationSec > 3600) {
-      warnings.push(`Duration ${durationSec}s seems very long - ensure it's in seconds, not milliseconds`);
+      warnings.push(
+        `Duration ${durationSec}s seems very long - ensure it's in seconds, not milliseconds`
+      );
     }
     return durationSec;
   }
@@ -293,7 +294,8 @@ async function handleRunTrial(
   if (currentTrialId !== null) {
     unlock();
     log(`Trial already running: ${currentTrialId}`);
-    return createErrorResponse(request.request_id,
+    return createErrorResponse(
+      request.request_id,
       new BusyError('Trial already running', currentTrialId),
       { errorCode: 'BUSY', retryable: true }
     );
@@ -306,23 +308,15 @@ async function handleRunTrial(
     const errorMessage = `Invalid trial config: ${parseResult.error.message}`;
     log(`Validation error: ${errorMessage}`);
 
-    const trialId =
-      (request.payload as { trial_id?: string } | undefined)?.trial_id ??
-      'unknown';
+    const trialId = (request.payload as { trial_id?: string } | undefined)?.trial_id ?? 'unknown';
 
     // Include structured error details (truncate values, keep path + message only)
-    const issues = parseResult.error.issues.slice(0, 10).map(issue => ({
+    const issues = parseResult.error.issues.slice(0, 10).map((issue) => ({
       path: issue.path.join('.'),
       message: issue.message,
       code: issue.code,
     }));
-    const payload = createFailureResult(
-      trialId,
-      errorMessage,
-      'VALIDATION_ERROR',
-      false,
-      0
-    );
+    const payload = createFailureResult(trialId, errorMessage, 'VALIDATION_ERROR', false, 0);
     // Add error details to metadata
     (payload as { metadata?: Record<string, unknown> }).metadata = {
       error_details: {
@@ -338,8 +332,7 @@ async function handleRunTrial(
 
   const config = parseResult.data;
   const timeoutMs =
-    (request.payload as { timeout_ms?: number } | undefined)?.timeout_ms ??
-    DEFAULT_TIMEOUT_MS;
+    (request.payload as { timeout_ms?: number } | undefined)?.timeout_ms ?? DEFAULT_TIMEOUT_MS;
 
   // Set trial ID IMMEDIATELY after validation, before any async work
   currentTrialId = config.trial_id;
@@ -359,9 +352,13 @@ async function handleRunTrial(
 
   try {
     // Execute trial within context with timeout and cancellation support
-    const trialPromise = TrialContext.run(config, async () => {
-      return await trialFn(config);
-    }, abortSignal);
+    const trialPromise = TrialContext.run(
+      config,
+      async () => {
+        return await trialFn(config);
+      },
+      abortSignal
+    );
 
     // Create timeout promise with proper cleanup
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -499,7 +496,9 @@ function handleCancel(request: CLIRequest): CLIResponse {
 
   // If a specific trial ID is requested, check if it matches current
   if (requestedTrialId && currentTrialId !== requestedTrialId) {
-    log(`Cancel requested for trial ${requestedTrialId} but current trial is ${currentTrialId ?? 'none'}`);
+    log(
+      `Cancel requested for trial ${requestedTrialId} but current trial is ${currentTrialId ?? 'none'}`
+    );
     return createSuccessResponse(request.request_id, {
       cancelled: false,
       reason: 'trial_not_found',
@@ -546,14 +545,16 @@ function handleCapabilities(request: CLIRequest): CLIResponse {
 
 /**
  * Handle a validate_config request.
- * Performs basic configuration shape validation without running a trial.
- * Full JSON Schema validation is not advertised until implemented.
+ * Performs configuration validation without running a trial.
+ * Supports optional JSON Schema Draft 7 validation when config_schema is provided.
  */
 function handleValidateConfig(request: CLIRequest): CLIResponse {
-  const payload = request.payload as {
-    config?: Record<string, unknown>;
-    config_schema?: Record<string, unknown>;
-  } | undefined;
+  const payload = request.payload as
+    | {
+        config?: Record<string, unknown>;
+        config_schema?: Record<string, unknown>;
+      }
+    | undefined;
 
   if (!payload?.config) {
     return createSuccessResponse(request.request_id, {
@@ -563,27 +564,10 @@ function handleValidateConfig(request: CLIRequest): CLIResponse {
     });
   }
 
-  // For now, do basic type validation
-  // TODO: Implement JSON Schema validation with ajv if config_schema provided
-  const issues: Array<{ path?: string; message: string }> = [];
-
-  // Check that config is an object
-  if (typeof payload.config !== 'object' || payload.config === null) {
-    issues.push({ message: 'config must be an object' });
-  }
-
-  // If a schema is provided, log that we received it (full validation TODO)
-  if (payload.config_schema) {
-    log('Config schema provided (JSON Schema validation not yet implemented)');
-  }
-
-  return createSuccessResponse(request.request_id, {
-    ok: issues.length === 0,
-    issues: issues.length > 0 ? issues : undefined,
-    summary: issues.length > 0
-      ? `Validation failed: ${issues.length} issue(s)`
-      : 'Config validation passed',
-  });
+  return createSuccessResponse(
+    request.request_id,
+    validateConfigPayload(payload.config, payload.config_schema)
+  );
 }
 
 /**
@@ -642,10 +626,7 @@ function startParentPidWatcher(): void {
  * Process a single request.
  * Handles payload size guard and dispatches to appropriate handler.
  */
-async function processRequest(
-  line: string,
-  trialFn: UserTrialFunction
-): Promise<void> {
+async function processRequest(line: string, trialFn: UserTrialFunction): Promise<void> {
   // Payload size guard - use Buffer.byteLength for accurate UTF-8 byte count
   // (line.length undercounts multi-byte characters)
   const lineBytes = Buffer.byteLength(line, 'utf8');
@@ -689,11 +670,10 @@ async function processRequest(
         response = handleValidateConfig(request);
         break;
       default:
-        response = createErrorResponse(
-          requestId,
-          `Unknown action: ${request.action}`,
-          { errorCode: 'UNSUPPORTED_ACTION', retryable: false }
-        );
+        response = createErrorResponse(requestId, `Unknown action: ${request.action}`, {
+          errorCode: 'UNSUPPORTED_ACTION',
+          retryable: false,
+        });
     }
 
     sendResponse(response);
@@ -735,7 +715,7 @@ async function main(): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log(`Module load failed: ${errorMessage}`);
     const response = createErrorResponse(
-      'init',  // Explicit request_id for initialization errors
+      'init', // Explicit request_id for initialization errors
       `Module load failed: ${errorMessage}`,
       { errorCode: 'MODULE_LOAD_ERROR', retryable: false }
     );

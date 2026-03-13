@@ -33,10 +33,11 @@ export const ProtocolVersionSchema = z.string().regex(/^1\.\d+$/, {
  * Python can query these via the 'capabilities' action.
  */
 export const SUPPORTED_CAPABILITIES = [
-  'dataset_hash',      // Dataset hash verification
-  'inline_rows',       // Inline data mode (vs indices)
-  'warnings',          // Warnings array in response
-  'error_details',     // Structured error details
+  'dataset_hash', // Dataset hash verification
+  'inline_rows', // Inline data mode (vs indices)
+  'warnings', // Warnings array in response
+  'error_details', // Structured error details
+  'json_schema_validation', // JSON Schema Draft 7 config validation
 ] as const;
 
 export type Capability = (typeof SUPPORTED_CAPABILITIES)[number];
@@ -48,9 +49,9 @@ export const ActionSchema = z.enum([
   'run_trial',
   'ping',
   'shutdown',
-  'cancel',           // Cancel an in-flight trial
-  'capabilities',     // Query supported capabilities (v1.1)
-  'validate_config',  // Validate config without running (v1.1)
+  'cancel', // Cancel an in-flight trial
+  'capabilities', // Query supported capabilities (v1.1)
+  'validate_config', // Validate config without running (v1.1)
 ]);
 
 export type Action = z.infer<typeof ActionSchema>;
@@ -106,10 +107,12 @@ export type ShutdownRequest = z.infer<typeof ShutdownRequestSchema>;
  */
 export const CancelRequestSchema = CLIRequestSchema.extend({
   action: z.literal('cancel'),
-  payload: z.object({
-    /** Trial ID to cancel (optional - if not provided, cancels current trial) */
-    trial_id: z.string().optional(),
-  }).optional(),
+  payload: z
+    .object({
+      /** Trial ID to cancel (optional - if not provided, cancels current trial) */
+      trial_id: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type CancelRequest = z.infer<typeof CancelRequestSchema>;
@@ -262,7 +265,7 @@ const MAX_JSON_DEPTH = 50;
 function checkJsonDepth(obj: unknown, maxDepth = MAX_JSON_DEPTH, current = 0): boolean {
   if (current > maxDepth) return false;
   if (typeof obj === 'object' && obj !== null) {
-    return Object.values(obj).every(v => checkJsonDepth(v, maxDepth, current + 1));
+    return Object.values(obj).every((v) => checkJsonDepth(v, maxDepth, current + 1));
   }
   return true;
 }
@@ -285,10 +288,7 @@ export function parseRequest(line: string): CLIRequest {
 /**
  * Create a success response.
  */
-export function createSuccessResponse<T>(
-  requestId: string,
-  payload: T
-): CLIResponse {
+export function createSuccessResponse<T>(requestId: string, payload: T): CLIResponse {
   return {
     version: PROTOCOL_VERSION,
     request_id: requestId,
@@ -311,7 +311,7 @@ function sanitizeStack(stack: string | undefined): string | undefined {
   return stack
     .split('\n')
     .slice(0, 5)
-    .map(line => line.replaceAll(/\(\/[^)]+\//g, '('))
+    .map((line) => line.replaceAll(/\(\/[^)]+\//g, '('))
     .join('\n');
 }
 
