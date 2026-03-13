@@ -103,10 +103,10 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` On-demand export jobs
 - `[x]` Export history/detail/status
 - `[x]` Privacy-safe manifest export by default
-- `[ ]` Provider-neutral artifact-store abstraction
-- `[ ]` Local artifact-store sink support
+- `[x]` Provider-neutral artifact-store abstraction
+- `[x]` Local artifact-store sink support
 - `[ ]` Cloud sink adapter only if required by a beta customer
-- `[ ]` Policy validation for raw-content export/materialization
+- `[x]` Policy validation for raw-content export/materialization
 - `[ ]` Coverage checkpoint after export artifact-storage slice
 
 ## Wave 3B: Project RBAC / Governance
@@ -143,7 +143,8 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Add SDK project retention policy DTOs and client methods
 - `[x]` Add frontend project retention policy service and Projects-page UI
 - `[x]` Add focused backend/SDK/frontend/schema tests for retention policy flows
-- `[ ]` Add retention-aware artifact cleanup/expiry enforcement beyond metadata
+- `[x]` Add retention-aware artifact cleanup/expiry enforcement beyond metadata
+- `[x]` Add project export policy routes, DTOs, UI, and materialized-export gating
 
 ## Release Validation / Security
 - `[ ]` Early lightweight threat-model review after Wave 3A stabilization
