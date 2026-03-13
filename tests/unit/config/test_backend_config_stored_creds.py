@@ -341,3 +341,22 @@ class TestCliAuthPayload:
 
         # Verify result
         assert result["api_key"] == "tg_created_key"  # pragma: allowlist secret
+
+
+class TestCliAuthEnvFileGuard:
+    """CLI should only write API keys to a local .env file."""
+
+    def test_resolve_env_file_path_requires_dotenv_name(self, tmp_path):
+        from traigent.cli.auth_commands import TraigentAuthCLI
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            with pytest.raises(ValueError, match="must point to a .env file"):
+                TraigentAuthCLI._resolve_env_file_path(tmp_path / "secrets.txt")
+
+    def test_resolve_env_file_path_stays_within_cwd(self, tmp_path):
+        from traigent.cli.auth_commands import TraigentAuthCLI
+
+        outside = tmp_path.parent / ".env"
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            with pytest.raises(ValueError, match="must remain within the current"):
+                TraigentAuthCLI._resolve_env_file_path(outside)

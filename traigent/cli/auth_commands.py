@@ -154,8 +154,7 @@ class TraigentAuthCLI:
         Returns:
             True if saved successfully
         """
-        if env_path is None:
-            env_path = Path.cwd() / ".env"
+        env_path = self._resolve_env_file_path(env_path)
 
         try:
             # Read existing content
@@ -188,9 +187,27 @@ class TraigentAuthCLI:
             logger.debug(f"API key saved to {env_path}")
             return True
 
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Failed to save API key to .env: {e}")
             return False
+
+    @staticmethod
+    def _resolve_env_file_path(env_path: Path | None = None) -> Path:
+        """Resolve a writable .env path under the current working directory."""
+        candidate = (env_path or (Path.cwd() / ".env")).expanduser().resolve()
+        cwd = Path.cwd().resolve()
+
+        if candidate.name != ".env":
+            raise ValueError("env_path must point to a .env file")
+
+        try:
+            candidate.relative_to(cwd)
+        except ValueError as exc:
+            raise ValueError(
+                "env_path must remain within the current working directory"
+            ) from exc
+
+        return candidate
 
     async def _validate_api_key(
         self, api_key: str, verbose: bool = False
