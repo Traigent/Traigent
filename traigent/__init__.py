@@ -98,6 +98,7 @@ from traigent.api.types import (
     SensitivityAnalysis,
     StrategyConfig,
     TrialResult,
+    serialize_trials,
 )
 from traigent.api.validation_protocol import (
     ConstraintValidator,
@@ -251,6 +252,7 @@ __all__ = [
     # Result types
     "OptimizationResult",
     "TrialResult",
+    "serialize_trials",
     "SensitivityAnalysis",
     "ConfigurationComparison",
     "ParetoFront",
