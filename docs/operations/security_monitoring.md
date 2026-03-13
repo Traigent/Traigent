@@ -1,8 +1,9 @@
 # Security Monitoring Runbook
 
-This runbook lists key telemetry emitted by the Traigent SDK when security features
-trigger defensive behaviors. Operators can wire the log messages or exported
-metrics into their observability stack to satisfy SOC2 monitoring controls.
+This runbook lists the beta-critical security telemetry emitted by Traigent and
+the backend services that enforce tenant/project isolation. Operators should wire
+these signals into their monitoring stack before onboarding enterprise beta
+tenants.
 
 ## Configuration Flags
 - `TRAIGENT_SECURITY_PROFILE` — `production` (default), `staging`, or `development`.
@@ -11,6 +12,49 @@ metrics into their observability stack to satisfy SOC2 monitoring controls.
 - `STRICT_SQL` — enable aggressive SQL quote heuristics (default `true`).
 - `TRAIGENT_USE_DECIMAL_RATE_LIMIT` — enable Decimal arithmetic in rate limiting.
 - `DISABLE_SECURITY_TELEMETRY` — suppress non-critical telemetry (default `false`).
+- `ENABLE_RESOURCE_ACCESS_DUAL_RUN` — emit scoped-vs-legacy discrepancy telemetry
+  during Wave 3A/3B rollout validation.
+
+## Beta-Critical Backend Signals
+
+The backend now emits three structured audit event types for scope enforcement:
+
+- `tenant_scope_violation`
+- `project_scope_violation`
+- `scope_discrepancy`
+
+These are recorded through the central audit logger and surfaced by the audit
+API so operators can detect isolation failures or rollout regressions.
+
+### Where these events come from
+
+- `tenant_scope_violation`
+  - an actor attempted to read or mutate a resource belonging to another tenant
+- `project_scope_violation`
+  - an actor attempted to read or mutate an out-of-scope project resource inside
+    the same tenant
+- `scope_discrepancy`
+  - the Wave 3A dual-run path found a difference between the new enforcement
+    kernel and the legacy path
+
+### Audit endpoints to monitor
+
+- `GET /api/v1/audit/alerts`
+  - active alert summaries and current thresholds
+- `GET /api/v1/audit/health`
+  - aggregate health plus:
+    - `scope_violations_24h`
+    - `scope_discrepancies_24h`
+
+Current beta alert IDs:
+- `scope_violation_watch`
+- `scope_discrepancy_watch`
+
+Escalation guidance:
+- any non-zero `tenant_scope_violation` in beta should be treated as a release
+  blocker until explained
+- any sustained `scope_discrepancy` count means the dual-run rollout is not yet
+  stable enough for final cutover
 
 ## Credential Store Events
 - `short_credential_value` — weak secret stored under relaxed profile.
@@ -42,11 +86,27 @@ Integrate these exceptions with application monitoring to trace misuse attempts.
 often floating point or Decimal corrections were applied. Persistent non-zero values
 may indicate precision issues that should be investigated.
 
+## Privacy-Mode Monitoring
+
+Enterprise beta assumes privacy mode is the default on new analytics/export
+surfaces. Monitoring should therefore include:
+
+- manifest-only export usage vs. materialized export usage
+- policy-denied materialized export attempts
+- export artifact cleanup success/failure counts
+
+Materialized/raw-content export is expected to be rare and policy-gated. Any
+unexpected increase should be investigated.
+
 ## Recommended Alerts
 - Weak credential blocked in production.
 - Auto-discovery instantiation observed in production.
 - SQL quote heuristic triggered in production.
 - Rate limiter rounding adjustments exceed a defined SLO.
+- Any `scope_violation_watch` alert.
+- Any `scope_discrepancy_watch` alert during rollout soak.
+- Policy-denied raw-content export attempts above the normal baseline.
+- Export artifact cleanup failures or backlog growth.
 
 Keep this runbook alongside your SOC2 evidence to demonstrate proactive monitoring
-of client-side security controls.
+of client-side and backend isolation controls.

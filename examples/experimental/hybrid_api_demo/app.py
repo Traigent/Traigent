@@ -105,6 +105,10 @@ def config_space():
             "tunable_id": "demo_agent",
             "tunables": TUNABLES,
             "constraints": {},
+            "estimated_tokens_per_example": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+            },
         }
     )
 
