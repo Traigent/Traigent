@@ -115,7 +115,7 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Backend authorization kernel
 - `[~]` Membership APIs
 - `[~]` Membership UI
-- `[ ]` Audit events for membership/role/export/admin actions
+- `[~]` Audit events for membership/role/export/admin actions
 - `[x]` Rate-limit policy product surface
 - `[~]` Retention controls for export/raw-content surfaces
 
@@ -153,7 +153,7 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Cross-tenant/project monitoring and alerting
 - `[ ]` API reference for dashboards, roles, exports, retention/rate limits
 - `[ ]` Migration/cutover notes for tenant/project enforcement
-- `[ ]` Privacy-mode integration tests for all new beta surfaces
+- `[~]` Privacy-mode integration tests for all new beta surfaces
 - `[ ]` Full CI and repo-wide validation rerun
 - `[ ]` Changed-code coverage at or above 85%
 - `[ ]` Claude review after each completed wave
@@ -166,6 +166,7 @@ This file is the working checklist for the remaining execution waves.
 - The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
 - The early lightweight threat-model review is captured in [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md); it found no new blockers but kept monitoring, privacy-mode integration coverage, and final audit-event completeness as explicit release-gate work.
 - Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts; remaining work is wiring this into the full beta monitoring/alerting release gate.
+- Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
 - The current beta gate is satisfied via the repaired live local worktree DB path; the fresh disposable DB fallback remains available if the legacy path regresses.
 - Fresh and legacy disposable Postgres databases now validate through the backend bootstrap/reconciliation path and stamp cleanly to revision `add_project_export_policy`.
 - The live worktree DB still validates cleanly through the backend reconciliation/current flow; tracker records whether beta validation is satisfied via the repaired live DB path or a fresh validated fallback.
