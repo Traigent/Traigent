@@ -27,20 +27,20 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Wave 3B beta retention controls
 
 ## Step 0: Secure the Current Baseline
-- `[~]` Commit and push all currently implemented but uncommitted work in `Traigent`
+- `[x]` Commit and push all currently implemented but uncommitted work in `Traigent`
 - `[x]` Commit and push all currently implemented but uncommitted work in `TraigentSchema`
 - `[x]` Commit and push all currently implemented but uncommitted work in backend worktree
 - `[x]` Commit and push all currently implemented but uncommitted work in SDK worktree
 - `[x]` Commit and push all currently implemented but uncommitted work in frontend worktree
-- `[~]` Record pushed commit SHAs in this tracker
-- `[ ]` Confirm tracker no longer mixes local-only implementation with committed baseline
+- `[x]` Record pushed commit SHAs in this tracker
+- `[x]` Confirm tracker no longer mixes local-only implementation with committed baseline
 
 ### Step 0 pushed baseline commits
 - `TraigentSchema` `feat/pr52-contract-sync-schema`: `de2f0bf`
 - `TraigentBackend` `feature/langfuse-epic1-observability`: `b77ceae`
 - `Traigent` SDK worktree `feature/langfuse-epic1-observability`: `e40eac1d`
 - `TraigentFrontend` `feature/langfuse-epic1-observability`: `cd97ae1`
-- `Traigent` main repo docs baseline: pending current docs commit
+- `Traigent` main repo `develop`: `b0244ab5`
 
 ## Wave 3A: Core Tenant/Project Enforcement
 - `[x]` Remove live single-tenant core-resource bypass in access checker v2
