@@ -26,6 +26,52 @@ with open("data/qa_samples.jsonl", "w") as f:
         f.write(json.dumps(row) + "\n")
 ```
 
+## Attaching a Dataset at Runtime
+
+You can also assign the dataset after decoration instead of hard-coding
+`eval_dataset=` in `@traigent.optimize(...)`.
+
+```python
+import asyncio
+
+import traigent
+from traigent.evaluators.base import Dataset, EvaluationExample
+
+
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    objectives=["accuracy"],
+)
+def qa_agent(question: str) -> str:
+    return answer_question(question)
+
+
+qa_agent.eval_dataset = Dataset(
+    examples=[
+        EvaluationExample(
+            input_data={"question": "What is 2+2?"},
+            expected_output="4",
+        ),
+        EvaluationExample(
+            input_data={"question": "Capital of France?"},
+            expected_output="Paris",
+        ),
+    ],
+    name="qa-smoke-test",
+)
+
+results = asyncio.run(qa_agent.optimize(max_trials=4))
+```
+
+What this does:
+
+- `qa_agent.eval_dataset` can be a JSONL path, a list of JSONL paths, or a
+  `Dataset` object.
+- Traigent evaluates the dataset outside your function. Your function still accepts
+  one example's `input_data` fields as normal arguments.
+- To swap evaluation sets between runs, assign a new value to
+  `qa_agent.eval_dataset` before the next `.optimize()` call.
+
 ## Evaluation Modes
 
 ### 1) Default semantic similarity
