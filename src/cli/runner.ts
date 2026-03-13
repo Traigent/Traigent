@@ -24,9 +24,22 @@ console.trace = (...args: unknown[]) => {
   console.error('[user:trace]', ...args);
 };
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { TrialContext } from '../core/context.js';
+import {
+  TimeoutError,
+  CancelledError,
+  BusyError,
+  isTraigentError,
+  getErrorCode,
+  isRetryable,
+} from '../core/errors.js';
 import {
   type TrialConfig,
   TrialConfigSchema,
@@ -40,9 +53,13 @@ import {
   createErrorResponse,
   serializeResponse,
   PROTOCOL_VERSION,
+  MIN_PROTOCOL_VERSION,
+  SUPPORTED_CAPABILITIES,
+  ActionSchema,
   type CLIRequest,
   type CLIResponse,
 } from './protocol.js';
+import { validateConfigPayload } from './config-validation.js';
 
 /** Start time for uptime calculation */
 const startTime = Date.now();
@@ -50,6 +67,60 @@ const startTime = Date.now();
 /** Current trial state for cancellation support */
 let currentTrialId: string | null = null;
 let currentTrialAbortController: AbortController | null = null;
+let currentTimeoutId: NodeJS.Timeout | undefined = undefined;
+
+/**
+ * Trial lock for race condition prevention.
+ * Ensures only one trial can be starting at a time.
+ */
+let trialLockPromise: Promise<void> = Promise.resolve();
+
+/**
+ * Acquire the trial lock.
+ * Returns an unlock function that MUST be called when done.
+ */
+async function acquireTrialLock(): Promise<() => void> {
+  const previousLock = trialLockPromise;
+  let unlock!: () => void;
+  trialLockPromise = new Promise((resolve) => {
+    unlock = resolve;
+  });
+  await previousLock;
+  return unlock;
+}
+
+/** Maximum payload size (10MB) */
+const MAX_PAYLOAD_SIZE = 10 * 1024 * 1024;
+
+/** Maximum JSON depth to prevent DoS */
+const MAX_JSON_DEPTH = 50;
+
+/** Maximum inline rows */
+const MAX_INLINE_ROWS = 100;
+
+/** Maximum inline payload size (1MB) */
+const MAX_INLINE_BYTES = 1024 * 1024;
+
+/** Default timeout for trial execution (5 minutes) */
+const DEFAULT_TIMEOUT_MS = 300_000;
+
+/** Idle timeout - configurable via TRAIGENT_IDLE_TIMEOUT_MS (default 5 minutes) */
+const IDLE_TIMEOUT_MS = Number.parseInt(process.env['TRAIGENT_IDLE_TIMEOUT_MS'] ?? '300000', 10);
+let idleTimeoutId: NodeJS.Timeout | undefined = undefined;
+
+/** Parent PID watcher interval (5 seconds) */
+const PARENT_PID_CHECK_INTERVAL_MS = 5_000;
+let parentPidIntervalId: NodeJS.Timeout | undefined = undefined;
+
+/** Module-level readline reference for backpressure control */
+let rl: ReturnType<typeof createInterface> | null = null;
+
+/**
+ * Backpressure state for stdout writes.
+ * When stdout buffer is full, we queue writes and pause input.
+ */
+const writeQueue: string[] = [];
+let draining = false;
 
 /** Parsed CLI arguments */
 interface RunnerArgs {
@@ -61,9 +132,7 @@ interface RunnerArgs {
 /**
  * User's trial function signature.
  */
-type UserTrialFunction = (
-  config: TrialConfig
-) => Promise<{
+type UserTrialFunction = (config: TrialConfig) => Promise<{
   metrics: Record<string, unknown>;
   duration?: number;
   metadata?: Record<string, unknown>;
@@ -122,7 +191,7 @@ async function loadTrialFunction(
 
   const fn = module[functionName];
   if (typeof fn !== 'function') {
-    throw new Error(
+    throw new TypeError(
       `Function "${functionName}" not found in module "${modulePath}". ` +
         `Available exports: ${Object.keys(module).join(', ')}`
     );
@@ -132,11 +201,48 @@ async function loadTrialFunction(
 }
 
 /**
- * Send a response to stdout.
+ * Flush the write queue when stdout drains.
+ */
+function flushWriteQueue(): void {
+  while (writeQueue.length > 0) {
+    const next = writeQueue.shift()!;
+    const ok = process.stdout.write(next);
+    if (!ok) {
+      // Still can't write, wait for another drain
+      draining = true;
+      process.stdout.once('drain', flushWriteQueue);
+      return;
+    }
+  }
+  // Queue fully flushed, resume input
+  draining = false;
+  if (rl) {
+    rl.resume();
+  }
+}
+
+/**
+ * Send a response to stdout with backpressure handling.
+ * When stdout buffer is full, queues writes and pauses input.
  */
 function sendResponse(response: CLIResponse): void {
-  const line = serializeResponse(response);
-  process.stdout.write(line + '\n');
+  const line = serializeResponse(response) + '\n';
+
+  // If already draining, just queue
+  if (draining) {
+    writeQueue.push(line);
+    return;
+  }
+
+  const ok = process.stdout.write(line);
+  if (!ok) {
+    // stdout buffer full - enable backpressure
+    draining = true;
+    if (rl) {
+      rl.pause(); // INPUT BACKPRESSURE: Stop reading while we drain
+    }
+    process.stdout.once('drain', flushWriteQueue);
+  }
 }
 
 /**
@@ -146,11 +252,34 @@ function log(message: string): void {
   console.error(`[traigent-js] ${message}`);
 }
 
-/** Default timeout for trial execution (5 minutes) */
-const DEFAULT_TIMEOUT_MS = 300_000;
+/**
+ * Calculate normalized duration in seconds.
+ * Supports duration_ms for migration from old code.
+ */
+function calculateNormalizedDuration(
+  durationMs: number | undefined,
+  durationSec: number | undefined,
+  fallbackDuration: number,
+  warnings: string[]
+): number {
+  if (durationMs !== undefined) {
+    return durationMs / 1000;
+  }
+  if (durationSec !== undefined) {
+    // Warn if it looks suspicious (> 1 hour suggests possible unit confusion)
+    if (durationSec > 3600) {
+      warnings.push(
+        `Duration ${durationSec}s seems very long - ensure it's in seconds, not milliseconds`
+      );
+    }
+    return durationSec;
+  }
+  return fallbackDuration;
+}
 
 /**
  * Handle a run_trial request.
+ * Uses a lock to prevent race conditions when multiple requests arrive simultaneously.
  */
 async function handleRunTrial(
   request: CLIRequest,
@@ -158,73 +287,121 @@ async function handleRunTrial(
 ): Promise<CLIResponse> {
   const trialStartTime = Date.now();
 
+  // Acquire lock to prevent race condition
+  const unlock = await acquireTrialLock();
+
+  // CRITICAL: Check busy state AFTER acquiring lock, set flag BEFORE any async work
+  if (currentTrialId !== null) {
+    unlock();
+    log(`Trial already running: ${currentTrialId}`);
+    return createErrorResponse(
+      request.request_id,
+      new BusyError('Trial already running', currentTrialId),
+      { errorCode: 'BUSY', retryable: true }
+    );
+  }
+
   // Validate payload FIRST with proper error code (not USER_FUNCTION_ERROR)
   const parseResult = TrialConfigSchema.safeParse(request.payload);
   if (!parseResult.success) {
+    unlock();
     const errorMessage = `Invalid trial config: ${parseResult.error.message}`;
     log(`Validation error: ${errorMessage}`);
 
-    const trialId =
-      (request.payload as { trial_id?: string } | undefined)?.trial_id ??
-      'unknown';
+    const trialId = (request.payload as { trial_id?: string } | undefined)?.trial_id ?? 'unknown';
 
-    const payload = createFailureResult(
-      trialId,
-      errorMessage,
-      'VALIDATION_ERROR',
-      false,
-      0
-    );
+    // Include structured error details (truncate values, keep path + message only)
+    const issues = parseResult.error.issues.slice(0, 10).map((issue) => ({
+      path: issue.path.join('.'),
+      message: issue.message,
+      code: issue.code,
+    }));
+    const payload = createFailureResult(trialId, errorMessage, 'VALIDATION_ERROR', false, 0);
+    // Add error details to metadata
+    (payload as { metadata?: Record<string, unknown> }).metadata = {
+      error_details: {
+        issues,
+        summary: parseResult.error.message,
+        truncated: parseResult.error.issues.length > 10,
+        total_issues: parseResult.error.issues.length,
+      },
+    };
 
     return createSuccessResponse(request.request_id, payload);
   }
 
   const config = parseResult.data;
   const timeoutMs =
-    (request.payload as { timeout_ms?: number } | undefined)?.timeout_ms ??
-    DEFAULT_TIMEOUT_MS;
+    (request.payload as { timeout_ms?: number } | undefined)?.timeout_ms ?? DEFAULT_TIMEOUT_MS;
 
-  // Set up cancellation support
+  // Set trial ID IMMEDIATELY after validation, before any async work
   currentTrialId = config.trial_id;
   currentTrialAbortController = new AbortController();
   const abortSignal = currentTrialAbortController.signal;
 
   log(`Running trial ${config.trial_id} (trial #${config.trial_number}, timeout: ${timeoutMs}ms)`);
 
+  // Track warnings for the response
+  const warnings: string[] = [];
+
+  // Abort handler for cleanup
+  let abortReject: ((error: Error) => void) | null = null;
+  const abortHandler = () => {
+    if (abortReject) abortReject(new CancelledError('Trial cancelled'));
+  };
+
   try {
     // Execute trial within context with timeout and cancellation support
-    const trialPromise = TrialContext.run(config, async () => {
-      return await trialFn(config);
-    }, abortSignal);
+    const trialPromise = TrialContext.run(
+      config,
+      async () => {
+        return await trialFn(config);
+      },
+      abortSignal
+    );
 
+    // Create timeout promise with proper cleanup
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Trial timeout after ${timeoutMs}ms`)), timeoutMs);
+      currentTimeoutId = setTimeout(() => {
+        reject(new TimeoutError('Trial timeout', timeoutMs));
+      }, timeoutMs);
     });
 
+    // Create abort promise - store reject for cleanup
     const abortPromise = new Promise<never>((_, reject) => {
-      abortSignal.addEventListener('abort', () => {
-        reject(new Error('Trial cancelled'));
-      });
+      abortReject = reject;
+      abortSignal.addEventListener('abort', abortHandler, { once: true });
     });
 
     const result = await Promise.race([trialPromise, timeoutPromise, abortPromise]);
 
     const duration = (Date.now() - trialStartTime) / 1000;
 
-    // Sanitize metrics
-    const metrics = sanitizeMeasures(result.metrics, {
+    // Guard metrics type before sanitizing
+    let rawMetrics: Record<string, unknown> = result.metrics;
+    if (rawMetrics === null || rawMetrics === undefined || typeof rawMetrics !== 'object') {
+      warnings.push(`Invalid metrics type: ${typeof rawMetrics}, coerced to {}`);
+      rawMetrics = {};
+    }
+
+    // Sanitize metrics and collect warnings
+    const metrics = sanitizeMeasures(rawMetrics, {
       strict: false,
-      warn: (msg) => log(`Warning: ${msg}`),
+      warn: (msg) => {
+        warnings.push(msg);
+        log(`Warning: ${msg}`);
+      },
     });
 
-    // Normalize duration: if user provides value > 1000, assume milliseconds and convert
-    const userDuration = result.duration;
-    const normalizedDuration =
-      userDuration !== undefined
-        ? userDuration > 1000
-          ? userDuration / 1000
-          : userDuration
-        : duration;
+    // Use user-provided duration if available (must be in seconds)
+    // Support duration_ms for migration from old code
+    const resultWithDurationMs = result as { duration_ms?: number };
+    const normalizedDuration = calculateNormalizedDuration(
+      resultWithDurationMs.duration_ms,
+      result.duration,
+      duration,
+      warnings
+    );
 
     // Create success result with metadata if provided
     const payload = createSuccessResult(
@@ -234,22 +411,31 @@ async function handleRunTrial(
       result.metadata
     );
 
+    // Add warnings if any
+    if (warnings.length > 0) {
+      (payload as { warnings?: string[]; metrics_sanitized?: boolean }).warnings = warnings;
+      (payload as { warnings?: string[]; metrics_sanitized?: boolean }).metrics_sanitized = true;
+    }
+
     log(`Trial ${config.trial_id} completed in ${duration.toFixed(2)}s`);
 
     return createSuccessResponse(request.request_id, payload);
   } catch (error) {
     const duration = (Date.now() - trialStartTime) / 1000;
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const isTimeout = errorMessage.includes('Trial timeout');
-    const isCancelled = errorMessage.includes('Trial cancelled') || abortSignal.aborted;
+
+    // Use typed error classification instead of string matching
+    const errorCode = isTraigentError(error) ? getErrorCode(error) : 'USER_FUNCTION_ERROR';
+    const retryable = isTraigentError(error) ? isRetryable(error) : false;
+    const isCancelled = error instanceof CancelledError || abortSignal.aborted;
 
     log(`Trial failed: ${errorMessage}`);
 
     const payload = createFailureResult(
       config.trial_id,
       errorMessage,
-      isCancelled ? 'CANCELLED' : isTimeout ? 'TIMEOUT' : 'USER_FUNCTION_ERROR',
-      isTimeout, // Timeouts are retryable, cancellations are not
+      errorCode,
+      retryable,
       duration
     );
 
@@ -260,9 +446,20 @@ async function handleRunTrial(
 
     return createSuccessResponse(request.request_id, payload);
   } finally {
+    // Clean up abort listener (even with { once: true }, remove for older Node versions)
+    abortSignal.removeEventListener('abort', abortHandler);
+
+    // Clean up timeout
+    if (currentTimeoutId !== undefined) {
+      clearTimeout(currentTimeoutId);
+      currentTimeoutId = undefined;
+    }
     // Clear trial state
     currentTrialId = null;
     currentTrialAbortController = null;
+
+    // Release lock
+    unlock();
   }
 }
 
@@ -299,7 +496,9 @@ function handleCancel(request: CLIRequest): CLIResponse {
 
   // If a specific trial ID is requested, check if it matches current
   if (requestedTrialId && currentTrialId !== requestedTrialId) {
-    log(`Cancel requested for trial ${requestedTrialId} but current trial is ${currentTrialId ?? 'none'}`);
+    log(
+      `Cancel requested for trial ${requestedTrialId} but current trial is ${currentTrialId ?? 'none'}`
+    );
     return createSuccessResponse(request.request_id, {
       cancelled: false,
       reason: 'trial_not_found',
@@ -325,12 +524,124 @@ function handleCancel(request: CLIRequest): CLIResponse {
 }
 
 /**
- * Process a single request.
+ * Handle a capabilities request.
+ * Returns supported features and limits for protocol negotiation.
  */
-async function processRequest(
-  line: string,
-  trialFn: UserTrialFunction
-): Promise<void> {
+function handleCapabilities(request: CLIRequest): CLIResponse {
+  return createSuccessResponse(request.request_id, {
+    protocol_version: PROTOCOL_VERSION,
+    min_protocol_version: MIN_PROTOCOL_VERSION,
+    capabilities: [...SUPPORTED_CAPABILITIES],
+    supported_actions: ActionSchema.options,
+    // Advertise limits to prevent guesswork
+    limits: {
+      max_line_bytes: MAX_PAYLOAD_SIZE,
+      max_inline_rows: MAX_INLINE_ROWS,
+      max_inline_bytes: MAX_INLINE_BYTES,
+      max_json_depth: MAX_JSON_DEPTH,
+    },
+  });
+}
+
+/**
+ * Handle a validate_config request.
+ * Performs configuration validation without running a trial.
+ * Supports optional JSON Schema Draft 7 validation when config_schema is provided.
+ */
+function handleValidateConfig(request: CLIRequest): CLIResponse {
+  const payload = request.payload as
+    | {
+        config?: Record<string, unknown>;
+        config_schema?: Record<string, unknown>;
+      }
+    | undefined;
+
+  if (!payload?.config) {
+    return createSuccessResponse(request.request_id, {
+      ok: false,
+      issues: [{ message: 'Missing required field: config' }],
+      summary: 'Missing required field: config',
+    });
+  }
+
+  return createSuccessResponse(
+    request.request_id,
+    validateConfigPayload(payload.config, payload.config_schema)
+  );
+}
+
+/**
+ * Reset idle timeout timer.
+ * Called after each request is processed.
+ */
+function resetIdleTimer(): void {
+  if (idleTimeoutId !== undefined) {
+    clearTimeout(idleTimeoutId);
+  }
+  // Only set idle timeout if no trial is running
+  if (currentTrialId === null) {
+    idleTimeoutId = setTimeout(() => {
+      log('Idle timeout - no requests received, exiting');
+      process.exit(0);
+    }, IDLE_TIMEOUT_MS);
+  }
+}
+
+/**
+ * Start parent PID watcher.
+ * Exits if parent process dies (orphan detection).
+ * Configurable via TRAIGENT_PARENT_PID env var for container environments.
+ */
+function startParentPidWatcher(): void {
+  // Allow override for container environments where ppid is a supervisor
+  const envPid = process.env['TRAIGENT_PARENT_PID'];
+  const parentPid = envPid ? Number.parseInt(envPid, 10) : process.ppid;
+
+  if (parentPid === undefined || parentPid <= 1 || Number.isNaN(parentPid)) {
+    log('No valid parent PID, skipping orphan detection');
+    return;
+  }
+
+  log(`Watching parent PID ${parentPid} for orphan detection`);
+
+  parentPidIntervalId = setInterval(() => {
+    try {
+      // Signal 0 doesn't kill the process, just checks if it exists
+      process.kill(parentPid, 0);
+    } catch {
+      log(`Parent process ${parentPid} died, exiting`);
+      // Clean up before exit
+      if (currentTrialAbortController) {
+        currentTrialAbortController.abort();
+      }
+      process.exit(0);
+    }
+  }, PARENT_PID_CHECK_INTERVAL_MS);
+
+  // Don't let this interval keep the process alive
+  parentPidIntervalId.unref();
+}
+
+/**
+ * Process a single request.
+ * Handles payload size guard and dispatches to appropriate handler.
+ */
+async function processRequest(line: string, trialFn: UserTrialFunction): Promise<void> {
+  // Payload size guard - use Buffer.byteLength for accurate UTF-8 byte count
+  // (line.length undercounts multi-byte characters)
+  const lineBytes = Buffer.byteLength(line, 'utf8');
+  if (lineBytes > MAX_PAYLOAD_SIZE) {
+    log(`Payload too large: ${lineBytes} bytes (max: ${MAX_PAYLOAD_SIZE})`);
+    // Use 'unknown' request_id - don't parse to get it (defeats protection)
+    const response = createErrorResponse(
+      'unknown',
+      `Payload too large: ${lineBytes} bytes exceeds ${MAX_PAYLOAD_SIZE} byte limit`,
+      { errorCode: 'PAYLOAD_TOO_LARGE', retryable: false }
+    );
+    sendResponse(response);
+    return;
+  }
+
   let requestId = 'unknown';
 
   try {
@@ -352,8 +663,17 @@ async function processRequest(
       case 'cancel':
         response = handleCancel(request);
         break;
+      case 'capabilities':
+        response = handleCapabilities(request);
+        break;
+      case 'validate_config':
+        response = handleValidateConfig(request);
+        break;
       default:
-        response = createErrorResponse(requestId, `Unknown action: ${request.action}`);
+        response = createErrorResponse(requestId, `Unknown action: ${request.action}`, {
+          errorCode: 'UNSUPPORTED_ACTION',
+          retryable: false,
+        });
     }
 
     sendResponse(response);
@@ -386,23 +706,73 @@ async function main(): Promise<void> {
   log(`Starting Traigent JS Runner v${PROTOCOL_VERSION}`);
   log(`Loading module: ${args.module}`);
 
-  const trialFn = await loadTrialFunction(args.module, args.function ?? 'runTrial');
+  // Load user module with proper error reporting via NDJSON
+  let trialFn: UserTrialFunction;
+  try {
+    trialFn = await loadTrialFunction(args.module, args.function ?? 'runTrial');
+  } catch (error) {
+    // MUST emit NDJSON error before exit so Python gets protocol response
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`Module load failed: ${errorMessage}`);
+    const response = createErrorResponse(
+      'init', // Explicit request_id for initialization errors
+      `Module load failed: ${errorMessage}`,
+      { errorCode: 'MODULE_LOAD_ERROR', retryable: false }
+    );
+    sendResponse(response);
+    process.exit(1);
+  }
   log(`Loaded function: ${args.function ?? 'runTrial'}`);
+
+  // Start orphan detection (exit if parent dies)
+  startParentPidWatcher();
+
+  // Start idle timeout
+  resetIdleTimer();
+
   log('Ready to receive requests');
 
-  // Read NDJSON from stdin
-  const rl = createInterface({
+  // Read NDJSON from stdin using event-based approach
+  // CRITICAL: This allows cancel/ping to be processed while a trial is running
+  // The old for-await approach blocked, preventing concurrent request handling
+  // Assign to module-level variable for backpressure control
+  rl = createInterface({
     input: process.stdin,
     crlfDelay: Infinity,
   });
 
-  for await (const line of rl) {
+  rl.on('line', (line: string) => {
     if (line.trim()) {
-      await processRequest(line, trialFn);
+      // Process request without awaiting - allows concurrent handling
+      // run_trial is still sequential (BUSY check), but cancel/ping can interrupt
+      processRequest(line, trialFn)
+        .then(() => {
+          // Only reset idle timer on successful processing
+          // This prevents malformed requests from keeping process alive indefinitely
+          resetIdleTimer();
+        })
+        .catch((err) => {
+          log(`Request processing error: ${err instanceof Error ? err.message : String(err)}`);
+          // Still send a response on errors (processRequest already does this)
+        });
     }
-  }
+  });
 
-  log('Stdin closed, exiting');
+  rl.on('close', () => {
+    log('Stdin closed, exiting');
+    // Clean up
+    if (idleTimeoutId !== undefined) {
+      clearTimeout(idleTimeoutId);
+    }
+    if (parentPidIntervalId !== undefined) {
+      clearInterval(parentPidIntervalId);
+    }
+    process.exit(0);
+  });
+
+  rl.on('error', (err) => {
+    log(`Readline error: ${err.message}`);
+  });
 }
 
 // Run main with top-level await

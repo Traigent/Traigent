@@ -4,6 +4,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     'cli/runner': 'src/cli/runner.ts',
+    'cli/index': 'src/cli/index.ts',
   },
   format: ['esm'],
   dts: false,

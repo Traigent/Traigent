@@ -20,7 +20,7 @@
  */
 import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type { Serialized } from '@langchain/core/load/serializable';
-import type { LLMResult, ChatGeneration, Generation } from '@langchain/core/outputs';
+import type { LLMResult } from '@langchain/core/outputs';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { MeasuresDict } from '../../dtos/measures.js';
 import { prefixMeasures } from '../../dtos/measures.js';
@@ -72,15 +72,15 @@ export interface TraigentHandlerMetrics {
  * [inputCostPer1M, outputCostPer1M]
  */
 const MODEL_COSTS: Record<string, [number, number]> = {
-  'gpt-4o': [2.5, 10.0],
+  'gpt-4o': [2.5, 10],
   'gpt-4o-mini': [0.15, 0.6],
-  'gpt-4-turbo': [10.0, 30.0],
-  'gpt-4': [30.0, 60.0],
+  'gpt-4-turbo': [10, 30],
+  'gpt-4': [30, 60],
   'gpt-3.5-turbo': [0.5, 1.5],
-  'claude-3-opus': [15.0, 75.0],
-  'claude-3-sonnet': [3.0, 15.0],
+  'claude-3-opus': [15, 75],
+  'claude-3-sonnet': [3, 15],
   'claude-3-haiku': [0.25, 1.25],
-  'claude-3-5-sonnet': [3.0, 15.0],
+  'claude-3-5-sonnet': [3, 15],
 };
 
 /**
@@ -111,7 +111,7 @@ function estimateCost(
   }
 
   // Default fallback cost
-  return (inputTokens * 1.0 + outputTokens * 3.0) / 1_000_000;
+  return (inputTokens * 1 + outputTokens * 3) / 1_000_000;
 }
 
 /**
@@ -123,9 +123,9 @@ function estimateCost(
 export class TraigentHandler implements Partial<BaseCallbackHandler> {
   readonly name = 'TraigentHandler';
 
-  private startTimes: Map<string, number> = new Map();
+  private readonly startTimes: Map<string, number> = new Map();
   private calls: LLMCallMetrics[] = [];
-  private metricPrefix: string;
+  private readonly metricPrefix: string;
 
   /**
    * Create a new TraigentHandler.

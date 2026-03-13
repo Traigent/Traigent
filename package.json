@@ -23,16 +23,24 @@
       "types": "./dist/integrations/openai/index.d.ts",
       "import": "./dist/integrations/openai/index.js",
       "require": "./dist/integrations/openai/index.cjs"
+    },
+    "./babel-plugin-seamless": {
+      "import": "./dist/seamless/babel-plugin.js",
+      "require": "./dist/seamless/babel-plugin.cjs"
     }
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "traigent-js": "./dist/cli/runner.js"
+    "traigent-js": "./dist/cli/runner.js",
+    "traigent": "./dist/cli/index.js"
   },
   "files": [
     "dist",
+    "docs",
+    "examples",
+    "walkthrough",
     "README.md",
     "LICENSE"
   ],
@@ -41,21 +49,45 @@
     "build:sdk": "tsup",
     "build:cli": "tsup --config tsup.cli.config.ts",
     "dev": "tsup --watch",
+    "smoke:example": "npm run build:sdk && node examples/native-optimization.mjs",
+    "smoke:examples": "npm run build:sdk && bash examples/test_all_examples.sh",
+    "smoke:walkthrough": "npm run build:sdk && bash walkthrough/test_all_examples.sh",
     "test": "vitest run",
+    "test:cross-sdk": "vitest run tests/cross-sdk/**/*.test.ts",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",
+    "lint:fix": "eslint src tests --ext .ts --fix",
+    "format": "prettier --write \"**/*.{js,cjs,mjs,ts,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{js,cjs,mjs,ts,json,md,yml,yaml}\"",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "test:package-smoke": "vitest run tests/integration/package-smoke.test.ts",
+    "test:ci": "npm run lint && npm run typecheck && npm run test:coverage && npm run build",
+    "smoke:codemod": "npm run build && node dist/cli/index.js migrate seamless examples/adoption/seamless/codemod-target.mjs",
+    "benchmark:cross-sdk": "npm run build:sdk && node scripts/run-cross-sdk-benchmark.mjs",
+    "sonar": "npx sonar-scanner -Dsonar.token=$SONAR_LOCAL_TOKEN",
+    "prepublishOnly": "npm run build",
+    "prepare": "husky"
   },
   "dependencies": {
+    "@babel/generator": "^7.28.5",
+    "@babel/parser": "^7.28.5",
+    "@babel/traverse": "^7.28.5",
+    "@babel/types": "^7.28.5",
+    "ajv": "^8.18.0",
+    "yaml": "^2.8.2",
     "zod": "^3.22.0"
   },
   "peerDependencies": {
+    "@babel/core": ">=7.0.0",
     "@langchain/core": ">=0.1.0",
     "ai": ">=3.0.0",
     "openai": ">=4.0.0"
   },
   "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
     "@langchain/core": {
       "optional": true
     },
@@ -67,11 +99,20 @@
     }
   },
   "devDependencies": {
+    "@babel/core": "^7.28.5",
     "@langchain/core": "^0.2.0",
     "@langchain/openai": "^0.2.0",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__generator": "^7.27.0",
+    "@types/babel__traverse": "^7.28.0",
     "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "ai": "^3.0.0",
     "eslint": "^8.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
     "openai": "^4.0.0",
     "prettier": "^3.0.0",
     "tsup": "^8.0.0",

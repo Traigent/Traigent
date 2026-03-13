@@ -18,3 +18,4 @@ export {
   type LLMCallMetrics,
   type TraigentHandlerMetrics,
 } from './handler.js';
+export { withTraigentModel } from './model.js';

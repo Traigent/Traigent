@@ -44,15 +44,32 @@ export {
   optimize,
   param,
   getOptimizationSpec,
+  getNativeTvlCompatibilityReport,
   toHybridConfigSpace,
+  loadTvlSpec,
+  parseTvlSpec,
 } from './optimization/index.js';
 
 export type {
+  AggregationStrategy,
   BuiltInObjectiveName,
   EvaluationSpec,
+  EvaluationAggregationMap,
+  EvaluationContext,
+  EvaluationMetricFunction,
+  EvaluationScoringFunction,
+  ExecutionContract,
+  ExecutionMode,
+  ExecutionSpec,
   FloatParamDefinition,
+  FrameworkTarget,
+  NativeTvlCompatibilityItem,
+  NativeTvlCompatibilityReport,
+  NativeTvlSupportStatus,
   HybridConfigSpace,
   HybridTunableDefinition,
+  InjectionMode,
+  InjectionSpec,
   IntParamDefinition,
   NativeOptimizedFunction,
   NativeOptimizeOptions,
@@ -66,7 +83,28 @@ export type {
   OptimizationTrialRecord,
   ParameterDefinition,
   ParamScale,
+  PromotionChanceConstraintResult,
+  PromotionDecision,
+  PromotionObjectiveResult,
+  SeamlessResolution,
+  TvlLoadOptions,
+  TvlPromotionPolicy,
+  TvlSpecArtifact,
 } from './optimization/index.js';
+
+export {
+  autoWrapFrameworkTarget,
+  autoWrapFrameworkTargets,
+  discoverFrameworkTargets,
+  prepareFrameworkTargets,
+} from './integrations/auto-wrap.js';
+export {
+  getRegisteredFrameworkTargets,
+  describeFrameworkAutoOverride,
+} from './integrations/registry.js';
+export { createTraigentOpenAI } from './integrations/openai/index.js';
+export { withTraigentModel } from './integrations/langchain/index.js';
+export { withTraigent } from './integrations/vercel-ai/index.js';
 
 // DTO exports
 export {
@@ -104,3 +142,23 @@ export type {
 
 // Protocol exports (for advanced usage)
 export { PROTOCOL_VERSION } from './cli/protocol.js';
+
+export {
+  discoverTunedVariables,
+  discoverTunedVariablesFromSource,
+  discoverTunedVariablesFromFile,
+} from './tuned-variables/index.js';
+
+export type {
+  DiscoverTunedVariablesOptions,
+  DiscoveredTunedVariable,
+  TunedVariableConfidence,
+  TunedVariableDiscoveryResult,
+  TunedVariableValueKind,
+} from './tuned-variables/index.js';
+
+export type {
+  DiscoveredFrameworkTarget,
+  PreparedFrameworkTargets,
+  PrepareFrameworkTargetsOptions,
+} from './integrations/auto-wrap.js';

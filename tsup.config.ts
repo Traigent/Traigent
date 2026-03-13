@@ -7,6 +7,7 @@ export default defineConfig({
     'integrations/langchain/index': 'src/integrations/langchain/index.ts',
     'integrations/vercel-ai/index': 'src/integrations/vercel-ai/index.ts',
     'integrations/openai/index': 'src/integrations/openai/index.ts',
+    'seamless/babel-plugin': 'src/seamless/babel-plugin.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

@@ -1,10 +1,14 @@
 /**
- * MeasuresDict validation - mirrors Python SDK's traigent/cloud/dtos.py MeasuresDict.
+ * MeasuresDict validation for metric-value maps.
  *
- * Enforces:
- * - Max 50 keys (prevent unbounded memory)
+ * This aligns with the canonical TraigentSchema value contracts used in
+ * execution/metric_submission_schema.json and
+ * evaluation/configuration_run_schema.json:
+ * - Max 50 keys
  * - Python identifier keys (^[a-zA-Z_][a-zA-Z0-9_]*$)
- * - Numeric values only (number or null)
+ * - Finite numeric values only (number or null)
+ *
+ * It does not model measure catalog definitions from measures/measure_schema.json.
  */
 import { z } from 'zod';
 
@@ -12,7 +16,7 @@ import { z } from 'zod';
 export const MAX_MEASURES_KEYS = 50;
 
 /** Pattern for valid measure keys (Python identifiers) */
-export const MEASURE_KEY_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+export const MEASURE_KEY_PATTERN = /^[a-zA-Z_]\w*$/;
 
 /**
  * Zod schema for a single measure key.
@@ -24,7 +28,7 @@ export const MeasureKeySchema = z.string().regex(MEASURE_KEY_PATTERN, {
 /**
  * Zod schema for a single measure value.
  */
-export const MeasureValueSchema = z.number().nullable();
+export const MeasureValueSchema = z.number().finite().nullable();
 
 /**
  * Zod schema for MeasuresDict with all validations.
@@ -36,6 +40,27 @@ export const MeasuresDictSchema = z
   });
 
 export type MeasuresDict = z.infer<typeof MeasuresDictSchema>;
+
+/**
+ * Handle validation error based on strict mode.
+ */
+function handleValidationError(
+  msg: string,
+  strict: boolean,
+  warn: (msg: string) => void
+): void {
+  if (strict) {
+    throw new Error(msg);
+  }
+  warn(msg);
+}
+
+/**
+ * Check if a value is a valid measure value (number or null).
+ */
+function isValidMeasureValue(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isFinite(value));
+}
 
 /**
  * Validate and sanitize a measures dictionary.
@@ -50,38 +75,33 @@ export function sanitizeMeasures(
   const keys = Object.keys(input);
 
   if (keys.length > MAX_MEASURES_KEYS) {
-    const msg = `MeasuresDict has ${keys.length} keys, truncating to ${MAX_MEASURES_KEYS}`;
-    if (strict) {
-      throw new Error(msg);
-    }
-    warn(msg);
+    handleValidationError(
+      `MeasuresDict has ${keys.length} keys, truncating to ${MAX_MEASURES_KEYS}`,
+      strict,
+      warn
+    );
   }
 
   for (const key of keys.slice(0, MAX_MEASURES_KEYS)) {
-    // Validate key pattern
     if (!MEASURE_KEY_PATTERN.test(key)) {
-      const msg = `Invalid measure key "${key}" - must be a valid Python identifier`;
-      if (strict) {
-        throw new Error(msg);
-      }
-      warn(msg);
+      handleValidationError(
+        `Invalid measure key "${key}" - must be a valid Python identifier`,
+        strict,
+        warn
+      );
       continue;
     }
 
     const value = input[key];
 
-    // Validate value is numeric
-    if (value === null) {
-      result[key] = null;
-    } else if (typeof value === 'number' && !Number.isNaN(value)) {
+    if (isValidMeasureValue(value)) {
       result[key] = value;
     } else {
-      const msg = `Non-numeric measure value for "${key}": ${typeof value} - use metadata for non-numeric values`;
-      if (strict) {
-        throw new Error(msg);
-      }
-      warn(msg);
-      // Skip non-numeric values
+      handleValidationError(
+        `Non-numeric measure value for "${key}": ${typeof value} - use metadata for non-numeric values`,
+        strict,
+        warn
+      );
     }
   }
 

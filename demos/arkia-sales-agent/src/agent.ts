@@ -458,6 +458,9 @@ export async function runSalesAgent(
   let successCount = 0;
   let failedCount = 0;
 
+  // The SDK chooses which configuration to try. This loop is still the
+  // application-level evaluation step for the chosen config over the dataset
+  // subset that Traigent attached to the trial.
   for (let i = 0; i < examples.length; i++) {
     const example = examples[i];
 

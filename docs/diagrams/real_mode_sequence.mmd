@@ -1,0 +1,141 @@
+%% Legacy/orchestrated reference only.
+%% This diagram documents the Python-to-Node bridge flow, not the current
+%% recommended JS-native optimize() or hybrid spec-authoring surface.
+%% Render with: https://mermaid.live or VSCode Mermaid extension
+
+sequenceDiagram
+    autonumber
+    participant User as 👤 User Script<br/>(run_with_python.py)
+    participant Dec as 🎯 @traigent.optimize<br/>(decorators.py)
+    participant OF as 📦 OptimizedFunction<br/>(optimized_function.py)
+    participant Orch as 🎼 Orchestrator<br/>(orchestrator.py)
+    participant Opt as 🔮 Optimizer<br/>(random.py)
+    participant Eval as 📊 JSEvaluator<br/>(js_evaluator.py)
+    participant Pool as 🏊 JSProcessPool<br/>(process_pool.py)
+    participant Bridge as 🌉 JSBridge<br/>(js_bridge.py)
+    participant Runner as 🏃 CLI Runner<br/>(runner.ts)
+    participant Trial as 🧪 runTrial()<br/>(trial.ts)
+    participant Agent as 🤖 Agent<br/>(agent.ts)
+    participant LLM as ☁️ LLM API<br/>(Groq/OpenAI)
+    participant BE as 💾 Backend<br/>(localhost:5000)
+
+    rect rgb(240, 248, 255)
+        Note over User,Dec: Phase 1: Initialization
+        User->>Dec: @traigent.optimize(execution={runtime:"node"})
+        Dec->>OF: new OptimizedFunction(func, config_space, objectives)
+    end
+
+    rect rgb(255, 248, 240)
+        Note over User,Orch: Phase 2: Optimization Setup
+        User->>OF: await optimize()
+        OF->>Opt: get_optimizer("random", max_trials=24)
+        OF->>Pool: new JSProcessPool(max_workers=4)
+        OF->>Eval: new JSEvaluator(process_pool)
+        OF->>Orch: new OptimizationOrchestrator(optimizer, evaluator)
+    end
+
+    rect rgb(240, 255, 240)
+        Note over Pool,Runner: Phase 3: Worker Startup (x4)
+        Pool->>Bridge: new JSBridge(config) [x4]
+
+        loop For each worker (parallel)
+            Bridge->>Runner: subprocess("npx traigent-js --module trial.js")
+            activate Runner
+            Runner->>Runner: loadTrialFunction()
+            Runner->>Runner: startParentPidWatcher()
+            Runner->>Runner: rl = createInterface(stdin)
+            Bridge-->>Runner: {"action":"ping"} (NDJSON)
+            Runner-->>Bridge: {"status":"success","uptime_ms":...}
+            Note right of Runner: Ready to receive trials
+        end
+    end
+
+    rect rgb(255, 240, 255)
+        Note over Orch,BE: Phase 4: Trial Loop
+
+        loop While not should_stop (max_trials, timeout, plateau)
+            Orch->>Opt: suggest()
+            Opt-->>Orch: config = {model, temperature, ...}
+
+            Orch->>Eval: evaluate(func, config, dataset)
+            Eval->>Eval: trial_config = {trial_id, config, dataset_subset}
+            Eval->>Pool: run_trial(trial_config)
+
+            Pool->>Bridge: acquire() → worker
+            activate Bridge
+
+            Bridge->>Runner: {"action":"run_trial","payload":{...}} (stdin)
+            activate Runner
+
+            rect rgb(230, 230, 250)
+                Note over Runner,Agent: Phase 5: JS Trial Execution
+                Runner->>Runner: parseRequest() [Zod validation]
+                Runner->>Runner: acquireTrialLock()
+                Runner->>Runner: currentTrialId = trial_id
+
+                Runner->>Trial: TrialContext.run(config, trialFn)
+                activate Trial
+
+                Trial->>Trial: agentConfig = extractConfig(trialConfig)
+                Trial->>Trial: examples = getDatasetSubset(indices)
+
+                Trial->>Agent: runSalesAgent(examples, agentConfig)
+                activate Agent
+
+                alt REAL_MODE = true
+                    loop For each example
+                        Agent->>LLM: POST /chat/completions
+                        LLM-->>Agent: {content, usage: {tokens, cost}}
+                        Agent->>Agent: evaluateResponse()
+                    end
+                else Mock Mode
+                    Agent->>Agent: simulateMetrics()
+                end
+
+                Agent-->>Trial: {metrics, tokens, cost, latency}
+                deactivate Agent
+
+                Trial-->>Runner: {metrics, duration, metadata}
+                deactivate Trial
+
+                Runner->>Runner: sanitizeMeasures(metrics)
+                Runner->>Runner: createSuccessResult()
+            end
+
+            Runner-->>Bridge: {"status":"success","payload":{metrics}} (stdout)
+            deactivate Runner
+
+            Bridge->>Bridge: _parse_trial_response()
+            Pool->>Bridge: release(worker)
+            deactivate Bridge
+
+            Eval->>Eval: _convert_js_result() → EvaluationResult
+            Eval-->>Orch: EvaluationResult
+
+            Orch->>Opt: report(config, metrics)
+            Orch->>Orch: _update_best(config, result)
+
+            opt Backend Connected
+                Orch->>BE: POST /configuration-runs
+                BE-->>Orch: 201 Created
+            end
+
+            Note over Orch: Progress: trial N/24, best_score: X.XX
+        end
+    end
+
+    rect rgb(255, 245, 238)
+        Note over OF,Runner: Phase 6: Shutdown
+        Orch-->>OF: OptimizationResult(best_config, best_metrics)
+        OF->>Pool: shutdown()
+
+        loop For each worker
+            Pool->>Bridge: stop()
+            Bridge->>Runner: {"action":"shutdown"}
+            Runner->>Runner: process.exit(0)
+            deactivate Runner
+        end
+
+        OF-->>User: OptimizationResult
+        Note over User: 🎉 Optimization Complete!
+    end

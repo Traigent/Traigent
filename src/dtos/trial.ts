@@ -1,19 +1,38 @@
 /**
- * Trial DTOs with Zod validation schemas.
- * These mirror the Python SDK's traigent/cloud/dtos.py structures.
+ * Trial/runtime DTOs with Zod validation schemas.
+ *
+ * These match the JS/Python SDK bridge/runtime contract and align where
+ * possible with canonical TraigentSchema value constraints (for example the
+ * metric-value dictionary rules), but TrialConfig and TrialResultPayload are
+ * SDK runtime transport objects rather than 1:1 copies of persisted platform
+ * schemas such as configuration_run or hybrid_session.
  */
 import { z } from 'zod';
 
+/** Maximum inline rows allowed (to prevent memory issues) */
+export const MAX_INLINE_ROWS = 100;
+
+/** Maximum inline payload size (1MB) */
+export const MAX_INLINE_PAYLOAD_SIZE = 1024 * 1024;
+
 /**
- * Dataset subset information for indices-only data passing.
+ * Dataset subset information.
+ *
+ * Supports two modes:
+ * 1. Indices mode: Pass indices to select from locally-loaded dataset
+ * 2. Inline mode: Pass data rows directly (for small datasets or single queries)
  */
 export const DatasetSubsetSchema = z.object({
-  /** Indices of examples to evaluate in this trial */
+  /** Indices of examples to evaluate in this trial (indices mode) */
   indices: z.array(z.number().int().nonnegative()),
   /** Total number of examples in the full dataset */
   total: z.number().int().positive(),
   /** Optional hash for reproducibility verification */
   hash: z.string().optional(),
+  /** Inline data rows for direct data passing (v1.1) - max 100 rows */
+  inline_rows: z.array(z.record(z.string(), z.unknown()))
+    .max(MAX_INLINE_ROWS)
+    .optional(),
 });
 
 export type DatasetSubset = z.infer<typeof DatasetSubsetSchema>;
@@ -54,6 +73,7 @@ export type TrialStatus = z.infer<typeof TrialStatusSchema>;
 
 /**
  * Structured error codes for retry logic.
+ * IMPORTANT: All error codes MUST be in this enum - no ad-hoc strings allowed.
  */
 export const ErrorCodeSchema = z.enum([
   'TIMEOUT',
@@ -64,6 +84,13 @@ export const ErrorCodeSchema = z.enum([
   'INTERNAL_ERROR',
   'USER_FUNCTION_ERROR',
   'CANCELLED',
+  // New error codes (v1.1)
+  'BUSY',               // Trial already running
+  'DATASET_MISMATCH',   // Hash verification failed
+  'UNSUPPORTED_ACTION', // Unknown protocol action
+  'PAYLOAD_TOO_LARGE',  // Request exceeds size limit
+  'MODULE_LOAD_ERROR',  // User module failed to load
+  'PROTOCOL_ERROR',     // NDJSON parse or protocol error
 ]);
 
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -73,10 +100,10 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
  * Keys must match: ^[a-zA-Z_][a-zA-Z0-9_]*$
  */
 export const MetricsSchema = z.record(
-  z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, {
+  z.string().regex(/^[a-zA-Z_]\w*$/, {
     message: 'Metric keys must be valid Python identifiers',
   }),
-  z.number().nullable()
+  z.number().finite().nullable()
 );
 
 export type Metrics = z.infer<typeof MetricsSchema>;
@@ -101,6 +128,10 @@ export const TrialResultPayloadSchema = z.object({
   retryable: z.boolean().optional().default(false),
   /** Optional result metadata */
   metadata: z.record(z.string(), z.unknown()).optional(),
+  /** Warnings generated during trial execution (v1.1) */
+  warnings: z.array(z.string()).optional(),
+  /** Whether metrics were sanitized (invalid values dropped) (v1.1) */
+  metrics_sanitized: z.boolean().optional(),
 });
 
 export type TrialResultPayload = z.infer<typeof TrialResultPayloadSchema>;

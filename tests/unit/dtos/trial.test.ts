@@ -106,6 +106,15 @@ describe('MetricsSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should reject infinite metric values', () => {
+    const metrics = {
+      accuracy: Number.POSITIVE_INFINITY,
+    };
+
+    const result = MetricsSchema.safeParse(metrics);
+    expect(result.success).toBe(false);
+  });
+
   it('should accept underscore-prefixed keys', () => {
     const metrics = {
       _private_metric: 0.5,

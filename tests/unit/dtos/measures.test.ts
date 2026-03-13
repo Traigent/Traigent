@@ -7,6 +7,7 @@ import {
   sanitizeMeasures,
   mergeMeasures,
   prefixMeasures,
+  createEmptyMeasures,
   MAX_MEASURES_KEYS,
   MEASURE_KEY_PATTERN,
 } from '../../../src/dtos/measures.js';
@@ -54,6 +55,12 @@ describe('MeasuresDictSchema', () => {
 
   it('should reject invalid key patterns', () => {
     const measures = { 'invalid-key': 0.5 };
+    const result = MeasuresDictSchema.safeParse(measures);
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject infinite values', () => {
+    const measures = { accuracy: Number.POSITIVE_INFINITY };
     const result = MeasuresDictSchema.safeParse(measures);
     expect(result.success).toBe(false);
   });
@@ -113,6 +120,25 @@ describe('sanitizeMeasures()', () => {
     );
   });
 
+  it('should throw in strict mode for too many keys', () => {
+    const input: Record<string, number> = {};
+    for (let i = 0; i < 60; i++) {
+      input[`metric_${i}`] = i;
+    }
+
+    expect(() => sanitizeMeasures(input, { strict: true })).toThrow(
+      'truncating'
+    );
+  });
+
+  it('should throw in strict mode for non-numeric values', () => {
+    const input = { accuracy: 0.95, model_name: 'gpt-4' };
+
+    expect(() => sanitizeMeasures(input as Record<string, unknown>, { strict: true })).toThrow(
+      'Non-numeric measure value'
+    );
+  });
+
   it('should preserve null values', () => {
     const input = { accuracy: 0.95, missing: null };
     const result = sanitizeMeasures(input);
@@ -124,6 +150,16 @@ describe('sanitizeMeasures()', () => {
     const input = { valid: 0.5, invalid: NaN };
     const result = sanitizeMeasures(input, { warn });
     expect(result).toEqual({ valid: 0.5 });
+  });
+
+  it('should filter out infinite values', () => {
+    const warn = vi.fn();
+    const input = { valid: 0.5, invalid: Number.POSITIVE_INFINITY };
+    const result = sanitizeMeasures(input, { warn });
+    expect(result).toEqual({ valid: 0.5 });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Non-numeric measure value')
+    );
   });
 });
 
@@ -154,6 +190,14 @@ describe('mergeMeasures()', () => {
   it('should return empty dict for no arguments', () => {
     const result = mergeMeasures();
     expect(result).toEqual({});
+  });
+});
+
+describe('createEmptyMeasures()', () => {
+  it('should return an empty object', () => {
+    const result = createEmptyMeasures();
+    expect(result).toEqual({});
+    expect(Object.keys(result).length).toBe(0);
   });
 });
 
