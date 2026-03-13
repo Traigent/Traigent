@@ -131,6 +131,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Enforce viewer/editor roles on evaluation routes
 - `[x]` Enforce viewer/editor roles on annotation queue routes
 - `[x]` Enforce viewer/editor roles on observability routes
+- `[x]` Enforce viewer/editor roles on core experiment/agent/benchmark routes
 - `[x]` Add focused integration coverage for the protected route surfaces above
 - `[x]` Add project-membership frontend service
 - `[x]` Add basic project-membership management UI on the Projects page
