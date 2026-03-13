@@ -23,8 +23,8 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Wave 3A core tenant/project enforcement completion
 - `[~]` Wave 3B project RBAC kernel
 - `[x]` Automated seeded release-validation harness
-- `[~]` Wave 3B basic project membership UI
-- `[~]` Wave 3B beta retention controls
+- `[x]` Wave 3B basic project membership UI
+- `[x]` Wave 3B beta retention controls
 
 ## Step 0: Secure the Current Baseline
 - `[x]` Commit and push all currently implemented but uncommitted work in `Traigent`
@@ -112,12 +112,12 @@ This file is the working checklist for the remaining execution waves.
 
 ## Wave 3B: Project RBAC / Governance
 - `[x]` Project role model: admin/editor/viewer
-- `[~]` Backend authorization kernel
-- `[~]` Membership APIs
-- `[~]` Membership UI
+- `[x]` Backend authorization kernel
+- `[x]` Membership APIs
+- `[x]` Membership UI
 - `[~]` Audit events for membership/role/export/admin actions
 - `[x]` Rate-limit policy product surface
-- `[~]` Retention controls for export/raw-content surfaces
+- `[x]` Retention controls for export/raw-content surfaces
 
 ### Wave 3B kernel progress
 - `[x]` Add project membership model and migration
@@ -125,7 +125,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Add project membership backend routes
 - `[x]` Add project membership integration tests
 - `[x]` Enforce viewer/editor roles on analytics and export routes
-- `[~]` Expand project-role enforcement beyond analytics/export to additional protected mutations
+- `[x]` Expand project-role enforcement beyond analytics/export to additional protected mutations
 - `[x]` Add audit events for project membership and role changes
 - `[x]` Enforce viewer/editor roles on prompt-management routes
 - `[x]` Enforce viewer/editor roles on evaluation routes
@@ -133,6 +133,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Enforce viewer/editor roles on observability routes
 - `[x]` Enforce viewer/editor roles on core experiment/agent/benchmark routes
 - `[x]` Add focused integration coverage for the protected route surfaces above
+- `[x]` Add release-review guard for critical project-role-decorated routes
 - `[x]` Add project-membership frontend service
 - `[x]` Add basic project-membership management UI on the Projects page
 - `[x]` Add focused frontend tests for project-membership management
