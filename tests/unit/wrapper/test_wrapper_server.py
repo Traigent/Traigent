@@ -245,6 +245,34 @@ class TestCreateAppRoutes:
         assert body["tunable_id"] == "test_svc"
         assert len(body["tvars"]) == 1
 
+    @pytest.mark.asyncio
+    async def test_config_space_route_includes_estimated_tokens_when_configured(
+        self,
+    ) -> None:
+        """Configured wrapper token estimates should be exposed via config-space."""
+        service = TraigentService(
+            tunable_id="test_svc",
+            estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
+        )
+
+        @service.tvars
+        def config_space():
+            return {"model": {"type": "enum", "values": ["gpt-4"]}}
+
+        app = create_app(service)
+        send = _SendCollector()
+        await app(
+            _make_scope("GET", CONFIG_SPACE_PATH),
+            _make_receive(),
+            send,
+        )
+        assert send.status == 200
+        body = send.body_json
+        assert body["estimated_tokens_per_example"] == {
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
+
     # --- POST /traigent/v1/execute ---
     @pytest.mark.asyncio
     async def test_execute_route(self, app, service) -> None:

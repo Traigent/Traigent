@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from traigent.hybrid.protocol import EstimatedTokensPerExample
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 
@@ -35,6 +36,7 @@ class TestServiceConfig:
         assert cfg.promotion_policy is None
         assert cfg.defaults is None
         assert cfg.measures is None
+        assert cfg.estimated_tokens_per_example is None
 
     def test_custom_values(self) -> None:
         """Test ServiceConfig with custom values."""
@@ -51,6 +53,9 @@ class TestServiceConfig:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            estimated_tokens_per_example=EstimatedTokensPerExample(
+                input_tokens=100, output_tokens=50
+            ),
         )
         assert cfg.tunable_id == "qa_agent"
         assert cfg.version == "2.5"
@@ -64,6 +69,9 @@ class TestServiceConfig:
         assert cfg.promotion_policy is not None
         assert cfg.defaults == {"model": "gpt-4"}
         assert cfg.measures == ["accuracy"]
+        assert cfg.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=100, output_tokens=50
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +122,7 @@ class TestTraigentServiceInit:
         assert svc._evaluate_handler is None
         assert svc._sessions == {}
         assert svc._cached_tvars is None
+        assert svc.config.estimated_tokens_per_example is None
 
     def test_custom_init(self) -> None:
         """Test TraigentService with custom parameters."""
@@ -128,6 +137,7 @@ class TestTraigentServiceInit:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
         )
         assert svc.config.tunable_id == "my_agent"
         assert svc.config.version == "3.0"
@@ -139,6 +149,9 @@ class TestTraigentServiceInit:
         assert svc.config.promotion_policy == {"dominance": "epsilon_pareto"}
         assert svc.config.defaults == {"model": "gpt-4"}
         assert svc.config.measures == ["accuracy"]
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=100, output_tokens=50
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +432,7 @@ class TestGetConfigSpace:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy", "cost"],
+            estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
         )
         result = svc.get_config_space()
         assert result["constraints"] == {
@@ -429,6 +443,10 @@ class TestGetConfigSpace:
         assert result["promotion_policy"] == {"dominance": "epsilon_pareto"}
         assert result["defaults"] == {"model": "gpt-4"}
         assert result["measures"] == ["accuracy", "cost"]
+        assert result["estimated_tokens_per_example"] == {
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
 
     def test_config_space_decorator_sections_override_init_values(self) -> None:
         """Decorator-declared sections override constructor-provided values."""
@@ -448,6 +466,46 @@ class TestGetConfigSpace:
         result = svc.get_config_space()
         assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
         assert result["defaults"] == {"model": "gpt-4"}
+
+    def test_config_space_omits_estimated_tokens_when_unconfigured(self) -> None:
+        """Config-space response should not emit token estimates by default."""
+        svc = TraigentService()
+        result = svc.get_config_space()
+        assert "estimated_tokens_per_example" not in result
+
+    def test_env_estimated_tokens_are_used_when_constructor_omits_them(self) -> None:
+        """Wrapper should support environment-driven token estimate configuration."""
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE": "60",
+            },
+            clear=False,
+        ):
+            svc = TraigentService()
+
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=120, output_tokens=60
+        )
+
+    def test_constructor_estimated_tokens_override_environment(self) -> None:
+        """Explicit wrapper config should beat environment fallback values."""
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE": "60",
+            },
+            clear=False,
+        ):
+            svc = TraigentService(
+                estimated_tokens_per_example={"input_tokens": 10, "output_tokens": 5}
+            )
+
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=10, output_tokens=5
+        )
 
 
 # ---------------------------------------------------------------------------
