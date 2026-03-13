@@ -154,8 +154,8 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` API reference for dashboards, roles, exports, retention/rate limits
 - `[x]` Migration/cutover notes for tenant/project enforcement
 - `[~]` Privacy-mode integration tests for all new beta surfaces
-- `[ ]` Full CI and repo-wide validation rerun
-- `[ ]` Changed-code coverage at or above 85%
+- `[x]` Full CI and repo-wide validation rerun
+- `[x]` Changed-code coverage at or above 85%
 - `[ ]` Claude review after each completed wave
 
 ## Notes
@@ -167,7 +167,12 @@ This file is the working checklist for the remaining execution waves.
 - The early lightweight threat-model review is captured in [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md); it found no new blockers but kept monitoring, privacy-mode integration coverage, and final audit-event completeness as explicit release-gate work.
 - Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts; remaining work is wiring this into the full beta monitoring/alerting release gate.
 - Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
-- The backend export/enforcement checkpoint now measures at **86% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
+- The backend export/enforcement checkpoint now measures at **88% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
+- Repo-wide validation has been rerun successfully across the active repos:
+  - `TraigentSchema`: `185 passed`
+  - `TraigentBackend`: `3670 passed, 210 skipped, 10 xfailed`
+  - `Traigent` SDK: `12937 passed, 200 skipped, 4 xfailed`
+  - `TraigentFrontend`: type-check passed, build passed, `1654 passed, 10 skipped`
 - API and operations docs are now in place for the beta surfaces:
   - [../api-reference/enterprise-beta-api.md](../api-reference/enterprise-beta-api.md)
   - [../operations/tenant_project_cutover.md](../operations/tenant_project_cutover.md)
