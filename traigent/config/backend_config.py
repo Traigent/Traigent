@@ -228,6 +228,22 @@ class BackendConfig:
         return None
 
     @classmethod
+    def has_api_key(cls) -> bool:
+        """Check if any API key is available without logging warnings.
+
+        Checks TRAIGENT_API_KEY env var and stored CLI credentials.
+        Unlike get_api_key(), this does not log warnings on failure.
+        """
+        if os.environ.get("TRAIGENT_API_KEY"):
+            return True
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            return bool(CredentialManager.get_stored_api_key_only())
+        except (ImportError, Exception):
+            return False
+
+    @classmethod
     def is_local_backend(cls) -> bool:
         """Check if using local backend URL.
 

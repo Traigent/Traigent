@@ -54,18 +54,19 @@ class BackendClientConfig:
             normalized = BackendConfig.normalize_backend_origin(self.backend_base_url)
             self.backend_base_url = normalized or self.backend_base_url.rstrip("/")
         elif backend_env or api_env:
-            self.backend_base_url = BackendConfig.get_backend_url()
+            self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
         else:
             self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
 
         # Warn when defaulting to cloud without any credentials.
         # Skip if the caller explicitly passed the URL (not our default).
+        # Use has_api_key() to avoid triggering get_api_key()'s own warning.
         if (
             not backend_explicitly_set
             and self.backend_base_url
             and self.backend_base_url.rstrip("/")
             == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
-            and not BackendConfig.get_api_key()
+            and not BackendConfig.has_api_key()
         ):
             logger.warning(
                 "Defaulting to Traigent cloud (%s) but no API key found. "

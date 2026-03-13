@@ -183,8 +183,8 @@ class TestBackendConfigDefaultBehavior:
                 return_value=None,
             ),
             patch(
-                "traigent.config.backend_config.BackendConfig.get_api_key",
-                return_value=None,
+                "traigent.config.backend_config.BackendConfig.has_api_key",
+                return_value=False,
             ),
             patch("traigent.cloud.backend_components.logger") as mock_logger,
         ):
@@ -205,8 +205,8 @@ class TestBackendConfigDefaultBehavior:
                 return_value=None,
             ),
             patch(
-                "traigent.config.backend_config.BackendConfig.get_api_key",
-                return_value="tg_stored_key",
+                "traigent.config.backend_config.BackendConfig.has_api_key",
+                return_value=True,
             ),
             patch("traigent.cloud.backend_components.logger") as mock_logger,
         ):
