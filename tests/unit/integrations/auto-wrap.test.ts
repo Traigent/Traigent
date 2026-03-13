@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TrialContext } from '../../../src/core/context.js';
+import type { TrialConfig } from '../../../src/dtos/trial.js';
 import {
   autoWrapFrameworkTarget,
   autoWrapFrameworkTargets,
@@ -8,7 +8,7 @@ import {
   prepareFrameworkTargets,
 } from '../../../src/integrations/auto-wrap.js';
 import { clearRegisteredFrameworkTargets } from '../../../src/integrations/registry.js';
-import type { TrialConfig } from '../../../src/dtos/trial.js';
+import { TrialContext } from '../../../src/core/context.js';
 
 function createTrialConfig(config: Record<string, unknown>): TrialConfig {
   return {
@@ -32,6 +32,7 @@ describe('autoWrapFrameworkTarget(s)', () => {
     expect(autoWrapFrameworkTargets('plain-value')).toBe('plain-value');
     expect(autoWrapFrameworkTargets(42)).toBe(42);
     expect(autoWrapFrameworkTargets(null)).toBeNull();
+    expect(autoWrapFrameworkTarget('plain-value')).toBe('plain-value');
   });
 
   it('wraps supported targets inside arrays', async () => {
@@ -62,12 +63,122 @@ describe('autoWrapFrameworkTarget(s)', () => {
         await client.chat?.completions?.create({
           model: 'gpt-3.5-turbo',
         });
-      },
+      }
     );
 
     expect(create).toHaveBeenCalledWith({
       model: 'gpt-4o-mini',
       temperature: 0.1,
+    });
+  });
+
+  it('wraps supported values inside a plain object map and leaves untouched entries alone', async () => {
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+      },
+    }));
+
+    const wrapped = autoWrapFrameworkTargets({
+      openaiClient: {
+        chat: {
+          completions: {
+            create,
+          },
+        },
+      },
+      untouched: 'plain-value',
+    });
+
+    expect(wrapped.untouched).toBe('plain-value');
+
+    await TrialContext.run(
+      createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.4 }),
+      async () => {
+        await wrapped.openaiClient.chat?.completions?.create({
+          model: 'gpt-3.5-turbo',
+        });
+      }
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      model: 'gpt-4o-mini',
+      temperature: 0.4,
+    });
+  });
+
+  it('recursively wraps supported targets inside nested plain-object graphs', async () => {
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 3,
+        completion_tokens: 1,
+      },
+    }));
+
+    const wrapped = autoWrapFrameworkTargets({
+      services: {
+        llm: {
+          primary: {
+            chat: {
+              completions: {
+                create,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await TrialContext.run(createTrialConfig({ model: 'gpt-4o', temperature: 0.2 }), async () => {
+      await wrapped.services.llm.primary.chat?.completions?.create({
+        model: 'gpt-3.5-turbo',
+      });
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      model: 'gpt-4o',
+      temperature: 0.2,
+    });
+  });
+
+  it('preserves cycles and repeated references while recursively wrapping', async () => {
+    const create = vi.fn(async () => ({
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+      },
+    }));
+    const sharedClient = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    };
+    const graph: {
+      primary: typeof sharedClient;
+      secondary?: typeof sharedClient;
+      self?: unknown;
+    } = {
+      primary: sharedClient,
+    };
+    graph.secondary = sharedClient;
+    graph.self = graph;
+
+    const wrapped = autoWrapFrameworkTargets(graph);
+
+    expect(wrapped.self).toBe(wrapped);
+    expect(wrapped.primary).toBe(wrapped.secondary);
+
+    await TrialContext.run(createTrialConfig({ model: 'gpt-4o-mini' }), async () => {
+      await wrapped.secondary?.chat?.completions?.create({
+        model: 'gpt-3.5-turbo',
+      });
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      model: 'gpt-4o-mini',
     });
   });
 
@@ -87,7 +198,7 @@ describe('autoWrapFrameworkTarget(s)', () => {
       createTrialConfig({ model: 'gpt-4o-mini', temperature: 0.3 }),
       async () => {
         await wrapped.invoke?.('hello');
-      },
+      }
     );
 
     expect(bind).toHaveBeenCalledWith({
@@ -117,19 +228,16 @@ describe('autoWrapFrameworkTarget(s)', () => {
       },
     });
 
-    await TrialContext.run(
-      createTrialConfig({ model: 'gpt-4o-mini' }),
-      async () => {
-        await wrapped.doGenerate?.({
-          modelId: 'gpt-3.5-turbo',
-        });
-      },
-    );
+    await TrialContext.run(createTrialConfig({ model: 'gpt-4o-mini' }), async () => {
+      await wrapped.doGenerate?.({
+        modelId: 'gpt-3.5-turbo',
+      });
+    });
 
     expect(doGenerate).toHaveBeenCalledWith(
       expect.objectContaining({
         modelId: 'gpt-4o-mini',
-      }),
+      })
     );
   });
 
@@ -208,12 +316,8 @@ describe('autoWrapFrameworkTarget(s)', () => {
     const graph: { root: typeof root; loop?: unknown } = { root };
     graph.loop = graph;
 
-    expect(discoverFrameworkTargets(root)).toEqual([
-      { path: '<root>', target: 'openai' },
-    ]);
-    expect(discoverFrameworkTargets(graph)).toEqual([
-      { path: 'root', target: 'openai' },
-    ]);
+    expect(discoverFrameworkTargets(root)).toEqual([{ path: '<root>', target: 'openai' }]);
+    expect(discoverFrameworkTargets(graph)).toEqual([{ path: 'root', target: 'openai' }]);
   });
 
   it('does not recurse into non-plain container instances', () => {
@@ -260,9 +364,7 @@ describe('autoWrapFrameworkTarget(s)', () => {
       },
     });
 
-    expect(prepared.discovered).toEqual([
-      { path: 'providers.primary', target: 'openai' },
-    ]);
+    expect(prepared.discovered).toEqual([{ path: 'providers.primary', target: 'openai' }]);
     expect(prepared.autoOverrideStatus).toMatchObject({
       enabled: true,
       activeTargets: ['openai'],
@@ -275,7 +377,7 @@ describe('autoWrapFrameworkTarget(s)', () => {
         await prepared.wrapped.providers.primary.chat?.completions?.create({
           model: 'gpt-3.5-turbo',
         });
-      },
+      }
     );
 
     expect(create).toHaveBeenCalledWith({
@@ -295,7 +397,7 @@ describe('autoWrapFrameworkTarget(s)', () => {
       },
       {
         autoOverrideFrameworks: false,
-      },
+      }
     );
 
     expect(prepared.discovered).toEqual([{ path: '<root>', target: 'openai' }]);

@@ -41,13 +41,8 @@ describe('framework registry', () => {
     registerFrameworkTarget('openai');
 
     expect(getRegisteredFrameworkTargets()).toEqual(['openai', 'vercel-ai']);
-    expect(resolveRegisteredFrameworkTargets(undefined)).toEqual([
-      'openai',
-      'vercel-ai',
-    ]);
-    expect(resolveRegisteredFrameworkTargets(['langchain', 'openai'])).toEqual([
-      'openai',
-    ]);
+    expect(resolveRegisteredFrameworkTargets(undefined)).toEqual(['openai', 'vercel-ai']);
+    expect(resolveRegisteredFrameworkTargets(['langchain', 'openai'])).toEqual(['openai']);
   });
 
   it('describes auto-override state for active, filtered, disabled, and empty cases', () => {
@@ -57,8 +52,7 @@ describe('framework registry', () => {
       activeTargets: [],
       selectedTargets: [],
       enabled: false,
-      reason:
-        'No wrapped framework targets are currently registered for seamless interception.',
+      reason: 'No wrapped framework targets are currently registered for seamless interception.',
     });
 
     registerFrameworkTarget('vercel-ai');
@@ -70,8 +64,7 @@ describe('framework registry', () => {
       activeTargets: ['openai', 'vercel-ai'],
       selectedTargets: ['openai', 'vercel-ai'],
       enabled: true,
-      reason:
-        'Using all active registered framework targets for seamless interception.',
+      reason: 'Using all active registered framework targets for seamless interception.',
     });
 
     expect(describeFrameworkAutoOverride(['langchain'], true)).toEqual({
@@ -89,8 +82,7 @@ describe('framework registry', () => {
       activeTargets: ['openai', 'vercel-ai'],
       selectedTargets: [],
       enabled: false,
-      reason:
-        'Framework auto-override is disabled for this seamless configuration.',
+      reason: 'Framework auto-override is disabled for this seamless configuration.',
     });
   });
 });

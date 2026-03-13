@@ -5,6 +5,16 @@ export {
   toHybridConfigSpace,
   normalizeOptimizationSpec,
 } from './spec.js';
+export {
+  checkOptimizationServiceStatus,
+  createOptimizationSession,
+  deleteOptimizationSession,
+  finalizeOptimizationSession,
+  getNextOptimizationTrial,
+  getOptimizationSessionStatus,
+  listOptimizationSessions,
+  submitOptimizationTrialResult,
+} from './hybrid.js';
 export { getNativeTvlCompatibilityReport, loadTvlSpec, parseTvlSpec } from './tvl.js';
 
 export type {
