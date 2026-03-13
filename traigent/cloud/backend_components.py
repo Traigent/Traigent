@@ -54,18 +54,26 @@ class BackendClientConfig:
             normalized = BackendConfig.normalize_backend_origin(self.backend_base_url)
             self.backend_base_url = normalized or self.backend_base_url.rstrip("/")
         elif backend_env or api_env:
-            self.backend_base_url = BackendConfig.get_backend_url()
+            self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
         else:
-            backend_url = BackendConfig.get_backend_url()
+            self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
 
-            # Default to local backend when environment context is unspecified.
-            if (
-                backend_url == BackendConfig.DEFAULT_PROD_URL
-                and os.environ.get("TRAIGENT_ENV") is None
-            ):
-                backend_url = BackendConfig.get_default_local_url()
-
-            self.backend_base_url = backend_url.rstrip("/")
+        # Warn when defaulting to cloud without any credentials.
+        # Skip if the caller explicitly passed the URL (not our default).
+        # Use a silent predicate so this path does not emit duplicate warnings.
+        if (
+            not backend_explicitly_set
+            and self.backend_base_url
+            and self.backend_base_url.rstrip("/")
+            == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
+            and not BackendConfig.has_auth_credentials()
+        ):
+            logger.warning(
+                "Defaulting to Traigent cloud (%s) but no credentials found. "
+                "Set TRAIGENT_API_KEY, run 'traigent auth login', or set "
+                "TRAIGENT_ENV=development for local mode.",
+                self.backend_base_url,
+            )
 
         if self.api_base_url is not None:
             if "://" not in self.api_base_url.strip():

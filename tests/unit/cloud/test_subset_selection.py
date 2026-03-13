@@ -258,9 +258,7 @@ class TestRepresentativeSampling:
 
         random.seed(123)
         sampler = RepresentativeSampling(random_seed=456)
-        await sampler.select_subset(
-            sample_dataset, target_size=4, balance_outputs=True
-        )
+        await sampler.select_subset(sample_dataset, target_size=4, balance_outputs=True)
 
         assert random.random() == expected_next
 

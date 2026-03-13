@@ -88,7 +88,9 @@ class TestBackendClientConfig:
         """Test default configuration creation."""
         config = BackendClientConfig()
 
-        assert config.backend_base_url == "http://localhost:5000"
+        from traigent.config.backend_config import BackendConfig
+
+        assert config.backend_base_url == BackendConfig.get_backend_url().rstrip("/")
         assert config.use_mcp is False
         assert config.mcp_server_path is None
         assert config.enable_session_sync is True
@@ -161,9 +163,9 @@ class TestBackendIntegratedClient:
             client = BackendIntegratedClient(backend_config=backend_config)
             # Check that the aiohttp warning was logged (among possibly other warnings)
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any(
-                "aiohttp not available" in msg for msg in warning_calls
-            ), f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
+            assert any("aiohttp not available" in msg for msg in warning_calls), (
+                f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
+            )
             assert client is not None
 
     def test_async_context_manager(self, backend_client):
@@ -209,7 +211,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session_api,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Mock responses
                 mock_cloud.return_value = MagicMock(
                     session_id="session_123",
@@ -220,15 +221,17 @@ class TestPrivacyFirstOptimization:
                 mock_session_api.return_value = ("session_123", "exp_456", "run_789")
                 mock_bridge.create_session_mapping.return_value = MagicMock()
 
-                session_id, exp_id, run_id = (
-                    await backend_client._deprecated_create_privacy_optimization_session(
-                        function_name="test_function",
-                        configuration_space={"param": [1, 2, 3]},
-                        objectives=["accuracy"],
-                        dataset_metadata={"size": 1000, "type": "qa"},
-                        max_trials=25,
-                        user_id="test_user",
-                    )
+                (
+                    session_id,
+                    exp_id,
+                    run_id,
+                ) = await backend_client._deprecated_create_privacy_optimization_session(
+                    function_name="test_function",
+                    configuration_space={"param": [1, 2, 3]},
+                    objectives=["accuracy"],
+                    dataset_metadata={"size": 1000, "type": "qa"},
+                    max_trials=25,
+                    user_id="test_user",
                 )
 
                 assert session_id == "session_123"
@@ -267,11 +270,13 @@ class TestPrivacyFirstOptimization:
                 side_effect=Exception("Network error"),
             ):
                 with pytest.raises(CloudServiceError, match="Failed to create session"):
-                    await backend_client._deprecated_create_privacy_optimization_session(
-                        function_name="test_function",
-                        configuration_space={"param": [1, 2, 3]},
-                        objectives=["accuracy"],
-                        dataset_metadata={"size": 1000},
+                    await (
+                        backend_client._deprecated_create_privacy_optimization_session(
+                            function_name="test_function",
+                            configuration_space={"param": [1, 2, 3]},
+                            objectives=["accuracy"],
+                            dataset_metadata={"size": 1000},
+                        )
                     )
 
         import asyncio
@@ -290,7 +295,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Setup mock response
                 from traigent.cloud.models import (
                     DatasetSubsetIndices,
@@ -359,7 +363,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 from traigent.cloud.models import NextTrialResponse
 
                 mock_cloud.return_value = NextTrialResponse(
@@ -413,7 +416,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
@@ -468,7 +470,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
@@ -539,7 +540,6 @@ class TestCloudSaaSOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Mock responses
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(
@@ -1051,7 +1051,6 @@ class TestEdgeCases:
                     new_callable=AsyncMock,
                 ) as mock_session,
             ):
-
                 mock_bridge.get_trial_mapping.return_value = None
                 mock_cloud.return_value = True
                 mock_session.return_value = True
@@ -1084,7 +1083,6 @@ class TestEdgeCases:
                     backend_client, "_submit_agent_optimization"
                 ) as mock_cloud,
             ):
-
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(session_id="session_123")
 

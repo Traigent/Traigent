@@ -59,7 +59,9 @@ class _FakeSession:
         assert self._response is not None
         return self._response
 
-    def post(self, url: str, headers: dict[str, str] | None = None, **kwargs: Any) -> _FakeResponse:
+    def post(
+        self, url: str, headers: dict[str, str] | None = None, **kwargs: Any
+    ) -> _FakeResponse:
         if self._error is not None:
             raise self._error
         assert self._response is not None
