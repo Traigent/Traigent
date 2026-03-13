@@ -66,6 +66,13 @@ def _estimated_tokens_from_env() -> EstimatedTokensPerExample | None:
     output_tokens = os.environ.get(_ESTIMATED_OUTPUT_TOKENS_ENV)
     if input_tokens is None and output_tokens is None:
         return None
+    if input_tokens is None or output_tokens is None:
+        logger.warning(
+            "Both %s and %s must be set together; ignoring partial token estimate configuration.",
+            _ESTIMATED_INPUT_TOKENS_ENV,
+            _ESTIMATED_OUTPUT_TOKENS_ENV,
+        )
+        return None
     return EstimatedTokensPerExample.from_dict(
         {
             "input_tokens": input_tokens,
@@ -84,7 +91,9 @@ def _resolve_estimated_tokens_per_example(
         return value
     if isinstance(value, dict):
         return EstimatedTokensPerExample.from_dict(value)
-    raise TypeError("estimated_tokens_per_example must be a dict or None")
+    raise TypeError(
+        "estimated_tokens_per_example must be an EstimatedTokensPerExample instance, a dict, or None"
+    )
 
 
 @dataclass

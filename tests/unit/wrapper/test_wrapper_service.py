@@ -507,6 +507,32 @@ class TestGetConfigSpace:
             input_tokens=10, output_tokens=5
         )
 
+    def test_partial_env_estimated_tokens_are_ignored_with_warning(self) -> None:
+        """Partial env config should be ignored rather than coercing missing values to zero."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                },
+                clear=False,
+            ),
+            patch("traigent.wrapper.service.logger") as mock_logger,
+        ):
+            svc = TraigentService()
+
+        assert svc.config.estimated_tokens_per_example is None
+        mock_logger.warning.assert_called_once()
+        assert "must be set together" in mock_logger.warning.call_args[0][0]
+
+    def test_invalid_estimated_tokens_type_raises_helpful_error(self) -> None:
+        """Invalid constructor values should explain all supported input types."""
+        with pytest.raises(
+            TypeError,
+            match="EstimatedTokensPerExample instance, a dict, or None",
+        ):
+            TraigentService(estimated_tokens_per_example=123)  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # get_capabilities tests
