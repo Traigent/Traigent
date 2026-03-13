@@ -212,6 +212,8 @@ def weighted_agent(question: str) -> str:
     return llm.invoke(f"Answer concisely: {question}").content
 ```
 
+Positive weights can be written as fractions (`0.7` / `0.3`) or percentages (`70` / `30`); Traigent normalizes them automatically before scoring.
+
 > **Tip**: See `examples/quickstart/03_custom_objectives.py` for a complete working example.
 
 ### Injection modes & default values
