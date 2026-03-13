@@ -108,7 +108,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Local artifact-store sink support
 - `[ ]` Cloud sink adapter only if required by a beta customer
 - `[x]` Policy validation for raw-content export/materialization
-- `[ ]` Coverage checkpoint after export artifact-storage slice
+- `[x]` Coverage checkpoint after export artifact-storage slice
 
 ## Wave 3B: Project RBAC / Governance
 - `[x]` Project role model: admin/editor/viewer
@@ -167,9 +167,11 @@ This file is the working checklist for the remaining execution waves.
 - The early lightweight threat-model review is captured in [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md); it found no new blockers but kept monitoring, privacy-mode integration coverage, and final audit-event completeness as explicit release-gate work.
 - Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts; remaining work is wiring this into the full beta monitoring/alerting release gate.
 - Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
+- The backend export/enforcement checkpoint now measures at **86% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
 - API and operations docs are now in place for the beta surfaces:
   - [../api-reference/enterprise-beta-api.md](../api-reference/enterprise-beta-api.md)
   - [../operations/tenant_project_cutover.md](../operations/tenant_project_cutover.md)
+  - [../operations/security_monitoring.md](../operations/security_monitoring.md)
 - The current beta gate is satisfied via the repaired live local worktree DB path; the fresh disposable DB fallback remains available if the legacy path regresses.
 - Fresh and legacy disposable Postgres databases now validate through the backend bootstrap/reconciliation path and stamp cleanly to revision `add_project_export_policy`.
 - The live worktree DB still validates cleanly through the backend reconciliation/current flow; tracker records whether beta validation is satisfied via the repaired live DB path or a fresh validated fallback.
