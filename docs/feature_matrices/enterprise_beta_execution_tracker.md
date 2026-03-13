@@ -64,7 +64,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Harden benchmark processor benchmark/file/config existence checks under active scope
 - `[x]` Prevent unscoped core-model primary-key fetches from reappearing in runtime code
 - `[~]` Audit remaining experiment/core runtime paths for transitive-scope assumptions
-- `[ ]` Expand dual-run discrepancy telemetry beyond current access-checker coverage
+- `[~]` Expand dual-run discrepancy telemetry beyond current access-checker coverage
 - `[x]` Verify no legacy route bypasses the enforcement kernel
 - `[x]` Inventory surviving legacy routes touching core resources
 - `[x]` Classify surviving legacy routes as safe vs unsafe
@@ -78,6 +78,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Validate partially migrated local worktree DB
 - `[ ]` If needed, provision fresh disposable seeded-validation DB fallback
 - `[x]` Record whether beta validation is satisfied via reconciled legacy DB or fresh fallback DB
+  - current state: access checker plus both TraiGent session services emit scope discrepancy telemetry under env-gated dual-run mode; broader list/read-path telemetry is still open
 
 ## Seeded Validation Harness
 - `[x]` Seed at least two tenants and two projects with realistic data
