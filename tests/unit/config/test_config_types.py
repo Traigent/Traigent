@@ -59,7 +59,9 @@ def test_setitem_rejects_unknown_comparability_mode() -> None:
         config["comparability_mode"] = "unsupported"
 
 
-def test_from_environment_reads_comparability_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_from_environment_reads_comparability_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("TRAIGENT_COMPARABILITY_MODE", "strict")
 
     config = TraigentConfig.from_environment()

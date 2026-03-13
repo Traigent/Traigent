@@ -36,5 +36,7 @@ def test_explicit_dev_mode_still_enables_dev_fallback(monkeypatch) -> None:
         assert CredentialManager.get_api_key() == "test_api_key_for_development"
         creds = CredentialManager.get_credentials()
 
-    assert creds["api_key"] == "test_api_key_for_development"  # pragma: allowlist secret
+    assert (
+        creds["api_key"] == "test_api_key_for_development"
+    )  # pragma: allowlist secret
     assert creds["source"] == "development"

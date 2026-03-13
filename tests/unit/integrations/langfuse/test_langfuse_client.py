@@ -7,14 +7,13 @@ Run with: TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/langfuse/ -v
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from traigent.integrations.langfuse.client import (
     AIOHTTP_AVAILABLE,
-    LANGFUSE_SDK_AVAILABLE,
     REQUESTS_AVAILABLE,
     LangfuseClient,
     LangfuseObservation,
@@ -41,7 +40,7 @@ class TestLangfuseObservation:
 
     def test_full_observation(self):
         """Test observation with all fields populated."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obs = LangfuseObservation(
             id="obs-456",
             name="llm-call",
@@ -188,9 +187,9 @@ class TestLangfuseTraceMetrics:
 
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         for key in measures:
-            assert re.match(
-                pattern, key
-            ), f"Key '{key}' is not a valid Python identifier"
+            assert re.match(pattern, key), (
+                f"Key '{key}' is not a valid Python identifier"
+            )
 
     def test_empty_metrics(self):
         """Test metrics with no per-agent data."""
@@ -542,7 +541,7 @@ class TestLangfuseClientTimestampParsing:
 
     def test_parse_timestamp_datetime_object(self, client):
         """Test parsing datetime object."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = client._parse_timestamp(now)
         assert result == now
 
@@ -904,9 +903,7 @@ class TestLangfuseClientAsync:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_wait_for_trace_async_avoids_deprecated_get_event_loop(
-        self, client
-    ):
+    async def test_wait_for_trace_async_avoids_deprecated_get_event_loop(self, client):
         """wait_for_trace_async should use the running loop, not get_event_loop."""
         with (
             patch(
@@ -945,7 +942,7 @@ class TestLangfuseClientSDK:
         client._sdk_client = None
         with patch.object(client, "_get_observations_http") as mock_http:
             mock_http.return_value = []
-            result = client.get_observations_for_trace("trace-123")
+            client.get_observations_for_trace("trace-123")
             mock_http.assert_called_once()
 
     def test_get_trace_with_sdk_success(self, client):
@@ -985,7 +982,7 @@ class TestLangfuseClientSDK:
 
         with patch.object(client, "_get_observations_http") as mock_http:
             mock_http.return_value = []
-            result = client.get_observations_for_trace("trace-123")
+            client.get_observations_for_trace("trace-123")
             mock_http.assert_called_once()
 
 

@@ -273,7 +273,9 @@ class TestResultsHelpers:
         run2.successful_trials = []
 
         table = _build_comparison_summary_table(run1, run2, "run1", "run2")
-        delta_column_cells = table.columns[-1]._cells  # rich stores rendered cell data on columns
+        delta_column_cells = table.columns[
+            -1
+        ]._cells  # rich stores rendered cell data on columns
         assert delta_column_cells
         assert delta_column_cells[0] == "N/A"
 

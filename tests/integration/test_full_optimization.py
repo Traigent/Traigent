@@ -165,7 +165,9 @@ class TestFullOptimizationWorkflow:
             assert len(result.trials) == 5
             if result.best_score is None:
                 session_summary = result.metadata.get("session_summary", {})
-                assert session_summary.get("reason_code") == "NO_RANKING_ELIGIBLE_TRIALS"
+                assert (
+                    session_summary.get("reason_code") == "NO_RANKING_ELIGIBLE_TRIALS"
+                )
                 assert result.best_config == {}
             else:
                 assert result.best_score >= 0

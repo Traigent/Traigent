@@ -14,7 +14,10 @@ from traigent.cloud.password_auth_handler import PasswordAuthHandler
 async def test_invalid_credentials_propagate_even_in_dev_mode():
     """Wrong credentials should fail loudly instead of returning mock tokens."""
     handler = PasswordAuthHandler()
-    credentials = {"email": "dev@example.com", "password": "password123"}  # pragma: allowlist secret
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",
+    }  # pragma: allowlist secret
 
     with (
         patch.object(handler, "_is_dev_mode_enabled", return_value=True),
@@ -31,7 +34,10 @@ async def test_invalid_credentials_propagate_even_in_dev_mode():
 async def test_dev_mode_still_falls_back_on_backend_outage():
     """Explicit dev mode may still use mock tokens for non-auth backend failures."""
     handler = PasswordAuthHandler()
-    credentials = {"email": "dev@example.com", "password": "password123"}  # pragma: allowlist secret
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",
+    }  # pragma: allowlist secret
 
     with (
         patch.object(handler, "_is_dev_mode_enabled", return_value=True),

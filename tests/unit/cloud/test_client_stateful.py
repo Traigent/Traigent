@@ -257,7 +257,9 @@ class TestSessionCreation:
 
         await cloud_client.create_optimization_session(
             request_or_function_name="test_function",
-            configuration_space={"temperature": {"type": "float", "low": 0.0, "high": 1.0}},
+            configuration_space={
+                "temperature": {"type": "float", "low": 0.0, "high": 1.0}
+            },
             objectives=["accuracy"],
             dataset_metadata={"size": 100},
             max_trials=3,
