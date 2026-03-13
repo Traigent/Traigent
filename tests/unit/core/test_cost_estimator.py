@@ -247,6 +247,29 @@ class TestEstimateOptimizationCost:
         # Total = 50 * 10 * 0.00525 * 1.2 = 3.15
         assert cost == pytest.approx(3.15)
 
+    def test_zero_estimated_tokens_fall_back_to_default_token_assumptions(self) -> None:
+        """Zero token metadata must not produce a zero-cost approval estimate."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o"],
+            estimated_input_tokens_per_example=0,
+            estimated_output_tokens_per_example=0,
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            return_value=(2.5e-6, 10.0e-6, "litellm"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base falls back to default 2000/500 estimate = 0.01
+        # Total = 50 * 10 * 0.01 * 1.2 = 6.0
+        assert cost == pytest.approx(6.0)
+
 
 # ---------------------------------------------------------------------------
 # check_cost_approval

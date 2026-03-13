@@ -321,7 +321,7 @@ class OptimizationOrchestrator:
 
         def _normalize(key: str) -> int | None:
             value = estimate.get(key)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 return value
             return None
 

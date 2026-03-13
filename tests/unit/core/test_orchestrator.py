@@ -2054,3 +2054,48 @@ class TestCostEstimation:
 
         assert base_cost == pytest.approx(0.00075)
         assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_cost_estimator_ignores_zero_hybrid_token_estimate_metadata(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Zero token estimates must not bypass pre-approval via a $0 base cost."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        mock_evaluator.optimization_spec = {
+            "estimated_tokens_per_example": {"input_tokens": 0, "output_tokens": 0}
+        }
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.01)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_extract_estimated_tokens_per_example_ignores_invalid_values(self) -> None:
+        """Only strictly positive integer estimates should be propagated."""
+        result = OptimizationOrchestrator._extract_estimated_tokens_per_example(
+            {
+                "estimated_tokens_per_example": {
+                    "input_tokens": False,
+                    "output_tokens": "50",
+                }
+            }
+        )
+
+        assert result == (None, None)

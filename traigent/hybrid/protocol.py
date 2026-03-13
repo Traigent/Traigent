@@ -364,12 +364,25 @@ class EstimatedTokensPerExample:
     input_tokens: int
     output_tokens: int
 
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> int:
+        """Best-effort parsing for externally supplied token estimates."""
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value if value >= 0 else 0
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return parsed if parsed >= 0 else 0
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EstimatedTokensPerExample:
         """Create from dictionary (API response)."""
         return cls(
-            input_tokens=int(data.get("input_tokens", 0)),
-            output_tokens=int(data.get("output_tokens", 0)),
+            input_tokens=cls._coerce_non_negative_int(data.get("input_tokens", 0)),
+            output_tokens=cls._coerce_non_negative_int(data.get("output_tokens", 0)),
         )
 
     def to_dict(self) -> dict[str, int]:

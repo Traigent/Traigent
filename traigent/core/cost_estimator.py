@@ -66,14 +66,14 @@ class CostEstimator:
             estimated_input_tokens_per_example
             if isinstance(estimated_input_tokens_per_example, int)
             and not isinstance(estimated_input_tokens_per_example, bool)
-            and estimated_input_tokens_per_example >= 0
+            and estimated_input_tokens_per_example > 0
             else None
         )
         self._estimated_output_tokens_per_example = (
             estimated_output_tokens_per_example
             if isinstance(estimated_output_tokens_per_example, int)
             and not isinstance(estimated_output_tokens_per_example, bool)
-            and estimated_output_tokens_per_example >= 0
+            and estimated_output_tokens_per_example > 0
             else None
         )
 
