@@ -519,9 +519,10 @@ class CallbackManager:
         Args:
             callbacks: List of callback instances
             timeout: Maximum seconds to wait for a callback (default 5.0).
-                Set to None or 0 to disable timeout protection. When a timeout
-                occurs, optimization continues immediately, but the callback
-                thread may still run to completion in the background.
+                Set to 0 to disable timeout protection; passing None uses the
+                default timeout (5.0 seconds). When a timeout occurs,
+                optimization continues immediately, but the callback thread may
+                still run to completion in the background.
         """
         self.callbacks = callbacks or []
         self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
