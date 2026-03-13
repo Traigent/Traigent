@@ -1,0 +1,66 @@
+name: Typed Session Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 2 * * *"
+
+jobs:
+  typed-session-smoke:
+    runs-on: ubuntu-latest
+    environment: typed-session-smoke
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check smoke configuration
+        id: config
+        env:
+          TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
+          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
+        run: |
+          if [ -z "$TRAIGENT_API_KEY" ] || [ -z "$TRAIGENT_API_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Typed session smoke is not configured; skipping."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.config.outputs.configured == 'true'
+        name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test,hybrid]"
+
+      - if: steps.config.outputs.configured == 'true'
+        name: Verify smoke backend is reachable
+        env:
+          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse, urlunparse
+
+          api_url = os.environ["TRAIGENT_API_URL"].rstrip("/")
+          parsed = urlparse(api_url)
+          path = parsed.path.removesuffix("/api/v1") or "/"
+          health = urlunparse(parsed._replace(path=f"{path.rstrip('/')}/health", query="", fragment=""))
+          print(health)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"TRAIGENT_SMOKE_HEALTH_URL={health}\n")
+          PY
+          curl -sf --max-time 10 "$TRAIGENT_SMOKE_HEALTH_URL"
+
+      - if: steps.config.outputs.configured == 'true'
+        name: Run typed session smoke
+        env:
+          TRAIGENT_HYBRID_LIVE: "1"
+          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
+          TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
+          PYTHONPATH: .
+        run: |
+          pytest tests/integration/backend/test_hybrid_session_live.py -q --tb=short
