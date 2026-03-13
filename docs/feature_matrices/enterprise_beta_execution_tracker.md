@@ -72,7 +72,7 @@ This file is the working checklist for the remaining execution waves.
 
 ### Migration-chain mitigation
 - `[x]` Commit the migration bootstrap/reconciliation path in Step 0
-- `[ ]` Wire docker/dev startup to reconcile legacy DB state before `alembic upgrade head`
+- `[x]` Wire docker/dev startup to reconcile legacy DB state before `alembic upgrade head`
 - `[ ]` Validate fresh DB startup path
 - `[ ]` Validate legacy DB with global `alembic_version`
 - `[x]` Validate partially migrated local worktree DB
