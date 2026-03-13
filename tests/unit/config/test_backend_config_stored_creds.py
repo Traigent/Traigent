@@ -36,7 +36,7 @@ class TestBackendConfigStoredApiKey:
         with (
             patch.dict(
                 "os.environ",
-                {"TRAIGENT_API_KEY": "tg_env_key"},
+                {"TRAIGENT_API_KEY": "tg_env_key"},  # pragma: allowlist secret
                 clear=True,
             ),
             patch(
@@ -183,7 +183,7 @@ class TestBackendConfigDefaultBehavior:
                 return_value=None,
             ),
             patch(
-                "traigent.config.backend_config.BackendConfig.has_api_key",
+                "traigent.config.backend_config.BackendConfig.has_auth_credentials",
                 return_value=False,
             ),
             patch("traigent.cloud.backend_components.logger") as mock_logger,
@@ -192,7 +192,7 @@ class TestBackendConfigDefaultBehavior:
 
         mock_logger.warning.assert_called_once()
         warning_msg = mock_logger.warning.call_args[0][0]
-        assert "no API key found" in warning_msg
+        assert "no credentials found" in warning_msg
 
     def test_cloud_default_no_warning_with_stored_credentials(self):
         """Should NOT warn when stored CLI credentials exist."""
@@ -205,8 +205,28 @@ class TestBackendConfigDefaultBehavior:
                 return_value=None,
             ),
             patch(
-                "traigent.config.backend_config.BackendConfig.has_api_key",
+                "traigent.config.backend_config.BackendConfig.has_auth_credentials",
                 return_value=True,
+            ),
+            patch("traigent.cloud.backend_components.logger") as mock_logger,
+        ):
+            BackendClientConfig()
+
+        mock_logger.warning.assert_not_called()
+
+    def test_cloud_default_no_warning_with_stored_jwt_credentials(self):
+        """JWT-authenticated CLI users should not get a missing-credentials warning."""
+        from traigent.cloud.backend_components import BackendClientConfig
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+                return_value={"jwt_token": "header.payload.signature"},
             ),
             patch("traigent.cloud.backend_components.logger") as mock_logger,
         ):
@@ -299,4 +319,4 @@ class TestCliAuthPayload:
         assert "write" in perms
 
         # Verify result
-        assert result["api_key"] == "tg_created_key"
+        assert result["api_key"] == "tg_created_key"  # pragma: allowlist secret

@@ -60,16 +60,16 @@ class BackendClientConfig:
 
         # Warn when defaulting to cloud without any credentials.
         # Skip if the caller explicitly passed the URL (not our default).
-        # Use has_api_key() to avoid triggering get_api_key()'s own warning.
+        # Use a silent predicate so this path does not emit duplicate warnings.
         if (
             not backend_explicitly_set
             and self.backend_base_url
             and self.backend_base_url.rstrip("/")
             == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
-            and not BackendConfig.has_api_key()
+            and not BackendConfig.has_auth_credentials()
         ):
             logger.warning(
-                "Defaulting to Traigent cloud (%s) but no API key found. "
+                "Defaulting to Traigent cloud (%s) but no credentials found. "
                 "Set TRAIGENT_API_KEY, run 'traigent auth login', or set "
                 "TRAIGENT_ENV=development for local mode.",
                 self.backend_base_url,

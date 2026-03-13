@@ -244,6 +244,25 @@ class BackendConfig:
             return False
 
     @classmethod
+    def has_auth_credentials(cls) -> bool:
+        """Check whether any non-empty backend credentials are available.
+
+        This broader predicate is intended for UX warnings that should stay
+        silent when the user is already authenticated via either API key or JWT.
+        """
+        if os.environ.get("TRAIGENT_API_KEY") or os.environ.get("TRAIGENT_JWT_TOKEN"):
+            return True
+
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            stored_creds = CredentialManager.get_credentials()
+        except (ImportError, Exception):
+            return False
+
+        return bool(stored_creds.get("api_key") or stored_creds.get("jwt_token"))
+
+    @classmethod
     def is_local_backend(cls) -> bool:
         """Check if using local backend URL.
 
