@@ -378,10 +378,10 @@ No environment variables needed after login — the SDK picks up stored credenti
 
 **Credential priority order:**
 
-| Credential  | 1st (highest)              | 2nd                        | 3rd (default)       |
-|-------------|----------------------------|----------------------------|---------------------|
-| API Key     | `TRAIGENT_API_KEY` env var | Stored CLI credentials     | None (local only)   |
-| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000`    |
+| Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
+|-------------|--------------------------------|------------------------|----------------------|
+| API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `portal.traigent.ai` |
 
 > **Tip:** Use env vars for CI/automation. Use `traigent auth login` for local development.
 

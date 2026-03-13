@@ -184,9 +184,7 @@ class TestGenerateConfigCLI:
         result = runner.invoke(generate_config, ["/nonexistent/path.py"])
         assert result.exit_code != 0
 
-    def test_tvl_output(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_tvl_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         source_file = tmp_path / "agent.py"
         source_file.write_text(SAMPLE_SOURCE)
         monkeypatch.chdir(tmp_path)

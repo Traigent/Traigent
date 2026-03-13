@@ -21,10 +21,14 @@ from traigent.utils.exceptions import ValidationError
 def test_build_example_content_map_from_jsonl(tmp_path):
     dataset = tmp_path / "dataset.jsonl"
     dataset.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 json.dumps(
-                    {"input": {"q": "Where is Paris?"}, "output": "France", "topic": "geo"}
+                    {
+                        "input": {"q": "Where is Paris?"},
+                        "output": "France",
+                        "topic": "geo",
+                    }
                 ),
                 json.dumps(
                     {
@@ -99,8 +103,12 @@ def test_dataset_fingerprint_is_deterministic_and_order_sensitive():
     ]
     reversed_order = list(reversed(same_order))
 
-    assert compute_dataset_fingerprint(examples) == compute_dataset_fingerprint(same_order)
-    assert compute_dataset_fingerprint(examples) != compute_dataset_fingerprint(reversed_order)
+    assert compute_dataset_fingerprint(examples) == compute_dataset_fingerprint(
+        same_order
+    )
+    assert compute_dataset_fingerprint(examples) != compute_dataset_fingerprint(
+        reversed_order
+    )
 
 
 def test_validate_example_content_map_rejects_unknown_fields(tmp_path):
@@ -115,9 +123,7 @@ def test_validate_example_content_map_rejects_unknown_fields(tmp_path):
     assert errors
 
 
-def test_validate_example_content_map_handles_schema_errors(
-    tmp_path, monkeypatch
-):
+def test_validate_example_content_map_handles_schema_errors(tmp_path, monkeypatch):
     dataset = tmp_path / "dataset.json"
     dataset.write_text(
         json.dumps([{"input": {"x": 1}, "output": {"y": 2}}]),
