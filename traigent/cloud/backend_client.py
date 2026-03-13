@@ -169,21 +169,44 @@ class BackendIntegratedClient:
 
         self.backend_config = backend_config or BackendClientConfig()
 
-        effective_base_url = base_url or self.backend_config.backend_base_url
+        explicit_base_origin = None
+        explicit_api_base = None
+        if base_url:
+            parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
+            explicit_base_origin = (
+                parsed_origin or BackendConfig.normalize_backend_origin(base_url)
+            )
+            if explicit_base_origin:
+                explicit_api_base = (
+                    f"{explicit_base_origin}"
+                    f"{parsed_path or BackendConfig.get_default_api_path()}"
+                )
+
+        effective_base_url = (
+            explicit_base_origin or base_url or self.backend_config.backend_base_url
+        )
         if effective_base_url is None:
             effective_base_url = BackendConfig.get_backend_url()
 
         # Validate and sanitize URLs
         self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
-        backend_base_url = self.backend_config.backend_base_url or self.base_url
+        backend_base_url = self.base_url
+        if not explicit_base_origin:
+            backend_base_url = self.backend_config.backend_base_url or self.base_url
         self.backend_config.backend_base_url = self._api_ops.validate_and_sanitize_url(
             backend_base_url
         )
 
-        api_base_candidate = (
-            self.backend_config.api_base_url or BackendConfig.get_backend_api_url()
-        )
+        if explicit_api_base and not getattr(
+            self.backend_config, "api_explicitly_set", False
+        ):
+            api_base_candidate = explicit_api_base
+        else:
+            api_base_candidate = (
+                self.backend_config.api_base_url
+                or BackendConfig.build_api_base(self.backend_config.backend_base_url)
+            )
         self.api_base_url = self._api_ops.validate_and_sanitize_url(api_base_candidate)
         self.backend_config.api_base_url = self.api_base_url
 
