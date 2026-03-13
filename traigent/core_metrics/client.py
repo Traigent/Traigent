@@ -19,6 +19,7 @@ from traigent.core_metrics.dtos import (
     ProjectExportJobListDTO,
     ProjectExportJobResponseDTO,
     ProjectMeasureDistributionDTO,
+    ProjectObservabilitySummaryDashboardDTO,
     ProjectOptimizationOverviewDashboardDTO,
     ProjectPricingCatalogDTO,
     ProjectUsageDashboardDTO,
@@ -121,6 +122,24 @@ class CoreMetricsClient:
         )
         return ProjectUsageDashboardDTO.from_dict(
             self._unwrap_data(payload, "project usage dashboard")
+        )
+
+    def get_observability_summary_dashboard(
+        self,
+        *,
+        days: int = 30,
+        limit: int = 5,
+    ) -> ProjectObservabilitySummaryDashboardDTO:
+        payload = self._request_json(
+            "GET",
+            self._build_query_path(
+                "/analytics/dashboards/observability-summary",
+                days=days,
+                limit=limit,
+            ),
+        )
+        return ProjectObservabilitySummaryDashboardDTO.from_dict(
+            self._unwrap_data(payload, "observability summary dashboard")
         )
 
     def get_run_volume_trend(

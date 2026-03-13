@@ -500,6 +500,124 @@ class ProjectUsageDashboardDTO:
 
 
 @dataclass(frozen=True)
+class ObservabilitySummaryCardsDTO:
+    sessions_in_range: int
+    traces_in_range: int
+    observations_in_range: int
+    bookmarked_traces_in_range: int
+    published_traces_in_range: int
+    commented_traces_in_range: int
+    total_cost_usd_in_range: float
+    total_tokens_in_range: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ObservabilitySummaryCardsDTO:
+        return cls(
+            sessions_in_range=int(payload["sessions_in_range"]),
+            traces_in_range=int(payload["traces_in_range"]),
+            observations_in_range=int(payload["observations_in_range"]),
+            bookmarked_traces_in_range=int(payload["bookmarked_traces_in_range"]),
+            published_traces_in_range=int(payload["published_traces_in_range"]),
+            commented_traces_in_range=int(payload["commented_traces_in_range"]),
+            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_tokens_in_range=int(payload["total_tokens_in_range"]),
+        )
+
+
+@dataclass(frozen=True)
+class ObservabilityActivityTrendPointDTO:
+    bucket_start: str
+    bucket_label: str
+    traces: int
+    observations: int
+    total_cost_usd: float
+    total_tokens: int
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ObservabilityActivityTrendPointDTO:
+        return cls(
+            bucket_start=str(payload["bucket_start"]),
+            bucket_label=str(payload["bucket_label"]),
+            traces=int(payload["traces"]),
+            observations=int(payload["observations"]),
+            total_cost_usd=float(payload["total_cost_usd"]),
+            total_tokens=int(payload["total_tokens"]),
+        )
+
+
+@dataclass(frozen=True)
+class ObservabilityTopTraceDTO:
+    trace_id: str
+    session_id: str | None
+    name: str
+    status: str
+    observation_count: int
+    total_cost_usd: float
+    total_tokens: int
+    total_latency_ms: int
+    is_bookmarked: bool
+    is_published: bool
+    started_at: str | None
+    privacy_classification: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ObservabilityTopTraceDTO:
+        return cls(
+            trace_id=str(payload["trace_id"]),
+            session_id=(
+                str(payload["session_id"])
+                if payload.get("session_id") is not None
+                else None
+            ),
+            name=str(payload["name"]),
+            status=str(payload["status"]),
+            observation_count=int(payload["observation_count"]),
+            total_cost_usd=float(payload["total_cost_usd"]),
+            total_tokens=int(payload["total_tokens"]),
+            total_latency_ms=int(payload["total_latency_ms"]),
+            is_bookmarked=bool(payload["is_bookmarked"]),
+            is_published=bool(payload["is_published"]),
+            started_at=(
+                str(payload["started_at"])
+                if payload.get("started_at") is not None
+                else None
+            ),
+            privacy_classification=str(payload["privacy_classification"]),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectObservabilitySummaryDashboardDTO:
+    context: AnalyticsContextDTO
+    range_days: int
+    resolved_bucket: str
+    summary_cards: ObservabilitySummaryCardsDTO
+    activity_trend: list[ObservabilityActivityTrendPointDTO]
+    top_traces: list[ObservabilityTopTraceDTO]
+
+    @classmethod
+    def from_dict(
+        cls, payload: dict[str, Any]
+    ) -> ProjectObservabilitySummaryDashboardDTO:
+        return cls(
+            context=AnalyticsContextDTO.from_dict(payload["context"]),
+            range_days=int(payload["range_days"]),
+            resolved_bucket=str(payload["resolved_bucket"]),
+            summary_cards=ObservabilitySummaryCardsDTO.from_dict(
+                payload["summary_cards"]
+            ),
+            activity_trend=[
+                ObservabilityActivityTrendPointDTO.from_dict(item)
+                for item in payload["activity_trend"]
+            ],
+            top_traces=[
+                ObservabilityTopTraceDTO.from_dict(item)
+                for item in payload["top_traces"]
+            ],
+        )
+
+
+@dataclass(frozen=True)
 class MeasureSummaryDTO:
     measure_key: str
     measure_id: str | None

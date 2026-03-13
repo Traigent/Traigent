@@ -313,6 +313,55 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                     ],
                 }
             }
+        if path == "/analytics/dashboards/observability-summary?days=7&limit=3":
+            return {
+                "data": {
+                    "context": {
+                        "tenant_id": "tenant_acme",
+                        "project_id": "project_alpha",
+                        "generated_at": "2026-03-12T09:21:00Z",
+                        "privacy_classification": "aggregate_safe",
+                    },
+                    "range_days": 7,
+                    "resolved_bucket": "day",
+                    "summary_cards": {
+                        "sessions_in_range": 2,
+                        "traces_in_range": 3,
+                        "observations_in_range": 7,
+                        "bookmarked_traces_in_range": 1,
+                        "published_traces_in_range": 1,
+                        "commented_traces_in_range": 1,
+                        "total_cost_usd_in_range": 0.42,
+                        "total_tokens_in_range": 678,
+                    },
+                    "activity_trend": [
+                        {
+                            "bucket_start": "2026-03-12T00:00:00+00:00",
+                            "bucket_label": "2026-03-12",
+                            "traces": 3,
+                            "observations": 7,
+                            "total_cost_usd": 0.42,
+                            "total_tokens": 678,
+                        }
+                    ],
+                    "top_traces": [
+                        {
+                            "trace_id": "trace_1",
+                            "session_id": "session_1",
+                            "name": "Support Trace",
+                            "status": "completed",
+                            "observation_count": 3,
+                            "total_cost_usd": 0.21,
+                            "total_tokens": 321,
+                            "total_latency_ms": 145,
+                            "is_bookmarked": True,
+                            "is_published": False,
+                            "started_at": "2026-03-12T08:59:00Z",
+                            "privacy_classification": "aggregate_safe",
+                        }
+                    ],
+                }
+            }
         if path == "/analytics/export-jobs?page=1&per_page=10":
             return {
                 "data": {
@@ -448,6 +497,7 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
     dashboard = client.get_optimization_overview_dashboard(days=7, limit=3)
     evaluator_dashboard = client.get_evaluator_quality_dashboard(days=7, limit=2)
     usage_dashboard = client.get_project_usage_dashboard(days=7, limit=3)
+    observability_dashboard = client.get_observability_summary_dashboard(days=7, limit=3)
     export_jobs = client.list_export_jobs(page=1, per_page=10)
     export_job = client.get_export_job("export_job_1")
     trend = client.get_run_volume_trend(experiment_id="exp_1", days=7, bucket="day")
@@ -473,15 +523,21 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
         None,
         "json",
     )
-    assert calls[5] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
-    assert calls[6] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
-    assert calls[7] == (
+    assert calls[5] == (
+        "GET",
+        "/analytics/dashboards/observability-summary?days=7&limit=3",
+        None,
+        "json",
+    )
+    assert calls[6] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
+    assert calls[7] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
+    assert calls[8] == (
         "GET",
         "/analytics/trends/run-volume?experiment_id=exp_1&days=7&bucket=day",
         None,
         "json",
     )
-    assert calls[8] == (
+    assert calls[9] == (
         "GET",
         "/analytics/distributions/measures/accuracy?experiment_id=exp_1&bins=5",
         None,
@@ -501,6 +557,9 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
     assert usage_dashboard.summary_cards.configuration_runs_in_range == 12
     assert usage_dashboard.usage_trend[0].total_tokens == 4321
     assert usage_dashboard.top_experiments[0].experiment_id == "exp_1"
+    assert observability_dashboard.summary_cards.traces_in_range == 3
+    assert observability_dashboard.activity_trend[0].observations == 7
+    assert observability_dashboard.top_traces[0].trace_id == "trace_1"
     assert export_jobs.pagination.total == 1
     assert export_jobs.items[0].job_id == "export_job_1"
     assert export_job.job.requested_by == "user_123"
