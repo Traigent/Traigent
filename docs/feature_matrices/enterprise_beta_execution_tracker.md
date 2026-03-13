@@ -19,7 +19,7 @@ This file is the working checklist for the remaining execution waves.
 - `[!]` blocked
 
 ## Current Focus
-- `[~]` Step 0 secure-and-push baseline across all active repos
+- `[x]` Step 0 secure-and-push baseline across all active repos
 - `[~]` Wave 3A core tenant/project enforcement completion
 - `[~]` Wave 3B project RBAC kernel
 - `[x]` Automated seeded release-validation harness
@@ -37,7 +37,7 @@ This file is the working checklist for the remaining execution waves.
 
 ### Step 0 pushed baseline commits
 - `TraigentSchema` `feat/pr52-contract-sync-schema`: `de2f0bf`
-- `TraigentBackend` `feature/langfuse-epic1-observability`: `b77ceae`
+- `TraigentBackend` `feature/langfuse-epic1-observability`: `3a71922`
 - `Traigent` SDK worktree `feature/langfuse-epic1-observability`: `e40eac1d`
 - `TraigentFrontend` `feature/langfuse-epic1-observability`: `cd97ae1`
 - `Traigent` main repo `develop`: `b0244ab5`
@@ -65,10 +65,10 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Prevent unscoped core-model primary-key fetches from reappearing in runtime code
 - `[~]` Audit remaining experiment/core runtime paths for transitive-scope assumptions
 - `[ ]` Expand dual-run discrepancy telemetry beyond current access-checker coverage
-- `[ ]` Verify no legacy route bypasses the enforcement kernel
-- `[ ]` Inventory surviving legacy routes touching core resources
-- `[ ]` Classify surviving legacy routes as safe vs unsafe
-- `[ ]` Disable any unsafe legacy route before beta
+- `[x]` Verify no legacy route bypasses the enforcement kernel
+- `[x]` Inventory surviving legacy routes touching core resources
+- `[x]` Classify surviving legacy routes as safe vs unsafe
+- `[x]` Disable any unsafe legacy route before beta
 
 ### Migration-chain mitigation
 - `[x]` Commit the migration bootstrap/reconciliation path in Step 0
@@ -160,6 +160,8 @@ This file is the working checklist for the remaining execution waves.
 ## Notes
 - Browser/JS feedback SDK, prompt playground, scheduled exports, export webhooks, and self-serve dashboards remain intentionally out of beta scope.
 - Any legacy route that bypasses tenant/project enforcement must be disabled before beta, even if cosmetic route cleanup is deferred.
+- Legacy core `/api/v1` route families are now explicitly inventoried in backend code; the only non-operational family left is `/api/v1/traigent-sessions`, which is hard-disabled with a `501` compatibility response.
 - Admin API keys are tenant-scoped in beta; cross-tenant operations are reserved for platform-admin JWT/internal tooling.
 - The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
 - The current beta gate is satisfied via the repaired live local worktree DB path; the fresh disposable DB fallback remains available if the legacy path regresses.
+- The live worktree DB now validates cleanly through the backend reconciliation/current flow and reports revision `add_export_artifact_refs` via `traigent_alembic_version`.
