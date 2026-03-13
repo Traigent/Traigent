@@ -37,7 +37,7 @@ This file is the working checklist for the remaining execution waves.
 
 ### Step 0 pushed baseline commits
 - `TraigentSchema` `feat/pr52-contract-sync-schema`: `de2f0bf`
-- `TraigentBackend` `feature/langfuse-epic1-observability`: `3a71922`
+- `TraigentBackend` `feature/langfuse-epic1-observability`: `bb55b11`
 - `Traigent` SDK worktree `feature/langfuse-epic1-observability`: `e40eac1d`
 - `TraigentFrontend` `feature/langfuse-epic1-observability`: `cd97ae1`
 - `Traigent` main repo `develop`: `b0244ab5`
@@ -73,8 +73,8 @@ This file is the working checklist for the remaining execution waves.
 ### Migration-chain mitigation
 - `[x]` Commit the migration bootstrap/reconciliation path in Step 0
 - `[x]` Wire docker/dev startup to reconcile legacy DB state before `alembic upgrade head`
-- `[ ]` Validate fresh DB startup path
-- `[ ]` Validate legacy DB with global `alembic_version`
+- `[x]` Validate fresh DB startup path
+- `[x]` Validate legacy DB with global `alembic_version`
 - `[x]` Validate partially migrated local worktree DB
 - `[ ]` If needed, provision fresh disposable seeded-validation DB fallback
 - `[x]` Record whether beta validation is satisfied via reconciled legacy DB or fresh fallback DB
@@ -164,4 +164,5 @@ This file is the working checklist for the remaining execution waves.
 - Admin API keys are tenant-scoped in beta; cross-tenant operations are reserved for platform-admin JWT/internal tooling.
 - The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
 - The current beta gate is satisfied via the repaired live local worktree DB path; the fresh disposable DB fallback remains available if the legacy path regresses.
-- The live worktree DB now validates cleanly through the backend reconciliation/current flow and reports revision `add_export_artifact_refs` via `traigent_alembic_version`.
+- Fresh and legacy disposable Postgres databases now validate through the backend bootstrap/reconciliation path and stamp cleanly to revision `add_project_export_policy`.
+- The live worktree DB still validates cleanly through the backend reconciliation/current flow; tracker records whether beta validation is satisfied via the repaired live DB path or a fresh validated fallback.
