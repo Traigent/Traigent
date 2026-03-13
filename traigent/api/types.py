@@ -116,19 +116,26 @@ StopReason = Literal[
 TrialDatetimeFormat = Literal["iso", "epoch"]
 
 
+def _validate_trial_datetime_format(datetime_format: TrialDatetimeFormat) -> None:
+    """Validate supported datetime formats for public trial serialization."""
+    if datetime_format not in ("iso", "epoch"):
+        raise ValueError(
+            "datetime_format must be 'iso' or 'epoch', " f"got {datetime_format!r}"
+        )
+
+
 def _serialize_datetime(
     value: datetime,
     *,
     datetime_format: TrialDatetimeFormat,
 ) -> str | float:
     """Serialize datetime using the requested wire format."""
+    _validate_trial_datetime_format(datetime_format)
+
     if datetime_format == "iso":
         return value.isoformat()
-    if datetime_format == "epoch":
-        return value.timestamp()
-    raise ValueError(
-        "datetime_format must be 'iso' or 'epoch', " f"got {datetime_format!r}"
-    )
+
+    return value.timestamp()
 
 
 def _json_safe_trial_value(
@@ -141,11 +148,21 @@ def _json_safe_trial_value(
         return None
 
     if hasattr(value, "to_dict") and callable(value.to_dict):
+        to_dict = value.to_dict
         try:
-            return value.to_dict()
+            return _json_safe_trial_value(
+                to_dict(datetime_format=datetime_format),
+                datetime_format=datetime_format,
+            )
         except TypeError:
-            # Some objects may expose a to_dict method with required arguments.
-            pass
+            try:
+                return _json_safe_trial_value(
+                    to_dict(),
+                    datetime_format=datetime_format,
+                )
+            except TypeError:
+                # Some objects may expose a to_dict method with required arguments.
+                pass
 
     if isinstance(value, datetime):
         return _serialize_datetime(value, datetime_format=datetime_format)
@@ -282,6 +299,8 @@ def serialize_trials(
         include_metadata: Include each trial's metadata payload.
         datetime_format: Timestamp encoding, either ``"iso"`` or ``"epoch"``.
     """
+    _validate_trial_datetime_format(datetime_format)
+
     return [
         trial.to_dict(
             include_config=include_config,

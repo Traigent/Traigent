@@ -10,6 +10,26 @@ from traigent import serialize_trials
 from traigent.api.types import ExampleResult, TrialResult, TrialStatus
 
 
+class _NestedTimestampedPayload:
+    """Test helper exposing a no-arg ``to_dict`` with nested datetimes."""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "nested_at": datetime(2026, 3, 13, 11, 58, tzinfo=UTC),
+            "status": "ok",
+        }
+
+
+class _FormatAwarePayload:
+    """Test helper exposing a ``to_dict`` that accepts ``datetime_format``."""
+
+    def to_dict(self, *, datetime_format: str = "iso") -> dict[str, object]:
+        ts = datetime(2026, 3, 13, 11, 57, tzinfo=UTC)
+        return {
+            "nested_at": ts.isoformat() if datetime_format == "iso" else ts.timestamp()
+        }
+
+
 def _build_trial_result() -> TrialResult:
     return TrialResult(
         trial_id="trial-001",
@@ -78,6 +98,28 @@ def test_trial_result_to_dict_supports_epoch_timestamps() -> None:
     )
 
 
+def test_trial_result_to_dict_serializes_nested_to_dict_datetimes() -> None:
+    trial = _build_trial_result()
+    trial.metadata["nested_payload"] = _NestedTimestampedPayload()
+
+    serialized = trial.to_dict(datetime_format="epoch")
+
+    assert serialized["metadata"]["nested_payload"]["nested_at"] == pytest.approx(
+        datetime(2026, 3, 13, 11, 58, tzinfo=UTC).timestamp()
+    )
+
+
+def test_trial_result_to_dict_forwards_datetime_format_to_nested_to_dict() -> None:
+    trial = _build_trial_result()
+    trial.metadata["format_aware_payload"] = _FormatAwarePayload()
+
+    serialized = trial.to_dict(datetime_format="epoch")
+
+    assert serialized["metadata"]["format_aware_payload"]["nested_at"] == pytest.approx(
+        datetime(2026, 3, 13, 11, 57, tzinfo=UTC).timestamp()
+    )
+
+
 def test_serialize_trials_applies_requested_options() -> None:
     trials = [_build_trial_result(), _build_trial_result()]
 
@@ -98,3 +140,8 @@ def test_serialize_trials_rejects_unknown_datetime_format() -> None:
 
     with pytest.raises(ValueError, match="datetime_format"):
         serialize_trials([trial], datetime_format="rfc3339")  # type: ignore[arg-type]
+
+
+def test_serialize_trials_rejects_unknown_datetime_format_for_empty_input() -> None:
+    with pytest.raises(ValueError, match="datetime_format"):
+        serialize_trials([], datetime_format="rfc3339")  # type: ignore[arg-type]
