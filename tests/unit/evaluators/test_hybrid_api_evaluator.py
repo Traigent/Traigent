@@ -1154,6 +1154,8 @@ class TestExecuteBatch:
         assert len(results) == 1
         assert results[0].metrics == {"accuracy": 0.8}
         mock_transport.evaluate.assert_awaited_once()
+        eval_request = mock_transport.evaluate.await_args.args[0]
+        assert eval_request.config == {"model": "gpt-4"}
 
     @pytest.mark.asyncio
     async def test_execute_only_mode(self, mock_transport: MagicMock) -> None:
@@ -1339,9 +1341,10 @@ class TestEvaluateOutputs:
             {"example_id": "ex_0", "data": {"question": "What is 2+2?"}},
             {"example_id": "ex_1", "data": {"question": "What is 3+3?"}},
         ]
+        config = {"judge_model": "gpt-4.1-mini"}
 
         results = await ev._evaluate_outputs(
-            mock_transport, batch, inputs, exec_response
+            mock_transport, config, batch, inputs, exec_response
         )
 
         assert len(results) == 2
@@ -1349,6 +1352,8 @@ class TestEvaluateOutputs:
         assert results[0].metrics == {"accuracy": 1.0}
         assert results[1].metrics == {"accuracy": 0.5}
         assert results[0].cost_usd == pytest.approx(0.02)  # 0.04 / 2
+        eval_request = mock_transport.evaluate.await_args.args[0]
+        assert eval_request.config == config
 
     @pytest.mark.asyncio
     async def test_evaluate_outputs_fallback_on_error(
@@ -1371,7 +1376,7 @@ class TestEvaluateOutputs:
         inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
         results = await ev._evaluate_outputs(
-            mock_transport, batch, inputs, exec_response
+            mock_transport, {}, batch, inputs, exec_response
         )
 
         # Should fall back to execute-only (no quality metrics)
@@ -1402,7 +1407,7 @@ class TestEvaluateOutputs:
         inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
         results = await ev._evaluate_outputs(
-            mock_transport, batch, inputs, exec_response
+            mock_transport, {}, batch, inputs, exec_response
         )
 
         assert len(results) == 1
@@ -1430,10 +1435,38 @@ class TestEvaluateOutputs:
         batch = list(dataset)
         inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
 
-        await ev._evaluate_outputs(mock_transport, batch, inputs, exec_response)
+        await ev._evaluate_outputs(
+            mock_transport, {"judge_model": "gpt-4"}, batch, inputs, exec_response
+        )
 
         eval_request = mock_transport.evaluate.await_args.args[0]
         assert eval_request.timeout_ms == 12500
+        assert eval_request.config == {"judge_model": "gpt-4"}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_outputs_preserves_empty_config_dict(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Empty config should be forwarded as {} rather than omitted."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        exec_response = _make_execute_response(
+            outputs=[{"example_id": "ex_0", "output": "result_0"}],
+            operational_metrics={"cost_usd": 0.01, "latency_ms": 100.0},
+        )
+        mock_transport.evaluate = AsyncMock(return_value=_make_evaluate_response())
+
+        dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
+        batch = list(dataset)
+        inputs = [{"example_id": "ex_0", "data": {"q": "?"}}]
+
+        await ev._evaluate_outputs(mock_transport, {}, batch, inputs, exec_response)
+
+        eval_request = mock_transport.evaluate.await_args.args[0]
+        assert eval_request.config == {}
 
 
 # ---------------------------------------------------------------------------
