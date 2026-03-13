@@ -194,8 +194,8 @@ class TestBackendConfigDefaultBehavior:
         warning_msg = mock_logger.warning.call_args[0][0]
         assert "no credentials found" in warning_msg
 
-    def test_cloud_default_no_warning_with_stored_credentials(self):
-        """Should NOT warn when stored CLI credentials exist."""
+    def test_cloud_default_no_warning_with_stored_api_key(self):
+        """Should NOT warn when stored API key credentials exist."""
         from traigent.cloud.backend_components import BackendClientConfig
 
         with (
