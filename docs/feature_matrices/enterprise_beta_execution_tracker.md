@@ -115,7 +115,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Backend authorization kernel
 - `[x]` Membership APIs
 - `[x]` Membership UI
-- `[~]` Audit events for membership/role/export/admin actions
+- `[x]` Audit events for membership/role/export/admin actions
 - `[x]` Rate-limit policy product surface
 - `[x]` Retention controls for export/raw-content surfaces
 
@@ -148,6 +148,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Add focused backend/SDK/frontend/schema tests for retention policy flows
 - `[x]` Add retention-aware artifact cleanup/expiry enforcement beyond metadata
 - `[x]` Add project export policy routes, DTOs, UI, and materialized-export gating
+- `[x]` Add enterprise-admin audit events for tenant, tenant-membership, and SSO mutations
 
 ## Release Validation / Security
 - `[x]` Early lightweight threat-model review after Wave 3A stabilization
