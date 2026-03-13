@@ -358,6 +358,29 @@ class TVARDefinition:
 
 
 @dataclass(slots=True)
+class EstimatedTokensPerExample:
+    """Per-example token estimate returned during config-space discovery."""
+
+    input_tokens: int
+    output_tokens: int
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EstimatedTokensPerExample:
+        """Create from dictionary (API response)."""
+        return cls(
+            input_tokens=int(data.get("input_tokens", 0)),
+            output_tokens=int(data.get("output_tokens", 0)),
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        """Convert to JSON-serializable dictionary."""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+        }
+
+
+@dataclass(slots=True)
 class ConfigSpaceResponse:
     """Response from config-space discovery endpoint.
 
@@ -371,6 +394,8 @@ class ConfigSpaceResponse:
         promotion_policy: Optional promotion policy definition
         defaults: Optional default configuration values
         measures: Optional metric names produced by the service
+        estimated_tokens_per_example: Optional per-example token estimate for
+            pre-run approval checks
     """
 
     schema_version: str
@@ -382,6 +407,7 @@ class ConfigSpaceResponse:
     promotion_policy: dict[str, Any] | None = None
     defaults: dict[str, Any] | None = None
     measures: list[str] | None = None
+    estimated_tokens_per_example: EstimatedTokensPerExample | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConfigSpaceResponse:
@@ -394,6 +420,7 @@ class ConfigSpaceResponse:
         tvars = [
             TVARDefinition.from_dict(t) if isinstance(t, dict) else t for t in tvar_data
         ]
+        estimated_tokens_data = data.get("estimated_tokens_per_example")
         return cls(
             schema_version=data.get("schema_version", "0.9"),
             tunable_id=data.get("tunable_id", ""),
@@ -404,6 +431,11 @@ class ConfigSpaceResponse:
             promotion_policy=data.get("promotion_policy"),
             defaults=data.get("defaults"),
             measures=data.get("measures"),
+            estimated_tokens_per_example=(
+                EstimatedTokensPerExample.from_dict(estimated_tokens_data)
+                if isinstance(estimated_tokens_data, dict)
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -441,6 +473,10 @@ class ConfigSpaceResponse:
             result["defaults"] = self.defaults
         if self.measures is not None:
             result["measures"] = self.measures
+        if self.estimated_tokens_per_example is not None:
+            result["estimated_tokens_per_example"] = (
+                self.estimated_tokens_per_example.to_dict()
+            )
         return result
 
     @property

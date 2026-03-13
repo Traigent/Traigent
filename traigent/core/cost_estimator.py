@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
@@ -31,6 +33,9 @@ class CostEstimator:
         max_trials: int | None,
         max_total_examples: int | None,
         model_name: str | None = None,
+        candidate_models: Sequence[str] | None = None,
+        estimated_input_tokens_per_example: int | None = None,
+        estimated_output_tokens_per_example: int | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -39,11 +44,58 @@ class CostEstimator:
             max_trials: Maximum number of trials
             max_total_examples: Global sample budget (None = unlimited)
             model_name: Primary model name for model-aware pricing estimation
+            candidate_models: Candidate model names from config space for
+                worst-case estimation when no fixed model is set for the run
+            estimated_input_tokens_per_example: Optional service-provided
+                per-example input token estimate
+            estimated_output_tokens_per_example: Optional service-provided
+                per-example output token estimate
         """
         self._cost_enforcer = cost_enforcer
         self._max_trials = max_trials
         self._max_total_examples = max_total_examples
         self._model_name = model_name
+        self._candidate_models = tuple(
+            dict.fromkeys(
+                model.strip()
+                for model in candidate_models or ()
+                if isinstance(model, str) and model.strip()
+            )
+        )
+        self._estimated_input_tokens_per_example = (
+            estimated_input_tokens_per_example
+            if isinstance(estimated_input_tokens_per_example, int)
+            and not isinstance(estimated_input_tokens_per_example, bool)
+            and estimated_input_tokens_per_example >= 0
+            else None
+        )
+        self._estimated_output_tokens_per_example = (
+            estimated_output_tokens_per_example
+            if isinstance(estimated_output_tokens_per_example, int)
+            and not isinstance(estimated_output_tokens_per_example, bool)
+            and estimated_output_tokens_per_example >= 0
+            else None
+        )
+
+    def _get_estimated_tokens_per_example(self) -> tuple[int, int]:
+        """Resolve per-example token estimate, preferring service metadata."""
+        return (
+            (
+                self._estimated_input_tokens_per_example
+                if self._estimated_input_tokens_per_example is not None
+                else _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE
+            ),
+            (
+                self._estimated_output_tokens_per_example
+                if self._estimated_output_tokens_per_example is not None
+                else _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE
+            ),
+        )
+
+    def _base_cost_for_rates(self, input_rate: float, output_rate: float) -> float:
+        """Compute per-example base cost from token rates."""
+        input_tokens, output_tokens = self._get_estimated_tokens_per_example()
+        return float(input_tokens * input_rate + output_tokens * output_rate)
 
     def _estimate_base_cost_per_example(self) -> tuple[float, str]:
         """Estimate per-example cost from model pricing with conservative fallback."""
@@ -52,11 +104,7 @@ class CostEstimator:
                 input_rate, output_rate, source = get_model_token_pricing(
                     self._model_name
                 )
-                base_cost = (
-                    _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * input_rate
-                    + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * output_rate
-                )
-                return float(base_cost), source
+                return self._base_cost_for_rates(input_rate, output_rate), source
             except UnknownModelError:
                 logger.warning(
                     "Unknown model %r for pre-approval estimate; using conservative pricing.",
@@ -68,10 +116,46 @@ class CostEstimator:
                     self._model_name,
                     exc_info=True,
                 )
+        elif self._candidate_models:
+            candidate_costs: list[tuple[float, str, str]] = []
+            unknown_candidates: list[str] = []
 
+            for candidate in self._candidate_models:
+                try:
+                    input_rate, output_rate, source = get_model_token_pricing(candidate)
+                    candidate_costs.append(
+                        (
+                            self._base_cost_for_rates(input_rate, output_rate),
+                            candidate,
+                            source,
+                        )
+                    )
+                except UnknownModelError:
+                    unknown_candidates.append(candidate)
+                except Exception:
+                    logger.debug(
+                        "Model-aware estimate failed for candidate %r; using conservative pricing.",
+                        candidate,
+                        exc_info=True,
+                    )
+                    unknown_candidates.append(candidate)
+
+            if candidate_costs and not unknown_candidates:
+                base_cost, model_name, source = max(
+                    candidate_costs, key=lambda item: item[0]
+                )
+                return base_cost, f"{source}:config_space_max({model_name})"
+
+            if unknown_candidates:
+                logger.warning(
+                    "Unable to resolve pricing for candidate model(s) %s; using conservative pricing.",
+                    sorted(unknown_candidates),
+                )
+
+        input_tokens, output_tokens = self._get_estimated_tokens_per_example()
         conservative_cost = (
-            _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_INPUT_COST_PER_TOKEN
-            + _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE * _CONSERVATIVE_OUTPUT_COST_PER_TOKEN
+            input_tokens * _CONSERVATIVE_INPUT_COST_PER_TOKEN
+            + output_tokens * _CONSERVATIVE_OUTPUT_COST_PER_TOKEN
         )
         return float(conservative_cost), "conservative_fallback"
 

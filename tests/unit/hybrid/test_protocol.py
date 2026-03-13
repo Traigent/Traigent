@@ -3,6 +3,7 @@
 from traigent.hybrid.protocol import (
     BatchOptions,
     ConfigSpaceResponse,
+    EstimatedTokensPerExample,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
@@ -345,6 +346,10 @@ class TestConfigSpaceResponse:
             },
             "defaults": {"model": "gpt-4"},
             "measures": ["accuracy", "cost"],
+            "estimated_tokens_per_example": {
+                "input_tokens": 120,
+                "output_tokens": 40,
+            },
         }
 
         response = ConfigSpaceResponse.from_dict(data)
@@ -356,6 +361,10 @@ class TestConfigSpaceResponse:
         assert response.promotion_policy == data["promotion_policy"]
         assert response.defaults == data["defaults"]
         assert response.measures == data["measures"]
+        assert response.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=120,
+            output_tokens=40,
+        )
 
     def test_to_dict_includes_optional_optimization_sections(self) -> None:
         """Optional optimization sections round-trip via to_dict."""
@@ -377,6 +386,10 @@ class TestConfigSpaceResponse:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            estimated_tokens_per_example=EstimatedTokensPerExample(
+                input_tokens=120,
+                output_tokens=40,
+            ),
         )
 
         serialized = response.to_dict()
@@ -387,6 +400,10 @@ class TestConfigSpaceResponse:
         assert serialized["promotion_policy"] == {"dominance": "epsilon_pareto"}
         assert serialized["defaults"] == {"model": "gpt-4"}
         assert serialized["measures"] == ["accuracy"]
+        assert serialized["estimated_tokens_per_example"] == {
+            "input_tokens": 120,
+            "output_tokens": 40,
+        }
         assert serialized["constraints"] == response.constraints
 
     def test_to_traigent_config_space(self) -> None:

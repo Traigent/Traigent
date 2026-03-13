@@ -1993,3 +1993,64 @@ class TestCostEstimation:
 
         expected = 10 * 5 * base_cost_per_example * 1.2
         assert estimate == pytest.approx(expected, rel=0.1)
+
+    def test_cost_estimator_uses_optimizer_model_candidates(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Hybrid-style model candidates should reach the shared estimator."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.01)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_cost_estimator_uses_hybrid_token_estimate_metadata(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Hybrid discovery metadata should replace generic token defaults."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        mock_evaluator.optimization_spec = {
+            "estimated_tokens_per_example": {"input_tokens": 100, "output_tokens": 50}
+        }
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.00075)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"

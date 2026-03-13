@@ -10,7 +10,11 @@ from traigent.hybrid.discovery import (
     normalize_tvar_to_config_space,
     validate_config_against_tvars,
 )
-from traigent.hybrid.protocol import ConfigSpaceResponse, TVARDefinition
+from traigent.hybrid.protocol import (
+    ConfigSpaceResponse,
+    EstimatedTokensPerExample,
+    TVARDefinition,
+)
 
 
 class TestConfigSpaceDiscovery:
@@ -64,6 +68,10 @@ class TestConfigSpaceDiscovery:
                 },
                 defaults={"model": "gpt-4", "temperature": 0.4},
                 measures=["accuracy", "cost"],
+                estimated_tokens_per_example=EstimatedTokensPerExample(
+                    input_tokens=120,
+                    output_tokens=40,
+                ),
             )
         )
         return transport
@@ -135,6 +143,10 @@ class TestConfigSpaceDiscovery:
         assert discovery.get_promotion_policy() is not None
         assert discovery.get_defaults() == {"model": "gpt-4", "temperature": 0.4}
         assert discovery.get_measures() == ["accuracy", "cost"]
+        assert discovery.get_estimated_tokens_per_example() == {
+            "input_tokens": 120,
+            "output_tokens": 40,
+        }
 
     @pytest.mark.asyncio
     async def test_build_optimization_spec(
@@ -154,6 +166,10 @@ class TestConfigSpaceDiscovery:
         )
         assert len(spec["constraints"]) >= 1
         assert spec["measures"] == ["accuracy", "cost"]
+        assert spec["estimated_tokens_per_example"] == {
+            "input_tokens": 120,
+            "output_tokens": 40,
+        }
 
     @pytest.mark.asyncio
     async def test_build_tvl_artifact_alias(

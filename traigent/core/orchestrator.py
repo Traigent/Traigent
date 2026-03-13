@@ -243,16 +243,89 @@ class OptimizationOrchestrator:
         )
 
         self._configure_stop_conditions()
+        estimated_input_tokens, estimated_output_tokens = (
+            self._extract_estimated_tokens_per_example(
+                getattr(self.evaluator, "optimization_spec", None)
+            )
+        )
 
         self._cost_estimator = CostEstimator(
             cost_enforcer=self.cost_enforcer,
             max_trials=self._max_trials,
             max_total_examples=self._max_total_examples,
             model_name=self.traigent_config.model,
+            candidate_models=self._extract_model_candidates_from_config_space(
+                getattr(self.optimizer, "config_space", None)
+            ),
+            estimated_input_tokens_per_example=estimated_input_tokens,
+            estimated_output_tokens_per_example=estimated_output_tokens,
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
         self._initialized = True
+
+    @staticmethod
+    def _extract_model_candidates_from_config_space(
+        config_space: dict[str, Any] | None,
+    ) -> tuple[str, ...]:
+        """Extract model candidates from optimizer config space for estimation."""
+        if not isinstance(config_space, dict):
+            return ()
+
+        for key in ("model", "model_name"):
+            if key not in config_space:
+                continue
+
+            definition = config_space[key]
+            raw_candidates: Sequence[Any] | None = None
+
+            if isinstance(definition, str):
+                raw_candidates = (definition,)
+            elif isinstance(definition, Sequence) and not isinstance(
+                definition, (str, bytes, bytearray)
+            ):
+                raw_candidates = definition
+            elif isinstance(definition, dict):
+                values = definition.get("values")
+                if isinstance(values, str):
+                    raw_candidates = (values,)
+                elif isinstance(values, Sequence) and not isinstance(
+                    values, (str, bytes, bytearray)
+                ):
+                    raw_candidates = values
+
+            if raw_candidates is None:
+                continue
+
+            return tuple(
+                dict.fromkeys(
+                    candidate.strip()
+                    for candidate in raw_candidates
+                    if isinstance(candidate, str) and candidate.strip()
+                )
+            )
+
+        return ()
+
+    @staticmethod
+    def _extract_estimated_tokens_per_example(
+        optimization_spec: dict[str, Any] | None,
+    ) -> tuple[int | None, int | None]:
+        """Extract per-example token estimate from hybrid optimization metadata."""
+        if not isinstance(optimization_spec, dict):
+            return (None, None)
+
+        estimate = optimization_spec.get("estimated_tokens_per_example")
+        if not isinstance(estimate, dict):
+            return (None, None)
+
+        def _normalize(key: str) -> int | None:
+            value = estimate.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                return value
+            return None
+
+        return (_normalize("input_tokens"), _normalize("output_tokens"))
 
     def _init_constraints(
         self, raw_constraints: list[Callable[..., bool]] | None
