@@ -22,7 +22,7 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Step 0 secure-and-push baseline across all active repos
 - `[~]` Wave 3A core tenant/project enforcement completion
 - `[~]` Wave 3B project RBAC kernel
-- `[~]` Automated seeded release-validation harness
+- `[x]` Automated seeded release-validation harness
 - `[~]` Wave 3B basic project membership UI
 - `[~]` Wave 3B beta retention controls
 
@@ -71,13 +71,13 @@ This file is the working checklist for the remaining execution waves.
 - `[ ]` Disable any unsafe legacy route before beta
 
 ### Migration-chain mitigation
-- `[ ]` Commit the migration bootstrap/reconciliation path in Step 0
+- `[x]` Commit the migration bootstrap/reconciliation path in Step 0
 - `[ ]` Wire docker/dev startup to reconcile legacy DB state before `alembic upgrade head`
 - `[ ]` Validate fresh DB startup path
 - `[ ]` Validate legacy DB with global `alembic_version`
-- `[ ]` Validate partially migrated local worktree DB
+- `[x]` Validate partially migrated local worktree DB
 - `[ ]` If needed, provision fresh disposable seeded-validation DB fallback
-- `[ ]` Record whether beta validation is satisfied via reconciled legacy DB or fresh fallback DB
+- `[x]` Record whether beta validation is satisfied via reconciled legacy DB or fresh fallback DB
 
 ## Seeded Validation Harness
 - `[x]` Seed at least two tenants and two projects with realistic data
@@ -85,7 +85,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Provide seeded validation user and memberships
 - `[x]` Add backend fixture integration test
 - `[x]` Add frontend Playwright seeded validation suite
-- `[!]` Run seeded validation successfully against the live local worktree stack
+- `[x]` Run seeded validation successfully against the live local worktree stack
 - `[x]` Add explicit negative UI assertions for cross-project/cross-tenant absence
 - `[x]` Fix fixture measure scoping so score records do not reference cross-tenant measures
 - `[x]` Add safe handling/documentation for fixture credentials output
@@ -95,8 +95,8 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Cost provenance fields and explicit unpriced state
 - `[x]` Pricing catalog contract and backend fallback path
 - `[x]` Optimization overview dashboard
-- `[ ]` Evaluator quality trends dashboard
-- `[ ]` Project cost/token/latency/volume dashboard completion
+- `[x]` Evaluator quality trends dashboard
+- `[x]` Project cost/token/latency/volume dashboard completion
 - `[ ]` Observability summary dashboard
 
 ## Minimal Export Product
@@ -160,4 +160,5 @@ This file is the working checklist for the remaining execution waves.
 - Browser/JS feedback SDK, prompt playground, scheduled exports, export webhooks, and self-serve dashboards remain intentionally out of beta scope.
 - Any legacy route that bypasses tenant/project enforcement must be disabled before beta, even if cosmetic route cleanup is deferred.
 - Admin API keys are tenant-scoped in beta; cross-tenant operations are reserved for platform-admin JWT/internal tooling.
-- The seeded validation fixture and Playwright suite are implemented and tested, but the live local run remains blocked until the worktree DB migration-chain issue is repaired.
+- The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
+- The current beta gate is satisfied via the repaired live local worktree DB path; the fresh disposable DB fallback remains available if the legacy path regresses.
