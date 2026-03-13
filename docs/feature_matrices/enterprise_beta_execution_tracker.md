@@ -159,7 +159,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Privacy-mode integration tests for all new beta surfaces
 - `[x]` Full CI and repo-wide validation rerun
 - `[x]` Changed-code coverage at or above 85%
-- `[ ]` Claude review after each completed wave
+- `[!]` Claude review after each completed wave
 
 ## Notes
 - Browser/JS feedback SDK, prompt playground, scheduled exports, export webhooks, and self-serve dashboards remain intentionally out of beta scope.
@@ -172,6 +172,7 @@ This file is the working checklist for the remaining execution waves.
 - Release-gate integration coverage now exercises the real scope-monitoring helpers end-to-end through `/api/v1/audit/alerts` and `/api/v1/audit/health`, proving that tenant/project violations and dual-run discrepancies surface as alert metrics and health warnings.
 - Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
 - The backend export/enforcement checkpoint now measures at **88% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
+- Non-interactive Claude CLI review was attempted again at the end of the beta scope, but the CLI accepted the job and then timed out without returning findings under a hard timeout. This remains non-blocking unless the CLI workflow itself is repaired.
 - Repo-wide validation has been rerun successfully across the active repos:
   - `TraigentSchema`: `185 passed`
   - `TraigentBackend`: `3670 passed, 210 skipped, 10 xfailed`
