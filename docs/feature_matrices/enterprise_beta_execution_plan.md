@@ -8,6 +8,7 @@ Related documents:
 - [enterprise_beta_execution_tracker.md](enterprise_beta_execution_tracker.md)
 - [../architecture/langfuse_target_architecture.md](../architecture/langfuse_target_architecture.md)
 - [../architecture/cross_repo_delivery_template.md](../architecture/cross_repo_delivery_template.md)
+- [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md)
 
 ## Summary
 
