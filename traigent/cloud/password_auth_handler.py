@@ -202,7 +202,8 @@ class PasswordAuthHandler:
         try:
             from traigent.config.backend_config import BackendConfig
 
-            if BackendConfig.is_local_backend():
+            configured_backend = BackendConfig.get_configured_backend_url()
+            if configured_backend and BackendConfig.is_local_origin(configured_backend):
                 return True
         except Exception as e:
             logger.debug(f"Could not check local backend status: {e}")
@@ -221,7 +222,7 @@ class PasswordAuthHandler:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.get_cloud_api_url()
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(

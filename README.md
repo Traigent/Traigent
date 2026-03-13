@@ -366,7 +366,7 @@ Connect your SDK to the Traigent cloud to see optimization results in the [porta
 
 2. Log in:
    ```bash
-   TRAIGENT_BACKEND_URL=https://api.traigent.ai traigent auth login
+   traigent auth login
    ```
 
 3. Run your optimization — results appear in the portal automatically:
@@ -381,9 +381,10 @@ No environment variables needed after login — the SDK picks up stored credenti
 | Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
 |-------------|--------------------------------|------------------------|----------------------|
 | API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
-| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `portal.traigent.ai` |
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000` (generic SDK) |
 
 > **Tip:** Use env vars for CI/automation. Use `traigent auth login` for local development.
+> Cloud-facing entry points such as `traigent auth login`, `TraigentCloudClient`, and `SyncManager` default to `portal.traigent.ai` when no backend URL is configured.
 
 ### Testing Models from Multiple Providers
 

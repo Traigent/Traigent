@@ -1,9 +1,4 @@
-"""Tests for BackendConfig stored credential fallback and CLI auth payload.
-
-Validates that BackendConfig.get_api_key() and get_backend_url() correctly
-fall through to CLI-stored credentials when environment variables are absent,
-and that the CLI login sends the correct permissions and headers.
-"""
+"""Tests for BackendConfig URL/credential resolution and CLI auth payload."""
 
 from __future__ import annotations
 
@@ -118,15 +113,14 @@ class TestBackendConfigStoredBackendUrl:
         ):
             result = BackendConfig.get_backend_url()
 
-        # Default is DEFAULT_PROD_URL (cloud portal)
-        assert result == BackendConfig.DEFAULT_PROD_URL
+        assert result == BackendConfig.get_default_local_url()
 
 
 class TestBackendConfigDefaultBehavior:
     """Verify default URL behavior for different environment configurations."""
 
-    def test_no_env_no_creds_defaults_to_cloud(self):
-        """External SDK user with no env vars should get cloud portal URL."""
+    def test_no_env_no_creds_defaults_to_local(self):
+        """Generic backend resolution should stay local when nothing is configured."""
         with (
             patch.dict("os.environ", {}, clear=True),
             patch(
@@ -136,7 +130,22 @@ class TestBackendConfigDefaultBehavior:
         ):
             result = BackendConfig.get_backend_url()
 
-        assert result == BackendConfig.DEFAULT_PROD_URL
+        assert result == BackendConfig.get_default_local_url()
+
+    def test_cloud_helpers_default_to_cloud(self):
+        """Cloud-facing entry points should default to the portal URL."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+        ):
+            backend_result = BackendConfig.get_cloud_backend_url()
+            api_result = BackendConfig.get_cloud_api_url()
+
+        assert backend_result == BackendConfig.DEFAULT_PROD_URL
+        assert api_result == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
 
     def test_development_env_defaults_to_local(self):
         """Internal dev with TRAIGENT_ENV=development should get localhost."""
@@ -172,12 +181,16 @@ class TestBackendConfigDefaultBehavior:
 
         assert result == "https://custom.example.com"
 
-    def test_cloud_default_warns_without_any_credentials(self):
-        """Defaulting to cloud without any credentials should log a warning."""
+    def test_cloud_env_warns_without_any_credentials(self):
+        """Defaulting backend client config to cloud via env should log a warning."""
         from traigent.cloud.backend_components import BackendClientConfig
 
         with (
-            patch.dict("os.environ", {}, clear=True),
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_BACKEND_URL": BackendConfig.DEFAULT_PROD_URL},
+                clear=True,
+            ),
             patch(
                 "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
                 return_value=None,
@@ -194,12 +207,16 @@ class TestBackendConfigDefaultBehavior:
         warning_msg = mock_logger.warning.call_args[0][0]
         assert "no credentials found" in warning_msg
 
-    def test_cloud_default_no_warning_with_stored_api_key(self):
-        """Should NOT warn when stored API key credentials exist."""
+    def test_cloud_env_no_warning_with_stored_api_key(self):
+        """Should NOT warn when cloud env config is paired with stored API keys."""
         from traigent.cloud.backend_components import BackendClientConfig
 
         with (
-            patch.dict("os.environ", {}, clear=True),
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_BACKEND_URL": BackendConfig.DEFAULT_PROD_URL},
+                clear=True,
+            ),
             patch(
                 "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
                 return_value=None,
@@ -214,12 +231,16 @@ class TestBackendConfigDefaultBehavior:
 
         mock_logger.warning.assert_not_called()
 
-    def test_cloud_default_no_warning_with_stored_jwt_credentials(self):
+    def test_cloud_env_no_warning_with_stored_jwt_credentials(self):
         """JWT-authenticated CLI users should not get a missing-credentials warning."""
         from traigent.cloud.backend_components import BackendClientConfig
 
         with (
-            patch.dict("os.environ", {}, clear=True),
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_BACKEND_URL": BackendConfig.DEFAULT_PROD_URL},
+                clear=True,
+            ),
             patch(
                 "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
                 return_value=None,
