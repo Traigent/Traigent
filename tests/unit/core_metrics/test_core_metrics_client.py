@@ -694,6 +694,11 @@ def test_core_metrics_client_validates_custom_request_sender_shapes() -> None:
     with pytest.raises(ClientError):
         client.get_analytics_summary()
 
+    text_client = CoreMetricsClient(request_sender=lambda *args, **kwargs: {"bad": "shape"})
+
+    with pytest.raises(ClientError):
+        text_client.export_fine_tuning_jsonl()
+
 
 def test_core_metrics_client_surfaces_missing_required_fields() -> None:
     def request_sender(
@@ -768,3 +773,81 @@ def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.Mo
 
         monkeypatch.setattr(client_module.request, "urlopen", _raise_network)
         client.get_core_metrics_overview()
+
+
+def test_core_metrics_client_maps_non_auth_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = CoreMetricsClient(
+        config=CoreMetricsConfig(
+            backend_origin="https://backend.example",
+            api_key="sk-test",  # pragma: allowlist secret
+        )
+    )
+
+    def _raise_error(*args, **kwargs):
+        raise error.HTTPError(
+            url="https://backend.example/api/v1beta/analytics/summary",
+            code=500,
+            msg="boom",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(client_module.request, "urlopen", _raise_error)
+
+    with pytest.raises(ClientError, match="status 500"):
+        client.get_analytics_summary()
+
+
+def test_core_metrics_client_maps_text_request_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = CoreMetricsClient(
+        config=CoreMetricsConfig(
+            backend_origin="https://backend.example",
+            api_key="sk-test",  # pragma: allowlist secret
+        )
+    )
+
+    class _Response:
+        status = 200
+        headers = {"Content-Disposition": 'attachment; filename="fallback.jsonl"'}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"messages":[{"role":"user","content":"hello"}]}'
+
+    monkeypatch.setattr(client_module.request, "urlopen", lambda *args, **kwargs: _Response())
+    export = client.export_fine_tuning_jsonl(limit=10)
+
+    assert export.filename == "fallback.jsonl"
+    assert export.content_type == client_module.DEFAULT_EXPORT_CONTENT_TYPE
+
+    def _raise_auth(*args, **kwargs):
+        raise error.HTTPError(
+            url="https://backend.example/api/v1beta/core-exports/fine-tuning.jsonl",
+            code=401,
+            msg="forbidden",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(client_module.request, "urlopen", _raise_auth)
+    with pytest.raises(AuthenticationError):
+        client.export_fine_tuning_jsonl(limit=10)
+
+    def _raise_network(*args, **kwargs):
+        raise error.URLError("offline")
+
+    monkeypatch.setattr(client_module.request, "urlopen", _raise_network)
+    with pytest.raises(TraigentConnectionError):
+        client.export_fine_tuning_jsonl(limit=10)
+
+
+def test_core_metrics_client_validates_unwrapped_response_shape() -> None:
+    client = CoreMetricsClient(request_sender=lambda *args, **kwargs: {"meta": "missing-data"})
+
+    with pytest.raises(ClientError, match="Unexpected response structure"):
+        client.get_pricing_catalog()
