@@ -72,7 +72,7 @@ def backend_config():
 def backend_client(backend_config):
     """Create backend integrated client for testing."""
     return BackendIntegratedClient(
-        api_key="tg_test_" + "x" * 56,
+        api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
         base_url="http://localhost:8000",
         backend_config=backend_config,
         enable_fallback=True,
@@ -119,7 +119,7 @@ class TestBackendIntegratedClient:
     def test_client_initialization(self, backend_config):
         """Test client initialization."""
         client = BackendIntegratedClient(
-            api_key="test_key",
+            api_key="test_key",  # pragma: allowlist secret
             base_url="https://api.test.com",
             backend_config=backend_config,
             enable_fallback=False,
@@ -142,7 +142,11 @@ class TestBackendIntegratedClient:
         monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
         monkeypatch.setenv("TRAIGENT_ENV", "production")
 
-        client = BackendIntegratedClient()
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            client = BackendIntegratedClient()
 
         assert client.base_url == BackendConfig.get_backend_url()
         assert isinstance(client.backend_config, BackendClientConfig)
@@ -155,6 +159,21 @@ class TestBackendIntegratedClient:
         """Test URL normalization on initialization."""
         client = BackendIntegratedClient(base_url="https://api.test.com/")
         assert client.base_url == "https://api.test.com"
+
+    def test_explicit_base_url_overrides_default_backend_config(self, monkeypatch):
+        """Explicit base_url should propagate through backend and API URLs."""
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            client = BackendIntegratedClient(base_url="https://api.test.com")
+
+        assert client.base_url == "https://api.test.com"
+        assert client.backend_config.backend_base_url == "https://api.test.com"
+        assert client.backend_config.api_base_url == "https://api.test.com/api/v1"
 
     @patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", False)
     def test_client_without_aiohttp(self, backend_config):
@@ -972,7 +991,7 @@ class TestGlobalClientInstance:
         assert client is client2
 
     def test_get_backend_client_with_kwargs(self):
-        """Test get_backend_client with custom kwargs."""
+        """Explicit base_url should override default backend routing."""
         # Clear global instance
 
         traigent.cloud.backend_client._backend_client = None
@@ -981,14 +1000,15 @@ class TestGlobalClientInstance:
             backend_base_url="https://custom.backend.com"
         )
         client = get_backend_client(
-            api_key="test_key",
+            api_key="test_key",  # pragma: allowlist secret
             base_url="https://custom.api.com",
             backend_config=backend_config,
             enable_fallback=False,
         )
 
         assert client.base_url == "https://custom.api.com"
-        assert client.backend_config.backend_base_url == "https://custom.backend.com"
+        assert client.backend_config.backend_base_url == "https://custom.api.com"
+        assert client.backend_config.api_base_url == "https://custom.api.com/api/v1"
         assert client.enable_fallback is False
 
 

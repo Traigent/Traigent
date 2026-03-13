@@ -74,8 +74,8 @@ class TraigentAuthCLI:
         self.config_dir = TRAIGENT_CONFIG_DIR
         self.credentials_file = CREDENTIALS_FILE
         self.auth_manager = AuthManager()
-        self.backend_url = BackendConfig.get_backend_url()
-        self.backend_api_url = BackendConfig.get_backend_api_url()
+        self.backend_url = BackendConfig.get_cloud_backend_url()
+        self.backend_api_url = BackendConfig.get_cloud_api_url()
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -861,7 +861,7 @@ class TraigentAuthCLI:
         console.print("Configure your Traigent SDK settings.\n")
 
         # Backend URL configuration
-        current_backend = BackendConfig.get_backend_url()
+        current_backend = BackendConfig.get_cloud_backend_url()
         console.print(f"Current backend: [cyan]{current_backend}[/cyan]")
 
         change_backend = Prompt.ask(
@@ -1045,7 +1045,7 @@ def whoami(key: str) -> None:
         sys.exit(1)
 
     # Check with backend
-    backend_api_url = BackendConfig.get_backend_api_url()
+    backend_api_url = BackendConfig.get_cloud_api_url()
     console.print(f"[dim]Backend: {backend_api_url}[/dim]")
 
     async def check_key() -> bool:

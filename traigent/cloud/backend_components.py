@@ -18,7 +18,7 @@ import os
 import secrets
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,6 +39,8 @@ class BackendClientConfig:
     mcp_server_path: str | None = None
     enable_session_sync: bool = True
     session_sync_interval: float = 5.0
+    backend_explicitly_set: bool = field(init=False, repr=False, default=False)
+    api_explicitly_set: bool = field(init=False, repr=False, default=False)
 
     def __post_init__(self) -> None:
         """Populate missing configuration using global backend settings."""
@@ -48,7 +50,8 @@ class BackendClientConfig:
         api_env = os.environ.get("TRAIGENT_API_URL")
 
         # Track if backend_base_url was explicitly provided
-        backend_explicitly_set = self.backend_base_url is not None
+        self.backend_explicitly_set = self.backend_base_url is not None
+        self.api_explicitly_set = self.api_base_url is not None
 
         if self.backend_base_url is not None:
             normalized = BackendConfig.normalize_backend_origin(self.backend_base_url)
@@ -62,7 +65,7 @@ class BackendClientConfig:
         # Skip if the caller explicitly passed the URL (not our default).
         # Use a silent predicate so this path does not emit duplicate warnings.
         if (
-            not backend_explicitly_set
+            not self.backend_explicitly_set
             and self.backend_base_url
             and self.backend_base_url.rstrip("/")
             == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
@@ -88,7 +91,7 @@ class BackendClientConfig:
         elif api_env:
             self.api_base_url = BackendConfig.get_backend_api_url()
             # Only derive backend_base_url from API URL if not explicitly provided
-            if not backend_explicitly_set:
+            if not self.backend_explicitly_set:
                 self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
         elif self.backend_base_url is not None:
             self.api_base_url = BackendConfig.build_api_base(self.backend_base_url)

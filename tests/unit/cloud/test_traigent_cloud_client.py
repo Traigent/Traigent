@@ -70,12 +70,15 @@ class TestTraigentCloudClient:
         ]:
             monkeypatch.delenv(var, raising=False)
 
-        monkeypatch.setenv("TRAIGENT_ENV", "production")
-
-        client = TraigentCloudClient()
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            monkeypatch.setenv("TRAIGENT_ENV", "production")
+            client = TraigentCloudClient()
 
         assert client.base_url == BackendConfig.DEFAULT_PROD_URL
-        assert client.api_base_url == BackendConfig.get_backend_api_url()
+        assert client.api_base_url == BackendConfig.get_cloud_api_url()
         assert client.enable_fallback is True
         assert client.max_retries == 3
         assert client.timeout == 30.0
