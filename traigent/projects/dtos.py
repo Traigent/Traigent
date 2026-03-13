@@ -159,3 +159,37 @@ class ProjectRetentionPolicyDTO:
                 payload.get("policy") or {}
             ),
         )
+
+
+@dataclass(frozen=True)
+class ProjectExportPolicySettingsDTO:
+    allow_materialized_exports: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectExportPolicySettingsDTO:
+        return cls(
+            allow_materialized_exports=bool(
+                payload.get("allow_materialized_exports", False)
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectExportPolicyDTO:
+    tenant_id: str
+    project_id: str
+    updated_at: str | None
+    updated_by: str | None
+    policy: ProjectExportPolicySettingsDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectExportPolicyDTO:
+        return cls(
+            tenant_id=str(payload.get("tenant_id", "")),
+            project_id=str(payload.get("project_id", "")),
+            updated_at=payload.get("updated_at"),
+            updated_by=payload.get("updated_by"),
+            policy=ProjectExportPolicySettingsDTO.from_dict(
+                payload.get("policy") or {}
+            ),
+        )

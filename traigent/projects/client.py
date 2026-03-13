@@ -10,6 +10,7 @@ from urllib.parse import quote, urlencode
 from traigent.projects.config import ProjectManagementConfig
 from traigent.projects.dtos import (
     ProjectDTO,
+    ProjectExportPolicyDTO,
     ProjectListResponse,
     ProjectRateLimitPolicyDTO,
     ProjectRetentionPolicyDTO,
@@ -118,6 +119,29 @@ class ProjectManagementClient:
         )
         return ProjectRetentionPolicyDTO.from_dict(
             self._unwrap_data(payload, "project retention policy update")
+        )
+
+    def get_export_policy(self, project_id: str) -> ProjectExportPolicyDTO:
+        payload = self._request_json(
+            "GET",
+            f"/{quote(project_id, safe='')}/policies/export",
+        )
+        return ProjectExportPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project export policy")
+        )
+
+    def update_export_policy(
+        self,
+        project_id: str,
+        **fields: Any,
+    ) -> ProjectExportPolicyDTO:
+        payload = self._request_json(
+            "PATCH",
+            f"/{quote(project_id, safe='')}/policies/export",
+            fields,
+        )
+        return ProjectExportPolicyDTO.from_dict(
+            self._unwrap_data(payload, "project export policy update")
         )
 
     def _request_json(

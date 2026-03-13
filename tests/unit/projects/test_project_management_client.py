@@ -97,6 +97,30 @@ def test_project_management_client_crud_and_list() -> None:
                     },
                 }
             }
+        if method == "GET" and path.endswith("/policies/export"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "allow_materialized_exports": False,
+                    },
+                }
+            }
+        if method == "PATCH" and path.endswith("/policies/export"):
+            return {
+                "data": {
+                    "tenant_id": "tenant_acme",
+                    "project_id": "project_alpha",
+                    "updated_at": "2026-03-12T00:00:00Z",
+                    "updated_by": "user_1",
+                    "policy": {
+                        "allow_materialized_exports": True,
+                    },
+                }
+            }
         return {
             "data": {
                 "id": "project_alpha",
@@ -129,6 +153,11 @@ def test_project_management_client_crud_and_list() -> None:
         export_artifact_retention_days=45,
         materialized_export_retention_days=14,
     )
+    export_policy = client.get_export_policy("project_alpha")
+    updated_export_policy = client.update_export_policy(
+        "project_alpha",
+        allow_materialized_exports=True,
+    )
 
     assert calls[0] == ("GET", "?page=1&per_page=20&search=alp", None)
     assert calls[1] == ("POST", "", {"name": "Alpha", "slug": "alpha", "description": None})
@@ -149,6 +178,12 @@ def test_project_management_client_crud_and_list() -> None:
             "materialized_export_retention_days": 14,
         },
     )
+    assert calls[8] == ("GET", "/project_alpha/policies/export", None)
+    assert calls[9] == (
+        "PATCH",
+        "/project_alpha/policies/export",
+        {"allow_materialized_exports": True},
+    )
     assert projects.items[0].slug == "alpha"
     assert created.id == "project_alpha"
     assert fetched.tenant_id == "tenant_acme"
@@ -157,6 +192,8 @@ def test_project_management_client_crud_and_list() -> None:
     assert updated_policy.policy.api_calls_per_minute == 240
     assert retention_policy.policy.export_artifact_retention_days == 30
     assert updated_retention_policy.policy.materialized_export_retention_days == 14
+    assert export_policy.policy.allow_materialized_exports is False
+    assert updated_export_policy.policy.allow_materialized_exports is True
 
 
 def test_project_management_client_validates_override_response_shape() -> None:
