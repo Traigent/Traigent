@@ -109,6 +109,25 @@ class TestEstimateOptimizationCost:
 
         assert cost == pytest.approx(40.5)
 
+    def test_model_pricing_exception_falls_back_to_conservative_pricing(self) -> None:
+        """Unexpected pricing lookup failures should preserve conservative approval."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=None,
+            max_total_examples=None,
+            model_name="gpt-4o-mini",
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=RuntimeError("pricing backend unavailable"),
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        assert cost == pytest.approx(40.5)
+
     def test_candidate_models_use_most_expensive_known_model(self) -> None:
         """When no fixed model is set, use the priciest candidate model."""
         enforcer = MagicMock(is_mock_mode=False)
@@ -158,6 +177,27 @@ class TestEstimateOptimizationCost:
         with patch(
             "traigent.core.cost_estimator.get_model_token_pricing",
             side_effect=pricing,
+        ):
+            cost = estimator.estimate_optimization_cost(dataset)
+
+        assert cost == pytest.approx(40.5)
+
+    def test_candidate_model_pricing_exception_falls_back_to_conservative_pricing(
+        self,
+    ) -> None:
+        """Unexpected candidate pricing failures should preserve conservative approval."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o"],
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=RuntimeError("pricing backend unavailable"),
         ):
             cost = estimator.estimate_optimization_cost(dataset)
 
