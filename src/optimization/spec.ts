@@ -36,25 +36,18 @@ const OPTIMIZATION_SPEC = Symbol.for('traigent.optimizationSpec');
 const LOW_LEVEL_CONTRACT_WARNING =
   'execution.contract="trial" is deprecated and will be removed in a future release. Use the high-level agent contract instead.';
 
-const BUILT_IN_OBJECTIVES: Record<
-  BuiltInObjectiveName,
-  NormalizedObjectiveDefinition
-> = {
+const BUILT_IN_OBJECTIVES: Record<BuiltInObjectiveName, NormalizedObjectiveDefinition> = {
   accuracy: { metric: 'accuracy', direction: 'maximize', weight: 1 },
   cost: { metric: 'cost', direction: 'minimize', weight: 1 },
   latency: { metric: 'latency', direction: 'minimize', weight: 1 },
 };
 
 type AnyFunction = (...args: any[]) => any;
-type NativeTrialFunction = (
-  trialConfig: TrialConfig,
-) => Promise<NativeTrialFunctionResult>;
+type NativeTrialFunction = (trialConfig: TrialConfig) => Promise<NativeTrialFunctionResult>;
 
 let hasWarnedAboutTrialContract = false;
 
-function isHybridOptimizeOptions(
-  options: OptimizeOptions,
-): options is HybridOptimizeOptions {
+function isHybridOptimizeOptions(options: OptimizeOptions): options is HybridOptimizeOptions {
   return options.mode === 'hybrid';
 }
 
@@ -68,14 +61,12 @@ function normalizeWeight(weight: unknown): number {
   return weight;
 }
 
-function normalizeObjective(
-  objective: ObjectiveInput,
-): NormalizedObjectiveDefinition {
+function normalizeObjective(objective: ObjectiveInput): NormalizedObjectiveDefinition {
   if (typeof objective === 'string') {
     const builtIn = BUILT_IN_OBJECTIVES[objective as BuiltInObjectiveName];
     if (!builtIn) {
       throw new ValidationError(
-        `Unknown objective "${objective}". Use accuracy, cost, latency, or an explicit { metric, direction } object.`,
+        `Unknown objective "${objective}". Use accuracy, cost, latency, or an explicit { metric, direction } object.`
       );
     }
     return builtIn;
@@ -85,10 +76,7 @@ function normalizeObjective(
     throw new ValidationError('Objectives must be strings or objects.');
   }
 
-  if (
-    typeof objective.metric !== 'string' ||
-    objective.metric.trim().length === 0
-  ) {
+  if (typeof objective.metric !== 'string' || objective.metric.trim().length === 0) {
     throw new ValidationError('Objective objects require a non-empty metric.');
   }
 
@@ -101,28 +89,23 @@ function normalizeObjective(
       !Number.isFinite(high)
     ) {
       throw new ValidationError(
-        `Objective "${objective.metric}" band requires finite low/high values.`,
+        `Objective "${objective.metric}" band requires finite low/high values.`
       );
     }
     if (low >= high) {
-      throw new ValidationError(
-        `Objective "${objective.metric}" band requires low < high.`,
-      );
+      throw new ValidationError(`Objective "${objective.metric}" band requires low < high.`);
     }
     if (
       alpha !== undefined &&
-      (typeof alpha !== 'number' ||
-        !Number.isFinite(alpha) ||
-        alpha <= 0 ||
-        alpha >= 1)
+      (typeof alpha !== 'number' || !Number.isFinite(alpha) || alpha <= 0 || alpha >= 1)
     ) {
       throw new ValidationError(
-        `Objective "${objective.metric}" band alpha must be a finite number in (0, 1).`,
+        `Objective "${objective.metric}" band alpha must be a finite number in (0, 1).`
       );
     }
     if (test !== undefined && test !== 'TOST') {
       throw new ValidationError(
-        `Objective "${objective.metric}" band test must be "TOST" when provided.`,
+        `Objective "${objective.metric}" band test must be "TOST" when provided.`
       );
     }
 
@@ -141,7 +124,7 @@ function normalizeObjective(
 
   if (objective.direction !== 'maximize' && objective.direction !== 'minimize') {
     throw new ValidationError(
-      `Objective "${objective.metric}" must declare direction "maximize" or "minimize", or provide a band target.`,
+      `Objective "${objective.metric}" must declare direction "maximize" or "minimize", or provide a band target.`
     );
   }
 
@@ -154,15 +137,13 @@ function normalizeObjective(
 
 function validateParameterName(name: string): void {
   if (!/^[A-Za-z_]\w*$/.test(name)) {
-    throw new ValidationError(
-      `Parameter "${name}" must be a valid identifier-like key.`,
-    );
+    throw new ValidationError(`Parameter "${name}" must be a valid identifier-like key.`);
   }
 }
 
 function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefinition>(
   kind: T['type'],
-  definition: T,
+  definition: T
 ): T {
   if (!Number.isFinite(definition.min) || !Number.isFinite(definition.max)) {
     throw new ValidationError(`${kind} parameters require finite min/max values.`);
@@ -175,27 +156,21 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
     definition.scale !== 'linear' &&
     definition.scale !== 'log'
   ) {
-    throw new ValidationError(
-      `${kind} parameters only support scale "linear" or "log".`,
-    );
+    throw new ValidationError(`${kind} parameters only support scale "linear" or "log".`);
   }
   if (definition.scale === 'log' && (definition.min <= 0 || definition.max <= 0)) {
-    throw new ValidationError(
-      `${kind} parameters with scale "log" require min/max > 0.`,
-    );
+    throw new ValidationError(`${kind} parameters with scale "log" require min/max > 0.`);
   }
   if (definition.step !== undefined) {
     if (!Number.isFinite(definition.step) || definition.step <= 0) {
-      throw new ValidationError(
-        `${kind} parameters require step to be a positive finite number.`,
-      );
+      throw new ValidationError(`${kind} parameters require step to be a positive finite number.`);
     }
     if (kind === 'int' && !Number.isInteger(definition.step)) {
       throw new ValidationError('int parameters require step to be an integer.');
     }
     if (definition.scale === 'log' && definition.step <= 1) {
       throw new ValidationError(
-        `${kind} parameters with scale "log" require step to be greater than 1 when provided.`,
+        `${kind} parameters with scale "log" require step to be greater than 1 when provided.`
       );
     }
   }
@@ -206,9 +181,7 @@ function normalizeRangeDefinition<T extends FloatParamDefinition | IntParamDefin
   };
 }
 
-function normalizeParameterDefinition(
-  definition: ParameterDefinition,
-): ParameterDefinition {
+function normalizeParameterDefinition(definition: ParameterDefinition): ParameterDefinition {
   if (!definition || typeof definition !== 'object') {
     throw new ValidationError('Parameter definitions must be objects.');
   }
@@ -232,50 +205,41 @@ function normalizeParameterDefinition(
 }
 
 function normalizeEvaluationSpec(
-  evaluation: OptimizationSpec['evaluation'],
+  evaluation: OptimizationSpec['evaluation']
 ): NormalizedOptimizationSpec['evaluation'] {
   if (!evaluation) {
     return undefined;
   }
 
   if (evaluation.data !== undefined && evaluation.loadData !== undefined) {
-    throw new ValidationError(
-      'Use either evaluation.data or evaluation.loadData, not both.',
-    );
+    throw new ValidationError('Use either evaluation.data or evaluation.loadData, not both.');
   }
 
-  if (
-    evaluation.customEvaluator &&
-    (evaluation.scoringFunction || evaluation.metricFunctions)
-  ) {
+  if (evaluation.customEvaluator && (evaluation.scoringFunction || evaluation.metricFunctions)) {
     throw new ValidationError(
-      'evaluation.customEvaluator cannot be combined with scoringFunction or metricFunctions.',
+      'evaluation.customEvaluator cannot be combined with scoringFunction or metricFunctions.'
     );
   }
 
   if (
     evaluation.inputField !== undefined &&
-    (typeof evaluation.inputField !== 'string' ||
-      evaluation.inputField.trim().length === 0)
+    (typeof evaluation.inputField !== 'string' || evaluation.inputField.trim().length === 0)
   ) {
     throw new ValidationError('evaluation.inputField must be a non-empty string.');
   }
 
   if (
     evaluation.expectedField !== undefined &&
-    (typeof evaluation.expectedField !== 'string' ||
-      evaluation.expectedField.trim().length === 0)
+    (typeof evaluation.expectedField !== 'string' || evaluation.expectedField.trim().length === 0)
   ) {
-    throw new ValidationError(
-      'evaluation.expectedField must be a non-empty string.',
-    );
+    throw new ValidationError('evaluation.expectedField must be a non-empty string.');
   }
 
   return evaluation;
 }
 
 function normalizeDefaultConfig(
-  defaultConfig: OptimizationSpec['defaultConfig'],
+  defaultConfig: OptimizationSpec['defaultConfig']
 ): NormalizedOptimizationSpec['defaultConfig'] {
   if (defaultConfig === undefined) {
     return {};
@@ -287,7 +251,7 @@ function normalizeDefaultConfig(
 }
 
 function normalizeConstraintList(
-  constraints: OptimizationSpec['constraints'],
+  constraints: OptimizationSpec['constraints']
 ): readonly OptimizationConstraint[] {
   if (constraints === undefined) {
     return [];
@@ -304,28 +268,24 @@ function normalizeConstraintList(
 }
 
 function normalizeSafetyConstraintList(
-  safetyConstraints: OptimizationSpec['safetyConstraints'],
+  safetyConstraints: OptimizationSpec['safetyConstraints']
 ): readonly SafetyConstraint[] {
   if (safetyConstraints === undefined) {
     return [];
   }
   if (!Array.isArray(safetyConstraints)) {
-    throw new ValidationError(
-      'safetyConstraints must be an array of functions.',
-    );
+    throw new ValidationError('safetyConstraints must be an array of functions.');
   }
   for (const constraint of safetyConstraints) {
     if (typeof constraint !== 'function') {
-      throw new ValidationError(
-        'safetyConstraints must contain only functions.',
-      );
+      throw new ValidationError('safetyConstraints must contain only functions.');
     }
   }
   return [...safetyConstraints];
 }
 
 function normalizePromotionPolicy(
-  policy: OptimizationSpec['promotionPolicy'],
+  policy: OptimizationSpec['promotionPolicy']
 ): TvlPromotionPolicy | undefined {
   if (policy === undefined) {
     return undefined;
@@ -340,7 +300,7 @@ function normalizePromotionPolicy(
   if (policyRecord['dominance'] !== undefined) {
     if (policyRecord['dominance'] !== 'epsilon_pareto') {
       throw new ValidationError(
-        'promotionPolicy.dominance must be "epsilon_pareto" when provided.',
+        'promotionPolicy.dominance must be "epsilon_pareto" when provided.'
       );
     }
     normalized.dominance = 'epsilon_pareto';
@@ -373,11 +333,11 @@ function normalizePromotionPolicy(
       Object.entries(policyRecord['minEffect']).map(([metric, value]) => {
         if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
           throw new ValidationError(
-            `promotionPolicy.minEffect.${metric} must be a non-negative finite number.`,
+            `promotionPolicy.minEffect.${metric} must be a non-negative finite number.`
           );
         }
         return [metric, value];
-      }),
+      })
     );
   }
 
@@ -389,88 +349,71 @@ function normalizePromotionPolicy(
       Object.entries(policyRecord['tieBreakers']).map(([metric, direction]) => {
         if (direction !== 'maximize' && direction !== 'minimize') {
           throw new ValidationError(
-            `promotionPolicy.tieBreakers.${metric} must be "maximize" or "minimize".`,
+            `promotionPolicy.tieBreakers.${metric} must be "maximize" or "minimize".`
           );
         }
         return [metric, direction];
-      }),
+      })
     );
   }
 
   if (policyRecord['chanceConstraints'] !== undefined) {
     if (!Array.isArray(policyRecord['chanceConstraints'])) {
-      throw new ValidationError(
-        'promotionPolicy.chanceConstraints must be an array.',
-      );
+      throw new ValidationError('promotionPolicy.chanceConstraints must be an array.');
     }
-    normalized.chanceConstraints = policyRecord['chanceConstraints'].map(
-      (entry, index) => {
-        if (!entry || typeof entry !== 'object') {
-          throw new ValidationError(
-            `promotionPolicy.chanceConstraints[${index}] must be an object.`,
-          );
-        }
+    normalized.chanceConstraints = policyRecord['chanceConstraints'].map((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        throw new ValidationError(`promotionPolicy.chanceConstraints[${index}] must be an object.`);
+      }
 
-        const entryRecord = entry as Record<string, unknown>;
-        if (
-          typeof entryRecord['name'] !== 'string' ||
-          entryRecord['name'].trim().length === 0
-        ) {
-          throw new ValidationError(
-            `promotionPolicy.chanceConstraints[${index}].name must be a non-empty string.`,
-          );
-        }
-        if (
-          typeof entryRecord['threshold'] !== 'number' ||
-          !Number.isFinite(entryRecord['threshold'])
-        ) {
-          throw new ValidationError(
-            `promotionPolicy.chanceConstraints[${index}].threshold must be a finite number.`,
-          );
-        }
-        if (
-          typeof entryRecord['confidence'] !== 'number' ||
-          !Number.isFinite(entryRecord['confidence']) ||
-          entryRecord['confidence'] <= 0 ||
-          entryRecord['confidence'] > 1
-        ) {
-          throw new ValidationError(
-            `promotionPolicy.chanceConstraints[${index}].confidence must be in (0, 1].`,
-          );
-        }
-        return {
-          name: entryRecord['name'].trim(),
-          threshold: entryRecord['threshold'],
-          confidence: entryRecord['confidence'],
-        };
-      },
-    );
+      const entryRecord = entry as Record<string, unknown>;
+      if (typeof entryRecord['name'] !== 'string' || entryRecord['name'].trim().length === 0) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].name must be a non-empty string.`
+        );
+      }
+      if (
+        typeof entryRecord['threshold'] !== 'number' ||
+        !Number.isFinite(entryRecord['threshold'])
+      ) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].threshold must be a finite number.`
+        );
+      }
+      if (
+        typeof entryRecord['confidence'] !== 'number' ||
+        !Number.isFinite(entryRecord['confidence']) ||
+        entryRecord['confidence'] <= 0 ||
+        entryRecord['confidence'] > 1
+      ) {
+        throw new ValidationError(
+          `promotionPolicy.chanceConstraints[${index}].confidence must be in (0, 1].`
+        );
+      }
+      return {
+        name: entryRecord['name'].trim(),
+        threshold: entryRecord['threshold'],
+        confidence: entryRecord['confidence'],
+      };
+    });
   }
 
   return Object.keys(normalized).length === 0 ? undefined : normalized;
 }
 
 function normalizeInjectionSpec(
-  injection: OptimizationSpec['injection'],
+  injection: OptimizationSpec['injection']
 ): NormalizedOptimizationSpec['injection'] {
   const mode = injection?.mode ?? 'context';
-  if (
-    mode !== 'context' &&
-    mode !== 'parameter' &&
-    mode !== 'seamless'
-  ) {
-    throw new ValidationError(
-      'injection.mode must be "context", "parameter", or "seamless".',
-    );
+  if (mode !== 'context' && mode !== 'parameter' && mode !== 'seamless') {
+    throw new ValidationError('injection.mode must be "context", "parameter", or "seamless".');
   }
 
   if (
     injection?.autoOverrideFrameworks !== undefined &&
     typeof injection.autoOverrideFrameworks !== 'boolean'
   ) {
-    throw new ValidationError(
-      'injection.autoOverrideFrameworks must be a boolean when provided.',
-    );
+    throw new ValidationError('injection.autoOverrideFrameworks must be a boolean when provided.');
   }
 
   if (mode === 'seamless') {
@@ -489,7 +432,7 @@ function normalizeInjectionSpec(
 }
 
 function normalizeExecutionSpec(
-  execution: OptimizationSpec['execution'],
+  execution: OptimizationSpec['execution']
 ): NormalizedOptimizationSpec['execution'] {
   const mode = execution?.mode ?? 'native';
   const contract = execution?.contract ?? 'agent';
@@ -502,41 +445,29 @@ function normalizeExecutionSpec(
   }
 
   if (contract !== 'agent' && contract !== 'trial') {
-    throw new ValidationError(
-      'execution.contract must be "agent" or "trial".',
-    );
+    throw new ValidationError('execution.contract must be "agent" or "trial".');
   }
 
   if (
     execution?.maxTotalExamples !== undefined &&
-    (!Number.isInteger(execution.maxTotalExamples) ||
-      execution.maxTotalExamples <= 0)
+    (!Number.isInteger(execution.maxTotalExamples) || execution.maxTotalExamples <= 0)
   ) {
-    throw new ValidationError(
-      'execution.maxTotalExamples must be a positive integer.',
-    );
+    throw new ValidationError('execution.maxTotalExamples must be a positive integer.');
   }
 
   if (
     execution?.maxWallclockMs !== undefined &&
-    (!Number.isInteger(execution.maxWallclockMs) ||
-      execution.maxWallclockMs <= 0)
+    (!Number.isInteger(execution.maxWallclockMs) || execution.maxWallclockMs <= 0)
   ) {
-    throw new ValidationError(
-      'execution.maxWallclockMs must be a positive integer.',
-    );
+    throw new ValidationError('execution.maxWallclockMs must be a positive integer.');
   }
 
   if (!Number.isInteger(exampleConcurrency) || exampleConcurrency <= 0) {
-    throw new ValidationError(
-      'execution.exampleConcurrency must be a positive integer.',
-    );
+    throw new ValidationError('execution.exampleConcurrency must be a positive integer.');
   }
 
   if (!Number.isInteger(repsPerTrial) || repsPerTrial <= 0) {
-    throw new ValidationError(
-      'execution.repsPerTrial must be a positive integer.',
-    );
+    throw new ValidationError('execution.repsPerTrial must be a positive integer.');
   }
 
   if (
@@ -546,7 +477,7 @@ function normalizeExecutionSpec(
     repsAggregation !== 'max'
   ) {
     throw new ValidationError(
-      'execution.repsAggregation must be "mean", "median", "min", or "max".',
+      'execution.repsAggregation must be "mean", "median", "min", or "max".'
     );
   }
 
@@ -560,9 +491,7 @@ function normalizeExecutionSpec(
   } satisfies NormalizedOptimizationSpec['execution'];
 }
 
-export function normalizeOptimizationSpec(
-  spec: OptimizationSpec,
-): NormalizedOptimizationSpec {
+export function normalizeOptimizationSpec(spec: OptimizationSpec): NormalizedOptimizationSpec {
   if (!spec || typeof spec !== 'object') {
     throw new ValidationError('Optimization spec must be an object.');
   }
@@ -575,19 +504,15 @@ export function normalizeOptimizationSpec(
     Object.entries(spec.configurationSpace).map(([name, definition]) => {
       validateParameterName(name);
       return [name, normalizeParameterDefinition(definition)];
-    }),
+    })
   );
 
   if (Object.keys(configurationSpace).length === 0) {
-    throw new ValidationError(
-      'Optimization spec requires at least one configuration parameter.',
-    );
+    throw new ValidationError('Optimization spec requires at least one configuration parameter.');
   }
 
   if (!Array.isArray(spec.objectives) || spec.objectives.length === 0) {
-    throw new ValidationError(
-      'Optimization spec requires at least one objective.',
-    );
+    throw new ValidationError('Optimization spec requires at least one objective.');
   }
 
   const objectives = spec.objectives.map(normalizeObjective);
@@ -615,11 +540,7 @@ export function normalizeOptimizationSpec(
   };
 }
 
-function defineHiddenProperty(
-  target: object,
-  key: PropertyKey,
-  value: unknown,
-): void {
+function defineHiddenProperty(target: object, key: PropertyKey, value: unknown): void {
   Object.defineProperty(target, key, {
     value,
     enumerable: false,
@@ -673,9 +594,7 @@ export const param = {
   },
 };
 
-export function getOptimizationSpec(
-  target: unknown,
-): NormalizedOptimizationSpec | undefined {
+export function getOptimizationSpec(target: unknown): NormalizedOptimizationSpec | undefined {
   if (typeof target === 'function') {
     return (target as unknown as Record<PropertyKey, NormalizedOptimizationSpec>)[
       OPTIMIZATION_SPEC
@@ -693,7 +612,7 @@ export function toHybridConfigSpace(target: unknown): HybridConfigSpace {
   const spec = getOptimizationSpec(target);
   if (!spec) {
     throw new ValidationError(
-      'toHybridConfigSpace() requires a wrapped function or optimization spec.',
+      'toHybridConfigSpace() requires a wrapped function or optimization spec.'
     );
   }
 
@@ -722,7 +641,7 @@ export function toHybridConfigSpace(target: unknown): HybridConfigSpace {
           };
         default:
           throw new ValidationError(
-            `Unsupported parameter type for "${name}" in hybrid config space.`,
+            `Unsupported parameter type for "${name}" in hybrid config space.`
           );
       }
     }),
@@ -748,7 +667,7 @@ export function optimize(specInput: OptimizationSpec) {
           fn,
           Object.keys(spec.configurationSpace),
           spec.injection.frameworkTargets,
-          spec.injection.autoOverrideFrameworks ?? true,
+          spec.injection.autoOverrideFrameworks ?? true
         );
         resolvedSeamlessFn = seamlessResolution.fn;
         resolvedSeamlessInfo = seamlessResolution.resolution;
@@ -773,13 +692,7 @@ export function optimize(specInput: OptimizationSpec) {
       const invocationFn = getInvocationFunction();
 
       const invoke = () =>
-        invokeFunctionWithConfig(
-          invocationFn,
-          this,
-          args,
-          activeConfig,
-          spec.injection.mode,
-        );
+        invokeFunctionWithConfig(invocationFn, this, args, activeConfig, spec.injection.mode);
 
       if (activeTrialConfig) {
         return invoke() as ReturnType<T>;
@@ -790,97 +703,72 @@ export function optimize(specInput: OptimizationSpec) {
 
     defineHiddenProperty(wrapped, OPTIMIZATION_SPEC, spec);
 
-    defineHiddenProperty(
-      wrapped,
-      'optimize',
-      async (options: OptimizeOptions) => {
-        if (isHybridOptimizeOptions(options)) {
-          return runHybridOptimization(
-            fn as unknown as NativeTrialFunction,
-            spec,
-            specInput,
-            options,
-            fn.name,
-          );
-        }
+    defineHiddenProperty(wrapped, 'optimize', async (options: OptimizeOptions) => {
+      if (!options || typeof options !== 'object') {
+        throw new ValidationError('optimize() options are required.');
+      }
 
-        if (spec.execution.mode === 'hybrid') {
-          throw new ValidationError(
-            'execution.mode="hybrid" is not supported in this checkout.',
-          );
-        }
-
-        if (spec.execution.contract === 'trial') {
-          emitTrialContractWarning();
-          return runNativeOptimization(
-            fn as unknown as NativeTrialFunction,
-            spec,
-            options,
-          );
-        }
-
-        const evaluationRows = await resolveEvaluationRows(spec);
-        if (!Array.isArray(evaluationRows) || evaluationRows.length === 0) {
-          throw new ValidationError(
-            'optimize() requires evaluation data to be a non-empty array.',
-          );
-        }
-
-        const hydratedSpec: NormalizedOptimizationSpec = {
-          ...spec,
-          evaluation: {
-            ...spec.evaluation,
-            data: evaluationRows,
-            loadData: undefined,
-          },
-        };
-        return runNativeOptimization(
-          createAgentTrialFunction(
-            getInvocationFunction(),
-            hydratedSpec,
-            evaluationRows,
-          ),
-          hydratedSpec,
+      if (isHybridOptimizeOptions(options)) {
+        return runHybridOptimization(
+          fn as unknown as NativeTrialFunction,
+          spec,
+          specInput,
           options,
+          fn.name
         );
-      },
-    );
+      }
 
-    defineHiddenProperty(
-      wrapped,
-      'applyBestConfig',
-      (result: OptimizationResult) => {
-        if (result.bestConfig) {
-          getInvocationFunction();
-        }
-        appliedConfig = result.bestConfig ? { ...result.bestConfig } : undefined;
-        return appliedConfig ? { ...appliedConfig } : undefined;
-      },
-    );
+      if (spec.execution.mode === 'hybrid') {
+        throw new ValidationError('execution.mode="hybrid" is not supported in this checkout.');
+      }
 
-    defineHiddenProperty(
-      wrapped,
-      'currentConfig',
-      () => {
-        const current =
-          appliedConfig ??
-          (Object.keys(spec.defaultConfig).length > 0 ? spec.defaultConfig : undefined);
-        return current ? { ...current } : undefined;
-      },
-    );
+      if (spec.execution.contract === 'trial') {
+        emitTrialContractWarning();
+        return runNativeOptimization(fn as unknown as NativeTrialFunction, spec, options);
+      }
 
-    defineHiddenProperty(
-      wrapped,
-      'seamlessResolution',
-      () =>
-        resolvedSeamlessInfo
-          ? {
-              ...resolvedSeamlessInfo,
-              targets: resolvedSeamlessInfo.targets
-                ? [...resolvedSeamlessInfo.targets]
-                : undefined,
-            }
-          : undefined,
+      const evaluationRows = await resolveEvaluationRows(spec);
+      if (!Array.isArray(evaluationRows) || evaluationRows.length === 0) {
+        throw new ValidationError('optimize() requires evaluation data to be a non-empty array.');
+      }
+
+      const hydratedSpec: NormalizedOptimizationSpec = {
+        ...spec,
+        evaluation: {
+          ...spec.evaluation,
+          data: evaluationRows,
+          loadData: undefined,
+        },
+      };
+      return runNativeOptimization(
+        createAgentTrialFunction(getInvocationFunction(), hydratedSpec, evaluationRows),
+        hydratedSpec,
+        options
+      );
+    });
+
+    defineHiddenProperty(wrapped, 'applyBestConfig', (result: OptimizationResult) => {
+      if (result.bestConfig) {
+        getInvocationFunction();
+      }
+      appliedConfig = result.bestConfig ? { ...result.bestConfig } : undefined;
+      return appliedConfig ? { ...appliedConfig } : undefined;
+    });
+
+    defineHiddenProperty(wrapped, 'currentConfig', () => {
+      const current =
+        appliedConfig ??
+        (Object.keys(spec.defaultConfig).length > 0 ? spec.defaultConfig : undefined);
+      return current ? { ...current } : undefined;
+    });
+
+    defineHiddenProperty(wrapped, 'seamlessResolution', () =>
+      resolvedSeamlessInfo
+        ? {
+            ...resolvedSeamlessInfo,
+            targets: resolvedSeamlessInfo.targets ? [...resolvedSeamlessInfo.targets] : undefined,
+          }
+        : undefined
     );
 
     return wrapped;

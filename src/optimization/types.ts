@@ -6,12 +6,10 @@ export type ParamScale = 'linear' | 'log';
 export type InjectionMode = 'context' | 'parameter' | 'seamless';
 export type ExecutionMode = 'native' | 'hybrid';
 export type ExecutionContract = 'agent' | 'trial';
+export type ParameterConditionValue = string | number | boolean;
+export type ParameterConditions = Record<string, ParameterConditionValue>;
 export type AggregationStrategy = 'mean' | 'median' | 'sum' | 'min' | 'max';
-export type RepetitionAggregationStrategy =
-  | 'mean'
-  | 'median'
-  | 'min'
-  | 'max';
+export type RepetitionAggregationStrategy = 'mean' | 'median' | 'min' | 'max';
 export type FrameworkTarget = 'openai' | 'langchain' | 'vercel-ai';
 
 export interface FrameworkAutoOverrideStatus {
@@ -64,12 +62,17 @@ export interface ObjectiveDefinition {
 
 export type ObjectiveInput = BuiltInObjectiveName | ObjectiveDefinition;
 
-export interface EnumParamDefinition<T = unknown> {
+interface ConditionalParameterDefinition<T> {
+  conditions?: ParameterConditions;
+  default?: T;
+}
+
+export interface EnumParamDefinition<T = unknown> extends ConditionalParameterDefinition<T> {
   type: 'enum';
   values: readonly T[];
 }
 
-export interface FloatParamDefinition {
+export interface FloatParamDefinition extends ConditionalParameterDefinition<number> {
   type: 'float';
   min: number;
   max: number;
@@ -77,7 +80,7 @@ export interface FloatParamDefinition {
   step?: number;
 }
 
-export interface IntParamDefinition {
+export interface IntParamDefinition extends ConditionalParameterDefinition<number> {
   type: 'int';
   min: number;
   max: number;
@@ -85,10 +88,7 @@ export interface IntParamDefinition {
   step?: number;
 }
 
-export type ParameterDefinition =
-  | EnumParamDefinition
-  | FloatParamDefinition
-  | IntParamDefinition;
+export type ParameterDefinition = EnumParamDefinition | FloatParamDefinition | IntParamDefinition;
 
 export interface OptimizationBudget {
   maxCostUsd?: number;
@@ -98,14 +98,14 @@ export type EvaluationScoringFunction<Row = unknown, Output = unknown> = (
   output: Output,
   expectedOutput: unknown,
   runtimeMetrics: Metrics,
-  row: Row,
+  row: Row
 ) => number | null | Promise<number | null>;
 
 export type EvaluationMetricFunction<Row = unknown, Output = unknown> = (
   output: Output,
   expectedOutput: unknown,
   runtimeMetrics: Metrics,
-  row: Row,
+  row: Row
 ) => number | null | Promise<number | null>;
 
 export interface EvaluationContext<Row = unknown, Output = unknown> {
@@ -122,7 +122,10 @@ export interface EvaluationContext<Row = unknown, Output = unknown> {
  * parameters or rest arguments, set `constraint.requiresMetrics = true` so the
  * native runtime does not rely on `function.length` inference.
  */
-export type OptimizationConstraint = ((config: TrialConfig['config'], metrics?: Metrics) => boolean) & {
+export type OptimizationConstraint = ((
+  config: TrialConfig['config'],
+  metrics?: Metrics
+) => boolean) & {
   requiresMetrics?: boolean;
 };
 
@@ -140,7 +143,7 @@ export type AgentCustomEvaluator<Row = unknown, Output = unknown> =
   | ((
       agentFn: (input: unknown) => unknown | Promise<unknown>,
       config: TrialConfig['config'],
-      row: Row,
+      row: Row
     ) => Metrics | Promise<Metrics>);
 
 export interface EvaluationSpec {
@@ -272,7 +275,7 @@ export interface OptimizationResult {
   bestMetrics: Metrics | null;
   trials: OptimizationTrialRecord[];
   promotionDecision?: PromotionDecision;
-  reporting: NativeOptimizationReportingSummary;
+  reporting?: NativeOptimizationReportingSummary;
   stopReason:
     | 'completed'
     | 'maxTrials'
@@ -393,9 +396,7 @@ export interface NativeTrialFunctionResult {
 
 export type NativeOptimizedFunction<T extends (...args: any[]) => any> = T & {
   optimize(options: OptimizeOptions): Promise<OptimizationResult>;
-  applyBestConfig(
-    result: OptimizationResult,
-  ): TrialConfig['config'] | undefined;
+  applyBestConfig(result: OptimizationResult): TrialConfig['config'] | undefined;
   currentConfig(): TrialConfig['config'] | undefined;
   seamlessResolution(): SeamlessResolution | undefined;
 };

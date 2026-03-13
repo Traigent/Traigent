@@ -17,7 +17,7 @@
  */
 
 import { execSync, ExecSyncOptionsWithStringEncoding } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -68,6 +68,11 @@ let tarballPath: string;
 let tmpDir: string;
 
 beforeAll(() => {
+  const cliRunnerPath = join(ROOT, 'dist', 'cli', 'runner.js');
+  if (!existsSync(cliRunnerPath)) {
+    run('npm run build', ROOT);
+  }
+
   // Pack the already-built SDK
   const tarball = run('npm pack --pack-destination /tmp', ROOT);
   tarballPath = join('/tmp', tarball);
