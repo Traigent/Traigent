@@ -58,12 +58,13 @@ class BackendClientConfig:
         else:
             self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
 
-        # Warn when defaulting to cloud without any credentials
+        # Warn when defaulting to cloud without any credentials.
+        # Skip if the caller explicitly passed the URL (not our default).
         if (
-            self.backend_base_url
+            not backend_explicitly_set
+            and self.backend_base_url
             and self.backend_base_url.rstrip("/")
             == BackendConfig.DEFAULT_PROD_URL.rstrip("/")
-            and not os.environ.get("TRAIGENT_API_KEY")
             and not BackendConfig.get_api_key()
         ):
             logger.warning(

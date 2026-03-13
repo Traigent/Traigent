@@ -88,7 +88,9 @@ class TestBackendClientConfig:
         """Test default configuration creation."""
         config = BackendClientConfig()
 
-        assert config.backend_base_url == "http://localhost:5000"
+        from traigent.config.backend_config import BackendConfig
+
+        assert config.backend_base_url == BackendConfig.get_backend_url().rstrip("/")
         assert config.use_mcp is False
         assert config.mcp_server_path is None
         assert config.enable_session_sync is True
