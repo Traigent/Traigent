@@ -59,3 +59,16 @@ npm run benchmark:cross-sdk
 ```
 
 The benchmark command builds the SDK, runs the JS benchmark harness, executes the Python benchmark script, and prints a combined JSON report.
+
+## Hybrid Session Contract Checks
+
+Hybrid JS optimization adds mocked contract validation around the Python backend session API:
+
+- session creation payload shape
+- next-trial suggestion decoding
+- result submission payload shape
+- stop-reason normalization
+
+These checks live in:
+
+- `tests/unit/optimization/hybrid.test.ts`

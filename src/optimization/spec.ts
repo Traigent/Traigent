@@ -7,21 +7,23 @@ import {
   invokeFunctionWithConfig,
   resolveEvaluationRows,
 } from './agent.js';
+import { runHybridOptimization } from './hybrid.js';
 import { runNativeOptimization } from './native.js';
 import { resolveSeamlessFunction } from '../seamless/runtime.js';
 import type {
   BuiltInObjectiveName,
   EnumParamDefinition,
   FloatParamDefinition,
+  HybridOptimizeOptions,
   HybridConfigSpace,
   IntParamDefinition,
   OptimizationConstraint,
   NativeOptimizedFunction,
-  NativeOptimizeOptions,
   NativeTrialFunctionResult,
   NormalizedObjectiveDefinition,
   NormalizedOptimizationSpec,
   ObjectiveInput,
+  OptimizeOptions,
   OptimizationResult,
   OptimizationSpec,
   ParameterDefinition,
@@ -49,6 +51,12 @@ type NativeTrialFunction = (
 ) => Promise<NativeTrialFunctionResult>;
 
 let hasWarnedAboutTrialContract = false;
+
+function isHybridOptimizeOptions(
+  options: OptimizeOptions,
+): options is HybridOptimizeOptions {
+  return options.mode === 'hybrid';
+}
 
 function normalizeWeight(weight: unknown): number {
   if (weight === undefined) {
@@ -785,7 +793,17 @@ export function optimize(specInput: OptimizationSpec) {
     defineHiddenProperty(
       wrapped,
       'optimize',
-      async (options: NativeOptimizeOptions) => {
+      async (options: OptimizeOptions) => {
+        if (isHybridOptimizeOptions(options)) {
+          return runHybridOptimization(
+            fn as unknown as NativeTrialFunction,
+            spec,
+            specInput,
+            options,
+            fn.name,
+          );
+        }
+
         if (spec.execution.mode === 'hybrid') {
           throw new ValidationError(
             'execution.mode="hybrid" is not supported in this checkout.',
@@ -816,7 +834,6 @@ export function optimize(specInput: OptimizationSpec) {
             loadData: undefined,
           },
         };
-
         return runNativeOptimization(
           createAgentTrialFunction(
             getInvocationFunction(),
