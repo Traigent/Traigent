@@ -71,9 +71,9 @@ class ObjectiveDefinition:
     def __post_init__(self) -> None:
         """Validate objective definition after initialization."""
         # Validate weight
-        if self.weight < 0:
+        if self.weight <= 0:
             raise ValueError(
-                f"Weight must be non-negative, got {self.weight} for objective '{self.name}'"
+                f"Weight must be positive, got {self.weight} for objective '{self.name}'"
             )
 
         # Validate orientation

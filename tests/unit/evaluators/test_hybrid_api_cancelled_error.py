@@ -109,6 +109,7 @@ async def test_evaluate_outputs_propagates_cancelled_error():
     with pytest.raises(asyncio.CancelledError):
         await evaluator._evaluate_outputs(
             transport=mock_transport,
+            config={"model": "gpt-4"},
             batch=batch,
             inputs=inputs,
             execute_response=mock_execute_response,

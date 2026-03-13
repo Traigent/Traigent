@@ -631,9 +631,9 @@ def preview_cloud_benefits() -> None:
             )
 
         click.echo("\n🎯 Ready to upgrade?")
-        click.echo("   1. Get API key: https://traigent.ai/signup")
+        click.echo("   1. Get API key: https://portal.traigent.ai/login")
         click.echo("   2. Run: traigent local sync --api-key YOUR_KEY")
-        click.echo("   3. Access dashboard: https://app.traigent.ai")
+        click.echo("   3. Access portal: https://portal.traigent.ai")
 
     except Exception as e:
         click.echo(f"Error previewing cloud benefits: {e}", err=True)
