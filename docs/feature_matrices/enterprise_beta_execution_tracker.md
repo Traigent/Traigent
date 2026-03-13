@@ -97,7 +97,7 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Optimization overview dashboard
 - `[x]` Evaluator quality trends dashboard
 - `[x]` Project cost/token/latency/volume dashboard completion
-- `[ ]` Observability summary dashboard
+- `[x]` Observability summary dashboard
 
 ## Minimal Export Product
 - `[x]` On-demand export jobs
