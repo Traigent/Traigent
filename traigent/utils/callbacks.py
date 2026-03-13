@@ -491,6 +491,16 @@ class CallbackManager:
     block or crash the optimization process. All failures are logged and tracked
     for reporting.
 
+    Timeout semantics are intentionally conservative:
+
+    - the optimization loop stops waiting once the timeout expires
+    - a timed-out callback may continue running in its worker thread
+    - ``future.cancel()`` only prevents execution if the callback has not started yet
+
+    For callbacks with side effects, prefer idempotent operations and avoid holding
+    locks or scarce resources for long periods. If a callback must complete before
+    optimization proceeds, disable timeout protection for that manager instance.
+
     Attributes:
         callbacks: List of registered callbacks
         timeout: Maximum seconds to wait for a callback (default 5.0)
@@ -509,7 +519,10 @@ class CallbackManager:
         Args:
             callbacks: List of callback instances
             timeout: Maximum seconds to wait for a callback (default 5.0).
-                Set to None or 0 to disable timeout protection.
+                Set to 0 to disable timeout protection; passing None uses the
+                default timeout (5.0 seconds). When a timeout occurs,
+                optimization continues immediately, but the callback thread may
+                still run to completion in the background.
         """
         self.callbacks = callbacks or []
         self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
@@ -529,6 +542,11 @@ class CallbackManager:
             method_name: Name of the method being called (for logging)
             method_func: The actual method to call
             *args: Arguments to pass to the method
+
+        Notes:
+            Timeout protection is best-effort only. A timeout stops waiting on
+            the callback future but does not forcibly terminate a callback that
+            is already running.
         """
         callback_name = callback.__class__.__name__
 
