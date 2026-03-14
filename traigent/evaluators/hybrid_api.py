@@ -797,7 +797,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             elif caps.supports_evaluate:
                 # Two-phase mode - need separate evaluate call
                 return await self._evaluate_outputs(
-                    transport, batch, inputs, execute_response
+                    transport, config, batch, inputs, execute_response
                 )
             else:
                 # No evaluation - return outputs only
@@ -910,6 +910,7 @@ class HybridAPIEvaluator(BaseEvaluator):
     async def _evaluate_outputs(
         self,
         transport: HybridTransport,
+        config: dict[str, Any],
         batch: list[Any],
         inputs: list[dict[str, Any]],
         execute_response: Any,  # HybridExecuteResponse
@@ -947,6 +948,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             benchmark_id=benchmark_id,
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
+            config=config,
             session_id=self._session_id,
             timeout_ms=int(self._timeout * 1000),
         )
