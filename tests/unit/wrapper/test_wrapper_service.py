@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traigent.hybrid.protocol import EstimatedTokensPerExample
+from traigent.wrapper.errors import BadRequestError
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 
@@ -906,6 +907,31 @@ class TestHandleExecute:
             await svc.handle_execute({"benchmark_id": "bench_001", "examples": []})
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"examples": [{"example_id": "i1", "data": {}}]},
+            {"benchmark_id": "", "examples": [{"example_id": "i1", "data": {}}]},
+        ],
+    )
+    async def test_missing_benchmark_id_raises_structured_error(
+        self, payload: dict[str, object]
+    ) -> None:
+        """Execute requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(example_id, data, config):
+            return {"output": "ok"}
+
+        with pytest.raises(BadRequestError) as exc_info:
+            await svc.handle_execute(payload)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_example_without_example_id_gets_uuid(self) -> None:
         """Test that examples without example_id get a generated UUID."""
         svc = TraigentService()
@@ -1498,6 +1524,40 @@ class TestHandleEvaluateEdgeCases:
             await svc.handle_evaluate(
                 {"benchmark_id": "bench_001", "evaluations": "not_a_list"}
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ]
+            },
+            {
+                "benchmark_id": "",
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            },
+        ],
+    )
+    async def test_missing_benchmark_id_raises_structured_error(
+        self, payload: dict[str, object]
+    ) -> None:
+        """Evaluate requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(BadRequestError) as exc_info:
+            await svc.handle_evaluate(payload)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_evaluation_with_output_id(self) -> None:
