@@ -55,6 +55,20 @@ The workflow (`.github/workflows/traigent-ci-gates.yml`) automatically:
 3. Runs optimization on PR
 4. Compares metrics and enforces gates
 
+### 4. Optional Demo Workflows
+
+This repo also ships manual demo workflows for maintainers and customer demos:
+- `.github/workflows/example-auto-tune.yml`
+- `.github/workflows/example-auto-tune-secure.yml`
+
+These are intentionally not part of the SDK release gate.
+
+- Use `environment=development` for mock/offline runs.
+- Use `environment=staging` or `production` only when you have configured
+  real provider credentials and, optionally, `AWS_ROLE_TO_ASSUME` for DVC/S3.
+- Leave `apply_changes=false` unless you explicitly want the workflow to push
+  DVC artifacts or open an automated PR.
+
 ## 🔑 Key Improvements Over ChatGPT5's Plan
 
 ### ✅ Proper SDK Usage

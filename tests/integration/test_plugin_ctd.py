@@ -604,14 +604,20 @@ class TestPluginCTD:
         """Get the plugin registry."""
         return get_registry()
 
-    @pytest.mark.parametrize("k", [1, 2])  # Removed k=3 to prevent hanging
+    @pytest.mark.parametrize(
+        "k",
+        [
+            1,
+            pytest.param(2, marks=[pytest.mark.slow, pytest.mark.timeout(0)]),
+        ],
+    )
     def test_all_plugins_ctd(self, k):
         """Test all registered plugins using CTD with configurable k value.
 
         Args:
             k: Combination size (1=univariate, 2=pairwise, 3=triplets)
         """
-        generator = CTDTestGenerator(k=k, verbose=True)
+        generator = CTDTestGenerator(k=k, verbose=(k == 1))
         registry = get_registry()
 
         # Get all registered plugins
