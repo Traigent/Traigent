@@ -13,10 +13,16 @@ on:
         options:
           - testpypi
           - pypi
+      confirm_publish:
+        description: 'Set to true to allow publishing'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event.inputs.confirm_publish == 'true'
     environment: ${{ github.event.inputs.environment || 'pypi' }}
     permissions:
       id-token: write  # For trusted publishing
@@ -72,19 +78,17 @@ jobs:
 
     # Publish to Test PyPI first for manual verification
     - name: Publish to Test PyPI
-      if: github.event.inputs.environment == 'testpypi' || github.event_name == 'workflow_dispatch'
+      if: github.event.inputs.environment == 'testpypi'
       uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
         repository-url: https://test.pypi.org/legacy/
-        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
         verbose: true
 
-    # Publish to production PyPI only on actual releases
+    # Publish to production PyPI only by explicit manual dispatch
     - name: Publish to PyPI
-      if: github.event_name == 'release' || github.event.inputs.environment == 'pypi'
+      if: github.event.inputs.environment == 'pypi'
       uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
         verbose: true
 
     - name: Create deployment summary
@@ -92,13 +96,9 @@ jobs:
       run: |
         echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
         echo "- **Version**: $(python -c "import traigent; print(traigent.__version__)")" >> $GITHUB_STEP_SUMMARY
-        echo "- **Environment**: ${{ github.event.inputs.environment || 'pypi' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event_name }}" = "release" ]; then
-          echo "- **Release**: ${{ github.event.release.tag_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release URL**: ${{ github.event.release.html_url }}" >> $GITHUB_STEP_SUMMARY
-        fi
 
   verify-publication:
     needs: publish
