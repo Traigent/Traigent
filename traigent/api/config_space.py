@@ -110,8 +110,8 @@ class ConfigSpace:
     @classmethod
     def from_decorator_args(
         cls,
-        configuration_space: dict[str, Any] | None = None,
-        inline_params: dict[str, Any] | None = None,
+        configuration_space: Mapping[str, Any] | None = None,
+        inline_params: Mapping[str, Any] | None = None,
         constraints: Sequence[Constraint] | None = None,
         description: str | None = None,
     ) -> ConfigSpace:
@@ -124,8 +124,8 @@ class ConfigSpace:
         3. Or a combination of both
 
         Args:
-            configuration_space: Dict of parameter definitions
-            inline_params: Inline parameter definitions from **kwargs
+            configuration_space: Mapping of parameter definitions
+            inline_params: Mapping of inline parameter definitions
             constraints: List of structural constraints
             description: Optional description
 
@@ -154,12 +154,12 @@ class ConfigSpace:
 
     @classmethod
     def _process_param_dict(
-        cls, params: dict[str, Any], tvars: dict[str, ParameterRange]
+        cls, params: Mapping[str, Any], tvars: dict[str, ParameterRange]
     ) -> None:
         """Process a parameter dictionary and add ranges to tvars.
 
         Args:
-            params: Dictionary of parameter definitions
+            params: Mapping of parameter definitions
             tvars: Target dictionary to populate with ParameterRange instances
         """
         for name, value in params.items():
