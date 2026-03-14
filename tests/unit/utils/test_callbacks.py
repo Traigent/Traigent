@@ -1679,6 +1679,23 @@ class TestCallbackManagerTimeoutAndIsolation:
         manager = CallbackManager()
         assert manager.timeout == 5.0
 
+    def test_default_max_callback_threads(self) -> None:
+        """Test CallbackManager has a bounded shared callback pool by default."""
+        manager = CallbackManager()
+        assert (
+            manager.max_callback_threads == CallbackManager.DEFAULT_MAX_CALLBACK_THREADS
+        )
+
+    def test_max_callback_threads_parameter_initialization(self) -> None:
+        """Test CallbackManager accepts max_callback_threads parameter."""
+        manager = CallbackManager(max_callback_threads=2)
+        assert manager.max_callback_threads == 2
+
+    def test_invalid_max_callback_threads_raises(self) -> None:
+        """Test CallbackManager rejects invalid callback worker limits."""
+        with pytest.raises(ValueError, match="max_callback_threads"):
+            CallbackManager(max_callback_threads=0)
+
     def test_timeout_disabled_with_zero(self) -> None:
         """Test timeout is disabled when set to 0."""
         manager = CallbackManager(timeout=0)
@@ -1943,6 +1960,51 @@ class TestCallbackManagerTimeoutAndIsolation:
         # No failures should be recorded
         assert len(manager.callback_failures) == 0
         mock_callback.on_optimization_start.assert_called_once()
+
+    def test_shared_executor_is_reused_across_timeout_calls(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test timeout-enabled callbacks reuse a single shared executor."""
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=5.0,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            first_executor = manager._executor
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert first_executor is not None
+            assert manager._executor is first_executor
+
+    def test_on_optimization_complete_closes_shared_executor(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test optimization completion releases the shared executor."""
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)
+
+        manager.on_trial_start(0, {"model": "gpt-4"})
+        assert manager._executor is not None
+
+        result = OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        manager.on_optimization_complete(result)
+
+        assert manager._executor is None
 
     def test_multiple_callbacks_with_timeout_mixed_results(
         self, caplog: pytest.LogCaptureFixture
