@@ -27,10 +27,6 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -387,17 +383,15 @@ class LicenseValidator:
             LicenseInfo with the validated license information.
         """
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're already in an async context, use cached or free
-                with self._lock:
-                    if self._cached_license:
-                        return self._cached_license
-                return self._get_free_license()
-            return loop.run_until_complete(self.validate_async())
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No event loop, create one
             return asyncio.run(self.validate_async())
+
+        # We're already in an async context, use cached or free
+        with self._lock:
+            if self._cached_license:
+                return self._cached_license
+        return self._get_free_license()
 
     def has_feature_sync(self, feature: LicenseFeature | str) -> bool:
         """Check if the license includes a specific feature (synchronous).

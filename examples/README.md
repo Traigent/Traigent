@@ -23,7 +23,7 @@ The gallery provides:
 | Folder | Description | Count |
 | ------ | ----------- | ----- |
 | **`quickstart/`** | **Start here!** Ready-to-run README examples | 3 examples |
-| **`core/`** | Essential examples introducing core Traigent concepts | 10 examples |
+| **`core/`** | Essential examples introducing core Traigent concepts | 12 examples |
 | **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
 | **`datasets/`** | Shared evaluation datasets and test data | 9+ datasets |
@@ -64,6 +64,8 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 | **`chunking-long-context`** | Handle documents exceeding context limits | Chunking strategies, long-context handling | ~4 min |
 | **`safety-guardrails`** | Apply content moderation and safety | Safety filters, guardrails, moderation | ~3 min |
 | **`prompt-ab-test`** | A/B test different prompt variants | Prompt comparison, statistical testing | ~3 min |
+| **`production-deployment`** | Load and apply optimized configs in production | Config persistence, hot-swap, deployment patterns | ~2 min |
+| **`error-handling`** | Graceful failure modes and fallback patterns | Error recovery, budget limits, timeouts, validation | ~2 min |
 
 ### What You'll Learn
 
@@ -89,6 +91,10 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 
 - **prompt-ab-test**: Statistical A/B testing for prompts. Compare prompt variants with statistical significance, not just single-run comparisons.
 
+- **production-deployment**: Production deployment workflow. Optimize, save the best config to JSON, load it in production, and run with a frozen configuration.
+
+- **error-handling**: Graceful error handling patterns. Demonstrates invalid config detection, budget limits, timeout handling, preflight validation, and fallback to default configs.
+
 **Each example includes:**
 
 - ✅ Complete `run.py` with production-quality code (except `multi-objective-tradeoff` which has provider-specific files)
@@ -102,7 +108,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
-| **`execution-modes/`** | 6 examples | Local patterns plus roadmap-only cloud/hybrid stubs |
+| **`execution-modes/`** | 2 examples | Local execution patterns with edge_analytics mode |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
 | **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
 | **`ragas/`** | 3 examples | Specialized RAG metrics and evaluation |
@@ -110,7 +116,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 ### Advanced Category Details
 
-- **execution-modes/**: Learn different execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Useful for understanding privacy-performance tradeoffs.
+- **execution-modes/**: Learn execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Cloud and hybrid modes coming in a future release.
 
 - **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
 
@@ -129,7 +135,6 @@ Production-ready integrations with popular platforms and workflows:
 
 - **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline). Run Traigent optimizations as part of your CI/CD workflow.
 - **`bedrock/`** - AWS Bedrock integration patterns. Use Traigent with Amazon's managed LLM service.
-- **More coming soon:** LangChain, OpenAI SDK, Azure OpenAI, Google Vertex AI
 
 ## 📊 Working With Datasets
 
@@ -205,11 +210,14 @@ Use `test_all_examples.sh` to run examples by category:
 cd examples
 
 # Run examples by category (mock mode, no API keys)
-./test_all_examples.sh core        # Run 10 core examples
-./test_all_examples.sh ragas       # Run 3 RAGAS examples
-./test_all_examples.sh docs        # Run 2 docs examples
-./test_all_examples.sh walkthrough # Run 8 walkthrough examples
-./test_all_examples.sh all         # Run all categories (23 examples)
+./test_all_examples.sh core               # Run 12 core examples
+./test_all_examples.sh quickstart         # Run 3 quickstart examples
+./test_all_examples.sh tvl                # Run 5 TVL tutorial examples
+./test_all_examples.sh multi-objective    # Run 5 multi-objective variants
+./test_all_examples.sh walkthrough        # Run 8 walkthrough examples
+./test_all_examples.sh advanced-walkthrough # Run 5 advanced walkthrough examples
+./test_all_examples.sh manifest           # Run all 37 manifest examples (strict)
+./test_all_examples.sh all                # Run all categories
 
 # Run with real API keys
 ./test_all_examples.sh --real core
@@ -223,11 +231,16 @@ cd examples
 
 | Category | Examples | Description |
 | -------- | -------- | ----------- |
-| `core` | 10 | Main Traigent feature demonstrations |
+| `core` | 12 | Main Traigent feature demonstrations |
+| `quickstart` | 3 | Ready-to-run README examples |
+| `tvl` | 5 | TVL specification tutorials |
+| `multi-objective` | 5 | Multi-objective optimization variants |
+| `walkthrough` | 8 | Tutorial walkthrough examples |
+| `advanced-walkthrough` | 5 | Advanced walkthrough mock examples |
 | `ragas` | 3 | RAGAS evaluation integration |
 | `docs` | 2 | Documentation inline examples |
-| `walkthrough` | 8 | Tutorial walkthrough examples |
-| `all` | 23 | Run all categories |
+| `manifest` | 37 | All publication-ready examples (strict) |
+| `all` | — | Run all categories |
 
 ### Quick Start (No API Keys!)
 
@@ -355,14 +368,13 @@ We welcome contributions! To add new examples:
 4. Test thoroughly before submitting
 5. Update this README and relevant docs
 
-See our [Contributing Guide](../docs/guides/CONTRIBUTING.md) for more details.
+See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ## 📝 Additional Resources
 
 - **Main README:** [../README.md](../README.md)
 - **Documentation:** [../docs/](../docs/)
-- **Website:** <https://traigent.ai> (coming soon)
-- **Discord:** Join our community for support
+- **Website:** <https://traigent.ai>
 - **GitHub Issues:** Report bugs and request features
 
 ---

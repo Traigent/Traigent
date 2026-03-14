@@ -72,7 +72,7 @@ def backend_config():
 def backend_client(backend_config):
     """Create backend integrated client for testing."""
     return BackendIntegratedClient(
-        api_key="tg_test_" + "x" * 56,
+        api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
         base_url="http://localhost:8000",
         backend_config=backend_config,
         enable_fallback=True,
@@ -88,7 +88,9 @@ class TestBackendClientConfig:
         """Test default configuration creation."""
         config = BackendClientConfig()
 
-        assert config.backend_base_url == "http://localhost:5000"
+        from traigent.config.backend_config import BackendConfig
+
+        assert config.backend_base_url == BackendConfig.get_backend_url().rstrip("/")
         assert config.use_mcp is False
         assert config.mcp_server_path is None
         assert config.enable_session_sync is True
@@ -117,7 +119,7 @@ class TestBackendIntegratedClient:
     def test_client_initialization(self, backend_config):
         """Test client initialization."""
         client = BackendIntegratedClient(
-            api_key="test_key",
+            api_key="test_key",  # pragma: allowlist secret
             base_url="https://api.test.com",
             backend_config=backend_config,
             enable_fallback=False,
@@ -140,7 +142,11 @@ class TestBackendIntegratedClient:
         monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
         monkeypatch.setenv("TRAIGENT_ENV", "production")
 
-        client = BackendIntegratedClient()
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            client = BackendIntegratedClient()
 
         assert client.base_url == BackendConfig.get_backend_url()
         assert isinstance(client.backend_config, BackendClientConfig)
@@ -153,6 +159,21 @@ class TestBackendIntegratedClient:
         """Test URL normalization on initialization."""
         client = BackendIntegratedClient(base_url="https://api.test.com/")
         assert client.base_url == "https://api.test.com"
+
+    def test_explicit_base_url_overrides_default_backend_config(self, monkeypatch):
+        """Explicit base_url should propagate through backend and API URLs."""
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            client = BackendIntegratedClient(base_url="https://api.test.com")
+
+        assert client.base_url == "https://api.test.com"
+        assert client.backend_config.backend_base_url == "https://api.test.com"
+        assert client.backend_config.api_base_url == "https://api.test.com/api/v1"
 
     @patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", False)
     def test_client_without_aiohttp(self, backend_config):
@@ -194,6 +215,72 @@ class TestBackendIntegratedClient:
 
         asyncio.run(run_test())
 
+    @patch("requests.post")
+    def test_upload_example_features_posts_to_analytics_endpoint(
+        self, mock_post, backend_client
+    ):
+        """Example features upload uses the analytics feature endpoint."""
+        mock_response = MagicMock(status_code=200, text="ok")
+        mock_post.return_value = mock_response
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ) as mock_get_headers:
+            result = backend_client.upload_example_features(
+                "run_123",
+                "simhash_v1",
+                [{"example_id": "ex_1", "feature": "0f0f"}],
+            )
+
+        assert result is True
+        mock_get_headers.assert_awaited_once_with(target="backend")
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args.args[0].endswith(
+            "/api/v1/analytics/example-scoring/run_123/features"
+        )
+        assert call_args.kwargs["json"]["feature_kind"] == "simhash_v1"
+        assert call_args.kwargs["headers"]["Authorization"] == "Bearer test-token"
+
+    @patch("requests.post")
+    def test_upload_example_features_rejects_unsupported_feature_kind(
+        self, mock_post, backend_client
+    ):
+        """Example feature upload only accepts supported feature kinds."""
+        result = backend_client.upload_example_features(
+            "run_123",
+            "unknown_v1",
+            [{"example_id": "ex_1", "feature": "0f0f"}],
+        )
+
+        assert result is False
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_upload_example_features_url_encodes_run_id(
+        self, mock_post, backend_client
+    ):
+        """Run IDs are path-encoded before constructing the upload URL."""
+        mock_response = MagicMock(status_code=200, text="ok")
+        mock_post.return_value = mock_response
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ):
+            result = backend_client.upload_example_features(
+                "run/../unsafe",
+                "simhash_v1",
+                [{"example_id": "ex_1", "feature": "0f0f"}],
+            )
+
+        assert result is True
+        assert mock_post.call_args.args[0] == (
+            f"{backend_client.api_base_url}/analytics/example-scoring/"
+            "run%2F..%2Funsafe/features"
+        )
+
 
 class TestPrivacyFirstOptimization:
     """Test privacy-first optimization functionality."""
@@ -209,7 +296,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session_api,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Mock responses
                 mock_cloud.return_value = MagicMock(
                     session_id="session_123",
@@ -220,15 +306,17 @@ class TestPrivacyFirstOptimization:
                 mock_session_api.return_value = ("session_123", "exp_456", "run_789")
                 mock_bridge.create_session_mapping.return_value = MagicMock()
 
-                session_id, exp_id, run_id = (
-                    await backend_client._deprecated_create_privacy_optimization_session(
-                        function_name="test_function",
-                        configuration_space={"param": [1, 2, 3]},
-                        objectives=["accuracy"],
-                        dataset_metadata={"size": 1000, "type": "qa"},
-                        max_trials=25,
-                        user_id="test_user",
-                    )
+                (
+                    session_id,
+                    exp_id,
+                    run_id,
+                ) = await backend_client._deprecated_create_privacy_optimization_session(
+                    function_name="test_function",
+                    configuration_space={"param": [1, 2, 3]},
+                    objectives=["accuracy"],
+                    dataset_metadata={"size": 1000, "type": "qa"},
+                    max_trials=25,
+                    user_id="test_user",
                 )
 
                 assert session_id == "session_123"
@@ -267,11 +355,13 @@ class TestPrivacyFirstOptimization:
                 side_effect=Exception("Network error"),
             ):
                 with pytest.raises(CloudServiceError, match="Failed to create session"):
-                    await backend_client._deprecated_create_privacy_optimization_session(
-                        function_name="test_function",
-                        configuration_space={"param": [1, 2, 3]},
-                        objectives=["accuracy"],
-                        dataset_metadata={"size": 1000},
+                    await (
+                        backend_client._deprecated_create_privacy_optimization_session(
+                            function_name="test_function",
+                            configuration_space={"param": [1, 2, 3]},
+                            objectives=["accuracy"],
+                            dataset_metadata={"size": 1000},
+                        )
                     )
 
         import asyncio
@@ -290,7 +380,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Setup mock response
                 from traigent.cloud.models import (
                     DatasetSubsetIndices,
@@ -359,7 +448,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 from traigent.cloud.models import NextTrialResponse
 
                 mock_cloud.return_value = NextTrialResponse(
@@ -413,7 +501,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
@@ -468,7 +555,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
@@ -539,7 +625,6 @@ class TestCloudSaaSOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-
                 # Mock responses
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(
@@ -972,7 +1057,7 @@ class TestGlobalClientInstance:
         assert client is client2
 
     def test_get_backend_client_with_kwargs(self):
-        """Test get_backend_client with custom kwargs."""
+        """Explicit base_url should override default backend routing."""
         # Clear global instance
 
         traigent.cloud.backend_client._backend_client = None
@@ -981,14 +1066,15 @@ class TestGlobalClientInstance:
             backend_base_url="https://custom.backend.com"
         )
         client = get_backend_client(
-            api_key="test_key",
+            api_key="test_key",  # pragma: allowlist secret
             base_url="https://custom.api.com",
             backend_config=backend_config,
             enable_fallback=False,
         )
 
         assert client.base_url == "https://custom.api.com"
-        assert client.backend_config.backend_base_url == "https://custom.backend.com"
+        assert client.backend_config.backend_base_url == "https://custom.api.com"
+        assert client.backend_config.api_base_url == "https://custom.api.com/api/v1"
         assert client.enable_fallback is False
 
 
@@ -1051,7 +1137,6 @@ class TestEdgeCases:
                     new_callable=AsyncMock,
                 ) as mock_session,
             ):
-
                 mock_bridge.get_trial_mapping.return_value = None
                 mock_cloud.return_value = True
                 mock_session.return_value = True
@@ -1084,7 +1169,6 @@ class TestEdgeCases:
                     backend_client, "_submit_agent_optimization"
                 ) as mock_cloud,
             ):
-
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(session_id="session_123")
 

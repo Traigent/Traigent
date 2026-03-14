@@ -8,6 +8,7 @@ and conversion to Traigent configuration space format.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from traigent.hybrid.protocol import ConfigSpaceResponse, TVARDefinition
@@ -39,13 +40,17 @@ class ConfigSpaceDiscovery:
         # config_space = {"temperature": {"low": 0.0, "high": 2.0, "step": 0.1}, ...}
     """
 
-    def __init__(self, transport: HybridTransport) -> None:
+    def __init__(
+        self, transport: HybridTransport, tunable_id: str | None = None
+    ) -> None:
         """Initialize discovery with transport.
 
         Args:
             transport: HybridTransport for fetching config space.
+            tunable_id: Optional tunable ID to scope config space discovery.
         """
         self._transport = transport
+        self._tunable_id = tunable_id
         self._cached_response: ConfigSpaceResponse | None = None
 
     async def fetch(self) -> ConfigSpaceResponse:
@@ -60,10 +65,12 @@ class ConfigSpaceDiscovery:
         if self._cached_response is not None:
             return self._cached_response
 
-        self._cached_response = await self._transport.discover_config_space()
+        self._cached_response = await self._transport.discover_config_space(
+            tunable_id=self._tunable_id,
+        )
         logger.info(
             f"Discovered {len(self._cached_response.tvars)} TVARs "
-            f"for capability '{self._cached_response.capability_id}'"
+            f"for tunable '{self._cached_response.tunable_id}'"
         )
         return self._cached_response
 
@@ -79,21 +86,51 @@ class ConfigSpaceDiscovery:
         response = await self.fetch()
         return response.to_traigent_config_space()
 
-    def get_capability_id(self) -> str | None:
-        """Get the capability ID from cached response.
+    def get_tunable_id(self) -> str | None:
+        """Get the tunable ID from cached response.
 
         Returns:
-            Capability ID if available, None if not fetched yet.
+            Tunable ID if available, None if not fetched yet.
         """
-        return self._cached_response.capability_id if self._cached_response else None
+        return self._cached_response.tunable_id if self._cached_response else None
 
-    def get_constraints(self) -> dict[str, list[str]] | None:
+    def get_constraints(self) -> dict[str, Any] | list[Any] | None:
         """Get constraints from cached response.
 
         Returns:
             Constraints dict if available, None if not fetched yet.
         """
         return self._cached_response.constraints if self._cached_response else None
+
+    def get_objectives(self) -> list[dict[str, Any]] | None:
+        """Get objectives from cached response."""
+        return self._cached_response.objectives if self._cached_response else None
+
+    def get_exploration(self) -> dict[str, Any] | None:
+        """Get exploration config from cached response."""
+        return self._cached_response.exploration if self._cached_response else None
+
+    def get_promotion_policy(self) -> dict[str, Any] | None:
+        """Get promotion policy from cached response."""
+        if not self._cached_response:
+            return None
+        return self._cached_response.promotion_policy
+
+    def get_defaults(self) -> dict[str, Any] | None:
+        """Get default configuration values from cached response."""
+        return self._cached_response.defaults if self._cached_response else None
+
+    def get_measures(self) -> list[str] | None:
+        """Get declared measure names from cached response."""
+        return self._cached_response.measures if self._cached_response else None
+
+    def get_estimated_tokens_per_example(self) -> dict[str, int] | None:
+        """Get optional per-example token estimate from cached response."""
+        if not self._cached_response:
+            return None
+        if self._cached_response.estimated_tokens_per_example is None:
+            return None
+        return self._cached_response.estimated_tokens_per_example.to_dict()
 
     def get_tvars(self) -> list[TVARDefinition]:
         """Get raw TVAR definitions from cached response.
@@ -142,6 +179,140 @@ class ConfigSpaceDiscovery:
         Call this to force re-fetching on next access.
         """
         self._cached_response = None
+
+    @staticmethod
+    def _normalize_constraints_for_parsing(
+        constraints: dict[str, Any] | list[Any] | None,
+    ) -> dict[str, Any] | list[Any] | None:
+        """Normalize hybrid constraints into TVL parser-compatible shapes."""
+        if constraints is None:
+            return None
+        if isinstance(constraints, list):
+            return constraints
+        if not isinstance(constraints, dict):
+            return None
+
+        # TVL 0.9 typed constraints shape.
+        if "structural" in constraints or "derived" in constraints:
+            return constraints
+
+        # Backward-compatible textual shape:
+        # {"hard": ["params.a > 0"], "soft": ["params.b < 2"]}.
+        legacy_rules: list[dict[str, Any]] = []
+        for group_name, group_entries in constraints.items():
+            if not isinstance(group_entries, list):
+                continue
+            for index, entry in enumerate(group_entries):
+                if isinstance(entry, str):
+                    legacy_rules.append(
+                        {
+                            "id": f"{group_name}_{index}",
+                            "type": "expression",
+                            "rule": entry,
+                            "error_message": (
+                                f"{group_name} constraint {index} violated"
+                            ),
+                        }
+                    )
+                elif isinstance(entry, dict):
+                    legacy_rules.append(entry)
+        return legacy_rules if legacy_rules else constraints
+
+    async def build_optimization_spec(self) -> dict[str, Any]:
+        """Build optimizer-compatible spec from discovered config-space metadata."""
+        from traigent.tvl.spec_loader import (
+            TVLSpecArtifact,
+            _compile_constraints_unified,
+            _parse_exploration_section,
+            _parse_objectives,
+            _parse_promotion_policy,
+            compile_constraint_expression,
+        )
+
+        response = await self.fetch()
+        constraints_input = self._normalize_constraints_for_parsing(
+            response.constraints
+        )
+
+        resolved: dict[str, Any] = {}
+        if response.objectives is not None:
+            resolved["objectives"] = response.objectives
+        if response.exploration is not None:
+            resolved["exploration"] = response.exploration
+        if response.promotion_policy is not None:
+            resolved["promotion_policy"] = response.promotion_policy
+        if constraints_input is not None:
+            resolved["constraints"] = constraints_input
+
+        objective_schema = _parse_objectives(resolved)
+        budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (
+            _parse_exploration_section(resolved)
+        )
+        promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
+
+        pseudo_path = Path(f"hybrid-{response.tunable_id or 'unknown'}-config-space")
+        compiled_constraints, derived_constraints = _compile_constraints_unified(
+            constraints_input if constraints_input is not None else [],
+            path=pseudo_path,
+        )
+        constraint_wrappers = [
+            compiled_constraint.to_callable()
+            for compiled_constraint in compiled_constraints
+        ]
+        if derived_constraints:
+            for derived_constraint in derived_constraints:
+                compiled_derived = compile_constraint_expression(
+                    derived_constraint.require,
+                    label=f"{pseudo_path}:derived_constraint_{derived_constraint.index}",
+                )
+                constraint_wrappers.append(compiled_derived)
+
+        artifact = TVLSpecArtifact(
+            path=pseudo_path,
+            environment=None,
+            configuration_space=response.to_traigent_config_space(),
+            objective_schema=objective_schema,
+            constraints=constraint_wrappers,
+            default_config=dict(response.defaults or {}),
+            metadata={
+                "source": "hybrid_api_config_space",
+                "tunable_id": response.tunable_id,
+                "schema_version": response.schema_version,
+            },
+            budget=budget,
+            algorithm=algorithm,
+            promotion_policy=promotion_policy,
+            tvars=None,
+            derived_constraints=derived_constraints,
+            tvl_header=None,
+            environment_snapshot=None,
+            evaluation_set=None,
+            tvl_version=response.schema_version,
+            convergence=convergence,
+            exploration_budgets=exploration_budgets,
+            exploration_parallelism=exploration_parallelism,
+            parameter_agents=None,
+        )
+
+        return {
+            "configuration_space": artifact.configuration_space,
+            "objective_schema": artifact.objective_schema,
+            "constraints": artifact.constraints,
+            "default_config": artifact.default_config,
+            "runtime_overrides": artifact.runtime_overrides(),
+            "promotion_policy": artifact.promotion_policy,
+            "measures": list(response.measures or []),
+            "derived_constraints": artifact.derived_constraints,
+            "estimated_tokens_per_example": (
+                response.estimated_tokens_per_example.to_dict()
+                if response.estimated_tokens_per_example is not None
+                else None
+            ),
+        }
+
+    async def build_tvl_artifact(self) -> dict[str, Any]:
+        """Backward-compatible alias for build_optimization_spec()."""
+        return await self.build_optimization_spec()
 
 
 def normalize_tvar_to_config_space(tvar: TVARDefinition) -> Any:
@@ -230,42 +401,42 @@ def validate_config_against_tvars(
                 errors.append(f"Missing required configuration: {tvar.name}")
             continue
 
-        value = config[tvar.name]
-
-        # Type-specific validation
-        if tvar.type == "bool":
-            if not isinstance(value, bool):
-                errors.append(f"{tvar.name}: expected bool, got {type(value).__name__}")
-
-        elif tvar.type == "int":
-            if not isinstance(value, int) or isinstance(value, bool):
-                errors.append(f"{tvar.name}: expected int, got {type(value).__name__}")
-            else:
-                range_spec = tvar.domain.get("range", [])
-                if len(range_spec) >= 2:
-                    if value < range_spec[0] or value > range_spec[1]:
-                        errors.append(
-                            f"{tvar.name}: {value} not in range "
-                            f"[{range_spec[0]}, {range_spec[1]}]"
-                        )
-
-        elif tvar.type == "float":
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                errors.append(
-                    f"{tvar.name}: expected float, got {type(value).__name__}"
-                )
-            else:
-                range_spec = tvar.domain.get("range", [])
-                if len(range_spec) >= 2:
-                    if value < range_spec[0] or value > range_spec[1]:
-                        errors.append(
-                            f"{tvar.name}: {value} not in range "
-                            f"[{range_spec[0]}, {range_spec[1]}]"
-                        )
-
-        elif tvar.type == "enum" or tvar.type == "str":
-            allowed = tvar.domain.get("values", [])
-            if allowed and value not in allowed:
-                errors.append(f"{tvar.name}: '{value}' not in allowed values {allowed}")
+        error = _validate_tvar_value(tvar, config[tvar.name])
+        if error:
+            errors.append(error)
 
     return errors
+
+
+def _validate_tvar_value(tvar: TVARDefinition, value: Any) -> str | None:
+    """Validate a single value against its TVAR definition. Returns error or None."""
+    if tvar.type == "bool":
+        if not isinstance(value, bool):
+            return f"{tvar.name}: expected bool, got {type(value).__name__}"
+
+    elif tvar.type == "int":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{tvar.name}: expected int, got {type(value).__name__}"
+        return _check_range(tvar, value)
+
+    elif tvar.type == "float":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return f"{tvar.name}: expected float, got {type(value).__name__}"
+        return _check_range(tvar, value)
+
+    elif tvar.type in ("enum", "str"):
+        allowed = tvar.domain.get("values", [])
+        if allowed and value not in allowed:
+            return f"{tvar.name}: '{value}' not in allowed values {allowed}"
+
+    return None
+
+
+def _check_range(tvar: TVARDefinition, value: int | float) -> str | None:
+    """Return a range error string if value is outside the TVAR domain range."""
+    range_spec = tvar.domain.get("range", [])
+    if len(range_spec) >= 2 and (value < range_spec[0] or value > range_spec[1]):
+        return (
+            f"{tvar.name}: {value} not in range " f"[{range_spec[0]}, {range_spec[1]}]"
+        )
+    return None

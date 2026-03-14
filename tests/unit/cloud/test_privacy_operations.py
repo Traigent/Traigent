@@ -80,7 +80,7 @@ async def test_create_privacy_session_uses_lock(monkeypatch):
     )
 
     assert session_id == "session-1"
-    assert lock.enter_count >= 1
+    assert lock.enter_count == 1  # Lock entered exactly once for session creation
     assert "session-1" in client._active_sessions
 
 
@@ -103,5 +103,5 @@ async def test_get_next_privacy_trial_updates_session_with_lock(monkeypatch):
 
     suggestion = await ops.get_next_privacy_trial("session-1", None)
     assert suggestion is not None
-    assert lock.enter_count >= 1
+    assert lock.enter_count == 1  # Lock entered exactly once for trial retrieval
     assert client._active_sessions["session-1"].completed_trials == 1

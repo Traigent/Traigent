@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import secrets
 import threading
 from collections.abc import Generator
@@ -290,14 +291,7 @@ class Tenant:
         """Initialize tenant after creation."""
         # Set quotas based on tier if not explicitly provided
         if self.quotas is None:
-            # If no tier is explicitly set and we're defaulting, use default quotas
-            # rather than tier-based quotas (for backward compatibility)
-            if self.tier == TenantTier.FREE:
-                # But for FREE tier, always use the tier-specific (limited) quotas
-                self.quotas = TenantQuotas.from_tier(self.tier)
-            else:
-                # For other tiers, use tier-specific quotas
-                self.quotas = TenantQuotas.from_tier(self.tier)
+            self.quotas = TenantQuotas.from_tier(self.tier)
 
     def _ensure_quotas(self) -> TenantQuotas:
         """Return tenant quotas, lazily initialising if missing."""
@@ -434,37 +428,35 @@ class Tenant:
 
 
 class TenantContext:
-    """Thread-local context for tenant isolation."""
+    """Context-local tenant isolation for sync and async execution."""
 
     def __init__(self) -> None:
         """Initialize tenant context."""
-        self._local = threading.local()
+        self._tenant_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "traigent_tenant_id",
+            default=None,
+        )
 
     def set_tenant(self, tenant_id: str) -> None:
         """Set current tenant ID."""
-        self._local.tenant_id = tenant_id
+        self._tenant_id.set(tenant_id)
 
     def get_tenant(self) -> str | None:
         """Get current tenant ID."""
-        return getattr(self._local, "tenant_id", None)
+        return self._tenant_id.get()
 
     def clear_tenant(self) -> None:
         """Clear current tenant."""
-        if hasattr(self._local, "tenant_id"):
-            delattr(self._local, "tenant_id")
+        self._tenant_id.set(None)
 
     @contextmanager
     def tenant_scope(self, tenant_id: str) -> Generator[None, None, None]:
         """Context manager for tenant scope."""
-        old_tenant = self.get_tenant()
-        self.set_tenant(tenant_id)
+        token = self._tenant_id.set(tenant_id)
         try:
             yield
         finally:
-            if old_tenant:
-                self.set_tenant(old_tenant)
-            else:
-                self.clear_tenant()
+            self._tenant_id.reset(token)
 
 
 class TenantManager:

@@ -353,6 +353,58 @@ class TestSessionManager:
         assert session.best_metrics["accuracy"] == 0.90
 
     @pytest.mark.asyncio
+    async def test_submit_lower_value_wins_for_minimize_objective(
+        self, session_manager
+    ):
+        """For minimize objectives (e.g., latency), lower values should win."""
+        session = await session_manager.create_session(
+            function_name="latency_test",
+            configuration_space={"temperature": (0.0, 1.0)},
+            objectives=["latency"],
+            max_trials=10,
+        )
+
+        suggestion1 = await session_manager.suggest_next_trial(session.session_id, 100)
+        await session_manager.submit_trial_result(
+            TrialResultSubmission(
+                session_id=session.session_id,
+                trial_id=suggestion1.trial_id,
+                metrics={"latency": 120.0},
+                duration=10.0,
+                status=TrialStatus.COMPLETED,
+            )
+        )
+
+        suggestion2 = await session_manager.suggest_next_trial(session.session_id, 100)
+        await session_manager.submit_trial_result(
+            TrialResultSubmission(
+                session_id=session.session_id,
+                trial_id=suggestion2.trial_id,
+                metrics={"latency": 80.0},
+                duration=10.0,
+                status=TrialStatus.COMPLETED,
+            )
+        )
+
+        updated = await session_manager.get_session(session.session_id)
+        assert updated.best_metrics["latency"] == 80.0
+
+        # Regressions guard: a worse (higher) latency must not replace best metrics.
+        suggestion3 = await session_manager.suggest_next_trial(session.session_id, 100)
+        await session_manager.submit_trial_result(
+            TrialResultSubmission(
+                session_id=session.session_id,
+                trial_id=suggestion3.trial_id,
+                metrics={"latency": 200.0},
+                duration=10.0,
+                status=TrialStatus.COMPLETED,
+            )
+        )
+
+        updated_again = await session_manager.get_session(session.session_id)
+        assert updated_again.best_metrics["latency"] == 80.0
+
+    @pytest.mark.asyncio
     async def test_finalize_session(self, session_manager, sample_session):
         """Test finalizing a session."""
         # Run some trials

@@ -17,10 +17,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
-from traigent.utils.importance import (
-    ImportanceResult,
-    ParameterImportanceAnalyzer,
-)
+from traigent.utils.importance import ImportanceResult, ParameterImportanceAnalyzer
 
 
 class TestImportanceResult:
@@ -276,8 +273,9 @@ class TestParameterImportanceAnalyzer:
         result = analyzer._calculate_parameter_variance_importance(
             trials, "param1", objective_values, 0.0
         )
-        # Should handle zero variance case
-        assert result is None or result.importance_score == 0.0
+        # Zero total_ss means no variance to explain; result should indicate no importance
+        assert result is not None
+        assert result.importance_score == 0.0
 
     def test_calculate_parameter_variance_importance_confidence_interval(
         self, analyzer: ParameterImportanceAnalyzer, simple_trials: list[TrialResult]

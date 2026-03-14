@@ -27,15 +27,9 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.exceptions import (
-    ConfigurationError,
-    EvaluationError,
-)
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import (
-    TrialPrunedError,
-    ValidationError,
-)
+from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -91,7 +85,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RagasConfigurationError,
         compute_ragas_metrics,
     )
-except Exception:  # pragma: no cover - executed only when module missing
+except ImportError:  # pragma: no cover - executed only when module missing
     POPULAR_RAGAS_METRICS = ()
     RAGAS_AVAILABLE = False
 
@@ -193,6 +187,56 @@ def _is_empty_expected_output(value: Any) -> bool:
     return False
 
 
+def _warn_if_expected_outputs_missing(
+    examples: list[EvaluationExample], source: str
+) -> None:
+    """Warn when examples are missing expected outputs needed for accuracy."""
+    missing_count = sum(
+        1 for ex in examples if _is_empty_expected_output(ex.expected_output)
+    )
+    if missing_count <= 0:
+        return
+
+    if missing_count == len(examples):
+        logger.warning(
+            "Dataset '%s' has no expected outputs (output field missing or empty "
+            "in all %d examples). Accuracy metrics will not be meaningful. "
+            "Consider adding expected outputs or using metrics that don't require them.",
+            source,
+            len(examples),
+        )
+        return
+
+    logger.warning(
+        "Dataset '%s' has %d/%d examples with missing or empty expected outputs. "
+        "Accuracy metrics will only be computed for examples with valid outputs.",
+        source,
+        missing_count,
+        len(examples),
+    )
+
+
+def _build_dataset_metadata(
+    resolved_path: Path,
+    registry_entry: DatasetRegistryEntry | None,
+    metadata_hint: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build dataset metadata, including source path and cache invalidation hash."""
+    metadata = dict(metadata_hint or {})
+    if registry_entry and registry_entry.metadata:
+        metadata.update(registry_entry.metadata)
+
+    metadata["source_path"] = str(resolved_path)
+
+    try:
+        stat_info = resolved_path.stat()
+        metadata["dataset_hash"] = f"{stat_info.st_size}_{stat_info.st_mtime_ns}"
+    except OSError:
+        pass
+
+    return metadata
+
+
 def _build_dataset(
     cls: type[Dataset],
     *,
@@ -207,49 +251,12 @@ def _build_dataset(
     if not examples:
         raise ValidationError(f"No valid examples found in {source}")
 
-    # Check for missing/empty expected outputs and warn users
-    missing_count = sum(
-        1 for ex in examples if _is_empty_expected_output(ex.expected_output)
+    _warn_if_expected_outputs_missing(examples, source)
+    metadata_out = _build_dataset_metadata(
+        resolved_path,
+        registry_entry,
+        metadata_hint,
     )
-    if missing_count > 0:
-        if missing_count == len(examples):
-            logger.warning(
-                "Dataset '%s' has no expected outputs (output field missing or empty "
-                "in all %d examples). Accuracy metrics will not be meaningful. "
-                "Consider adding expected outputs or using metrics that don't require them.",
-                source,
-                len(examples),
-            )
-        else:
-            logger.warning(
-                "Dataset '%s' has %d/%d examples with missing or empty expected outputs. "
-                "Accuracy metrics will only be computed for examples with valid outputs.",
-                source,
-                missing_count,
-                len(examples),
-            )
-
-    metadata: dict[str, Any] | None = None
-    if metadata_hint:
-        metadata = dict(metadata_hint)
-    if registry_entry and registry_entry.metadata:
-        metadata = {**(metadata or {}), **registry_entry.metadata}
-
-    # Store source path for JS runtime and other consumers
-    if metadata is None:
-        metadata = {}
-    metadata["source_path"] = str(resolved_path)
-
-    # Compute dataset hash for cache invalidation (file size + mtime_ns for efficiency)
-    # Uses nanosecond precision mtime to detect rapid changes within the same second
-    try:
-        stat_info = resolved_path.stat()
-        metadata["dataset_hash"] = f"{stat_info.st_size}_{stat_info.st_mtime_ns}"
-    except OSError:
-        # If we can't stat the file, skip the hash
-        pass
-
-    metadata_out = metadata or None
 
     description = (
         registry_entry.description
@@ -262,7 +269,7 @@ def _build_dataset(
         examples=examples,
         name=name,
         description=description,
-        metadata=metadata_out,
+        metadata=metadata_out or None,
     )
 
 
@@ -1039,10 +1046,7 @@ class BaseEvaluator(ABC):
         Returns:
             Tuple of (output, error_message)
         """
-        from traigent.config.context import (
-            ConfigurationContext,
-            set_trial_context,
-        )
+        from traigent.config.context import ConfigurationContext, set_trial_context
         from traigent.config.context import trial_context as trial_context_var
 
         def call_with_config() -> Any:
@@ -2360,6 +2364,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 )
                 score = metric_func(**kwargs)
                 example_metrics[metric_name] = score
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Metric function {metric_name} failed: {e}")
                 example_metrics[metric_name] = 0.0
@@ -2399,6 +2405,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 example_metrics.update(result)
             else:
                 example_metrics["score"] = float(result)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"Scoring function failed: {e}")
             example_metrics["score"] = 0.0
@@ -2675,6 +2683,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 outputs.append(output)
                 errors.append(None)
 
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)

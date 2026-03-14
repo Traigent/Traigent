@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.core.constants import DEFAULT_MODEL
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -478,6 +479,76 @@ def max_tokens_constraint(
     return ParameterRangeConstraint("max_tokens", min_tokens, max_tokens)
 
 
+def _try_litellm_pricing(model: str, max_tokens: int) -> float | None:
+    """Try litellm for cost-per-token pricing. Returns None if unavailable."""
+    try:
+        import litellm
+
+        input_cost, output_cost = litellm.cost_per_token(
+            model=model, prompt_tokens=1000, completion_tokens=1000
+        )
+        if input_cost > 0 or output_cost > 0:
+            avg_cost_per_1k = (input_cost + output_cost) / 2
+            return float(avg_cost_per_1k * (max_tokens / 1000))
+
+        from traigent.utils.cost_calculator import _is_model_known_to_litellm
+
+        if _is_model_known_to_litellm(model):
+            return 0.0
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(
+            "litellm cost_per_token failed for model %r: %s", model, e, exc_info=True
+        )
+    return None
+
+
+def _find_fallback_pricing(
+    base_model: str, pricing_table: dict[str, dict[str, float]]
+) -> dict[str, float] | None:
+    """Find best-match pricing from the fallback table."""
+    # Exact match
+    for key, value in pricing_table.items():
+        if key.lower() == base_model:
+            return value
+
+    # Prefix matching — prefer longest match
+    best_match_len = 0
+    pricing: dict[str, float] | None = None
+    for model_key, model_pricing in pricing_table.items():
+        key_lower = model_key.lower()
+        match_len = 0
+        if base_model.startswith(key_lower):
+            match_len = len(key_lower)
+        elif key_lower.startswith(base_model):
+            match_len = len(base_model)
+        if match_len > best_match_len:
+            best_match_len = match_len
+            pricing = model_pricing
+    return pricing
+
+
+def _try_fallback_pricing(model: str, max_tokens: int) -> float | None:
+    """Try ESTIMATION_MODEL_PRICING fallback. Returns None if unavailable."""
+    try:
+        from traigent.utils.cost_calculator import (
+            ESTIMATION_MODEL_PRICING,
+            _normalize_model_for_fallback,
+        )
+
+        base_model = _normalize_model_for_fallback(model)
+        pricing = _find_fallback_pricing(base_model, ESTIMATION_MODEL_PRICING)
+        if pricing:
+            input_cost_per_1k = pricing["input_cost_per_token"] * 1000
+            output_cost_per_1k = pricing["output_cost_per_token"] * 1000
+            avg_cost_per_1k = (input_cost_per_1k + output_cost_per_1k) / 2
+            return float(avg_cost_per_1k * (max_tokens / 1000))
+    except ImportError:
+        pass
+    return None
+
+
 def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstraint:
     """Create constraint based on model cost using litellm library.
 
@@ -494,86 +565,17 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
 
         Returns float('inf') for unknown models to ensure they fail the constraint.
         """
-        model = config.get("model", "gpt-4o-mini")
+        model = config.get("model", DEFAULT_MODEL)
         max_tokens = config.get("max_tokens", 150)
 
-        # Method 1: Try litellm.cost_per_token directly with 1000 tokens
-        # This is the most accurate method
-        try:
-            import litellm
+        result = _try_litellm_pricing(model, max_tokens)
+        if result is not None:
+            return result
 
-            # Get cost per token directly from litellm (1000 input + 1000 output)
-            input_cost, output_cost = litellm.cost_per_token(
-                model=model, prompt_tokens=1000, completion_tokens=1000
-            )
+        result = _try_fallback_pricing(model, max_tokens)
+        if result is not None:
+            return result
 
-            if input_cost > 0 or output_cost > 0:
-                # Calculate average cost per 1k tokens
-                avg_cost_per_1k = (input_cost + output_cost) / 2
-                return float(avg_cost_per_1k * (max_tokens / 1000))
-
-            # Zero cost could mean unknown model or legitimately free
-            # Check if model is actually known to litellm
-            from traigent.utils.cost_calculator import _is_model_known_to_litellm
-
-            if _is_model_known_to_litellm(model):
-                # Known model with 0 cost (free tier) - allow it
-                return 0.0
-
-        except ImportError:
-            pass  # litellm not available
-        except Exception as e:
-            logger.debug(
-                "litellm cost_per_token failed for model %r: %s",
-                model,
-                e,
-                exc_info=True,
-            )
-            pass  # Fall through to fallback
-
-        # Method 2: Fallback to FALLBACK_MODEL_PRICING from cost_calculator
-        try:
-            from traigent.utils.cost_calculator import (
-                FALLBACK_MODEL_PRICING,
-                _normalize_model_for_fallback,
-            )
-
-            base_model = _normalize_model_for_fallback(model)
-
-            # Try exact match first
-            pricing = None
-            for key, value in FALLBACK_MODEL_PRICING.items():
-                if key.lower() == base_model:
-                    pricing = value
-                    break
-
-            # Try prefix matching - prefer longest match
-            if not pricing:
-                best_match_len = 0
-                for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
-                    key_lower = model_key.lower()
-                    if base_model.startswith(key_lower):
-                        if len(key_lower) > best_match_len:
-                            best_match_len = len(key_lower)
-                            pricing = model_pricing
-                    elif key_lower.startswith(base_model):
-                        if len(base_model) > best_match_len:
-                            best_match_len = len(base_model)
-                            pricing = model_pricing
-
-            if pricing:
-                # Calculate cost per 1k tokens from per-token pricing
-                input_cost_per_1k = pricing["input_cost_per_token"] * 1000
-                output_cost_per_1k = pricing["output_cost_per_token"] * 1000
-                # Average input/output cost
-                avg_cost_per_1k = (input_cost_per_1k + output_cost_per_1k) / 2
-                return float(avg_cost_per_1k * (max_tokens / 1000))
-
-        except ImportError:
-            pass  # FALLBACK_MODEL_PRICING not available
-
-        # Ultimate fallback: Unknown model - return infinity to FAIL the constraint
-        # This prevents unknown models from silently passing cost checks
         logger.warning(
             "Unknown model %r has no pricing info - failing cost constraint", model
         )

@@ -21,6 +21,7 @@ from traigent.api.types import (
     SensitivityAnalysis,
     StrategyConfig,
     Trial,
+    TrialError,
     TrialResult,
     TrialStatus,
 )
@@ -107,6 +108,47 @@ class TestTrial:
 class TestTrialResult:
     """Test TrialResult dataclass."""
 
+    def test_trial_error_from_exception(self):
+        """Test structured error creation from an exception."""
+        try:
+            raise ValueError("Connection timeout")
+        except ValueError as exc:
+            error = TrialError.from_exception(
+                exc,
+                config={"model": "gpt-4", "temperature": 0.5},
+            )
+
+        assert error.message == "Connection timeout"
+        assert error.error_type == "ValueError"
+        assert "raise ValueError" in error.traceback
+        assert error.config == {"model": "gpt-4", "temperature": 0.5}
+
+    def test_trial_error_from_dict_supports_iso_and_epoch_timestamps(self):
+        """Test structured error reconstruction from serialized dictionaries."""
+        iso_error = TrialError.from_dict(
+            {
+                "message": "boom",
+                "error_type": "RuntimeError",
+                "traceback": "Traceback...",
+                "timestamp": "2026-03-14T08:00:00+00:00",
+                "config": {"model": "gpt-4o"},
+            }
+        )
+        epoch_error = TrialError.from_dict(
+            {
+                "message": "boom",
+                "error_type": "RuntimeError",
+                "traceback": "Traceback...",
+                "timestamp": 1773475200.0,
+                "config": {"model": "gpt-4o-mini"},
+            }
+        )
+
+        assert iso_error.timestamp.isoformat() == "2026-03-14T08:00:00+00:00"
+        assert iso_error.config == {"model": "gpt-4o"}
+        assert epoch_error.timestamp.timestamp() == pytest.approx(1773475200.0)
+        assert epoch_error.config == {"model": "gpt-4o-mini"}
+
     def test_trial_result_creation(self):
         """Test creating a TrialResult instance."""
         now = datetime.now()
@@ -128,6 +170,13 @@ class TestTrialResult:
 
     def test_trial_result_with_error(self):
         """Test TrialResult with error."""
+        error = TrialError(
+            message="Connection timeout",
+            error_type="TimeoutError",
+            traceback="Traceback (most recent call last): ...",
+            timestamp=datetime.now(),
+            config={},
+        )
         result = TrialResult(
             trial_id="trial_002",
             config={},
@@ -136,10 +185,14 @@ class TestTrialResult:
             duration=0.5,
             timestamp=datetime.now(),
             error_message="Connection timeout",
+            error=error,
         )
 
         assert result.status == TrialStatus.FAILED
         assert result.error_message == "Connection timeout"
+        assert result.error is error
+        assert result.error_type == "TimeoutError"
+        assert result.error_traceback == "Traceback (most recent call last): ..."
         assert not result.is_successful
 
     def test_is_successful_property(self):
@@ -416,6 +469,7 @@ class TestOptimizationResult:
             timestamp=datetime.now(),
         )
 
+        assert len(result.trials) == 0
         assert result.success_rate == 0.0
 
     def test_best_metrics_property(self):

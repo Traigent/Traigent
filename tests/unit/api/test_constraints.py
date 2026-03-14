@@ -31,6 +31,7 @@ from traigent.api.constraints import (
 from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
 from traigent.api.validation_protocol import (
     PythonConstraintValidator,
+    SATConstraintValidator,
     SatStatus,
 )
 
@@ -505,6 +506,33 @@ class TestPythonConstraintValidator:
         result = validator.check_satisfiability({"temperature": temp}, constraints)
 
         assert result.status == SatStatus.UNKNOWN
+
+
+class TestSATConstraintValidator:
+    """Tests for SATConstraintValidator compatibility adapter."""
+
+    def test_check_satisfiability_delegates_to_python_validator(self) -> None:
+        validator = SATConstraintValidator()
+
+        result = validator.check_satisfiability({"temp": Range(0.0, 1.0)}, [])
+
+        assert result.status == SatStatus.SAT
+
+    def test_validate_config_delegates_to_python_validator(self) -> None:
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+        constraints = [implies(model.equals("gpt-4"), temp.lte(0.7))]
+        var_names = {id(model): "model", id(temp): "temperature"}
+
+        validator = SATConstraintValidator()
+        result = validator.validate_config(
+            {"model": "gpt-4", "temperature": 1.0},
+            constraints,
+            var_names,
+        )
+
+        assert result.is_valid is False
+        assert result.violations[0].constraint_index == 0
 
 
 class TestCompoundConditions:

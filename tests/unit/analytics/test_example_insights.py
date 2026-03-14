@@ -35,7 +35,7 @@ class TestExampleInsightsClientInit:
         with patch("traigent.utils.env_config.get_api_key", return_value="test_key"):
             client = ExampleInsightsClient()
 
-            assert client.backend_url == "https://api.traigent.ai"
+            assert client.backend_url == "http://localhost:5000"
             assert client.timeout == 30.0
             assert client.api_key == "test_key"
             assert client._client is None
@@ -61,11 +61,11 @@ class TestExampleInsightsClientInit:
         from traigent.analytics.example_insights import ExampleInsightsClient
 
         client = ExampleInsightsClient(
-            backend_url="https://api.traigent.ai/",
+            backend_url="http://localhost:5000/",
             api_key="key",
         )
 
-        assert client.backend_url == "https://api.traigent.ai"
+        assert client.backend_url == "http://localhost:5000"
 
     @pytest.mark.skipif(HTTPX_AVAILABLE, reason="Test for httpx not available")
     def test_init_raises_without_httpx(self) -> None:
@@ -118,7 +118,7 @@ class TestExampleInsightsClientGetClient:
             mock_instance = MagicMock()
             mock_async_client.return_value = mock_instance
 
-            result = await client._get_client()
+            result = client._get_client()
 
             assert result == mock_instance
             mock_async_client.assert_called_once()
@@ -138,7 +138,7 @@ class TestExampleInsightsClientGetClient:
         mock_existing = MagicMock()
         client._client = mock_existing
 
-        result = await client._get_client()
+        result = client._get_client()
 
         assert result == mock_existing
 
@@ -154,7 +154,7 @@ class TestExampleInsightsClientGetClient:
             mock_instance = MagicMock()
             mock_async_client.return_value = mock_instance
 
-            await client._get_client()
+            client._get_client()
 
             call_kwargs = mock_async_client.call_args.kwargs
             # Authorization header should not be present without key
@@ -293,9 +293,9 @@ class TestGetExampleScores:
         mock_http.get.side_effect = mock_get
         client._client = mock_http
 
+        client.timeout = 5.0
         result = await client.get_example_scores(
             experiment_run_id="run_123",
-            timeout=5.0,
             poll_interval=0.01,  # Fast polling for test
         )
 
@@ -322,10 +322,10 @@ class TestGetExampleScores:
         mock_http.get.side_effect = mock_get
         client._client = mock_http
 
+        client.timeout = 0.05  # Very short timeout
         with pytest.raises(TimeoutError, match="Scores not ready"):
             await client.get_example_scores(
                 experiment_run_id="run_123",
-                timeout=0.05,  # Very short timeout
                 poll_interval=0.01,
             )
 
@@ -417,9 +417,9 @@ class TestGetDatasetQuality:
         mock_http.get.side_effect = mock_get
         client._client = mock_http
 
+        client.timeout = 5.0
         result = await client.get_dataset_quality(
             experiment_run_id="run_123",
-            timeout=5.0,
             poll_interval=0.01,
         )
 
@@ -446,10 +446,10 @@ class TestGetDatasetQuality:
         mock_http.get.side_effect = mock_get
         client._client = mock_http
 
+        client.timeout = 0.05  # Very short timeout
         with pytest.raises(TimeoutError, match="Quality metrics not ready"):
             await client.get_dataset_quality(
                 experiment_run_id="run_123",
-                timeout=0.05,
                 poll_interval=0.01,
             )
 

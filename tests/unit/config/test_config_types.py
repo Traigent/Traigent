@@ -43,3 +43,27 @@ def test_custom_params_assignment() -> None:
     config["custom_flag"] = True
 
     assert config.custom_params["custom_flag"] is True
+
+
+def test_get_comparability_mode_falls_back_to_warn_for_invalid_value() -> None:
+    config = TraigentConfig()
+    object.__setattr__(config, "comparability_mode", "INVALID")
+
+    assert config.get_comparability_mode() == "warn"
+
+
+def test_setitem_rejects_unknown_comparability_mode() -> None:
+    config = TraigentConfig()
+
+    with pytest.raises(ValueError):
+        config["comparability_mode"] = "unsupported"
+
+
+def test_from_environment_reads_comparability_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_COMPARABILITY_MODE", "strict")
+
+    config = TraigentConfig.from_environment()
+
+    assert config.comparability_mode == "strict"

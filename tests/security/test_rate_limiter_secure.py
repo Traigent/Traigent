@@ -1,6 +1,7 @@
 """Tests for secure rate limiter implementation."""
 
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -285,27 +286,43 @@ class TestAuthenticationRateLimiter:
     async def test_auth_rate_limiting(self):
         """Test authentication rate limiting."""
         limiter = SecureAuthenticationRateLimiter()
+        limiter.config.max_attempts = 3
+        limiter.config.lockout_duration = 120
+        limiter.limiter.config.max_attempts = 3
+        limiter.limiter.config.lockout_duration = 120
 
-        # Successful attempts
-        for _ in range(3):
-            result = await limiter.check_auth_attempt(
-                ip_address="192.168.1.1",
-                username="testuser",
-            )
-            assert result.allowed
-            limiter.record_auth_result(
-                success=False,
+        with (
+            patch.object(
+                limiter.limiter,
+                "get_progressive_delay",
+                side_effect=[1.0, 2.0, 4.0],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            for _ in range(3):
+                result = await limiter.check_auth_attempt(
+                    ip_address="192.168.1.1",
+                    username="testuser",
+                )
+                assert result.allowed
+                limiter.record_auth_result(
+                    success=False,
+                    ip_address="192.168.1.1",
+                    username="testuser",
+                )
+
+            blocked = await limiter.check_auth_attempt(
                 ip_address="192.168.1.1",
                 username="testuser",
             )
 
-        # Should apply rate limiting
-        for _ in range(3):
-            result = await limiter.check_auth_attempt(
-                ip_address="192.168.1.1",
-                username="testuser",
-            )
-            # After max attempts, should be blocked
+        assert mock_sleep.await_count == 3
+        assert mock_sleep.await_args_list[0].args == (1.0,)
+        assert mock_sleep.await_args_list[1].args == (2.0,)
+        assert mock_sleep.await_args_list[2].args == (4.0,)
+        assert not blocked.allowed
+        assert blocked.retry_after is not None
+        assert blocked.remaining_attempts == 0
 
     @pytest.mark.asyncio
     async def test_successful_auth_clears_limits(self):
@@ -346,17 +363,17 @@ class TestAuthenticationRateLimiter:
             username="testuser",
         )
 
-        # Check with timing
-        start = time.time()
-        await limiter.check_auth_attempt(
-            ip_address="192.168.1.1",
-            username="testuser",
-        )
-        elapsed = time.time() - start
+        with (
+            patch.object(limiter.limiter, "get_progressive_delay", return_value=1.25),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            result = await limiter.check_auth_attempt(
+                ip_address="192.168.1.1",
+                username="testuser",
+            )
 
-        # Should have some delay applied (if progressive delay is enabled)
-        if limiter.config.progressive_delay:
-            assert elapsed > 0  # Some delay was applied
+        assert result.allowed
+        mock_sleep.assert_awaited_once_with(1.25)
 
 
 class TestRateLimiterFactory:

@@ -43,7 +43,8 @@ Examples:
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -57,6 +58,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
+    ParameterRange,
     is_inline_param_definition,
     normalize_configuration_space,
 )
@@ -148,6 +150,8 @@ class ExecutionOptions(BaseModel):
         privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
+        cloud_fallback_policy: Cloud fallback behavior on execution failure.
+            "auto" or "warn" falls back to local optimization; "never" re-raises.
         reps_per_trial: Number of repetitions per configuration for statistical stability.
             Running multiple repetitions helps account for LLM non-determinism.
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
@@ -180,6 +184,19 @@ class ExecutionOptions(BaseModel):
     js_function: str = "runTrial"
     js_timeout: float = 300.0
     js_parallel_workers: int = 1
+    # Hybrid API options
+    hybrid_api_endpoint: str | None = None
+    tunable_id: str | None = None
+    hybrid_api_transport: Any | None = None
+    hybrid_api_transport_type: str = "auto"
+    hybrid_api_batch_size: int = 1
+    hybrid_api_batch_parallelism: int = 1
+    hybrid_api_keep_alive: bool = True
+    hybrid_api_heartbeat_interval: float = 30.0
+    hybrid_api_timeout: float | None = None
+    hybrid_api_auth_header: str | None = None
+    hybrid_api_auto_discover_tvars: bool = False
+    cloud_fallback_policy: str | None = None
 
 
 class MockModeOptions(BaseModel):
@@ -293,6 +310,7 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
 
 
 _DEFAULT_SENTINEL = object()
+_AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
 _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "eval_dataset": None,
@@ -309,6 +327,18 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
     "execution_mode": "edge_analytics",
+    "hybrid_api_endpoint": None,
+    "tunable_id": None,
+    "hybrid_api_transport": None,
+    "hybrid_api_transport_type": "auto",
+    "hybrid_api_batch_size": 1,
+    "hybrid_api_batch_parallelism": 1,
+    "hybrid_api_keep_alive": True,
+    "hybrid_api_heartbeat_interval": 30.0,
+    "hybrid_api_timeout": None,
+    "hybrid_api_auth_header": None,
+    "hybrid_api_auto_discover_tvars": False,
+    "cloud_fallback_policy": None,
     "local_storage_path": None,
     "minimal_logging": True,
     "parallel_config": None,
@@ -323,6 +353,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
+    "algorithm": "random",
     "max_trials": 50,
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
@@ -335,11 +366,30 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Config persistence (Phase 1 of optimization-persistency feature)
     "auto_load_best": False,  # Auto-load best config on decoration
     "load_from": None,  # Explicit path to load config from
+    # Tuned variable auto-detection
+    "auto_detect_tvars": False,  # Log suggestions when no configuration_space is set
+    "auto_detect_tvars_mode": None,  # "off" | "suggest" | "apply"
+    "auto_detect_tvars_min_confidence": "medium",  # "high" | "medium" | "low"
+    "auto_detect_tvars_include": None,  # Optional names to include
+    "auto_detect_tvars_exclude": None,  # Optional names to exclude
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
 _REMOVED_PARAMETERS = frozenset(
     ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+)
+_ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
+    (
+        "budget_limit",
+        "budget_metric",
+        "budget_include_pruned",
+        "plateau_window",
+        "plateau_epsilon",
+        "cost_limit",
+        "cost_approved",
+        "tie_breakers",
+        "tvl_parameter_agents",
+    )
 )
 
 
@@ -377,6 +427,18 @@ class LegacyOptimizeArgs:
     auto_override_frameworks: bool | None = None
     framework_targets: list[str] | None = None
     execution_mode: str | None = None
+    hybrid_api_endpoint: str | None = None
+    tunable_id: str | None = None
+    hybrid_api_transport: Any | None = None
+    hybrid_api_transport_type: str | None = None
+    hybrid_api_batch_size: int | None = None
+    hybrid_api_batch_parallelism: int | None = None
+    hybrid_api_keep_alive: bool | None = None
+    hybrid_api_heartbeat_interval: float | None = None
+    hybrid_api_timeout: float | None = None
+    hybrid_api_auth_header: str | None = None
+    hybrid_api_auto_discover_tvars: bool | None = None
+    cloud_fallback_policy: str | None = None
     local_storage_path: str | None = None
     minimal_logging: bool | None = None
     parallel_config: ParallelConfig | dict[str, Any] | None = None
@@ -391,6 +453,8 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
+    algorithm: str | None = None
+    max_trials: int | None = None
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None
     agent_prefixes: list[str] | None = None
@@ -444,6 +508,18 @@ class LegacyOptimizeArgs:
             ("auto_override_frameworks", self.auto_override_frameworks),
             ("framework_targets", self.framework_targets),
             ("execution_mode", self.execution_mode),
+            ("hybrid_api_endpoint", self.hybrid_api_endpoint),
+            ("tunable_id", self.tunable_id),
+            ("hybrid_api_transport", self.hybrid_api_transport),
+            ("hybrid_api_transport_type", self.hybrid_api_transport_type),
+            ("hybrid_api_batch_size", self.hybrid_api_batch_size),
+            ("hybrid_api_batch_parallelism", self.hybrid_api_batch_parallelism),
+            ("hybrid_api_keep_alive", self.hybrid_api_keep_alive),
+            ("hybrid_api_heartbeat_interval", self.hybrid_api_heartbeat_interval),
+            ("hybrid_api_timeout", self.hybrid_api_timeout),
+            ("hybrid_api_auth_header", self.hybrid_api_auth_header),
+            ("hybrid_api_auto_discover_tvars", self.hybrid_api_auto_discover_tvars),
+            ("cloud_fallback_policy", self.cloud_fallback_policy),
             ("local_storage_path", self.local_storage_path),
             ("minimal_logging", self.minimal_logging),
             ("parallel_config", self.parallel_config),
@@ -458,6 +534,8 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("mock", self.mock),
+            ("algorithm", self.algorithm),
+            ("max_trials", self.max_trials),
             ("agents", self.agents),
             ("agent_prefixes", self.agent_prefixes),
             ("agent_measures", self.agent_measures),
@@ -624,15 +702,115 @@ def _extract_inline_params(
     return inline_params, remaining_overrides
 
 
+def _normalize_runtime_override_aliases(
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize deprecated runtime override aliases."""
+    if "strategy" not in overrides:
+        return dict(overrides)
+
+    normalized = dict(overrides)
+    strategy_value = normalized.pop("strategy")
+    existing_algorithm = normalized.get("algorithm")
+    if (
+        existing_algorithm is not None
+        and strategy_value is not None
+        and existing_algorithm != strategy_value
+    ):
+        raise TypeError(
+            "Conflicting optimization selector: received both "
+            f"'algorithm={existing_algorithm}' and 'strategy={strategy_value}'. "
+            "Use only 'algorithm'."
+        )
+
+    warnings.warn(
+        "'strategy' is deprecated; use 'algorithm' instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    normalized["algorithm"] = (
+        existing_algorithm if existing_algorithm is not None else strategy_value
+    )
+    return normalized
+
+
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
-    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
+    unknown_keys = (
+        set(remaining_overrides.keys())
+        - _DIRECT_OPTION_KEYS
+        - _ALLOWED_RUNTIME_OVERRIDE_KEYS
+    )
     if unknown_keys:
         raise TypeError(
             f"Unknown keyword arguments: {sorted(unknown_keys)}. "
             f"If you meant to define parameter ranges, use Range(), IntRange(), "
             f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
         )
+
+
+def _ensure_scope_name(scope_var_names: dict[int, str], name: str) -> None:
+    """Ensure a parameter name appears in scope even without a live object id."""
+    if name in scope_var_names.values():
+        return
+
+    synthetic_id = -1
+    while synthetic_id in scope_var_names:
+        synthetic_id -= 1
+    scope_var_names[synthetic_id] = name
+
+
+def _iter_constraint_scope_sources(
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect configuration mappings that contribute names to constraint scope."""
+    sources: list[dict[str, Any]] = []
+    if isinstance(raw_configuration_space, dict):
+        sources.append(raw_configuration_space)
+    else:
+        tvars = getattr(raw_configuration_space, "tvars", None)
+        if isinstance(tvars, Mapping):
+            sources.append(dict(tvars))
+    if inline_params:
+        sources.append(inline_params)
+    return sources
+
+
+def _build_constraint_scope_var_names(
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+    config_space_var_names: dict[int, str] | None,
+) -> dict[int, str] | None:
+    """Build var-name scope used for compile-time constraint validation."""
+    scope_var_names: dict[int, str] = dict(config_space_var_names or {})
+
+    for source in _iter_constraint_scope_sources(
+        raw_configuration_space, inline_params
+    ):
+        for name, value in source.items():
+            if not isinstance(name, str):
+                continue
+            _ensure_scope_name(scope_var_names, name)
+            if isinstance(value, ParameterRange):
+                scope_var_names[id(value)] = name
+
+    return scope_var_names or None
+
+
+def _augment_constraint_scope_var_names(
+    scope_var_names: dict[int, str] | None,
+    configuration_space: dict[str, Any] | None,
+) -> dict[int, str] | None:
+    """Augment scope map with normalized configuration-space keys."""
+    if scope_var_names is None and not configuration_space:
+        return None
+
+    merged = dict(scope_var_names or {})
+    for name in configuration_space or {}:
+        if isinstance(name, str):
+            _ensure_scope_name(merged, name)
+    return merged
 
 
 def _resolve_evaluation_bundle_options(
@@ -731,29 +909,40 @@ class JSRuntimeConfig:
         return self.runtime == "node"
 
 
+@dataclass(slots=True)
+class ResolvedExecutionOptions:
+    """Resolved execution options after merging direct and bundled settings."""
+
+    execution_mode: Any
+    hybrid_api_endpoint: Any
+    tunable_id: Any
+    hybrid_api_transport: Any
+    hybrid_api_transport_type: Any
+    hybrid_api_batch_size: Any
+    hybrid_api_batch_parallelism: Any
+    hybrid_api_keep_alive: Any
+    hybrid_api_heartbeat_interval: Any
+    hybrid_api_timeout: Any
+    hybrid_api_auth_header: Any
+    hybrid_api_auto_discover_tvars: Any
+    cloud_fallback_policy: Any
+    local_storage_path: Any
+    minimal_logging: Any
+    parallel_config: Any
+    privacy_enabled: Any
+    max_total_examples: Any
+    samples_include_pruned: Any
+    js_runtime_config: JSRuntimeConfig | None
+
+
 def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
-    execution_mode: Any,
-    local_storage_path: Any,
-    minimal_logging: Any,
-    parallel_config: Any,
-    privacy_enabled: Any,
-    max_total_examples: Any,
-    samples_include_pruned: Any,
+    base_options: ResolvedExecutionOptions,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, JSRuntimeConfig | None]:
+) -> ResolvedExecutionOptions:
     """Resolve execution options from bundle and validate enterprise features."""
     if execution_bundle is None:
-        return (
-            execution_mode,
-            local_storage_path,
-            minimal_logging,
-            parallel_config,
-            privacy_enabled,
-            max_total_examples,
-            samples_include_pruned,
-            None,  # js_runtime_config
-        )
+        return base_options
 
     # Validate enterprise-gated features
     if execution_bundle.reps_per_trial != 1:
@@ -790,47 +979,122 @@ def _resolve_execution_bundle_options(
             "Supported values are 'python' (default) or 'node' (JavaScript)."
         )
 
-    return (
-        _resolve_option(
-            "execution_mode", execution_mode, execution_bundle.execution_mode, defaults
+    return ResolvedExecutionOptions(
+        execution_mode=_resolve_option(
+            "execution_mode",
+            base_options.execution_mode,
+            execution_bundle.execution_mode,
+            defaults,
         ),
-        _resolve_option(
+        hybrid_api_endpoint=_resolve_option(
+            "hybrid_api_endpoint",
+            base_options.hybrid_api_endpoint,
+            execution_bundle.hybrid_api_endpoint,
+            defaults,
+        ),
+        tunable_id=_resolve_option(
+            "tunable_id",
+            base_options.tunable_id,
+            execution_bundle.tunable_id,
+            defaults,
+        ),
+        hybrid_api_transport=_resolve_option(
+            "hybrid_api_transport",
+            base_options.hybrid_api_transport,
+            execution_bundle.hybrid_api_transport,
+            defaults,
+        ),
+        hybrid_api_transport_type=_resolve_option(
+            "hybrid_api_transport_type",
+            base_options.hybrid_api_transport_type,
+            execution_bundle.hybrid_api_transport_type,
+            defaults,
+        ),
+        hybrid_api_batch_size=_resolve_option(
+            "hybrid_api_batch_size",
+            base_options.hybrid_api_batch_size,
+            execution_bundle.hybrid_api_batch_size,
+            defaults,
+        ),
+        hybrid_api_batch_parallelism=_resolve_option(
+            "hybrid_api_batch_parallelism",
+            base_options.hybrid_api_batch_parallelism,
+            execution_bundle.hybrid_api_batch_parallelism,
+            defaults,
+        ),
+        hybrid_api_keep_alive=_resolve_option(
+            "hybrid_api_keep_alive",
+            base_options.hybrid_api_keep_alive,
+            execution_bundle.hybrid_api_keep_alive,
+            defaults,
+        ),
+        hybrid_api_heartbeat_interval=_resolve_option(
+            "hybrid_api_heartbeat_interval",
+            base_options.hybrid_api_heartbeat_interval,
+            execution_bundle.hybrid_api_heartbeat_interval,
+            defaults,
+        ),
+        hybrid_api_timeout=_resolve_option(
+            "hybrid_api_timeout",
+            base_options.hybrid_api_timeout,
+            execution_bundle.hybrid_api_timeout,
+            defaults,
+        ),
+        hybrid_api_auth_header=_resolve_option(
+            "hybrid_api_auth_header",
+            base_options.hybrid_api_auth_header,
+            execution_bundle.hybrid_api_auth_header,
+            defaults,
+        ),
+        hybrid_api_auto_discover_tvars=_resolve_option(
+            "hybrid_api_auto_discover_tvars",
+            base_options.hybrid_api_auto_discover_tvars,
+            execution_bundle.hybrid_api_auto_discover_tvars,
+            defaults,
+        ),
+        cloud_fallback_policy=_resolve_option(
+            "cloud_fallback_policy",
+            base_options.cloud_fallback_policy,
+            execution_bundle.cloud_fallback_policy,
+            defaults,
+        ),
+        local_storage_path=_resolve_option(
             "local_storage_path",
-            local_storage_path,
+            base_options.local_storage_path,
             execution_bundle.local_storage_path,
             defaults,
         ),
-        _resolve_option(
+        minimal_logging=_resolve_option(
             "minimal_logging",
-            minimal_logging,
+            base_options.minimal_logging,
             execution_bundle.minimal_logging,
             defaults,
         ),
-        _resolve_option(
+        parallel_config=_resolve_option(
             "parallel_config",
-            parallel_config,
+            base_options.parallel_config,
             execution_bundle.parallel_config,
             defaults,
         ),
-        _resolve_option(
+        privacy_enabled=_resolve_option(
             "privacy_enabled",
-            privacy_enabled,
+            base_options.privacy_enabled,
             execution_bundle.privacy_enabled,
             defaults,
         ),
-        _resolve_option(
+        max_total_examples=_resolve_option(
             "max_total_examples",
-            max_total_examples,
+            base_options.max_total_examples,
             execution_bundle.max_total_examples,
             defaults,
         ),
-        _resolve_option(
+        samples_include_pruned=_resolve_option(
             "samples_include_pruned",
-            samples_include_pruned,
+            base_options.samples_include_pruned,
             execution_bundle.samples_include_pruned,
             defaults,
         ),
-        js_runtime_config,
+        js_runtime_config=js_runtime_config,
     )
 
 
@@ -1103,9 +1367,15 @@ def _process_runtime_overrides(
     """Process runtime overrides, handling removed parameters."""
     combined_runtime_overrides: dict[str, Any] = {}
     if legacy_args:
-        combined_runtime_overrides.update(legacy_args.extra)
+        combined_runtime_overrides.update(
+            _normalize_runtime_override_aliases(legacy_args.extra)
+        )
 
-    for key, value in runtime_overrides.items():
+    normalized_runtime_overrides = _normalize_runtime_override_aliases(
+        runtime_overrides
+    )
+
+    for key, value in normalized_runtime_overrides.items():
         if key in _REMOVED_PARAMETERS:
             raise TypeError(
                 "The following optimize() parameters have been removed: "
@@ -1176,7 +1446,141 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
-def optimize(
+def _resolve_auto_detect_tvars_mode(
+    auto_detect_tvars: Any, auto_detect_tvars_mode: Any
+) -> str:
+    """Resolve effective auto-detection mode with backward compatibility."""
+    if not isinstance(auto_detect_tvars, bool):
+        raise TypeError(
+            "auto_detect_tvars must be a bool. "
+            f"Received {type(auto_detect_tvars).__name__}."
+        )
+    if auto_detect_tvars_mode is None:
+        return "suggest" if auto_detect_tvars else "off"
+    if not isinstance(auto_detect_tvars_mode, str):
+        raise TypeError(
+            "auto_detect_tvars_mode must be one of "
+            f"{sorted(_AUTO_DETECT_TVARS_MODES)}, got "
+            f"{type(auto_detect_tvars_mode).__name__}."
+        )
+    mode = auto_detect_tvars_mode.strip().lower()
+    if mode not in _AUTO_DETECT_TVARS_MODES:
+        raise TypeError(
+            "auto_detect_tvars_mode must be one of "
+            f"{sorted(_AUTO_DETECT_TVARS_MODES)}, got {auto_detect_tvars_mode!r}."
+        )
+    return mode
+
+
+def _coerce_auto_detect_tvars_min_confidence(value: Any) -> str:
+    """Validate and normalize auto-detection minimum confidence."""
+    from traigent.tuned_variables.detection_types import DetectionConfidence
+
+    if isinstance(value, DetectionConfidence):
+        return value.value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        try:
+            return DetectionConfidence(normalized).value
+        except ValueError as exc:
+            raise TypeError(
+                "auto_detect_tvars_min_confidence must be one of "
+                "['high', 'medium', 'low']."
+            ) from exc
+    raise TypeError(
+        "auto_detect_tvars_min_confidence must be a string " "('high'|'medium'|'low')."
+    )
+
+
+def _coerce_auto_detect_tvars_name_filter(
+    value: Any, option_name: str
+) -> set[str] | None:
+    """Validate include/exclude name filters for auto-detection."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, Collection):
+        values = list(value)
+        if any(not isinstance(v, str) for v in values):
+            raise TypeError(f"{option_name} must contain only strings.")
+        return set(values)
+    raise TypeError(
+        f"{option_name} must be None, a string, or a collection of strings."
+    )
+
+
+def _suggest_detected_tvars(
+    func: Callable[..., Any],
+    *,
+    mode: str,
+    min_confidence: str,
+    include: Collection[str] | None = None,
+    exclude: Collection[str] | None = None,
+) -> dict[str, Any] | None:
+    """Run detection on ``func`` and return filtered configuration candidates.
+
+    Logs suggestion or auto-apply messages at INFO level.
+    """
+    try:
+        from traigent.tuned_variables.detector import TunedVariableDetector
+
+        detector = TunedVariableDetector()
+        result = detector.detect_from_callable(func)
+        if result.count == 0:
+            return None
+
+        config_space = result.to_configuration_space(
+            format="ranges",
+            min_confidence=min_confidence,
+            include=include,
+            exclude=exclude,
+        )
+        if not config_space:
+            logger.info(
+                "auto_detect_tvars: no candidates met filters in '%s' "
+                "(min_confidence=%s, include=%s, exclude=%s).",
+                func.__name__,
+                min_confidence,
+                sorted(include) if include is not None else None,
+                sorted(exclude) if exclude is not None else None,
+            )
+            return None
+
+        suggestions = [
+            f"{c.name} ({c.candidate_type.value}, {c.confidence.value} confidence)"
+            + (
+                f" → {c.suggested_range.to_parameter_range_code()}"
+                if c.suggested_range
+                else ""
+            )
+            for c in result.candidates
+            if c.name in config_space
+        ]
+
+        if mode == "apply":
+            logger.info(
+                "auto_detect_tvars: auto-applied %d tunable variable(s) to "
+                "configuration_space in '%s': %s",
+                len(config_space),
+                func.__name__,
+                suggestions,
+            )
+        else:
+            logger.info(
+                "auto_detect_tvars: detected %d tunable variable(s) in '%s'. "
+                "Consider adding to configuration_space: %s",
+                len(config_space),
+                func.__name__,
+                suggestions,
+            )
+        return config_space
+    except Exception:
+        logger.debug("auto_detect_tvars: detection failed", exc_info=True)
+        return None
+
+
+def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
@@ -1200,7 +1604,9 @@ def optimize(
     load_from: str | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
-) -> Callable[[Callable[..., Any]], Any]:
+) -> Callable[
+    [Callable[..., Any]], Any
+]:  # NOSONAR - stable public API intentionally exposes broad options
     """Decorator to make functions optimizable with Traigent.
 
     This is the main entry point for Traigent optimization. Decorate any function
@@ -1280,6 +1686,8 @@ def optimize(
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             privacy_enabled: Flag enabling hybrid privacy safeguards.
+            cloud_fallback_policy: Cloud failure policy: "auto"/"warn" fallback to
+                local, "never" to fail closed.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 
@@ -1300,6 +1708,11 @@ def optimize(
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
                 ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+                Tuned-variable detection controls are also available via runtime
+                overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
+                (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
+                (``high|medium|low``), and optional include/exclude filters via
+                ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
 
     Warning:
         Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
@@ -1465,6 +1878,11 @@ def optimize(
     config_space_constraints, config_space_var_names, _ = (
         _process_config_space_constraints(configuration_space, constraints)
     )
+    constraint_scope_var_names = _build_constraint_scope_var_names(
+        configuration_space,
+        inline_params,
+        config_space_var_names,
+    )
 
     # Normalize configuration_space and merge defaults
     configuration_space, default_config, constraints = (
@@ -1484,6 +1902,18 @@ def optimize(
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
     execution_mode = combined_settings["execution_mode"]
+    hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
+    tunable_id = combined_settings["tunable_id"]
+    hybrid_api_transport = combined_settings["hybrid_api_transport"]
+    hybrid_api_transport_type = combined_settings["hybrid_api_transport_type"]
+    hybrid_api_batch_size = combined_settings["hybrid_api_batch_size"]
+    hybrid_api_batch_parallelism = combined_settings["hybrid_api_batch_parallelism"]
+    hybrid_api_keep_alive = combined_settings["hybrid_api_keep_alive"]
+    hybrid_api_heartbeat_interval = combined_settings["hybrid_api_heartbeat_interval"]
+    hybrid_api_timeout = combined_settings["hybrid_api_timeout"]
+    hybrid_api_auth_header = combined_settings["hybrid_api_auth_header"]
+    hybrid_api_auto_discover_tvars = combined_settings["hybrid_api_auto_discover_tvars"]
+    cloud_fallback_policy = combined_settings["cloud_fallback_policy"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
@@ -1504,6 +1934,30 @@ def optimize(
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    algorithm_value = combined_settings["algorithm"]
+    # Optimizer limits
+    max_trials_value = combined_settings["max_trials"]
+    # Tuned variable auto-detection
+    auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
+    auto_detect_tvars_mode_value = combined_settings["auto_detect_tvars_mode"]
+    auto_detect_tvars_min_confidence_value = combined_settings[
+        "auto_detect_tvars_min_confidence"
+    ]
+    auto_detect_tvars_include_value = combined_settings["auto_detect_tvars_include"]
+    auto_detect_tvars_exclude_value = combined_settings["auto_detect_tvars_exclude"]
+
+    effective_auto_detect_tvars_mode = _resolve_auto_detect_tvars_mode(
+        auto_detect_tvars_value, auto_detect_tvars_mode_value
+    )
+    auto_detect_tvars_min_confidence = _coerce_auto_detect_tvars_min_confidence(
+        auto_detect_tvars_min_confidence_value
+    )
+    auto_detect_tvars_include = _coerce_auto_detect_tvars_name_filter(
+        auto_detect_tvars_include_value, "auto_detect_tvars_include"
+    )
+    auto_detect_tvars_exclude = _coerce_auto_detect_tvars_name_filter(
+        auto_detect_tvars_exclude_value, "auto_detect_tvars_exclude"
+    )
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1549,26 +2003,53 @@ def optimize(
         defaults,
     )
 
-    (
-        execution_mode,
-        local_storage_path,
-        minimal_logging,
-        parallel_config,
-        privacy_enabled,
-        max_total_examples,
-        samples_include_pruned,
-        js_runtime_config,
-    ) = _resolve_execution_bundle_options(
+    base_execution_options = ResolvedExecutionOptions(
+        execution_mode=execution_mode,
+        hybrid_api_endpoint=hybrid_api_endpoint,
+        tunable_id=tunable_id,
+        hybrid_api_transport=hybrid_api_transport,
+        hybrid_api_transport_type=hybrid_api_transport_type,
+        hybrid_api_batch_size=hybrid_api_batch_size,
+        hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
+        hybrid_api_keep_alive=hybrid_api_keep_alive,
+        hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
+        hybrid_api_timeout=hybrid_api_timeout,
+        hybrid_api_auth_header=hybrid_api_auth_header,
+        hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+        cloud_fallback_policy=cloud_fallback_policy,
+        local_storage_path=local_storage_path,
+        minimal_logging=minimal_logging,
+        parallel_config=parallel_config,
+        privacy_enabled=privacy_enabled,
+        max_total_examples=max_total_examples,
+        samples_include_pruned=samples_include_pruned,
+        js_runtime_config=None,
+    )
+    resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
-        execution_mode,
-        local_storage_path,
-        minimal_logging,
-        parallel_config,
-        privacy_enabled,
-        max_total_examples,
-        samples_include_pruned,
+        base_execution_options,
         defaults,
     )
+    execution_mode = resolved_execution.execution_mode
+    hybrid_api_endpoint = resolved_execution.hybrid_api_endpoint
+    tunable_id = resolved_execution.tunable_id
+    hybrid_api_transport = resolved_execution.hybrid_api_transport
+    hybrid_api_transport_type = resolved_execution.hybrid_api_transport_type
+    hybrid_api_batch_size = resolved_execution.hybrid_api_batch_size
+    hybrid_api_batch_parallelism = resolved_execution.hybrid_api_batch_parallelism
+    hybrid_api_keep_alive = resolved_execution.hybrid_api_keep_alive
+    hybrid_api_heartbeat_interval = resolved_execution.hybrid_api_heartbeat_interval
+    hybrid_api_timeout = resolved_execution.hybrid_api_timeout
+    hybrid_api_auth_header = resolved_execution.hybrid_api_auth_header
+    hybrid_api_auto_discover_tvars = resolved_execution.hybrid_api_auto_discover_tvars
+    cloud_fallback_policy = resolved_execution.cloud_fallback_policy
+    local_storage_path = resolved_execution.local_storage_path
+    minimal_logging = resolved_execution.minimal_logging
+    parallel_config = resolved_execution.parallel_config
+    privacy_enabled = resolved_execution.privacy_enabled
+    max_total_examples = resolved_execution.max_total_examples
+    samples_include_pruned = resolved_execution.samples_include_pruned
+    js_runtime_config = resolved_execution.js_runtime_config
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -1588,6 +2069,9 @@ def optimize(
         default_config,
         eval_dataset,
         combined_runtime_overrides,
+    )
+    constraint_scope_var_names = _augment_constraint_scope_var_names(
+        constraint_scope_var_names, configuration_space
     )
 
     if samples_include_pruned is None:
@@ -1654,15 +2138,50 @@ def optimize(
             from traigent.api.constraints import normalize_constraints
 
             normalized_constraints = normalize_constraints(
-                constraints, config_space_var_names
+                constraints, constraint_scope_var_names
             )
+
+        # Remove keys from runtime overrides that are passed explicitly below
+        # to avoid "got multiple values for keyword argument" errors.
+        # TVL budget application can inject max_trials into runtime_overrides
+        # (via _apply_tvl_artifact), but we pass it explicitly as well.
+        combined_runtime_overrides.pop("algorithm", None)
+        combined_runtime_overrides.pop("max_trials", None)
+
+        resolved_configuration_space = configuration_space
+        resolved_default_config = default_config
+
+        # Tuned variable auto-detection:
+        # - suggest mode logs candidates
+        # - apply mode auto-materializes configuration_space
+        if (
+            effective_auto_detect_tvars_mode != "off"
+            and not resolved_configuration_space
+        ):
+            detected_config = _suggest_detected_tvars(
+                func,
+                mode=effective_auto_detect_tvars_mode,
+                min_confidence=auto_detect_tvars_min_confidence,
+                include=auto_detect_tvars_include,
+                exclude=auto_detect_tvars_exclude,
+            )
+            if effective_auto_detect_tvars_mode == "apply" and detected_config:
+                resolved_configuration_space, detected_defaults = (
+                    normalize_configuration_space(detected_config)
+                )
+                if detected_defaults:
+                    resolved_default_config = {
+                        **detected_defaults,
+                        **(resolved_default_config or {}),
+                    }
 
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
-            configuration_space=configuration_space,
-            default_config=default_config,
+            configuration_space=resolved_configuration_space,
+            algorithm=algorithm_value,
+            default_config=resolved_default_config,
             constraints=normalized_constraints,
             safety_constraints=safety_constraints,
             injection_mode=actual_injection_mode,
@@ -1670,6 +2189,18 @@ def optimize(
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
             execution_mode=execution_mode_enum,
+            hybrid_api_endpoint=hybrid_api_endpoint,
+            tunable_id=tunable_id,
+            hybrid_api_transport=hybrid_api_transport,
+            hybrid_api_transport_type=hybrid_api_transport_type,
+            hybrid_api_batch_size=hybrid_api_batch_size,
+            hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
+            hybrid_api_keep_alive=hybrid_api_keep_alive,
+            hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
+            hybrid_api_timeout=hybrid_api_timeout,
+            hybrid_api_auth_header=hybrid_api_auth_header,
+            hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            cloud_fallback_policy=cloud_fallback_policy,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
@@ -1693,6 +2224,8 @@ def optimize(
             js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
+            # Optimizer limits (extracted from combined_settings)
+            max_trials=max_trials_value,
             **combined_runtime_overrides,
         )
 

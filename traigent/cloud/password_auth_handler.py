@@ -20,6 +20,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.core.constants import MAX_RETRIES
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -201,7 +202,8 @@ class PasswordAuthHandler:
         try:
             from traigent.config.backend_config import BackendConfig
 
-            if BackendConfig.is_local_backend():
+            configured_backend = BackendConfig.get_configured_backend_url()
+            if configured_backend and BackendConfig.is_local_origin(configured_backend):
                 return True
         except Exception as e:
             logger.debug(f"Could not check local backend status: {e}")
@@ -220,11 +222,11 @@ class PasswordAuthHandler:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.get_cloud_api_url()
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,
@@ -278,11 +280,6 @@ class PasswordAuthHandler:
                 perform_login, operation_name="backend_authentication"
             )
         except InvalidCredentialsError:
-            if self._is_dev_mode_enabled():
-                logger.warning(
-                    "Dev mode enabled - returning mock tokens despite invalid credentials"
-                )
-                return self._build_dev_token_payload(credentials)
             raise
         except Exception as exc:
             if self._is_dev_mode_enabled():
@@ -303,7 +300,7 @@ class PasswordAuthHandler:
         user_id = (credentials or {}).get("user_id") or f"dev-{uuid.uuid4()}"
         dev_key_suffix = "".join(
             secrets.choice(
-                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"  # pragma: allowlist secret
             )
             for _ in range(61)
         )

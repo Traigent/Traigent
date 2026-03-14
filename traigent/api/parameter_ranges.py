@@ -35,9 +35,21 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    NotRequired,
+    TypeAlias,
+    TypedDict,
+    TypeGuard,
+    TypeVar,
+    cast,
+    overload,
+)
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -50,6 +62,38 @@ from traigent.api.constraint_builders import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class FloatRangeConfigDict(TypedDict):
+    """Dictionary form emitted for float ranges with advanced options."""
+
+    type: Literal["float"]
+    low: float
+    high: float
+    step: NotRequired[float]
+    log: NotRequired[bool]
+
+
+class IntRangeConfigDict(TypedDict):
+    """Dictionary form emitted for integer ranges with advanced options."""
+
+    type: Literal["int"]
+    low: int
+    high: int
+    step: NotRequired[int]
+    log: NotRequired[bool]
+
+
+FloatRangeTuple: TypeAlias = tuple[float, float]
+IntRangeTuple: TypeAlias = tuple[int, int]
+ChoicesConfigValue: TypeAlias = list[T]
+FloatRangeConfigValue: TypeAlias = FloatRangeTuple | FloatRangeConfigDict
+IntRangeConfigValue: TypeAlias = IntRangeTuple | IntRangeConfigDict
+# ParameterRange itself is not generic, so the categorical branch erases the
+# element type at the aggregate alias and is recovered on concrete overloads.
+ParameterRangeConfigValue: TypeAlias = (
+    FloatRangeConfigValue | IntRangeConfigValue | ChoicesConfigValue[Any]
+)
 
 
 class ParameterRange(ABC):
@@ -82,7 +126,7 @@ class ParameterRange(ABC):
     name: str | None
 
     @abstractmethod
-    def to_config_value(self) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
+    def to_config_value(self) -> ParameterRangeConfigValue:
         """Convert to the internal configuration space format.
 
         Returns:
@@ -159,7 +203,7 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
                 f"default {self.default} is outside range [{self.low}, {self.high}]"
             )
 
-    def to_config_value(self) -> tuple[float, float] | dict[str, Any]:
+    def to_config_value(self) -> FloatRangeConfigValue:
         """Convert to internal format.
 
         Returns tuple for simple ranges, dict when log/step is set.
@@ -167,7 +211,7 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
         if self.step is None and not self.log:
             return (self.low, self.high)
         # Use dict format for advanced options
-        result: dict[str, Any] = {
+        result: FloatRangeConfigDict = {
             "type": "float",
             "low": self.low,
             "high": self.high,
@@ -363,14 +407,14 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
                 f"default {self.default} is outside range [{self.low}, {self.high}]"
             )
 
-    def to_config_value(self) -> tuple[int, int] | dict[str, Any]:
+    def to_config_value(self) -> IntRangeConfigValue:
         """Convert to internal format.
 
         Returns tuple for simple ranges, dict when log/step is set.
         """
         if self.step is None and not self.log:
             return (self.low, self.high)
-        result: dict[str, Any] = {
+        result: IntRangeConfigDict = {
             "type": "int",
             "low": self.low,
             "high": self.high,
@@ -557,7 +601,7 @@ class LogRange(NumericConstraintBuilderMixin, ParameterRange):
                 f"default {self.default} is outside range [{self.low}, {self.high}]"
             )
 
-    def to_config_value(self) -> dict[str, Any]:
+    def to_config_value(self) -> FloatRangeConfigDict:
         """Convert to internal format with log=True."""
         return {
             "type": "float",
@@ -676,7 +720,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
                 f"Set enforce_type=False to allow mixed types."
             )
 
-    def to_config_value(self) -> list[T]:
+    def to_config_value(self) -> ChoicesConfigValue[T]:
         """Convert to internal list format."""
         return list(self.values)
 
@@ -880,6 +924,27 @@ def is_parameter_range(value: Any) -> bool:
     return isinstance(value, ParameterRange)
 
 
+def is_float_range_config_dict(
+    value: FloatRangeConfigValue,
+) -> TypeGuard[FloatRangeConfigDict]:
+    """Narrow a float range config value to its dict form."""
+    return isinstance(value, dict)
+
+
+def is_int_range_config_dict(
+    value: IntRangeConfigValue,
+) -> TypeGuard[IntRangeConfigDict]:
+    """Narrow an int range config value to its dict form."""
+    return isinstance(value, dict)
+
+
+def is_parameter_range_config_dict(
+    value: ParameterRangeConfigValue,
+) -> TypeGuard[FloatRangeConfigDict | IntRangeConfigDict]:
+    """Narrow a parameter config value to an advanced numeric dict form."""
+    return isinstance(value, dict)
+
+
 def is_inline_param_definition(value: Any) -> bool:
     """Check if a value looks like an inline parameter definition.
 
@@ -905,9 +970,43 @@ def is_inline_param_definition(value: Any) -> bool:
     return False
 
 
+@overload
+def normalize_config_value(value: Range) -> FloatRangeConfigValue: ...
+
+
+@overload
+def normalize_config_value(value: IntRange) -> IntRangeConfigValue: ...
+
+
+@overload
+def normalize_config_value(value: LogRange) -> FloatRangeConfigDict: ...
+
+
+@overload
+def normalize_config_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
+
+
+@overload
+def normalize_config_value(value: tuple[Any, ...]) -> tuple[Any, ...]: ...
+
+
+@overload
+def normalize_config_value(value: list[T]) -> list[T]: ...
+
+
+@overload
+def normalize_config_value(value: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@overload
 def normalize_config_value(
     value: ParameterRange | tuple[Any, ...] | list[Any] | dict[str, Any],
-) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
+) -> ParameterRangeConfigValue | tuple[Any, ...] | list[Any] | dict[str, Any]: ...
+
+
+def normalize_config_value(
+    value: ParameterRange | tuple[Any, ...] | list[Any] | dict[str, Any],
+) -> ParameterRangeConfigValue | tuple[Any, ...] | list[Any] | dict[str, Any]:
     """Convert a ParameterRange to its primitive format.
 
     If value is already a primitive (tuple/list/dict), returns it unchanged.
@@ -923,9 +1022,43 @@ def normalize_config_value(
     return value  # type: ignore[return-value]
 
 
+@overload
+def normalize_parameter_value(value: Range) -> FloatRangeConfigValue: ...
+
+
+@overload
+def normalize_parameter_value(value: IntRange) -> IntRangeConfigValue: ...
+
+
+@overload
+def normalize_parameter_value(value: LogRange) -> FloatRangeConfigDict: ...
+
+
+@overload
+def normalize_parameter_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
+
+
+@overload
+def normalize_parameter_value(value: tuple[Any, ...]) -> tuple[Any, ...]: ...
+
+
+@overload
+def normalize_parameter_value(value: list[T]) -> list[T]: ...
+
+
+@overload
+def normalize_parameter_value(value: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@overload
 def normalize_parameter_value(
-    value: Any,
-) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
+    value: ParameterRange | tuple[Any, ...] | list[Any] | dict[str, Any],
+) -> ParameterRangeConfigValue | tuple[Any, ...] | list[Any] | dict[str, Any]: ...
+
+
+def normalize_parameter_value(
+    value: ParameterRange | tuple[Any, ...] | list[Any] | dict[str, Any],
+) -> ParameterRangeConfigValue | tuple[Any, ...] | list[Any] | dict[str, Any]:
     """Normalize a ParameterRange or primitive configuration value.
 
     Alias for normalize_config_value to match API naming expectations.
@@ -999,17 +1132,20 @@ def normalize_configuration_space(
 
     # Start with explicit config_space (lower precedence)
     if config_space:
+        normalized_config_space: Mapping[str, Any]
         # Handle ConfigSpace objects by extracting their tvars
         if hasattr(config_space, "tvars") and hasattr(config_space, "constraints"):
-            # It's a ConfigSpace object - extract the tvars dict
-            config_space = config_space.tvars
-        elif not isinstance(config_space, dict):
+            # It's a ConfigSpace object - extract the tvars mapping
+            normalized_config_space = config_space.tvars
+        elif isinstance(config_space, Mapping):
+            normalized_config_space = config_space
+        else:
             from traigent.utils.exceptions import ValidationError
 
             raise ValidationError(
                 f"Expected dictionary for configuration_space, got {type(config_space).__name__}"
             )
-        for key, value in config_space.items():
+        for key, value in normalized_config_space.items():
             _process_param_entry(key, value, result, defaults)
 
     # Add/override with inline parameters (higher precedence)
@@ -1022,11 +1158,22 @@ def normalize_configuration_space(
 
 __all__ = [
     "ParameterRange",
+    "FloatRangeConfigDict",
+    "IntRangeConfigDict",
+    "FloatRangeTuple",
+    "IntRangeTuple",
+    "ChoicesConfigValue",
+    "FloatRangeConfigValue",
+    "IntRangeConfigValue",
+    "ParameterRangeConfigValue",
     "Range",
     "IntRange",
     "LogRange",
     "Choices",
     "is_parameter_range",
+    "is_float_range_config_dict",
+    "is_int_range_config_dict",
+    "is_parameter_range_config_dict",
     "is_inline_param_definition",
     "normalize_config_value",
     "normalize_parameter_value",

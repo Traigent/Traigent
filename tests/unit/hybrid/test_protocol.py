@@ -3,6 +3,7 @@
 from traigent.hybrid.protocol import (
     BatchOptions,
     ConfigSpaceResponse,
+    EstimatedTokensPerExample,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
@@ -37,14 +38,16 @@ class TestHybridExecuteRequest:
     def test_minimal_request(self) -> None:
         """Test creating minimal execute request."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"temperature": 0.7},
-            inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
+            examples=[{"example_id": "ex_1", "data": {"query": "test"}}],
         )
 
-        assert request.capability_id == "test_agent"
+        assert request.tunable_id == "test_agent"
+        assert request.benchmark_id == "bench_001"
         assert request.config == {"temperature": 0.7}
-        assert len(request.inputs) == 1
+        assert len(request.examples) == 1
         assert request.request_id  # Auto-generated
         assert request.session_id is None
         assert request.batch_options is None
@@ -53,18 +56,20 @@ class TestHybridExecuteRequest:
     def test_to_dict(self) -> None:
         """Test serialization to dictionary."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "gpt-4"},
-            inputs=[{"input_id": "1", "data": {}}],
+            examples=[{"example_id": "1", "data": {}}],
             session_id="sess_123",
             batch_options=BatchOptions(parallelism=3),
             timeout_ms=60000,
         )
 
         d = request.to_dict()
-        assert d["capability_id"] == "test_agent"
+        assert d["tunable_id"] == "test_agent"
+        assert d["benchmark_id"] == "bench_001"
         assert d["config"] == {"model": "gpt-4"}
-        assert d["inputs"] == [{"input_id": "1", "data": {}}]
+        assert d["examples"] == [{"example_id": "1", "data": {}}]
         assert d["session_id"] == "sess_123"
         assert d["batch_options"]["parallelism"] == 3
         assert d["timeout_ms"] == 60000
@@ -72,9 +77,10 @@ class TestHybridExecuteRequest:
     def test_to_dict_minimal(self) -> None:
         """Test minimal serialization excludes None fields."""
         request = HybridExecuteRequest(
-            capability_id="test",
+            tunable_id="test",
+            benchmark_id="bench_001",
             config={},
-            inputs=[],
+            examples=[],
         )
 
         d = request.to_dict()
@@ -91,7 +97,7 @@ class TestHybridExecuteResponse:
             "request_id": "req_123",
             "execution_id": "exec_456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": "result"}],
+            "outputs": [{"example_id": "1", "output": "result"}],
             "operational_metrics": {"cost_usd": 0.002, "latency_ms": 150},
             "session_id": "sess_789",
         }
@@ -135,28 +141,34 @@ class TestHybridEvaluateRequest:
 
     def test_minimal_request(self) -> None:
         """Test creating minimal evaluate request."""
-        request = HybridEvaluateRequest(capability_id="test")
-        assert request.capability_id == "test"
+        request = HybridEvaluateRequest(tunable_id="test", benchmark_id="bench_001")
+        assert request.tunable_id == "test"
+        assert request.benchmark_id == "bench_001"
         assert request.request_id  # Auto-generated
         assert request.execution_id is None
         assert request.evaluations is None
+        assert request.timeout_ms is None
 
     def test_to_dict(self) -> None:
         """Test serialization to dictionary."""
         request = HybridEvaluateRequest(
-            capability_id="test",
+            tunable_id="test",
+            benchmark_id="bench_001",
             execution_id="exec_123",
-            evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+            evaluations=[{"example_id": "1", "output": {}, "target": {}}],
             config={"setting": "value"},
             session_id="sess_456",
+            timeout_ms=45000,
         )
 
         d = request.to_dict()
-        assert d["capability_id"] == "test"
+        assert d["tunable_id"] == "test"
+        assert d["benchmark_id"] == "bench_001"
         assert d["execution_id"] == "exec_123"
         assert len(d["evaluations"]) == 1
         assert d["config"] == {"setting": "value"}
         assert d["session_id"] == "sess_456"
+        assert d["timeout_ms"] == 45000
 
 
 class TestHybridEvaluateResponse:
@@ -166,18 +178,26 @@ class TestHybridEvaluateResponse:
         """Test creating response from dictionary."""
         data = {
             "request_id": "req_123",
-            "status": "completed",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "status": "partial",
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95, "std": 0.02, "n": 10}},
+            "error": {
+                "code": "EVALUATION_PARTIAL_FAILURE",
+                "message": "One or more items failed during evaluation",
+                "failed_examples": ["2"],
+            },
         }
 
         response = HybridEvaluateResponse.from_dict(data)
 
         assert response.request_id == "req_123"
-        assert response.status == "completed"
+        assert response.status == "partial"
         assert len(response.results) == 1
         assert response.results[0]["metrics"]["accuracy"] == 0.95
         assert response.aggregate_metrics["accuracy"]["mean"] == 0.95
+        assert response.aggregate_metrics["accuracy"]["n"] == 10
+        assert response.error is not None
+        assert response.error["code"] == "EVALUATION_PARTIAL_FAILURE"
 
 
 class TestServiceCapabilities:
@@ -276,6 +296,28 @@ class TestTVARDefinition:
         assert tvar.is_tool is True
         assert len(tvar.constraints) == 1
 
+    def test_from_dict_accepts_top_level_values(self) -> None:
+        """Top-level values are normalized into domain.values."""
+        data = {
+            "name": "model",
+            "type": "enum",
+            "values": ["gpt-4", "claude-3"],
+        }
+        tvar = TVARDefinition.from_dict(data)
+        assert tvar.domain["values"] == ["gpt-4", "claude-3"]
+
+    def test_from_dict_accepts_top_level_range(self) -> None:
+        """Top-level range/resolution are normalized into domain."""
+        data = {
+            "name": "temperature",
+            "type": "float",
+            "range": [0.0, 1.0],
+            "resolution": 0.1,
+        }
+        tvar = TVARDefinition.from_dict(data)
+        assert tvar.domain["range"] == [0.0, 1.0]
+        assert tvar.domain["resolution"] == 0.1
+
 
 class TestConfigSpaceResponse:
     """Tests for ConfigSpaceResponse."""
@@ -284,23 +326,131 @@ class TestConfigSpaceResponse:
         """Test creating config space from dictionary."""
         data = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {"name": "model", "type": "enum", "domain": {"values": ["gpt-4"]}},
                 {"name": "temp", "type": "float", "domain": {"range": [0.0, 1.0]}},
             ],
+            "objectives": [
+                {"name": "accuracy", "direction": "maximize", "weight": 2.0},
+                {"name": "cost", "direction": "minimize", "weight": 1.0},
+            ],
+            "exploration": {
+                "strategy": "nsga2",
+                "budgets": {"max_trials": 50, "max_spend_usd": 10.0},
+            },
+            "promotion_policy": {
+                "dominance": "epsilon_pareto",
+                "alpha": 0.05,
+                "min_effect": {"accuracy": 0.02},
+            },
+            "defaults": {"model": "gpt-4"},
+            "measures": ["accuracy", "cost"],
+            "estimated_tokens_per_example": {
+                "input_tokens": 120,
+                "output_tokens": 40,
+            },
         }
 
         response = ConfigSpaceResponse.from_dict(data)
         assert response.schema_version == "0.9"
-        assert response.capability_id == "test_agent"
+        assert response.tunable_id == "test_agent"
         assert len(response.tvars) == 2
+        assert response.objectives == data["objectives"]
+        assert response.exploration == data["exploration"]
+        assert response.promotion_policy == data["promotion_policy"]
+        assert response.defaults == data["defaults"]
+        assert response.measures == data["measures"]
+        assert response.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=120,
+            output_tokens=40,
+        )
+
+    def test_to_dict_includes_optional_optimization_sections(self) -> None:
+        """Optional optimization sections round-trip via to_dict."""
+        response = ConfigSpaceResponse(
+            schema_version="0.9",
+            tunable_id="test",
+            tvars=[
+                TVARDefinition(
+                    name="model",
+                    type="enum",
+                    domain={"values": ["gpt-4"]},
+                )
+            ],
+            constraints={
+                "structural": [{"id": "c1", "expr": "params.model == 'gpt-4'"}]
+            },
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
+            estimated_tokens_per_example=EstimatedTokensPerExample(
+                input_tokens=120,
+                output_tokens=40,
+            ),
+        )
+
+        serialized = response.to_dict()
+        assert serialized["objectives"] == [
+            {"name": "accuracy", "direction": "maximize"}
+        ]
+        assert serialized["exploration"] == {"strategy": "nsga2"}
+        assert serialized["promotion_policy"] == {"dominance": "epsilon_pareto"}
+        assert serialized["defaults"] == {"model": "gpt-4"}
+        assert serialized["measures"] == ["accuracy"]
+        assert serialized["estimated_tokens_per_example"] == {
+            "input_tokens": 120,
+            "output_tokens": 40,
+        }
+        assert serialized["constraints"] == response.constraints
+
+    def test_from_dict_tolerates_invalid_estimated_token_values(self) -> None:
+        """Malformed token estimate fields should not crash config discovery."""
+        data = {
+            "schema_version": "0.9",
+            "tunable_id": "test_agent",
+            "tvars": [],
+            "estimated_tokens_per_example": {
+                "input_tokens": None,
+                "output_tokens": "unknown",
+            },
+        }
+
+        response = ConfigSpaceResponse.from_dict(data)
+
+        assert response.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=0,
+            output_tokens=0,
+        )
+
+    def test_from_dict_coerces_negative_and_boolean_estimated_tokens_to_zero(
+        self,
+    ) -> None:
+        """Negative or boolean token estimates should be neutralized."""
+        data = {
+            "schema_version": "0.9",
+            "tunable_id": "test_agent",
+            "tvars": [],
+            "estimated_tokens_per_example": {
+                "input_tokens": -5,
+                "output_tokens": True,
+            },
+        }
+
+        response = ConfigSpaceResponse.from_dict(data)
+
+        assert response.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=0,
+            output_tokens=0,
+        )
 
     def test_to_traigent_config_space(self) -> None:
         """Test converting to Traigent config space format."""
         response = ConfigSpaceResponse(
             schema_version="0.9",
-            capability_id="test",
+            tunable_id="test",
             tvars=[
                 TVARDefinition(
                     name="model",
@@ -341,3 +491,68 @@ class TestHealthCheckResponse:
         """Test default status when not provided."""
         response = HealthCheckResponse.from_dict({})
         assert response.status == "unhealthy"
+
+
+class TestExecuteResponseMissingExecutionId:
+    """Test HybridExecuteResponse fallback when execution_id is missing."""
+
+    def test_missing_execution_id_generates_fallback(self) -> None:
+        """Missing execution_id should generate a UUID fallback."""
+        data = {
+            "request_id": "req_abc",
+            "status": "completed",
+            "outputs": [],
+            "operational_metrics": {},
+        }
+
+        response = HybridExecuteResponse.from_dict(data)
+
+        assert response.request_id == "req_abc"
+        # execution_id should be a generated UUID string
+        assert response.execution_id is not None
+        assert len(response.execution_id) == 36  # UUID format
+
+
+class TestEvaluateResponseExecutionId:
+    """Test HybridEvaluateResponse execution_id field."""
+
+    def test_from_dict_with_execution_id(self) -> None:
+        """Execution_id is preserved from response dict."""
+        data = {
+            "request_id": "req_1",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+            "execution_id": "exec_999",
+        }
+        response = HybridEvaluateResponse.from_dict(data)
+        assert response.execution_id == "exec_999"
+
+    def test_from_dict_without_execution_id(self) -> None:
+        """Missing execution_id defaults to None."""
+        data = {
+            "request_id": "req_2",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+        }
+        response = HybridEvaluateResponse.from_dict(data)
+        assert response.execution_id is None
+
+
+class TestServiceCapabilitiesTunableIds:
+    """Test ServiceCapabilities tunable_ids field."""
+
+    def test_from_dict_with_tunable_ids(self) -> None:
+        """tunable_ids is parsed from response dict."""
+        data = {
+            "version": "1.0",
+            "tunable_ids": ["agent_a", "agent_b"],
+        }
+        caps = ServiceCapabilities.from_dict(data)
+        assert caps.tunable_ids == ["agent_a", "agent_b"]
+
+    def test_from_dict_without_tunable_ids(self) -> None:
+        """Missing tunable_ids defaults to None."""
+        caps = ServiceCapabilities.from_dict({"version": "1.0"})
+        assert caps.tunable_ids is None

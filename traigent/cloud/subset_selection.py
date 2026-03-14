@@ -313,7 +313,7 @@ class RepresentativeSampling(BaseSubsetSelector):
     def __init__(self, random_seed: int = 42) -> None:
         """Initialize representative sampling selector."""
         self.random_seed = random_seed
-        random.seed(random_seed)
+        self._random = random.Random(random_seed)
 
     async def select_subset(
         self, dataset: Dataset, target_size: int, **kwargs: Any
@@ -360,7 +360,7 @@ class RepresentativeSampling(BaseSubsetSelector):
         if balance_outputs:
             selected_examples = self._stratified_sampling(dataset.examples, target_size)
         else:
-            selected_examples = random.sample(dataset.examples, target_size)
+            selected_examples = self._random.sample(dataset.examples, target_size)
 
         return SubsetSelectionResult(
             selected_examples=selected_examples,
@@ -398,18 +398,18 @@ class RepresentativeSampling(BaseSubsetSelector):
             group_target = max(1, int(target_size * group_proportion))
             group_target = min(group_target, len(group_examples))
 
-            group_selected = random.sample(group_examples, group_target)
+            group_selected = self._random.sample(group_examples, group_target)
             selected_examples.extend(group_selected)
 
         # Adjust if we have too many or too few
         if len(selected_examples) > target_size:
-            selected_examples = random.sample(selected_examples, target_size)
+            selected_examples = self._random.sample(selected_examples, target_size)
         elif len(selected_examples) < target_size:
             # Add random examples from remaining pool
             remaining = [ex for ex in examples if ex not in selected_examples]
             needed = target_size - len(selected_examples)
             if remaining:
-                additional = random.sample(remaining, min(needed, len(remaining)))
+                additional = self._random.sample(remaining, min(needed, len(remaining)))
                 selected_examples.extend(additional)
 
         return selected_examples

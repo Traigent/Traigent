@@ -97,6 +97,43 @@ class ConcreteBypassPlugin(LLMPlugin):
         return {}
 
 
+class TestLLMPluginCustomParams:
+    """Test custom_params extraction helper behavior."""
+
+    def test_extract_custom_params_mapping(self):
+        plugin = ConcreteOpenAIPlugin()
+        config_obj = type("Cfg", (), {"custom_params": {"system": "hello"}})()
+
+        extracted = plugin._extract_custom_params(config_obj)
+
+        assert extracted == {"system": "hello"}
+
+    def test_extract_custom_params_coerces_iterable_of_pairs(self):
+        plugin = ConcreteOpenAIPlugin()
+        config_obj = type(
+            "Cfg",
+            (),
+            {"custom_params": [("system", "hello"), ("stop", ["END"])]},
+        )()
+
+        extracted = plugin._extract_custom_params(config_obj)
+
+        assert extracted == {"system": "hello", "stop": ["END"]}
+
+    def test_extract_custom_params_logs_warning_for_invalid_payload(self, caplog):
+        plugin = ConcreteOpenAIPlugin()
+        config_obj = type("Cfg", (), {"custom_params": object()})()
+
+        with caplog.at_level("WARNING"):
+            extracted = plugin._extract_custom_params(config_obj)
+
+        assert extracted == {}
+        assert any(
+            "Ignoring invalid custom_params" in record.message
+            for record in caplog.records
+        )
+
+
 class TestLLMPluginMappings:
     """Test parameter mapping functionality."""
 

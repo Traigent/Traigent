@@ -603,10 +603,7 @@ def create_wandb_sweep_config(
         elif isinstance(param_range, tuple) and len(param_range) == 2:
             # Continuous parameter
             min_val, max_val = param_range
-            if isinstance(min_val, int) and isinstance(max_val, int):
-                wandb_parameters[param_name] = {"min": min_val, "max": max_val}
-            else:
-                wandb_parameters[param_name] = {"min": min_val, "max": max_val}
+            wandb_parameters[param_name] = {"min": min_val, "max": max_val}
         else:
             # Single value - treat as constant
             wandb_parameters[param_name] = {"value": param_range}

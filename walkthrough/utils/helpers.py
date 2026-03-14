@@ -57,7 +57,12 @@ def print_estimated_time(example_name: str) -> None:
 
 
 def configure_logging() -> None:
-    """Configure Traigent logging level from environment variable."""
+    """Configure Traigent logging and default local backend for walkthrough/real."""
+    # Walkthrough real scripts are local-first examples; avoid accidental cloud host fallback.
+    os.environ.setdefault("TRAIGENT_ENV", "development")
+    os.environ.setdefault("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    os.environ.setdefault("TRAIGENT_API_URL", "http://localhost:5000")
+
     log_level = os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper()
     traigent.configure(logging_level=log_level)
 
@@ -90,16 +95,15 @@ def is_valid_traigent_key(value: str) -> bool:
 def sanitize_traigent_api_key() -> None:
     """Remove invalid Traigent API keys from environment.
 
-    Checks TRAIGENT_API_KEY and OPTIGEN_API_KEY; removes if invalid format.
+    Checks TRAIGENT_API_KEY; removes if invalid format.
     """
-    key = os.getenv("TRAIGENT_API_KEY") or os.getenv("OPTIGEN_API_KEY")
+    key = os.getenv("TRAIGENT_API_KEY")
     if key and not is_valid_traigent_key(key):
         print(
             "WARNING: Ignoring invalid TRAIGENT_API_KEY for this run. "
             "Set a valid Traigent key to enable cloud features."
         )
         os.environ.pop("TRAIGENT_API_KEY", None)
-        os.environ.pop("OPTIGEN_API_KEY", None)
 
 
 def require_openai_key(example_name: str) -> None:

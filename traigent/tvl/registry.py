@@ -38,9 +38,12 @@ Implements: FUNC-TVLSPEC
 from __future__ import annotations
 
 import json
+import operator
 import re
 from pathlib import Path
 from typing import Any, cast
+
+from packaging.version import InvalidVersion, Version
 
 # Optional YAML support
 try:
@@ -49,6 +52,14 @@ try:
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
+
+
+_COMPARISON_OPERATORS = {
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+}
 
 
 class FileRegistryResolver:
@@ -410,6 +421,38 @@ class FileRegistryResolver:
         values = [v.strip().strip("'\"") for v in values_str.split(",") if v.strip()]
         return [i for i in items if i.get(field) in values]
 
+    @staticmethod
+    def _parse_comparison_filter(filter_expr: str) -> tuple[str, str, str] | None:
+        """Parse a comparison filter without regex backtracking risk."""
+        expr = filter_expr.strip()
+        if not expr:
+            return None
+
+        field_end = 0
+        while field_end < len(expr) and (
+            expr[field_end].isalnum() or expr[field_end] == "_"
+        ):
+            field_end += 1
+
+        field = expr[:field_end]
+        if not field:
+            return None
+
+        remainder = expr[field_end:].lstrip()
+        for op in (">=", "<=", ">", "<"):
+            if remainder.startswith(op):
+                value = remainder[len(op) :].strip()
+                if not value:
+                    return None
+                if value[0] in {"'", '"'}:
+                    quote = value[0]
+                    if len(value) < 2 or not value.endswith(quote):
+                        return None
+                    value = value[1:-1]
+                return field, op, value
+
+        return None
+
     def _apply_simple_filter(
         self, items: list[dict[str, Any]], filter_expr: str
     ) -> list[dict[str, Any]]:
@@ -439,11 +482,9 @@ class FileRegistryResolver:
             return self._apply_equality_filter(items, field, op, value)
 
         # Parse comparison: field >= 'value'
-        comparison_match = re.match(
-            r"^\s*(\w+)\s*(>=|<=|>|<)\s*['\"]?([^'\"]+)['\"]?\s*$", filter_expr
-        )
-        if comparison_match:
-            field, op, value = comparison_match.groups()
+        comparison_filter = self._parse_comparison_filter(filter_expr)
+        if comparison_filter:
+            field, op, value = comparison_filter
             return self._apply_comparison(items, field, op, value)
 
         # Parse 'in' expression: field in ['a', 'b']
@@ -479,30 +520,36 @@ class FileRegistryResolver:
         Returns:
             Filtered list of items.
         """
+        comparator = _COMPARISON_OPERATORS.get(op)
+        if comparator is None:
+            raise ValueError(f"Unsupported comparison operator: {op}")
+
         result = []
         for item in items:
             item_value = item.get(field)
             if item_value is None:
                 continue
 
-            # String comparison (works for semver-like versions)
             try:
-                if op == ">=":
-                    if str(item_value) >= value:
-                        result.append(item)
-                elif op == "<=":
-                    if str(item_value) <= value:
-                        result.append(item)
-                elif op == ">":
-                    if str(item_value) > value:
-                        result.append(item)
-                elif op == "<":
-                    if str(item_value) < value:
-                        result.append(item)
+                lhs, rhs = self._coerce_comparison_operands(item_value, value)
+                if comparator(lhs, rhs):
+                    result.append(item)
             except (TypeError, ValueError):
                 continue
 
         return result
+
+    @staticmethod
+    def _coerce_comparison_operands(
+        item_value: Any, value: str
+    ) -> tuple[Version | str, Version | str]:
+        """Prefer semantic version comparison when both values are version-like."""
+        item_text = str(item_value)
+        value_text = str(value)
+        try:
+            return Version(item_text), Version(value_text)
+        except InvalidVersion:
+            return item_text, value_text
 
     def _extract_values(self, items: list[dict[str, Any]]) -> list[Any]:
         """Extract values from registry items.

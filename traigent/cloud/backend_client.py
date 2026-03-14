@@ -7,6 +7,7 @@ for better maintainability and adherence to software engineering principles.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Security FUNC-CLOUD-HYBRID FUNC-AGENTS FUNC-SECURITY REQ-CLOUD-009 REQ-AGNT-013 REQ-SEC-010
 
 import asyncio
+import concurrent.futures
 import os
 import secrets
 import sys
@@ -15,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
@@ -84,7 +86,7 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
             self,
             session_id: str,
             config: dict[str, Any],
-            score: float,
+            score: float | None,
             metadata: dict[str, Any] | None = None,
             error: str | None = None,
         ) -> None:
@@ -94,6 +96,9 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 
 
 logger = get_logger(__name__)
+_ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
+_JSON_CONTENT_TYPE = "application/json"
+_SDK_USER_AGENT = "Traigent-SDK/1.0"
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -169,21 +174,44 @@ class BackendIntegratedClient:
 
         self.backend_config = backend_config or BackendClientConfig()
 
-        effective_base_url = base_url or self.backend_config.backend_base_url
+        explicit_base_origin = None
+        explicit_api_base = None
+        if base_url:
+            parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
+            explicit_base_origin = (
+                parsed_origin or BackendConfig.normalize_backend_origin(base_url)
+            )
+            if explicit_base_origin:
+                explicit_api_base = (
+                    f"{explicit_base_origin}"
+                    f"{parsed_path or BackendConfig.get_default_api_path()}"
+                )
+
+        effective_base_url = (
+            explicit_base_origin or base_url or self.backend_config.backend_base_url
+        )
         if effective_base_url is None:
             effective_base_url = BackendConfig.get_backend_url()
 
         # Validate and sanitize URLs
         self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
 
-        backend_base_url = self.backend_config.backend_base_url or self.base_url
+        backend_base_url = self.base_url
+        if not explicit_base_origin:
+            backend_base_url = self.backend_config.backend_base_url or self.base_url
         self.backend_config.backend_base_url = self._api_ops.validate_and_sanitize_url(
             backend_base_url
         )
 
-        api_base_candidate = (
-            self.backend_config.api_base_url or BackendConfig.get_backend_api_url()
-        )
+        if explicit_api_base and not getattr(
+            self.backend_config, "api_explicitly_set", False
+        ):
+            api_base_candidate = explicit_api_base
+        else:
+            api_base_candidate = (
+                self.backend_config.api_base_url
+                or BackendConfig.build_api_base(self.backend_config.backend_base_url)
+            )
         self.api_base_url = self._api_ops.validate_and_sanitize_url(api_base_candidate)
         self.backend_config.api_base_url = self.api_base_url
 
@@ -403,9 +431,7 @@ class BackendIntegratedClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        await self.close(_reason="context-exit")
 
     async def _ensure_session(self) -> AioClientSession:
         """Ensure session exists with current auth headers."""
@@ -430,11 +456,11 @@ class BackendIntegratedClient:
             except Exception as exc:
                 logger.warning("Could not get auth headers: %s", exc)
                 headers = {
-                    "Content-Type": "application/json",
-                    "User-Agent": "Traigent-SDK/1.0",
+                    "Content-Type": _JSON_CONTENT_TYPE,
+                    "User-Agent": _SDK_USER_AGENT,
                 }
             else:
-                headers.setdefault("Content-Type", "application/json")
+                headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
 
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -455,6 +481,15 @@ class BackendIntegratedClient:
             if _session_is_closed(session):
                 return
             await session.close()
+            # On shutdown/context-exit paths, give the event loop time to run
+            # the connector's cleanup callbacks (especially for HTTPS/SSL).
+            # Without this, asyncio.run() may tear down the loop before the
+            # underlying TCP transport is fully closed, producing the
+            # "Unclosed client session" ResourceWarning.
+            # Skip the delay on retry/error paths to avoid adding 250ms
+            # on every transient reset.
+            if reason in ("shutdown", "context-exit"):
+                await asyncio.sleep(0.25)
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.debug(
                 "Error closing backend HTTP session%s: %s",
@@ -462,10 +497,10 @@ class BackendIntegratedClient:
                 exc,
             )
 
-    async def close(self) -> None:
+    async def close(self, *, _reason: str = "shutdown") -> None:
         """Close any active HTTP session to avoid resource leaks."""
 
-        await self._reset_http_session("shutdown")
+        await self._reset_http_session(_reason)
 
     # === Delegated Operations ===
     # The following methods delegate to the refactored sub-modules
@@ -641,6 +676,136 @@ class BackendIntegratedClient:
         Delegates to session_operations module."""
         return self._session_ops.get_session_mapping(session_id)
 
+    def _get_sync_auth_headers(self, target: str = "backend") -> dict[str, str]:
+        """Return auth headers for sync request paths.
+
+        Uses the async auth manager to preserve the canonical header-generation
+        path, including JWT refresh behavior when available.
+        """
+        default_headers = {
+            "Content-Type": _JSON_CONTENT_TYPE,
+            "User-Agent": _SDK_USER_AGENT,
+        }
+        auth = getattr(self.auth_manager, "auth", None)
+        if auth is None or not hasattr(auth, "get_headers"):
+            return default_headers
+
+        async def _get_headers_async() -> dict[str, str]:
+            return cast(dict[str, str], await auth.get_headers(target=target))
+
+        def _run_in_new_loop() -> dict[str, str]:
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(_get_headers_async())
+            finally:
+                new_loop.close()
+
+        try:
+            try:
+                asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    headers = future.result(timeout=min(self.timeout, 30.0))
+            except RuntimeError:
+                headers = asyncio.run(_get_headers_async())
+        except Exception as exc:
+            logger.debug("Could not get auth headers for feature upload: %s", exc)
+            return default_headers
+
+        merged_headers = dict(headers or {})
+        merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+        merged_headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        return merged_headers
+
+    def _build_feature_upload_url(self, experiment_run_id: str) -> str | None:
+        """Return a sanitized feature-upload URL for the configured backend API."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            logger.debug(
+                "Skipping example feature upload because api_base_url is invalid: %s",
+                self.api_base_url,
+            )
+            return None
+
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            logger.debug(
+                "Skipping example feature upload because api_base_url contains unsupported URL components"
+            )
+            return None
+
+        encoded_run_id = quote(experiment_run_id, safe="")
+        upload_path = (
+            f"{parsed.path.rstrip('/')}/analytics/example-scoring/"
+            f"{encoded_run_id}/features"
+        )
+        return urlunparse(
+            parsed._replace(path=upload_path, params="", query="", fragment="")
+        )
+
+    def upload_example_features(
+        self,
+        experiment_run_id: str,
+        feature_kind: str,
+        features: list[dict[str, Any]] | dict[str, Any],
+    ) -> bool:
+        """Upload per-run example features for backend-side analytics."""
+        if not experiment_run_id or not feature_kind or not features:
+            return False
+
+        if feature_kind not in _ALLOWED_EXAMPLE_FEATURE_KINDS:
+            logger.debug(
+                "Skipping example feature upload for unsupported feature kind: %s",
+                feature_kind,
+            )
+            return False
+
+        try:
+            import requests
+        except ImportError:  # pragma: no cover - requests is a required dependency
+            logger.debug(
+                "Skipping example feature upload because requests is unavailable"
+            )
+            return False
+
+        headers = self._get_sync_auth_headers(target="backend")
+        url = self._build_feature_upload_url(experiment_run_id)
+        if not url:
+            return False
+        payload = {"feature_kind": feature_kind, "features": features}
+
+        try:
+            response = requests.post(  # nosec B113 — timeout is provided
+                url,
+                json=payload,
+                headers=headers,
+                timeout=min(self.timeout, 30.0),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Example feature upload failed for run %s: %s",
+                experiment_run_id,
+                exc,
+            )
+            return False
+
+        if response.status_code >= 400:
+            logger.debug(
+                "Example feature upload rejected for run %s: HTTP %s %s",
+                experiment_run_id,
+                response.status_code,
+                response.text[:200],
+            )
+            return False
+
+        return True
+
     # Trial Operations
     async def register_trial_start(
         self,
@@ -724,7 +889,7 @@ class BackendIntegratedClient:
         self,
         session_id: str,
         config: dict[str, Any],
-        score: float,
+        score: float | None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Compatibility shim for legacy synchronous result submission."""

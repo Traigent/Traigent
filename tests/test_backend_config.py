@@ -25,7 +25,6 @@ def test_backend_config():
     for var in [
         "TRAIGENT_BACKEND_URL",
         "TRAIGENT_API_URL",
-        "OPTIGEN_API_KEY",
         "TRAIGENT_API_KEY",
         "TRAIGENT_DEFAULT_LOCAL_URL",
         "TRAIGENT_ENV",
@@ -41,14 +40,23 @@ def test_backend_config():
     print(f"   Environment: {config['environment']}")
     print(f"   Configured Via: {config['configured_via']}")
     assert (
-        config["backend_url"] == "https://api.traigent.ai"
-    ), "Should default to production"
-    assert config["requires_auth"], "Production should require auth"
+        config["backend_url"] == BackendConfig.get_default_local_url()
+    ), "Generic backend config should default to local"
+    assert config["is_local"], "Default should remain local"
     assert config["configured_via"] == "default"
     assert (
-        config["backend_api_url"] == "https://api.traigent.ai/api/v1"
-    ), "Default API base should include versioned path"
+        config["backend_api_url"] == f"{BackendConfig.get_default_local_url()}/api/v1"
+    ), "Default API base should use the local backend"
     print("   ✅ Default configuration working correctly\n")
+
+    print("1b. Testing cloud helper defaults:")
+    cloud_backend = BackendConfig.get_cloud_backend_url()
+    cloud_api = BackendConfig.get_cloud_api_url()
+    print(f"   Cloud Backend URL: {cloud_backend}")
+    print(f"   Cloud API URL: {cloud_api}")
+    assert cloud_backend == BackendConfig.DEFAULT_PROD_URL
+    assert cloud_api == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
+    print("   ✅ Cloud helper defaults working correctly\n")
 
     # Test 2: Local development environment
     print("2. Testing local development environment:")
@@ -86,15 +94,15 @@ def test_backend_config():
     # Test 3b: TRAIGENT_API_URL host override
     print("3b. Testing TRAIGENT_API_URL host override:")
     os.environ.pop("TRAIGENT_BACKEND_URL", None)
-    os.environ["TRAIGENT_API_URL"] = "api.traigent.ai"
+    os.environ["TRAIGENT_API_URL"] = "api.example.com"
     config = BackendConfig.get_config_summary()
     print(f"   Backend URL: {config['backend_url']}")
     assert (
-        config["backend_url"] == "https://api.traigent.ai"
+        config["backend_url"] == "https://api.example.com"
     ), "Host-only API URL should resolve to https origin"
     assert config["configured_via"] == "TRAIGENT_API_URL"
     assert (
-        config["backend_api_url"] == "https://api.traigent.ai/api/v1"
+        config["backend_api_url"] == "https://api.example.com/api/v1"
     ), "API base should include default path"
     print("   ✅ TRAIGENT_API_URL host override working correctly\n")
 
@@ -113,26 +121,17 @@ def test_backend_config():
 
     # Test 4: API key configuration
     print("4. Testing API key configuration:")
-    os.environ["TRAIGENT_API_KEY"] = "traigent-key-12345"
+    os.environ["TRAIGENT_API_KEY"] = "traigent-key-12345"  # pragma: allowlist secret
     config = BackendConfig.get_config_summary()
     print(f"   API Key Configured: {config['api_key_configured']}")
     print(f"   API Key Prefix: {config['api_key_prefix']}")
     print(f"   API Key Env: {config['api_key_env']}")
     assert config["api_key_configured"], "Should have API key"
-    assert config["api_key_prefix"] == "traigent...", "Should show prefix"
-    assert config["api_key_env"] == "TRAIGENT_API_KEY"
+    assert (
+        config["api_key_prefix"] == "traigent..."  # pragma: allowlist secret
+    ), "Should show prefix"  # pragma: allowlist secret
+    assert config["api_key_env"] == "TRAIGENT_API_KEY"  # pragma: allowlist secret
 
-    print("   Ensuring legacy OPTIGEN_API_KEY still works:")
-    os.environ["OPTIGEN_API_KEY"] = "optigen-key-67890"
-    config = BackendConfig.get_config_summary()
-    assert (
-        config["api_key_prefix"] == "traigent..."
-    ), "TRAIGENT_API_KEY should remain preferred when both set"
-    os.environ.pop("TRAIGENT_API_KEY", None)
-    config = BackendConfig.get_config_summary()
-    assert (
-        config["api_key_env"] == "OPTIGEN_API_KEY"
-    ), "Legacy OPTIGEN_API_KEY should be used when TRAIGENT_API_KEY absent"
     print("   ✅ API key configuration working correctly\n")
 
     # Test 5: Test with traigent.initialize()
@@ -143,7 +142,6 @@ def test_backend_config():
     for var in [
         "TRAIGENT_BACKEND_URL",
         "TRAIGENT_API_URL",
-        "OPTIGEN_API_KEY",
         "TRAIGENT_API_KEY",
         "TRAIGENT_DEFAULT_LOCAL_URL",
         "TRAIGENT_ENV",
@@ -151,7 +149,7 @@ def test_backend_config():
         os.environ.pop(var, None)
 
     os.environ["TRAIGENT_BACKEND_URL"] = "http://localhost:5000"
-    os.environ["OPTIGEN_API_KEY"] = "test-api-key"
+    os.environ["TRAIGENT_API_KEY"] = "test-api-key"  # pragma: allowlist secret
 
     # Initialize without explicit URL (should use env var)
     result = traigent.initialize()
@@ -175,7 +173,7 @@ def test_backend_client_config():
 
     # Set up environment for local backend
     os.environ["TRAIGENT_BACKEND_URL"] = "http://localhost:5000"
-    os.environ["OPTIGEN_API_KEY"] = "test-key"
+    os.environ["TRAIGENT_API_KEY"] = "test-key"  # pragma: allowlist secret
     os.environ["TRAIGENT_ENV"] = "development"
 
     # Import after setting env vars
@@ -197,7 +195,9 @@ def test_backend_client_config():
     # Test BackendIntegratedClient creation
     print("Testing BackendIntegratedClient with centralized config:")
     client = BackendIntegratedClient(
-        api_key="test-key", backend_config=config, enable_fallback=True
+        api_key="test-key",  # pragma: allowlist secret
+        backend_config=config,
+        enable_fallback=True,  # pragma: allowlist secret
     )
     print(f"   Client backend URL: {client.backend_config.backend_base_url}")
     assert (

@@ -158,7 +158,10 @@ def _display_optimization_result(
     max_trials: int,
 ) -> None:
     """Display and save the optimization result for a single function."""
-    console.print(f"✅ Best score: [green]{result.best_score:.3f}[/green]")
+    best_score_str = (
+        f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
+    )
+    console.print(f"✅ Best score: [green]{best_score_str}[/green]")
     console.print(f"   Best config: {result.best_config}")
     console.print(f"   Total trials: {len(result.trials)}")
     console.print(f"   Successful trials: {len(result.successful_trials)}")
@@ -194,7 +197,7 @@ def _display_optimization_summary(
 
         table.add_row(
             func_name,
-            f"{result.best_score:.3f}",
+            (f"{result.best_score:.3f}" if result.best_score is not None else "N/A"),
             config_str,
             str(len(result.trials)),
         )
@@ -328,9 +331,7 @@ def _run_single_optimization(
     try:
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
-            func.optimize(**optimize_kwargs)
-        )
+        result = asyncio.run(func.optimize(**optimize_kwargs))
         _display_optimization_result(
             func_name, result, persistence, algorithm, max_trials
         )
@@ -626,6 +627,93 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             console.print(obj_result.get_feedback())
 
 
+@cli.command(name="report-example-map")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to source dataset (.jsonl or .json)",
+)
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(),
+    help="Output file path for example-content map JSON",
+)
+@click.option(
+    "--dataset-identifier",
+    default=None,
+    help=(
+        "Identifier used for stable example_id generation. "
+        "Defaults to the resolved absolute dataset path."
+    ),
+)
+@click.option(
+    "--validate-schema/--no-validate-schema",
+    default=True,
+    show_default=True,
+    help="Validate generated map against example_content_map_schema",
+)
+def report_example_map(
+    dataset_path: str,
+    output_path: str,
+    dataset_identifier: str | None,
+    validate_schema: bool,
+) -> None:
+    """Generate local-only example-content map for report enrichment."""
+    from traigent.reporting.example_map import (
+        build_example_content_map,
+        validate_example_content_map,
+    )
+
+    try:
+        dataset_candidate = Path(dataset_path)
+        if not dataset_candidate.is_absolute():
+            dataset_candidate = Path.cwd() / dataset_candidate
+        resolved_dataset = _resolve_workspace_path(
+            dataset_candidate,
+            "Dataset file",
+            must_exist=True,
+        )
+
+        output_candidate = Path(output_path)
+        if not output_candidate.is_absolute():
+            output_candidate = Path.cwd() / output_candidate
+        resolved_output = _resolve_workspace_path(output_candidate, "Output file")
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+
+        effective_identifier = dataset_identifier or str(resolved_dataset)
+        payload = build_example_content_map(
+            resolved_dataset,
+            dataset_identifier=effective_identifier,
+        )
+        if validate_schema:
+            errors = validate_example_content_map(payload)
+            if errors:
+                raise click.ClickException(
+                    f"Generated map failed schema validation: {errors[0]}"
+                )
+
+        serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        safe_write_text(resolved_output, serialized, WORKSPACE_ROOT)
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    console.print("\n[bold green]Example map generated successfully[/bold green]")
+    console.print(f"Dataset: {resolved_dataset}")
+    console.print(f"Output: {resolved_output}")
+    console.print(f"Schema version: {payload['schema_version']}")
+    console.print(f"Dataset fingerprint: {payload['dataset_fingerprint']}")
+    console.print(f"Examples mapped: {len(payload['example_map'])}")
+    console.print(
+        "[dim]Local-only flow: generated file stays client-side unless you share it.[/dim]"
+    )
+
+
 # -----------------------------------------------------------------------------
 # Helper functions for results commands (reduces cognitive complexity - S3776)
 # -----------------------------------------------------------------------------
@@ -638,6 +726,13 @@ def _format_metric_value(value: Any) -> str:
     return str(value)
 
 
+def _format_best_score(value: Any) -> str:
+    """Format best score with null-safe fallback."""
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    return "N/A"
+
+
 def _format_diff_colored(diff: float, fmt: str = ".4f") -> str:
     """Format a numeric diff with color coding (green=positive, red=negative)."""
     if diff > 0:
@@ -645,6 +740,24 @@ def _format_diff_colored(diff: float, fmt: str = ".4f") -> str:
     if diff < 0:
         return f"[red]{diff:{fmt}}[/]"
     return f"{diff:+{fmt}}"
+
+
+def _visible_metric_names(*metric_sets: dict[str, Any] | None) -> list[str]:
+    """Return sorted non-internal metric names across one or more metric dicts."""
+    names = {
+        metric
+        for metrics in metric_sets
+        for metric in (metrics or {})
+        if not metric.startswith("_")
+    }
+    return sorted(names)
+
+
+def _format_metric_diff(m1: Any, m2: Any) -> str:
+    """Format the delta between two metric values when both are numeric."""
+    if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
+        return f"{m2 - m1:+.4f}"
+    return "-"
 
 
 def _print_result_summary(result: Any) -> None:
@@ -658,7 +771,7 @@ def _print_result_summary(result: Any) -> None:
     summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
     summary_table.add_row(_MSG_TOTAL_TRIALS, str(len(result.trials)))
     summary_table.add_row("Successful Trials", str(len(result.successful_trials or [])))
-    summary_table.add_row(_MSG_BEST_SCORE, f"{result.best_score:.4f}")
+    summary_table.add_row(_MSG_BEST_SCORE, _format_best_score(result.best_score))
     summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
     if hasattr(result, "duration") and result.duration:
         summary_table.add_row("Duration", f"{result.duration:.1f}s")
@@ -686,9 +799,8 @@ def _print_metrics_table(metrics: dict[str, Any] | None) -> None:
     metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     metrics_table.add_column("Metric")
     metrics_table.add_column("Value", justify="right")
-    for metric, value in metrics.items():
-        if not metric.startswith("_"):
-            metrics_table.add_row(metric, _format_metric_value(value))
+    for metric in _visible_metric_names(metrics):
+        metrics_table.add_row(metric, _format_metric_value(metrics.get(metric)))
     console.print(metrics_table)
 
 
@@ -726,12 +838,16 @@ def _build_comparison_summary_table(r1: Any, r2: Any, name1: str, name2: str) ->
     table.add_column("Δ", justify="right")
 
     # Best score
-    score_diff = r2.best_score - r1.best_score
+    if r1.best_score is not None and r2.best_score is not None:
+        score_diff = r2.best_score - r1.best_score
+        diff_col = _format_diff_colored(score_diff)
+    else:
+        diff_col = "N/A"
     table.add_row(
         _MSG_BEST_SCORE,
-        f"{r1.best_score:.4f}",
-        f"{r2.best_score:.4f}",
-        _format_diff_colored(score_diff),
+        _format_best_score(r1.best_score),
+        _format_best_score(r2.best_score),
+        diff_col,
     )
 
     # Trials count
@@ -791,20 +907,14 @@ def _build_metrics_comparison_table(
     metrics_table.add_column(name2, justify="right")
     metrics_table.add_column("Δ", justify="right")
 
-    all_metrics = set((metrics1 or {}).keys()) | set((metrics2 or {}).keys())
-    for metric in sorted(all_metrics):
-        if metric.startswith("_"):
-            continue
+    for metric in _visible_metric_names(metrics1, metrics2):
         m1 = (metrics1 or {}).get(metric)
         m2 = (metrics2 or {}).get(metric)
-        diff_str = "-"
-        if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
-            diff_str = f"{m2 - m1:+.4f}"
         metrics_table.add_row(
             metric,
             _format_metric_value(m1) if m1 else "-",
             _format_metric_value(m2) if m2 else "-",
-            diff_str,
+            _format_metric_diff(m1, m2),
         )
 
     return metrics_table
@@ -908,11 +1018,12 @@ def results_list(storage_dir: str) -> None:
     table.add_column("Date", style="dim")
 
     for result_info in all_results:
+        best_score = result_info.get("best_score")
         table.add_row(
             result_info["name"],
             result_info["function_name"],
             result_info["algorithm"],
-            f"{result_info['best_score']:.3f}",
+            (f"{best_score:.3f}" if isinstance(best_score, (int, float)) else "N/A"),
             str(result_info["total_trials"]),
             f"{result_info.get('success_rate', 0):.1%}",
             result_info.get("created_at", "").split("T")[0],  # Just date part
@@ -1815,6 +1926,13 @@ register_edge_analytics_commands(cli)
 
 cli.add_command(auth)
 cli.add_command(hooks)
+from traigent.cli.detect_tvars_command import detect_tvars  # noqa: E402
+
+cli.add_command(detect_tvars)
+
+from traigent.cli.generate_config_command import generate_config  # noqa: E402
+
+cli.add_command(generate_config)
 
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter

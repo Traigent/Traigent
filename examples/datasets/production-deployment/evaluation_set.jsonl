@@ -1,0 +1,12 @@
+{"input": {"query": "How do I reset my password?"}, "output": "Go to Settings > Security > Reset Password and follow the prompts."}
+{"input": {"query": "What are your business hours?"}, "output": "We are open Monday to Friday, 9 AM to 5 PM."}
+{"input": {"query": "How do I cancel my subscription?"}, "output": "Go to Account > Subscription > Cancel and confirm."}
+{"input": {"query": "What payment methods do you accept?"}, "output": "We accept Visa, Mastercard, PayPal, and bank transfers."}
+{"input": {"query": "How do I contact support?"}, "output": "Email support@example.com or call 1-800-555-0123."}
+{"input": {"query": "Where can I find my order history?"}, "output": "Go to Account > Orders to view your purchase history."}
+{"input": {"query": "How do I update my billing address?"}, "output": "Go to Account > Billing > Edit Address and save changes."}
+{"input": {"query": "What is your refund policy?"}, "output": "Full refund within 30 days of purchase, no questions asked."}
+{"input": {"query": "How do I enable two-factor authentication?"}, "output": "Go to Settings > Security > Enable 2FA and scan the QR code."}
+{"input": {"query": "Can I change my username?"}, "output": "Go to Settings > Profile > Edit Username and save."}
+{"input": {"query": "How do I export my data?"}, "output": "Go to Settings > Privacy > Export Data to download your information."}
+{"input": {"query": "What browsers do you support?"}, "output": "We support Chrome, Firefox, Safari, and Edge."}

@@ -8,6 +8,7 @@ and handling response parsing logic.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -234,10 +235,11 @@ class LLMResponseProcessor:
             if response_time_ms > 0:
                 example_result.execution_time = response_time_ms / 1000.0
 
-        # If no response-time from metrics and evaluator didn't set it, use measured duration
-        if (
-            not hasattr(example_result, "execution_time")
-            or example_result.execution_time == 0.0
+        # Only treat numeric zero as "unset"; preserve custom non-numeric sentinels.
+        # If no response-time from metrics and evaluator didn't set it, use measured duration.
+        if not hasattr(example_result, "execution_time") or (
+            isinstance(example_result.execution_time, (int, float))
+            and math.isclose(example_result.execution_time, 0.0, abs_tol=1e-9)
         ):
             example_result.execution_time = execution_time
 

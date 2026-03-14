@@ -6,7 +6,7 @@ spec:
   version: 0.1.0
 
 metadata:
-  owner: "mlops@traigent.ai"
+  owner: "team@example.com"
   description: "Example demonstrating banded objectives"
 
 # TVL 0.9 typed variables

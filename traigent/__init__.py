@@ -67,6 +67,7 @@ from traigent.api.constraints import (
 from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
+    configure_for_budget,
     get_available_strategies,
     get_config,
     get_current_config,
@@ -96,7 +97,9 @@ from traigent.api.types import (
     ParetoFront,
     SensitivityAnalysis,
     StrategyConfig,
+    TrialError,
     TrialResult,
+    serialize_trials,
 )
 from traigent.api.validation_protocol import (
     ConstraintValidator,
@@ -193,6 +196,7 @@ __all__ = [
     "when",
     # Configuration functions
     "configure",
+    "configure_for_budget",
     "initialize",
     "override_config",
     "get_available_strategies",
@@ -248,7 +252,9 @@ __all__ = [
     "create_quick_plot",
     # Result types
     "OptimizationResult",
+    "TrialError",
     "TrialResult",
+    "serialize_trials",
     "SensitivityAnalysis",
     "ConfigurationComparison",
     "ParetoFront",

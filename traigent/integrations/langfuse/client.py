@@ -10,8 +10,8 @@ The client extracts:
 
 Usage:
     client = LangfuseClient(
-        public_key="pk-xxx",
-        secret_key="sk-xxx",
+        public_key="pk-xxx",  # pragma: allowlist secret
+        secret_key="sk-xxx",  # pragma: allowlist secret
     )
 
     # Get metrics for optimization
@@ -206,7 +206,7 @@ class LangfuseClient:
     Example:
         client = LangfuseClient(
             public_key="pk-xxx",
-            secret_key="sk-xxx",
+            secret_key="sk-xxx",  # pragma: allowlist secret
         )
 
         # Get metrics for a trace
@@ -225,9 +225,10 @@ class LangfuseClient:
         """Initialize the Langfuse client."""
         self.public_key = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
         self.secret_key = secret_key or os.environ.get("LANGFUSE_SECRET_KEY")
-        self.host = (
-            host or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
-        ).rstrip("/")
+        resolved_host: str = host or os.environ.get(  # type: ignore[assignment]
+            "LANGFUSE_HOST", "https://cloud.langfuse.com"
+        )
+        self.host = resolved_host.rstrip("/")
         self.timeout = timeout
         self._lock = threading.Lock()
 
@@ -550,8 +551,9 @@ class LangfuseClient:
         """Async version of wait_for_trace."""
         import asyncio
 
-        start = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start < timeout_seconds:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        while loop.time() - start < timeout_seconds:
             trace = await self.get_trace_async(trace_id)
             if trace:
                 obs = await self.get_observations_for_trace_async(trace_id)

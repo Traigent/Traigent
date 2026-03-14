@@ -25,15 +25,13 @@ class TestMeasuresDictValidation:
                 "int_val": 42,
                 "float_val": 3.14,
                 "str_val": "test",
-                "bool_val": True,
                 "none_val": None,
             }
         )
-        assert len(measures) == 5
+        assert len(measures) == 4
         assert measures["int_val"] == 42
         assert measures["float_val"] == 3.14
         assert measures["str_val"] == "test"
-        assert measures["bool_val"] is True
         assert measures["none_val"] is None
 
     def test_accepts_list_type_with_warning(self, caplog):
@@ -341,7 +339,6 @@ class TestMeasuresDictValidation:
                 "int_metric": 42,
                 "float_metric": 3.14,
                 "str_metric": "success",
-                "bool_metric": True,
                 "none_metric": None,
                 "negative_int": -10,
                 "negative_float": -2.5,
@@ -349,11 +346,10 @@ class TestMeasuresDictValidation:
                 "empty_string": "",
             }
         )
-        assert len(measures) == 9
+        assert len(measures) == 8
         assert measures["int_metric"] == 42
         assert measures["float_metric"] == 3.14
         assert measures["str_metric"] == "success"
-        assert measures["bool_metric"] is True
         assert measures["none_metric"] is None
         assert measures["negative_int"] == -10
         assert measures["negative_float"] == -2.5
@@ -462,19 +458,10 @@ class TestMeasuresDictNumericEnforcement:
         assert any("non-numeric" in msg.lower() for msg in warning_messages)
         assert any("v2.0" in msg for msg in warning_messages)
 
-    def test_accepts_boolean_without_warning(self, caplog):
-        """Should accept boolean values without warning (bool is subclass of int)."""
-        with caplog.at_level(logging.WARNING):
-            measures = MeasuresDict({"is_valid": True})
-
-        # Booleans are accepted as numeric (isinstance(True, int) == True)
-        assert measures["is_valid"] is True
-
-        # No warning should be logged (booleans pass isinstance check for int)
-        warning_messages = [
-            record.message for record in caplog.records if record.levelname == "WARNING"
-        ]
-        assert not any("non-numeric" in msg.lower() for msg in warning_messages)
+    def test_rejects_boolean_metric(self):
+        """Booleans must be rejected even though bool is a subclass of int."""
+        with pytest.raises(TypeError, match="got bool"):
+            MeasuresDict({"is_valid": True})
 
     def test_warns_on_non_numeric_list(self, caplog):
         """Should warn for list values in Phase 0."""

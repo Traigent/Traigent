@@ -134,7 +134,7 @@ Key environment variables (see `.env.example` for complete list):
 - Use `TRAIGENT_MOCK_LLM=true` to avoid API costs during debugging
 - Check `~/.traigent/` for local optimization results
 - Use `make dev-server` to run the Streamlit UI for interactive debugging
-- For async issues, check `asyncio_mode = auto` in `pytest.ini`
+- For async issues, check `asyncio_mode = "auto"` in `pyproject.toml` under `[tool.pytest.ini_options]`
 
 ## 📝 Examples Usage
 Examples are in `examples/` directory:
@@ -150,7 +150,7 @@ Key GitHub Actions workflows (`.github/workflows/`):
 - `tests.yml` - Unit & integration tests (runs on all PRs)
 - `quality.yml` - Linting, formatting, security checks
 - `examples-smoke.yml` - Smoke tests for examples
-- `auto-tune.yml` - Optimization benchmarks
+- `example-auto-tune.yml` - Optional demo workflow for auto-tuning examples
 - `architecture-analysis.yml` - Architecture drift detection
 
 ## 🔍 Code Review Checklist

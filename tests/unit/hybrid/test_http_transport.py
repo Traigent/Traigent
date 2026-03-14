@@ -31,6 +31,7 @@ class TestHTTPTransportInit:
         assert transport.timeout == 300.0
         assert transport.max_connections == 10
         assert transport._auth_header is None
+        assert transport.require_http2 is False
 
     def test_init_with_custom_values(self) -> None:
         """Test initialization with custom values."""
@@ -39,11 +40,26 @@ class TestHTTPTransportInit:
             timeout=60.0,
             max_connections=5,
             auth_header="Bearer token123",
+            require_http2=False,
         )
         assert transport.base_url == "http://example.com"
         assert transport.timeout == 60.0
         assert transport.max_connections == 5
         assert transport._auth_header == "Bearer token123"
+
+    def test_init_require_http2_requires_https(self) -> None:
+        """Strict HTTP/2 mode requires an HTTPS base URL."""
+        with pytest.raises(ValueError, match="https:// base_url"):
+            HTTPTransport(base_url="http://localhost:8080", require_http2=True)
+
+    def test_init_with_require_http2_on_https(self) -> None:
+        """Strict HTTP/2 mode accepts HTTPS endpoints."""
+        transport = HTTPTransport(
+            base_url="https://api.example.com",
+            require_http2=True,
+        )
+        assert transport.base_url == "https://api.example.com"
+        assert transport.require_http2 is True
 
     def test_init_strips_trailing_slash(self) -> None:
         """Test that trailing slash is stripped from base_url."""
@@ -149,6 +165,41 @@ class TestHTTPTransportErrorHandling:
             assert exc_info.value.retry_after is None
 
     @pytest.mark.asyncio
+    async def test_timeout_error_408(self, transport: HTTPTransport) -> None:
+        """Test handling of HTTP 408 timeout responses."""
+        mock_response = MagicMock()
+        mock_response.status_code = 408
+        mock_response.text = "Request Timeout"
+        mock_response.http_version = "HTTP/2"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        with patch.object(transport, "_get_client", return_value=mock_client):
+            with pytest.raises(TransportTimeoutError) as exc_info:
+                await transport._request("GET", "/test")
+            assert exc_info.value.status_code == 408
+
+    @pytest.mark.asyncio
+    async def test_require_http2_rejects_http11_response(self) -> None:
+        """Strict HTTP/2 mode rejects HTTP/1.1 responses."""
+        transport = HTTPTransport(
+            base_url="https://api.example.com",
+            require_http2=True,
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.http_version = "HTTP/1.1"
+        mock_response.text = "{}"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        with patch.object(transport, "_get_client", return_value=mock_client):
+            with pytest.raises(TransportError, match="HTTP/2 is required"):
+                await transport._request("GET", "/test")
+
+    @pytest.mark.asyncio
     async def test_server_error_500(self, transport: HTTPTransport) -> None:
         """Test handling of 500 server error."""
         mock_response = MagicMock()
@@ -245,7 +296,7 @@ class TestHTTPTransportMethods:
             "request_id": "req-123",
             "execution_id": "exec-456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": {"result": "test"}}],
+            "outputs": [{"example_id": "1", "output": {"result": "test"}}],
             "operational_metrics": {"total_cost_usd": 0.001},
         }
 
@@ -253,9 +304,10 @@ class TestHTTPTransportMethods:
             transport, "_request", new_callable=AsyncMock, return_value=mock_response
         ):
             request = HybridExecuteRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
+                benchmark_id="bench_001",
                 config={"model": "fast"},
-                inputs=[{"input_id": "1", "data": {}}],
+                examples=[{"example_id": "1", "data": {}}],
             )
             response = await transport.execute(request)
 
@@ -284,7 +336,7 @@ class TestHTTPTransportMethods:
     async def test_keep_alive(self, transport: HTTPTransport) -> None:
         """Test keep-alive method."""
         mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
-        mock_response = {"alive": True, "session_id": "session-123"}
+        mock_response = {"status": "alive", "session_id": "session-123"}
 
         with (
             patch.object(
@@ -308,7 +360,7 @@ class TestHTTPTransportMethods:
     async def test_keep_alive_expired(self, transport: HTTPTransport) -> None:
         """Test keep-alive with expired session."""
         mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
-        mock_response = {"alive": False, "reason": "expired"}
+        mock_response = {"status": "expired", "reason": "expired"}
 
         with (
             patch.object(
@@ -329,6 +381,32 @@ class TestHTTPTransportMethods:
         assert alive is False
 
     @pytest.mark.asyncio
+    async def test_keep_alive_backward_compatible_alive_field(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Legacy wrappers returning {'alive': bool} are still supported."""
+        mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
+        mock_response = {"alive": True, "session_id": "session-123"}
+
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(
+                transport,
+                "_request",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+        ):
+            alive = await transport.keep_alive("session-123")
+
+        assert alive is True
+
+    @pytest.mark.asyncio
     async def test_keep_alive_not_supported(self, transport: HTTPTransport) -> None:
         """Test keep-alive when not supported."""
         mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=False)
@@ -338,6 +416,32 @@ class TestHTTPTransportMethods:
         ):
             with pytest.raises(NotImplementedError):
                 await transport.keep_alive("session-123")
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_no_status_or_alive_returns_false(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Keep-alive with response missing both 'status' and 'alive' returns False."""
+        mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
+        mock_response = {"session_id": "session-123", "info": "no relevant key"}
+
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(
+                transport,
+                "_request",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+        ):
+            alive = await transport.keep_alive("session-123")
+
+        assert alive is False
 
     @pytest.mark.asyncio
     async def test_close(self, transport: HTTPTransport) -> None:
@@ -580,7 +684,7 @@ class TestHTTPTransportAdditionalMethods:
         """Test discover_config_space method."""
         mock_data = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {
                     "name": "model",
@@ -595,7 +699,7 @@ class TestHTTPTransportAdditionalMethods:
         ):
             config_space = await transport.discover_config_space()
 
-        assert config_space.capability_id == "test_agent"
+        assert config_space.tunable_id == "test_agent"
         assert len(config_space.tvars) == 1
 
     @pytest.mark.asyncio
@@ -607,7 +711,7 @@ class TestHTTPTransportAdditionalMethods:
         mock_response = {
             "request_id": "req-123",
             "status": "completed",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95}},
         }
 
@@ -626,8 +730,9 @@ class TestHTTPTransportAdditionalMethods:
             ),
         ):
             request = HybridEvaluateRequest(
-                capability_id="test_agent",
-                evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+                tunable_id="test_agent",
+                benchmark_id="bench_001",
+                evaluations=[{"example_id": "1", "output": {}, "target": {}}],
             )
             response = await transport.evaluate(request)
 
@@ -648,7 +753,8 @@ class TestHTTPTransportAdditionalMethods:
             return_value=mock_caps,
         ):
             request = HybridEvaluateRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
+                benchmark_id="bench_001",
                 evaluations=[],
             )
             with pytest.raises(NotImplementedError):
@@ -691,9 +797,10 @@ class TestHTTPTransportAdditionalMethods:
         mock_request = AsyncMock(return_value=mock_response)
         with patch.object(transport, "_request", mock_request):
             request = HybridExecuteRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
+                benchmark_id="bench_001",
                 config={},
-                inputs=[],
+                examples=[],
                 timeout_ms=60000,  # 60 seconds
             )
             await transport.execute(request)
@@ -701,6 +808,144 @@ class TestHTTPTransportAdditionalMethods:
         # Verify timeout_override was passed
         call_args = mock_request.call_args
         assert call_args.kwargs.get("timeout_override") == 60.0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_timeout(self, transport: HTTPTransport) -> None:
+        """Test evaluate uses request timeout when provided."""
+        from traigent.hybrid.protocol import HybridEvaluateRequest
+
+        mock_caps = ServiceCapabilities(version="1.0", supports_evaluate=True)
+        mock_response = {
+            "request_id": "req-123",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+        }
+
+        mock_request = AsyncMock(return_value=mock_response)
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(transport, "_request", mock_request),
+        ):
+            request = HybridEvaluateRequest(
+                tunable_id="test_agent",
+                benchmark_id="bench_001",
+                evaluations=[{"example_id": "1", "output": {}, "target": {}}],
+                timeout_ms=45000,
+            )
+            await transport.evaluate(request)
+
+        call_args = mock_request.call_args
+        assert call_args.kwargs.get("timeout_override") == 45.0
+
+
+class TestHTTPTransportBenchmarks:
+    """Tests for benchmarks() endpoint."""
+
+    @pytest.fixture
+    def transport(self) -> HTTPTransport:
+        """Create transport for testing."""
+        return HTTPTransport(base_url="http://localhost:8080")
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_happy_path(self, transport: HTTPTransport) -> None:
+        """Test benchmarks returns all benchmarks with example IDs."""
+        mock_data = {
+            "benchmarks": [
+                {
+                    "benchmark_id": "bench_001",
+                    "tunable_ids": ["child-age-agent-a"],
+                    "example_ids": ["case_001", "case_002", "case_003"],
+                    "name": "Test Benchmark",
+                }
+            ],
+            "benchmarks_revision": None,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks("child-age-agent-a")
+
+        assert len(resp.benchmarks) == 1
+        assert resp.benchmarks[0].benchmark_id == "bench_001"
+        assert resp.benchmarks[0].tunable_ids == ["child-age-agent-a"]
+        assert resp.benchmarks[0].example_ids == ["case_001", "case_002", "case_003"]
+        assert resp.benchmarks_revision is None
+
+        # Verify correct path and params
+        mock_request.assert_called_once_with(
+            "GET",
+            "/traigent/v1/benchmarks",
+            params={"tunable_id": "child-age-agent-a"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_no_tunable_filter(self, transport: HTTPTransport) -> None:
+        """Test benchmarks without tunable_id filter."""
+        mock_data = {
+            "benchmarks": [
+                {
+                    "benchmark_id": "bench_001",
+                    "tunable_ids": ["agent-x"],
+                    "example_ids": ["q006", "q007"],
+                    "name": "Bench A",
+                },
+                {
+                    "benchmark_id": "bench_002",
+                    "tunable_ids": ["agent-y"],
+                    "example_ids": ["q008"],
+                    "name": "Bench B",
+                },
+            ],
+            "benchmarks_revision": "rev_abc",
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks()
+
+        assert len(resp.benchmarks) == 2
+        assert resp.benchmarks_revision == "rev_abc"
+
+        # Verify no params when tunable_id is None
+        mock_request.assert_called_once_with(
+            "GET", "/traigent/v1/benchmarks", params=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_empty_response(self, transport: HTTPTransport) -> None:
+        """Test benchmarks with empty response."""
+        mock_data = {
+            "benchmarks": [],
+            "benchmarks_revision": None,
+        }
+
+        mock_request = AsyncMock(return_value=mock_data)
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks("t")
+
+        assert resp.benchmarks == []
+        assert resp.benchmarks_revision is None
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_unknown_tunable_raises(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test benchmarks propagates 404 as TransportError."""
+        with patch.object(
+            transport,
+            "_request",
+            new_callable=AsyncMock,
+            side_effect=TransportError("Not found", status_code=404),
+        ):
+            with pytest.raises(TransportError) as exc_info:
+                await transport.benchmarks("bogus")
+            assert exc_info.value.status_code == 404
 
 
 class TestHTTPTransportContextManager:

@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ class _AsyncBool:
 class AuthMode(Enum):
     """Authentication modes supported by unified auth system."""
 
-    API_KEY = "api_key"
+    API_KEY = "api_key"  # pragma: allowlist secret
     JWT_TOKEN = "jwt_token"
     OAUTH2 = "oauth2"
     SERVICE_TO_SERVICE = "service_to_service"
@@ -84,7 +86,7 @@ class AuthCredentials:
     client_id: str | None = None
     client_secret: str | None = None
     service_key: str | None = None
-    backend_url: str | None = "https://api.traigent.ai"
+    backend_url: str | None = None  # Resolved from BackendConfig at runtime
     expires_at: float | None = None
     scopes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -146,9 +148,9 @@ class UnifiedAuthConfig:
 
     default_mode: AuthMode = AuthMode.API_KEY
     backend_base_url: str | None = (
-        None  # Will be set from BackendConfig if not provided
+        None  # Will be set from cloud backend config if not provided
     )
-    cloud_base_url: str = "https://api.traigent.ai"
+    cloud_base_url: str = ""  # Resolved from cloud backend config in __post_init__
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True
@@ -158,11 +160,13 @@ class UnifiedAuthConfig:
     api_key_critical_days: int = 7
 
     def __post_init__(self) -> None:
-        """Set backend URL from centralized config if not provided."""
-        if self.backend_base_url is None:
-            from traigent.config.backend_config import BackendConfig
+        """Set backend/cloud URLs from centralized config if not provided."""
+        from traigent.config.backend_config import BackendConfig
 
-            self.backend_base_url = BackendConfig.get_backend_url()
+        if self.backend_base_url is None:
+            self.backend_base_url = BackendConfig.get_cloud_backend_url()
+        if not self.cloud_base_url:
+            self.cloud_base_url = BackendConfig.get_cloud_backend_url()
 
 
 @dataclass
@@ -218,7 +222,7 @@ class APIKey:
 
         if isinstance(value, datetime):
             dt = value
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             dt = datetime.fromtimestamp(float(value), tz=UTC)
         elif isinstance(value, str):
             raw = value.strip()
@@ -382,9 +386,7 @@ class AuthManager:
         self._unified_auth = self
 
         self._provided_credentials: AuthCredentials | None = None
-        initial_api_key = (
-            api_key or os.getenv("TRAIGENT_API_KEY") or os.getenv("OPTIGEN_API_KEY")
-        )
+        initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
         initial_source = (
             "explicit" if api_key else ("environment" if initial_api_key else None)
         )
@@ -878,10 +880,19 @@ class AuthManager:
         Returns:
             Dictionary of authentication headers
         """
-        if not await self.is_authenticated():
+        auth_state = self.is_authenticated()
+        if inspect.isawaitable(auth_state):
+            auth_state = await auth_state
+        if not bool(auth_state):
             auth_result = await self.authenticate()
             if not auth_result.success or self._credentials is None:
                 self._authenticated = False
+                # Fall back to raw API key headers when full auth fails
+                # but an API key is available (e.g., local dev mode).
+                fallback = self._get_api_key_headers()
+                if fallback:
+                    self._add_common_headers(fallback, target)
+                    return fallback
                 return {}
 
         if not self._credentials:
@@ -1073,7 +1084,7 @@ class AuthManager:
         expires_dt: datetime | None
         if isinstance(expires_at, datetime):
             expires_dt = expires_at
-        elif isinstance(expires_at, (int, float)):
+        elif isinstance(expires_at, int | float):
             expires_dt = datetime.fromtimestamp(expires_at, tz=UTC)
         else:
             expires_dt = None
@@ -1422,11 +1433,13 @@ class AuthManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.build_api_base(
+            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+        )
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,

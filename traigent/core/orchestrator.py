@@ -39,12 +39,15 @@ if TYPE_CHECKING:
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
-from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
+from traigent.core.cost_enforcement import (
+    DEFAULT_COST_LIMIT_USD,
+    CostEnforcer,
+    CostEnforcerConfig,
+    Permit,
+)
 from traigent.core.cost_estimator import CostEstimator
 from traigent.core.logger_facade import LoggerFacade
-from traigent.core.metadata_helpers import (
-    merge_run_metrics_into_session_summary,
-)
+from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
 from traigent.core.metrics_aggregator import (
     aggregate_metrics,
@@ -65,15 +68,10 @@ from traigent.core.parallel_execution_manager import (
     ParallelExecutionManager,
     PermittedTrialResult,
 )
-from traigent.core.progress_manager import (
-    ProgressManager,
-)
-from traigent.core.result_selection import (
-    TieBreaker,
-    _is_minimization_objective,
-    select_best_configuration,
-)
+from traigent.core.progress_manager import ProgressManager
+from traigent.core.result_selection import TieBreaker, select_best_configuration
 from traigent.core.sample_budget import SampleBudgetManager
+from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
@@ -83,21 +81,17 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.exceptions import (
-    OptimizationError,
-)
+from traigent.utils.env_config import is_backend_offline
+from traigent.utils.exceptions import OptimizationError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
-from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.optimization_logger import OptimizationLogger
 
-from .tracing import (
-    optimization_session_span,
-    record_optimization_complete,
-)
+from .tracing import optimization_session_span, record_optimization_complete
 
 logger = get_logger(__name__)
 
@@ -249,15 +243,103 @@ class OptimizationOrchestrator:
         )
 
         self._configure_stop_conditions()
+        estimated_input_tokens, estimated_output_tokens = (
+            self._extract_estimated_tokens_per_example(
+                getattr(self.evaluator, "optimization_spec", None)
+            )
+        )
 
         self._cost_estimator = CostEstimator(
             cost_enforcer=self.cost_enforcer,
             max_trials=self._max_trials,
             max_total_examples=self._max_total_examples,
+            model_name=self.traigent_config.model,
+            candidate_models=self._extract_model_candidates_from_config_space(
+                getattr(self.optimizer, "config_space", None)
+            ),
+            estimated_input_tokens_per_example=estimated_input_tokens,
+            estimated_output_tokens_per_example=estimated_output_tokens,
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
         self._initialized = True
+
+    @staticmethod
+    def _extract_raw_model_candidates(definition: Any) -> Sequence[Any] | None:
+        """Extract raw candidate values from a config-space definition."""
+        if isinstance(definition, str):
+            return (definition,)
+        if isinstance(definition, Sequence) and not isinstance(
+            definition, (str, bytes, bytearray)
+        ):
+            return definition
+        if not isinstance(definition, dict):
+            return None
+
+        values = definition.get("values")
+        if isinstance(values, str):
+            return (values,)
+        if isinstance(values, Sequence) and not isinstance(
+            values, (str, bytes, bytearray)
+        ):
+            return values
+        return None
+
+    @staticmethod
+    def _normalize_model_candidates(
+        raw_candidates: Sequence[Any] | None,
+    ) -> tuple[str, ...]:
+        """Normalize candidate model values into a deduplicated tuple."""
+        if raw_candidates is None:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                candidate.strip()
+                for candidate in raw_candidates
+                if isinstance(candidate, str) and candidate.strip()
+            )
+        )
+
+    @staticmethod
+    def _extract_model_candidates_from_config_space(
+        config_space: dict[str, Any] | None,
+    ) -> tuple[str, ...]:
+        """Extract model candidates from optimizer config space for estimation."""
+        if not isinstance(config_space, dict):
+            return ()
+
+        for key in ("model", "model_name"):
+            normalized_candidates = (
+                OptimizationOrchestrator._normalize_model_candidates(
+                    OptimizationOrchestrator._extract_raw_model_candidates(
+                        config_space.get(key)
+                    )
+                )
+            )
+            if normalized_candidates:
+                return normalized_candidates
+
+        return ()
+
+    @staticmethod
+    def _extract_estimated_tokens_per_example(
+        optimization_spec: dict[str, Any] | None,
+    ) -> tuple[int | None, int | None]:
+        """Extract per-example token estimate from hybrid optimization metadata."""
+        if not isinstance(optimization_spec, dict):
+            return (None, None)
+
+        estimate = optimization_spec.get("estimated_tokens_per_example")
+        if not isinstance(estimate, dict):
+            return (None, None)
+
+        def _normalize(key: str) -> int | None:
+            value = estimate.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value
+            return None
+
+        return (_normalize("input_tokens"), _normalize("output_tokens"))
 
     def _init_constraints(
         self, raw_constraints: list[Callable[..., bool]] | None
@@ -380,7 +462,7 @@ class OptimizationOrchestrator:
         cost_config = None
         if cost_limit is not None or cost_approved:
             cost_config = CostEnforcerConfig(
-                limit=float(cost_limit) if cost_limit else 2.0,
+                limit=float(cost_limit) if cost_limit else DEFAULT_COST_LIMIT_USD,
                 approved=bool(cost_approved),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
@@ -520,8 +602,12 @@ class OptimizationOrchestrator:
     @property
     def progress(self) -> float:
         """Get optimization progress as a percentage (0.0 to 1.0)."""
-        if self.max_trials is None or self.max_trials == 0:
-            return 1.0 if self.trial_count == 0 else 0.0
+        if self.max_trials is None:
+            # Unbounded runs have indeterminate completion percentage.
+            return 0.0
+        if self.max_trials == 0:
+            # Explicit no-op optimization is immediately complete.
+            return 1.0
 
         return min(self.trial_count / self.max_trials, 1.0)
 
@@ -537,13 +623,18 @@ class OptimizationOrchestrator:
         # Find trial with best primary objective (assuming first objective is primary)
         if self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
-            best_trial = max(
-                self._trials,
-                key=lambda t: t.metrics.get(primary_objective, float("-inf")),
-                default=None,
-            )
-            if best_trial is not None:
-                self._best_trial_cached = best_trial
+            minimization = is_minimization_objective(primary_objective)
+            if minimization:
+                best_trial = min(
+                    self._trials,
+                    key=lambda t: t.metrics.get(primary_objective, float("inf")),
+                )
+            else:
+                best_trial = max(
+                    self._trials,
+                    key=lambda t: t.metrics.get(primary_objective, float("-inf")),
+                )
+            self._best_trial_cached = best_trial
             return best_trial
 
         # If no objectives defined, return last trial
@@ -680,20 +771,22 @@ class OptimizationOrchestrator:
 
         primary_objective = self.optimizer.objectives[0]
         new_score = (
-            trial_result.get_metric(primary_objective, 0.0)
+            trial_result.get_metric(primary_objective)
             if hasattr(trial_result, "get_metric")
-            else ((trial_result.metrics or {}).get(primary_objective, 0.0))
+            else ((trial_result.metrics or {}).get(primary_objective))
         )
-        new_score = new_score or 0.0
+        if new_score is None:
+            return False
 
         current_score = (
-            self._best_trial_cached.get_metric(primary_objective, 0.0)
+            self._best_trial_cached.get_metric(primary_objective)
             if hasattr(self._best_trial_cached, "get_metric")
-            else (self._best_trial_cached.metrics or {}).get(primary_objective, 0.0)
+            else (self._best_trial_cached.metrics or {}).get(primary_objective)
         )
-        current_score = current_score or 0.0
+        if current_score is None:
+            return True
 
-        minimization = _is_minimization_objective(primary_objective)
+        minimization = is_minimization_objective(primary_objective)
         if minimization:
             return new_score < current_score
         return new_score > current_score
@@ -885,6 +978,13 @@ class OptimizationOrchestrator:
         # during parallel trial execution (P1/P2/P3 fixes)
         async with self._state_lock:
             self._trials.append(trial_result)
+            logger.info(
+                "Trial #%d result: status=%s, config=%s, metrics=%s",
+                current_trial_index + 1,
+                trial_result.status,
+                trial_result.config,
+                trial_result.metrics,
+            )
             self._log_trial(trial_result)
 
             # Track cost for cost limit enforcement
@@ -934,7 +1034,6 @@ class OptimizationOrchestrator:
                 trial_result=trial_result,
                 session_id=session_id,
                 dataset_name=getattr(self, "_dataset_name", "dataset"),
-                content_scores=getattr(self, "_content_scores", None),
             )
 
         if hasattr(self.optimizer, "tell"):
@@ -1474,15 +1573,24 @@ class OptimizationOrchestrator:
 
         return trial_count, "continue"
 
-    def _submit_usage_analytics(self) -> None:
+    async def _submit_usage_analytics(self) -> None:
         """Submit usage analytics if enabled."""
 
         if not self.traigent_config.enable_usage_analytics:
             return
 
+        if is_backend_offline():
+            logger.debug("Skipping analytics submission: backend is offline")
+            return
+
         try:
-            collect_and_submit_analytics(self.traigent_config)
+            from traigent.utils.local_analytics import LocalAnalytics
+
+            analytics = LocalAnalytics(self.traigent_config)
+            await asyncio.wait_for(analytics.submit_usage_stats(), timeout=10.0)
             logger.debug("Analytics submitted after optimization completion")
+        except TimeoutError:
+            logger.debug("Analytics submission timed out")
         except Exception as exc:
             logger.debug("Analytics submission failed: %s", exc)
 
@@ -1528,9 +1636,7 @@ class OptimizationOrchestrator:
         self._function_descriptor = descriptor
         self._workflow_trace_manager._function_descriptor = descriptor
 
-        # Compute content scores once for the dataset (used for backend analytics)
         self._dataset_name = getattr(dataset, "name", "dataset")
-        self._content_scores = self._compute_content_scores(dataset)
 
         if function_name and function_name != descriptor.identifier:
             logger.debug(
@@ -1784,6 +1890,31 @@ class OptimizationOrchestrator:
         )
 
         merge_run_metrics_into_session_summary(result)
+
+        # Compute statistical significance badges per objective
+        # Guarded: significance is post-processing and must not fail the run
+        try:
+            orientations: dict[str, str] | None = None
+            if self.objective_schema and self.objective_schema.objectives:
+                orientations = {
+                    obj.name: str(obj.orientation)
+                    for obj in self.objective_schema.objectives
+                }
+            significance = compute_significance(
+                trials=result.trials,
+                objectives=self.optimizer.objectives,
+                objective_orientations=orientations,
+                alpha=0.05,
+            )
+            if significance:
+                result.metadata["statistical_significance"] = significance
+        except Exception:
+            logger.warning(
+                "Statistical significance computation failed; "
+                "optimization results are unaffected",
+                exc_info=True,
+            )
+
         await self.backend_session_manager.update_weighted_scores(result, session_id)
         self.backend_session_manager.submit_session_aggregation(result, session_id)
 
@@ -1794,7 +1925,7 @@ class OptimizationOrchestrator:
             result, session_id, session_summary
         )
 
-        self._submit_usage_analytics()
+        await self._submit_usage_analytics()
 
         # Submit collected workflow traces and graph to backend
         await self._submit_workflow_traces(session_id)
@@ -1804,7 +1935,8 @@ class OptimizationOrchestrator:
         cost_status = self.cost_enforcer.get_status()
         logger.info(
             f"Optimization {self._optimization_id} completed: "
-            f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
+            f"{len(self._trials)} trials, best score: "
+            f"{'N/A' if result.best_score is None else f'{result.best_score:.4f}'}, "
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
 
@@ -2065,11 +2197,11 @@ class OptimizationOrchestrator:
         total_trials = len(self._trials)
         success_count = self._successful_trials
 
-        best_score = 0.0
+        best_score: float | None = None
         best_trial = self.best_result
         if best_trial and self.optimizer.objectives:
             primary_objective = self.optimizer.objectives[0]
-            best_score = best_trial.get_metric(primary_objective, 0.0) or 0.0
+            best_score = best_trial.get_metric(primary_objective)
 
         success_rate = (success_count / total_trials) if total_trials else 0.0
 
@@ -2077,7 +2209,7 @@ class OptimizationOrchestrator:
 
         logger.info(
             f"Progress: {trial_count} trials, "
-            f"best score: {best_score:.4f}, "
+            f"best score: {'N/A' if best_score is None else f'{best_score:.4f}'}, "
             f"success rate: {success_rate:.2%}, "
             f"elapsed: {elapsed:.1f}s"
         )
@@ -2145,14 +2277,14 @@ class OptimizationOrchestrator:
         Returns:
             OptimizationResult with all trial data
         """
-        successful_trials = [t for t in self._trials if t.is_successful]
         selection = select_best_configuration(
-            trials=successful_trials,
+            trials=self._trials,
             primary_objective=self.optimizer.objectives[0],
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
+            comparability_mode=self.traigent_config.get_comparability_mode(),
         )
         best_config = selection.best_config
         best_score = selection.best_score
@@ -2162,6 +2294,7 @@ class OptimizationOrchestrator:
         duration = time.time() - self._start_time if self._start_time else 0.0
 
         # Create convergence info
+        successful_trials = [t for t in self._trials if t.is_successful]
         convergence_info = {
             "total_trials": len(self._trials),
             "successful_trials": len(successful_trials),
@@ -2219,60 +2352,3 @@ class OptimizationOrchestrator:
             )
 
         return optimization_result
-
-    def _compute_content_scores(
-        self, dataset: Dataset
-    ) -> dict[str, dict[int, float]] | None:
-        """Compute content-based scores for the dataset (once per optimization run).
-
-        Computes uniqueness and novelty scores using TF-IDF and cosine similarity.
-        These scores are computed once and reused across all trials since the
-        dataset doesn't change.
-
-        Args:
-            dataset: Evaluation dataset
-
-        Returns:
-            Dict with keys "uniqueness" and "novelty" mapping example_index -> score,
-            or None if content scoring is disabled or fails
-        """
-        try:
-            from traigent.metrics.content_scoring import ContentScorer
-
-            # Extract input texts from dataset
-            example_inputs = []
-            for example in dataset.examples:
-                input_data = str(example.input_data)
-                example_inputs.append(input_data)
-
-            # Instantiate scorer (per-trial pattern for thread safety)
-            scorer = ContentScorer()
-
-            # Compute scores
-            uniqueness_scores = scorer.compute_uniqueness_scores(example_inputs)
-            novelty_scores = scorer.compute_novelty_scores(example_inputs)
-
-            logger.debug(
-                "Computed content scores for %s examples: uniqueness range [%.2f, %.2f], "
-                "novelty range [%.2f, %.2f]",
-                len(example_inputs),
-                min(uniqueness_scores.values()) if uniqueness_scores else 0.0,
-                max(uniqueness_scores.values()) if uniqueness_scores else 0.0,
-                min(novelty_scores.values()) if novelty_scores else 0.0,
-                max(novelty_scores.values()) if novelty_scores else 0.0,
-            )
-
-            return {
-                "uniqueness": uniqueness_scores,
-                "novelty": novelty_scores,
-            }
-
-        except ImportError:
-            logger.debug(
-                "Content scoring disabled: scikit-learn not installed. "
-                "Install with: pip install traigent[analytics]"
-            )
-            return None
-        except Exception as e:
-            logger.warning("Failed to compute content scores: %s", e)
-            return None

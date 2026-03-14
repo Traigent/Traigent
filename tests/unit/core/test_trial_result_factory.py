@@ -259,6 +259,38 @@ class TestBuildSuccessResult:
         # Should still create result, may not have total_cost in metrics
         assert result.trial_id == "trial_123"
 
+    def test_fallback_comparability_uses_aggregated_metrics_when_examples_empty(
+        self, eval_config
+    ):
+        """Empty example_results should still infer full metric coverage."""
+        eval_result = Mock()
+        eval_result.metrics = {"accuracy": 0.85, "cost": 0.05}
+        eval_result.success_rate = 1.0
+        eval_result.has_errors = False
+        eval_result.outputs = ["output1", "output2"]
+        eval_result.example_results = []
+        eval_result.summary_stats = None
+        eval_result.total_examples = 2
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=2,
+            total_cost=0.05,
+            optuna_trial_id=None,
+        )
+
+        comparability = result.metadata["comparability"]
+        assert comparability["primary_objective"] == "accuracy"
+        assert comparability["evaluation_mode"] == "evaluated"
+        assert comparability["examples_with_primary_metric"] == 2
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["ranking_eligible"] is True
+        assert comparability["per_metric_coverage"]["accuracy"]["present"] == 2
+        assert comparability["warning_codes"] == []
+
 
 class TestBuildPrunedResult:
     """Test build_pruned_result function."""
@@ -392,22 +424,29 @@ class TestBuildFailedResult:
 
     def test_basic_failed_result(self, eval_config):
         """Test basic failed result construction."""
-        error = ValueError("Test error")
-
-        result = build_failed_result(
-            trial_id="trial_789",
-            evaluation_config=eval_config,
-            duration=0.3,
-            error=error,
-            progress_state=None,
-            optuna_trial_id=None,
-        )
+        try:
+            raise ValueError("Test error")
+        except ValueError as error:
+            result = build_failed_result(
+                trial_id="trial_789",
+                evaluation_config=eval_config,
+                duration=0.3,
+                error=error,
+                progress_state=None,
+                optuna_trial_id=None,
+            )
 
         assert result.trial_id == "trial_789"
         assert result.config == eval_config
         assert result.status == TrialStatus.FAILED
         assert result.duration == 0.3
         assert result.error_message == "Test error"
+        assert result.error is not None
+        assert result.error.message == "Test error"
+        assert result.error.error_type == "ValueError"
+        assert "raise ValueError" in result.error.traceback
+        assert result.error.config == eval_config
+        assert result.error.timestamp.tzinfo == UTC
 
     def test_failed_with_progress_state(self, eval_config, progress_state):
         """Test failed result with progress state."""
@@ -469,8 +508,8 @@ class TestBuildFailedResult:
             optuna_trial_id=None,
         )
 
-        # Metadata should be empty dict when no optuna_trial_id
-        assert result.metadata == {}
+        assert "optuna_trial_id" not in result.metadata
+        assert "comparability" in result.metadata
 
     def test_failed_invalid_cost(self, eval_config):
         """Test failed result with invalid cost value."""

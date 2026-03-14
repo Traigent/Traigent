@@ -17,6 +17,8 @@ Environment Variables:
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_MOCK_LLM: Bypass all cost tracking when "true" (no real LLM costs)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
+    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
+        (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning)
 """
@@ -39,6 +41,9 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_COST_LIMIT_USD = 2.0
+EMA_COLD_START_WARNING_TRIALS = 5
 
 
 class CostTrackingRequiredError(Exception):
@@ -105,7 +110,7 @@ class CostEnforcerConfig:
             Used for in-flight budget reservation in parallel execution.
     """
 
-    limit: float = 2.0
+    limit: float = DEFAULT_COST_LIMIT_USD
     approved: bool = False
     warning_threshold: float = 0.5
     fallback_trial_limit: int = 10
@@ -204,6 +209,7 @@ class CostEnforcer:
         self._reserved_cost: float = 0.0
         self._cost_samples: list[float] = []  # Track actual costs for estimation
         self._estimated_cost: float = self.config.estimated_cost_per_trial
+        self._cold_start_warning_emitted: bool = False
 
         # Permit tracking for single-release semantics (Phase 1)
         self._permit_counter: int = 0  # Monotonic counter for permit IDs
@@ -215,6 +221,16 @@ class CostEnforcer:
         # cause stranded permits (acquired with tracking, released without tracking).
         # If you need to change mock mode, create a new CostEnforcer instance.
         self._mock_mode_cached: bool = self._check_mock_mode()
+        # Cache strict-cost-tracking mode at init for consistent run semantics.
+        # NOTE: Changing TRAIGENT_REQUIRE_COST_TRACKING or
+        # TRAIGENT_STRICT_COST_ACCOUNTING after CostEnforcer initialization has
+        # NO EFFECT. This mirrors mock-mode latching and avoids env reads in hot paths.
+        self._require_cost_tracking_cached: bool = (
+            self._check_require_cost_tracking_mode()
+        )
+        # Cache divergence threshold at init for consistent run semantics.
+        # Invalid values fail-fast instead of silently defaulting in hot path checks.
+        self._cost_divergence_threshold: float = self._check_cost_divergence_threshold()
 
         # Sync/async usage tracking for mixing detection (Phase 3.2)
         self._sync_used: bool = False
@@ -227,6 +243,45 @@ class CostEnforcer:
         there are no real LLM API costs to track.
         """
         return os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
+
+    @staticmethod
+    def _check_require_cost_tracking_mode() -> bool:
+        """Read strict cost-tracking mode from environment."""
+        require_tracking = (
+            os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true"
+        )
+        strict_accounting = (
+            os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING", "").lower() == "true"
+        )
+        return require_tracking or strict_accounting
+
+    def _require_cost_tracking(self) -> bool:
+        """Return latched strict cost-tracking mode for this instance."""
+        return self._require_cost_tracking_cached
+
+    @staticmethod
+    def _check_cost_divergence_threshold() -> float:
+        """Read and validate divergence threshold from environment.
+
+        Raises:
+            ValueError: If threshold is non-numeric or non-positive.
+        """
+        threshold_str = os.getenv("TRAIGENT_COST_DIVERGENCE_THRESHOLD", "2.0")
+        try:
+            threshold = float(threshold_str)
+        except ValueError as exc:
+            raise ValueError(
+                "Invalid TRAIGENT_COST_DIVERGENCE_THRESHOLD="
+                f"{threshold_str!r}. Expected a numeric value."
+            ) from exc
+
+        if threshold <= 0:
+            raise ValueError(
+                "Invalid TRAIGENT_COST_DIVERGENCE_THRESHOLD="
+                f"{threshold_str!r}. Value must be greater than 0."
+            )
+
+        return threshold
 
     def _check_mixing(self, is_async: bool) -> None:
         """Log when switching between sync and async method usage."""
@@ -284,7 +339,7 @@ class CostEnforcer:
                 return default
 
         return CostEnforcerConfig(
-            limit=safe_float("TRAIGENT_RUN_COST_LIMIT", 2.0),
+            limit=safe_float("TRAIGENT_RUN_COST_LIMIT", DEFAULT_COST_LIMIT_USD),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
             fallback_trial_limit=safe_int("TRAIGENT_FALLBACK_TRIAL_LIMIT", 10),
@@ -480,39 +535,7 @@ Options:
             return Permit(id=0, amount=self._estimated_cost, active=True)
 
         with self._lock:
-            if self._unknown_cost_mode:
-                # In unknown cost mode, use trial count including in-flight
-                total_trials = self._trial_count + self._in_flight_count
-                if total_trials >= self.config.fallback_trial_limit:
-                    return Permit(id=-1, amount=0.0, active=False)  # Denied
-
-                self._in_flight_count += 1
-                self._permit_counter += 1
-                permit = Permit(
-                    id=self._permit_counter,
-                    amount=self._estimated_cost,
-                    active=True,
-                )
-                self._active_permits[permit.id] = permit
-                return permit
-
-            # Check if there's budget available considering reserved in-flight cost
-            reserved_amount = self._estimated_cost
-            total_committed = self._accumulated_cost + self._reserved_cost
-            if total_committed + reserved_amount > self.config.limit:
-                return Permit(id=-1, amount=0.0, active=False)  # Denied
-
-            # Reserve budget for this trial
-            self._in_flight_count += 1
-            self._reserved_cost += reserved_amount
-            self._permit_counter += 1
-            permit = Permit(
-                id=self._permit_counter,
-                amount=reserved_amount,
-                active=True,
-            )
-            self._active_permits[permit.id] = permit
-            return permit
+            return self._acquire_permit_locked()
 
     def release_permit(self, permit: Permit) -> bool:
         """Release a permit without tracking cost.
@@ -540,47 +563,7 @@ Options:
             return True
 
         with self._lock:
-            # Check single-release semantics under lock to prevent race condition
-            # where two concurrent calls both see active=True
-            if not permit.mark_released():
-                logger.warning(
-                    "Double-release attempt for permit %d - ignoring",
-                    permit.id,
-                )
-                return False
-
-            # Validate permit exists in active registry
-            if permit.id not in self._active_permits:
-                logger.warning(
-                    "Foreign or already-removed permit %d passed to release_permit",
-                    permit.id,
-                )
-                # Still return True since permit was marked released, but don't
-                # adjust counters for unknown permits
-
-            # Remove from active permits registry
-            removed = self._active_permits.pop(permit.id, None)
-
-            if removed is not None and self._in_flight_count > 0:
-                self._in_flight_count -= 1
-                self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
-                logger.debug(
-                    "Released permit %d without cost tracking "
-                    "(in_flight: %d, released: $%.4f)",
-                    permit.id,
-                    self._in_flight_count,
-                    permit.amount,
-                )
-            elif removed is None:
-                # Already warned above about foreign/removed permit
-                pass
-            else:
-                logger.warning(
-                    "release_permit called with no in-flight permits (permit %d)",
-                    permit.id,
-                )
-
-        return True
+            return self._release_permit_locked(permit, caller="release_permit")
 
     async def release_permit_async(self, permit: Permit) -> bool:
         """Async version of release_permit.
@@ -603,47 +586,7 @@ Options:
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
         with self._lock:
-            # Check single-release semantics under lock to prevent race condition
-            # where two concurrent calls both see active=True
-            if not permit.mark_released():
-                logger.warning(
-                    "Double-release attempt for permit %d - ignoring",
-                    permit.id,
-                )
-                return False
-
-            # Validate permit exists in active registry
-            if permit.id not in self._active_permits:
-                logger.warning(
-                    "Foreign or already-removed permit %d passed to release_permit_async",
-                    permit.id,
-                )
-                # Still return True since permit was marked released, but don't
-                # adjust counters for unknown permits
-
-            # Remove from active permits registry
-            removed = self._active_permits.pop(permit.id, None)
-
-            if removed is not None and self._in_flight_count > 0:
-                self._in_flight_count -= 1
-                self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
-                logger.debug(
-                    "Released permit %d without cost tracking "
-                    "(in_flight: %d, released: $%.4f)",
-                    permit.id,
-                    self._in_flight_count,
-                    permit.amount,
-                )
-            elif removed is None:
-                # Already warned above about foreign/removed permit
-                pass
-            else:
-                logger.warning(
-                    "release_permit_async called with no in-flight permits (permit %d)",
-                    permit.id,
-                )
-
-        return True
+            return self._release_permit_locked(permit, caller="release_permit_async")
 
     async def acquire_permit_async(self) -> Permit:
         """Async version of acquire_permit for use in async contexts.
@@ -665,39 +608,7 @@ Options:
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
         with self._lock:
-            if self._unknown_cost_mode:
-                # In unknown cost mode, use trial count including in-flight
-                total_trials = self._trial_count + self._in_flight_count
-                if total_trials >= self.config.fallback_trial_limit:
-                    return Permit(id=-1, amount=0.0, active=False)  # Denied
-
-                self._in_flight_count += 1
-                self._permit_counter += 1
-                permit = Permit(
-                    id=self._permit_counter,
-                    amount=self._estimated_cost,
-                    active=True,
-                )
-                self._active_permits[permit.id] = permit
-                return permit
-
-            # Check if there's budget available considering reserved in-flight cost
-            reserved_amount = self._estimated_cost
-            total_committed = self._accumulated_cost + self._reserved_cost
-            if total_committed + reserved_amount > self.config.limit:
-                return Permit(id=-1, amount=0.0, active=False)  # Denied
-
-            # Reserve budget for this trial
-            self._in_flight_count += 1
-            self._reserved_cost += reserved_amount
-            self._permit_counter += 1
-            permit = Permit(
-                id=self._permit_counter,
-                amount=reserved_amount,
-                active=True,
-            )
-            self._active_permits[permit.id] = permit
-            return permit
+            return self._acquire_permit_locked()
 
     def track_cost(
         self,
@@ -725,7 +636,8 @@ Options:
 
         Raises:
             CostTrackingRequiredError: If cost is None and
-                TRAIGENT_REQUIRE_COST_TRACKING=true.
+                TRAIGENT_REQUIRE_COST_TRACKING=true or
+                TRAIGENT_STRICT_COST_ACCOUNTING=true.
             ValueError: If a negative cost is provided.
         """
         self._check_mixing(is_async=False)
@@ -737,71 +649,21 @@ Options:
             permit.mark_released()  # Mark for consistency
             return
 
+        # Read environment-driven strictness once per call.
+        # Keep this outside the lock to minimize lock hold time.
+        require_cost_tracking = self._require_cost_tracking()
+
         with self._lock:
-            # Check if permit was already released (e.g., via exception path)
-            # Done under lock to prevent race condition where two concurrent
-            # calls both see active=True
-            permit_was_active = permit.mark_released()
-            if not permit_was_active:
-                logger.debug(
-                    "Permit %d already released before track_cost - "
-                    "tracking cost but not releasing reservation",
-                    permit.id,
-                )
-
-            # Validate permit exists in active registry (unless already released)
-            if permit_was_active and permit.id not in self._active_permits:
-                logger.warning(
-                    "Foreign or already-removed permit %d passed to track_cost",
-                    permit.id,
-                )
-
-            self._trial_count += 1
-            trial_desc = f"trial {trial_id or self._trial_count}"
-
-            # Release in-flight reservation only if permit was active
-            if permit_was_active:
-                # Remove from active permits registry
-                removed = self._active_permits.pop(permit.id, None)
-
-                if removed is not None and self._in_flight_count > 0:
-                    self._in_flight_count -= 1
-                    self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
-
-            # Handle unknown cost with optional strict mode
-            if cost is None:
-                if (
-                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
-                    == "true"
-                ):
-                    raise CostTrackingRequiredError(
-                        f"Cost extraction failed for {trial_desc} but "
-                        "TRAIGENT_REQUIRE_COST_TRACKING=true. "
-                        "Set to 'false' or fix cost extraction."
-                    )
-                if not self._unknown_cost_mode:
-                    logger.warning(
-                        "Cost unknown for %s. Falling back to trial count limit (%d).",
-                        trial_desc,
-                        self.config.fallback_trial_limit,
-                    )
-                    self._unknown_cost_mode = True
-            else:
-                self._accumulated_cost += cost
-                status = "failed" if trial_failed else "completed"
-                logger.debug(
-                    "%s %s: +$%.4f (total: $%.4f)",
-                    trial_desc,
-                    status,
-                    cost,
-                    self._accumulated_cost,
-                )
-
-                # Update cost estimate using exponential moving average
-                self._update_cost_estimate(cost)
-
-                # Emit warnings at thresholds
-                self._check_thresholds()
+            self._track_cost_locked(
+                cost,
+                permit=permit,
+                trial_failed=trial_failed,
+                trial_id=trial_id,
+                require_cost_tracking=require_cost_tracking,
+                caller="track_cost",
+                include_limit_in_warning=True,
+                include_status_log=True,
+            )
 
     def _update_cost_estimate(self, actual_cost: float) -> None:
         """Update the cost estimate using exponential moving average.
@@ -837,12 +699,7 @@ Options:
         if self._estimated_cost <= 0 or actual_cost <= 0:
             return
 
-        threshold_str = os.getenv("TRAIGENT_COST_DIVERGENCE_THRESHOLD", "2.0")
-        try:
-            threshold = float(threshold_str)
-        except ValueError:
-            threshold = 2.0
-
+        threshold = self._cost_divergence_threshold
         ratio = actual_cost / self._estimated_cost
 
         if ratio > threshold:
@@ -991,7 +848,8 @@ Options:
 
         Raises:
             CostTrackingRequiredError: If cost is None and
-                TRAIGENT_REQUIRE_COST_TRACKING=true.
+                TRAIGENT_REQUIRE_COST_TRACKING=true or
+                TRAIGENT_STRICT_COST_ACCOUNTING=true.
             ValueError: If a negative cost is provided.
         """
         self._check_mixing(is_async=True)
@@ -1003,60 +861,240 @@ Options:
             permit.mark_released()  # Mark for consistency
             return
 
+        # Read environment-driven strictness once per call.
+        # Keep this outside the lock to minimize lock hold time.
+        require_cost_tracking = self._require_cost_tracking()
+
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
         with self._lock:
-            # Check if permit was already released (e.g., via exception path)
-            # Done under lock to prevent race condition where two concurrent
-            # calls both see active=True
-            permit_was_active = permit.mark_released()
-            if not permit_was_active:
+            self._track_cost_locked(
+                cost,
+                permit=permit,
+                trial_failed=trial_failed,
+                trial_id=trial_id,
+                require_cost_tracking=require_cost_tracking,
+                caller="track_cost_async",
+                include_limit_in_warning=False,
+                include_status_log=False,
+            )
+
+    def _acquire_permit_locked(self) -> Permit:
+        if self._unknown_cost_mode:
+            # In unknown cost mode, use trial count including in-flight
+            total_trials = self._trial_count + self._in_flight_count
+            if total_trials >= self.config.fallback_trial_limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+
+            self._in_flight_count += 1
+            self._permit_counter += 1
+            permit = Permit(
+                id=self._permit_counter,
+                amount=self._estimated_cost,
+                active=True,
+            )
+            self._active_permits[permit.id] = permit
+            return permit
+
+        # Check if there's budget available considering reserved in-flight cost
+        reserved_amount = self._estimated_cost
+        total_committed = self._accumulated_cost + self._reserved_cost
+        if total_committed + reserved_amount > self.config.limit:
+            return Permit(id=-1, amount=0.0, active=False)  # Denied
+
+        # Reserve budget for this trial
+        self._in_flight_count += 1
+        self._reserved_cost += reserved_amount
+        self._permit_counter += 1
+        permit = Permit(
+            id=self._permit_counter,
+            amount=reserved_amount,
+            active=True,
+        )
+        self._active_permits[permit.id] = permit
+        return permit
+
+    def _release_permit_locked(self, permit: Permit, *, caller: str) -> bool:
+        # Check single-release semantics under lock to prevent race condition
+        # where two concurrent calls both see active=True
+        if not permit.mark_released():
+            logger.warning(
+                "Double-release attempt for permit %d - ignoring",
+                permit.id,
+            )
+            return False
+
+        self._release_reserved_permit_locked(
+            permit,
+            caller=caller,
+            log_release=True,
+        )
+
+        return True
+
+    def _release_reserved_permit_locked(
+        self,
+        permit: Permit,
+        *,
+        caller: str,
+        log_release: bool,
+    ) -> None:
+        """Release an active permit reservation under the lock."""
+        if permit.id not in self._active_permits:
+            logger.warning(
+                "Foreign or already-removed permit %d passed to %s",
+                permit.id,
+                caller,
+            )
+
+        removed = self._active_permits.pop(permit.id, None)
+        if removed is None:
+            return
+
+        if self._in_flight_count > 0:
+            self._in_flight_count -= 1
+            self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
+            if log_release:
                 logger.debug(
-                    "Permit %d already released before track_cost_async - "
-                    "tracking cost but not releasing reservation",
+                    "Released permit %d without cost tracking "
+                    "(in_flight: %d, released: $%.4f)",
                     permit.id,
+                    self._in_flight_count,
+                    permit.amount,
                 )
+            return
 
-            # Validate permit exists in active registry (unless already released)
-            if permit_was_active and permit.id not in self._active_permits:
+        logger.warning(
+            "%s called with no in-flight permits (permit %d)",
+            caller,
+            permit.id,
+        )
+
+    def _handle_unknown_cost_locked(
+        self,
+        trial_desc: str,
+        *,
+        require_cost_tracking: bool,
+        include_limit_in_warning: bool,
+    ) -> None:
+        """Handle unknown cost under the lock, including strict-mode failure."""
+        if require_cost_tracking:
+            raise CostTrackingRequiredError(
+                f"Cost extraction failed for {trial_desc} but "
+                "TRAIGENT_REQUIRE_COST_TRACKING=true or "
+                "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
+                "Set to 'false' or fix cost extraction."
+            )
+
+        if not self._unknown_cost_mode:
+            if include_limit_in_warning:
                 logger.warning(
-                    "Foreign or already-removed permit %d passed to track_cost_async",
-                    permit.id,
+                    "Cost unknown for %s. Falling back to trial count limit (%d).",
+                    trial_desc,
+                    self.config.fallback_trial_limit,
                 )
-
-            self._trial_count += 1
-            trial_desc = f"trial {trial_id or self._trial_count}"
-
-            # Release in-flight reservation only if permit was active
-            if permit_was_active:
-                # Remove from active permits registry
-                removed = self._active_permits.pop(permit.id, None)
-
-                if removed is not None and self._in_flight_count > 0:
-                    self._in_flight_count -= 1
-                    self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
-
-            # Handle unknown cost with optional strict mode
-            if cost is None:
-                if (
-                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
-                    == "true"
-                ):
-                    raise CostTrackingRequiredError(
-                        f"Cost extraction failed for {trial_desc} but "
-                        "TRAIGENT_REQUIRE_COST_TRACKING=true. "
-                        "Set to 'false' or fix cost extraction."
-                    )
-                if not self._unknown_cost_mode:
-                    logger.warning(
-                        "Cost unknown for %s, falling back to trial limit",
-                        trial_desc,
-                    )
-                    self._unknown_cost_mode = True
             else:
-                self._accumulated_cost += cost
-                self._update_cost_estimate(cost)
-                self._check_thresholds()
+                logger.warning(
+                    "Cost unknown for %s, falling back to trial limit",
+                    trial_desc,
+                )
+            self._unknown_cost_mode = True
+
+        self._maybe_warn_cold_start_estimate()
+
+    def _record_known_cost_locked(
+        self,
+        cost: float,
+        *,
+        trial_desc: str,
+        trial_failed: bool,
+        include_status_log: bool,
+    ) -> None:
+        """Record a known trial cost under the lock."""
+        self._accumulated_cost += cost
+        if include_status_log:
+            status = "failed" if trial_failed else "completed"
+            logger.debug(
+                "%s %s: +$%.4f (total: $%.4f)",
+                trial_desc,
+                status,
+                cost,
+                self._accumulated_cost,
+            )
+
+        self._update_cost_estimate(cost)
+        self._check_thresholds()
+
+    def _track_cost_locked(
+        self,
+        cost: float | None,
+        *,
+        permit: Permit,
+        trial_failed: bool,
+        trial_id: str | None,
+        require_cost_tracking: bool,
+        caller: str,
+        include_limit_in_warning: bool,
+        include_status_log: bool,
+    ) -> None:
+        # Check if permit was already released (e.g., via exception path)
+        # Done under lock to prevent race condition where two concurrent
+        # calls both see active=True
+        permit_was_active = permit.mark_released()
+        if not permit_was_active:
+            logger.debug(
+                "Permit %d already released before %s - "
+                "tracking cost but not releasing reservation",
+                permit.id,
+                caller,
+            )
+
+        # Validate permit exists in active registry (unless already released)
+        self._trial_count += 1
+        trial_desc = f"trial {trial_id or self._trial_count}"
+
+        # Release in-flight reservation only if permit was active
+        if permit_was_active:
+            self._release_reserved_permit_locked(
+                permit,
+                caller=caller,
+                log_release=False,
+            )
+
+        # Handle unknown cost with optional strict mode
+        if cost is None:
+            self._handle_unknown_cost_locked(
+                trial_desc,
+                require_cost_tracking=require_cost_tracking,
+                include_limit_in_warning=include_limit_in_warning,
+            )
+            return
+
+        self._record_known_cost_locked(
+            cost,
+            trial_desc=trial_desc,
+            trial_failed=trial_failed,
+            include_status_log=include_status_log,
+        )
+
+    def _maybe_warn_cold_start_estimate(self) -> None:
+        """Warn once when estimate stays at cold-start value after repeated unknown costs."""
+
+        if self._cold_start_warning_emitted:
+            return
+        if self._cost_samples:
+            return
+        if self._trial_count < EMA_COLD_START_WARNING_TRIALS:
+            return
+
+        logger.warning(
+            "Cost estimate is still at initial value ($%.4f) after %d trials with "
+            "unknown runtime costs. Consider enabling "
+            "TRAIGENT_REQUIRE_COST_TRACKING=true to fail fast on missing costs.",
+            self._estimated_cost,
+            self._trial_count,
+        )
+        self._cold_start_warning_emitted = True
 
     def get_status(self) -> CostStatus:
         """Get current cost tracking status for logging/auditing.
@@ -1097,6 +1135,7 @@ Options:
             self._reserved_cost = 0.0
             self._cost_samples = []
             self._estimated_cost = self.config.estimated_cost_per_trial
+            self._cold_start_warning_emitted = False
             # Clear active permits registry (Phase 4 fix)
             self._active_permits.clear()
             # NOTE: Do NOT reset _permit_counter - IDs must remain unique across
@@ -1123,10 +1162,13 @@ Options:
             I2: reserved_cost >= 0
             I3: len(active_permits) == in_flight_count
             I4: accumulated_cost + reserved_cost <= limit + ε
+                (enforced only when in_flight_count > 0 and not unknown_cost_mode;
+                 post-execution actuals may exceed reserved estimates)
             I5: Released permits have active=False (structural - verified via Permit design)
             I6: Permit IDs monotonically increasing (structural - verified via counter)
             I7: Denied permits: id=-1, amount=0 (structural - verified via construction)
             I8: Sum of active permit amounts equals reserved_cost
+                (enforced only outside unknown_cost_mode)
         """
         violations: list[str] = []
 
@@ -1151,10 +1193,17 @@ Options:
                     f"in_flight_count = {self._in_flight_count}"
                 )
 
-            # I4: accumulated + reserved <= limit + ε
+            # I4: accumulated + reserved <= limit + ε (reservation phase only)
+            # Actual accumulated spend can exceed limit after execution if per-trial
+            # actuals are higher than reserved estimates. Also, unknown-cost mode
+            # enforces fallback trial-count limits rather than budget arithmetic.
             total = self._accumulated_cost + self._reserved_cost
             epsilon = 0.0001  # Floating point tolerance
-            if total > self.config.limit + epsilon:
+            if (
+                self._in_flight_count > 0
+                and not self._unknown_cost_mode
+                and total > self.config.limit + epsilon
+            ):
                 violations.append(
                     f"I4 violated: accumulated ({self._accumulated_cost:.4f}) + "
                     f"reserved ({self._reserved_cost:.4f}) = {total:.4f} > "
@@ -1166,13 +1215,16 @@ Options:
             # - I6: _permit_counter only increments, never decreases
             # - I7: Denied permits are constructed with id=-1, amount=0.0, active=False
 
-            # I8: Sum of active permit amounts equals reserved_cost
-            permit_sum = sum(p.amount for p in self._active_permits.values())
-            if abs(permit_sum - self._reserved_cost) > epsilon:
-                violations.append(
-                    f"I8 violated: sum(permit.amount) = {permit_sum:.4f} != "
-                    f"reserved_cost = {self._reserved_cost:.4f}"
-                )
+            # I8: Sum of active permit amounts equals reserved_cost in normal mode.
+            # In unknown-cost mode, permits remain tracked for single-release safety
+            # but reserved_cost accounting is intentionally bypassed.
+            if not self._unknown_cost_mode:
+                permit_sum = sum(p.amount for p in self._active_permits.values())
+                if abs(permit_sum - self._reserved_cost) > epsilon:
+                    violations.append(
+                        f"I8 violated: sum(permit.amount) = {permit_sum:.4f} != "
+                        f"reserved_cost = {self._reserved_cost:.4f}"
+                    )
 
         if violations:
             for v in violations:

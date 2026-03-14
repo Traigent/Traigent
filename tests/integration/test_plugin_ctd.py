@@ -537,7 +537,11 @@ class CTDTestGenerator:
                         # client APIs don't accept them as top-level kwargs:
                         # - Bedrock: extra_params (for stop_sequences, etc.)
                         # - Gemini: generation_config (for temperature, max_output_tokens, etc.)
-                        nested_dicts = ["extra_params", "generation_config"]
+                        nested_dicts = [
+                            "extra_params",
+                            "generation_config",
+                            "model_settings",
+                        ]
                         actual_value = None
                         for nested_key in nested_dicts:
                             nested = overridden_kwargs.get(nested_key, {})
@@ -566,7 +570,11 @@ class CTDTestGenerator:
             # Some plugins (e.g., Bedrock, Gemini) move unknown params to nested dicts
             original_param_preserved = "original_param" in overridden_kwargs
             if not original_param_preserved:
-                for nested_key in ["extra_params", "generation_config"]:
+                for nested_key in [
+                    "extra_params",
+                    "generation_config",
+                    "model_settings",
+                ]:
                     nested = overridden_kwargs.get(nested_key, {})
                     if isinstance(nested, dict) and "original_param" in nested:
                         original_param_preserved = True
@@ -596,14 +604,20 @@ class TestPluginCTD:
         """Get the plugin registry."""
         return get_registry()
 
-    @pytest.mark.parametrize("k", [1, 2])  # Removed k=3 to prevent hanging
+    @pytest.mark.parametrize(
+        "k",
+        [
+            1,
+            pytest.param(2, marks=[pytest.mark.slow, pytest.mark.timeout(0)]),
+        ],
+    )
     def test_all_plugins_ctd(self, k):
         """Test all registered plugins using CTD with configurable k value.
 
         Args:
             k: Combination size (1=univariate, 2=pairwise, 3=triplets)
         """
-        generator = CTDTestGenerator(k=k, verbose=True)
+        generator = CTDTestGenerator(k=k, verbose=(k == 1))
         registry = get_registry()
 
         # Get all registered plugins

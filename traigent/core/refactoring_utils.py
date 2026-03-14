@@ -30,9 +30,7 @@ class RefactoringValidator:
         logger.info("Establishing refactoring baseline...")
 
         # Measure import time
-        start_time = time.time()
-        importlib.import_module("traigent.core.orchestrator")
-        import_time = time.time() - start_time
+        import_time = self._measure_import_time("traigent.core.orchestrator")
 
         # Measure instantiation time
         start_time = time.time()
@@ -63,6 +61,12 @@ class RefactoringValidator:
         self.baseline_metrics = baseline
         logger.info(f"Baseline established: {baseline}")
         return baseline
+
+    def _measure_import_time(self, module_name: str) -> float:
+        """Measure the time required to import a module."""
+        start_time = time.time()
+        importlib.import_module(module_name)
+        return time.time() - start_time
 
     def validate_api_compatibility(self) -> dict[str, Any]:
         """Ensure public APIs remain unchanged after refactoring."""
@@ -114,8 +118,7 @@ class RefactoringValidator:
             self.establish_baseline()
 
         # Measure current performance
-        start_time = time.time()
-        current_import_time = time.time() - start_time
+        current_import_time = self._measure_import_time("traigent.core.orchestrator")
 
         # Check for regression
         baseline_import = self.baseline_metrics.get("import_time", 0)

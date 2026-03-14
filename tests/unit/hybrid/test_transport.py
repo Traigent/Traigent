@@ -101,6 +101,25 @@ class TestCreateTransport:
                 auth_header="Bearer token",
                 timeout=60.0,
                 max_connections=10,
+                require_http2=False,
+            )
+
+    def test_create_http_transport_with_require_http2(self) -> None:
+        """Test creating HTTP transport with strict HTTP/2 requirement."""
+        with patch("traigent.hybrid.http_transport.HTTPTransport") as mock_http:
+            mock_http.return_value = MagicMock()
+            _ = create_transport(
+                transport_type="http",
+                base_url="https://api.example.com",
+                require_http2=True,
+            )
+
+            mock_http.assert_called_once_with(
+                base_url="https://api.example.com",
+                auth_header=None,
+                timeout=300.0,
+                max_connections=10,
+                require_http2=True,
             )
 
     def test_create_mcp_transport(self) -> None:
@@ -176,13 +195,16 @@ class TestHybridTransportProtocol:
             async def capabilities(self):
                 pass
 
-            async def discover_config_space(self):
+            async def discover_config_space(self, *, tunable_id=None):
                 pass
 
             async def execute(self, request):
                 pass
 
             async def evaluate(self, request):
+                pass
+
+            async def benchmarks(self, tunable_id=None):
                 pass
 
             async def health_check(self):

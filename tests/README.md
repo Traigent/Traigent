@@ -25,12 +25,8 @@ pytest tests/e2e/          # End-to-end tests only
 
 ## Excluded Directories
 
-The following directories contain demo and example code with their own test requirements and are **not** part of the main SDK test suite:
-
-- `demos/` - Demo applications (may require TensorFlow, specific databases, etc.)
-- `playground/` - Experimental code and LangChain examples
-
-These directories are automatically excluded by pytest.ini configuration.
+Certain directories (legacy tests, manual validation, bridges) are automatically excluded
+by the `addopts` in `pyproject.toml` (`[tool.pytest.ini_options]`).
 
 ## Test Standards
 

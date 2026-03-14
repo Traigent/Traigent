@@ -450,6 +450,33 @@ class TestCostOptimizationAI:
             pricing["aws"]["compute"]["spot"] < pricing["aws"]["compute"]["on_demand"]
         )
 
+    def test_fetch_pricing_skips_failing_models(self):
+        """Test fetch_current_pricing skips models that raise exceptions."""
+        from unittest.mock import patch
+
+        ai = CostOptimizationAI()
+
+        call_count = 0
+
+        def failing_pricing(model, logger=None):
+            nonlocal call_count
+            call_count += 1
+            if "gpt-4o-mini" in model:
+                raise ValueError("test error")
+            # Return valid per-1K rates for other models
+            return (0.0025, 0.01)
+
+        with patch(
+            "traigent.utils.cost_calculator.get_model_pricing_per_1k",
+            side_effect=failing_pricing,
+        ):
+            pricing = ai.fetch_current_pricing(providers=["openai"])
+
+        # gpt-4o-mini should be skipped, others should be present
+        assert "openai" in pricing
+        assert "gpt-4o-mini" not in pricing["openai"]
+        assert call_count > 0
+
     def test_concurrent_analysis(self):
         """Test thread safety of analysis operations."""
         import threading

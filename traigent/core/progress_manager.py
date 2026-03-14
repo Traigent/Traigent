@@ -109,7 +109,7 @@ def log_progress(
     """
     logger.info(
         f"Progress: {trial_count} trials, "
-        f"best score: {state.best_score or 0.0:.4f}, "
+        f"best score: {'N/A' if state.best_score is None else f'{state.best_score:.4f}'}, "
         f"success rate: {state.success_rate:.2%}, "
         f"elapsed: {state.elapsed_time:.1f}s"
     )

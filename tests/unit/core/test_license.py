@@ -977,11 +977,7 @@ class TestValidateSync:
         )
         validator._cached_license = cached
 
-        # Simulate being in a running event loop
-        with patch("asyncio.get_event_loop") as mock_loop:
-            loop = MagicMock()
-            loop.is_running.return_value = True
-            mock_loop.return_value = loop
+        with patch("asyncio.get_running_loop", return_value=MagicMock()):
             result = validator.validate_sync()
 
         assert result is cached
@@ -990,45 +986,72 @@ class TestValidateSync:
         """Test validate_sync returns free license in running loop with no cache."""
         validator = LicenseValidator()
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            loop = MagicMock()
-            loop.is_running.return_value = True
-            mock_loop.return_value = loop
+        with patch("asyncio.get_running_loop", return_value=MagicMock()):
             result = validator.validate_sync()
 
         assert result.tier == LicenseTier.FREE
 
-    def test_runs_validate_async_when_loop_not_running(self):
-        """Test validate_sync runs validate_async when loop is not running."""
+    def test_runs_validate_async_when_no_loop_is_running(self):
+        """Test validate_sync runs validate_async via asyncio.run when needed."""
         validator = LicenseValidator(offline_mode=True)
+        expected = LicenseInfo(
+            tier=LicenseTier.FREE,
+            features=set(),
+            validation_source="none",
+        )
 
-        with patch("asyncio.get_event_loop") as mock_get_loop:
-            loop = MagicMock()
-            loop.is_running.return_value = False
-            mock_get_loop.return_value = loop
-            expected = LicenseInfo(
-                tier=LicenseTier.FREE,
-                features=set(),
-                validation_source="none",
-            )
-            loop.run_until_complete.return_value = expected
-            result = validator.validate_sync()
+        def _run_stub(coro):
+            coro.close()
+            return expected
+
+        with patch(
+            "asyncio.get_running_loop", side_effect=RuntimeError("no running loop")
+        ):
+            with patch("asyncio.run", side_effect=_run_stub) as mock_run:
+                result = validator.validate_sync()
 
         assert result is expected
+        mock_run.assert_called_once()
 
     def test_handles_runtime_error_no_loop(self):
         """Test validate_sync handles RuntimeError when no event loop exists."""
         validator = LicenseValidator(offline_mode=True)
+        expected = LicenseInfo(
+            tier=LicenseTier.FREE,
+            features=set(),
+            validation_source="none",
+        )
 
-        with patch("asyncio.get_event_loop", side_effect=RuntimeError("no loop")):
-            with patch("asyncio.run") as mock_run:
-                expected = LicenseInfo(
-                    tier=LicenseTier.FREE,
-                    features=set(),
-                    validation_source="none",
-                )
-                mock_run.return_value = expected
+        def _run_stub(coro):
+            coro.close()
+            return expected
+
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
+            with patch("asyncio.run", side_effect=_run_stub) as mock_run:
                 result = validator.validate_sync()
+
+        assert result is expected
+
+    def test_uses_fresh_runner_when_default_loop_is_closed(self):
+        """A closed default loop should not break synchronous validation."""
+        validator = LicenseValidator(offline_mode=True)
+        expected = LicenseInfo(
+            tier=LicenseTier.FREE,
+            features=set(),
+            validation_source="none",
+        )
+
+        closed_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(closed_loop)
+        closed_loop.close()
+
+        try:
+            with patch.object(
+                validator, "validate_async", AsyncMock(return_value=expected)
+            ):
+                result = validator.validate_sync()
+        finally:
+            asyncio.set_event_loop(None)
 
         assert result is expected
 

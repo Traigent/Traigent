@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.core.constants import MAX_RETRIES
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -222,9 +223,10 @@ class TokenManager:
 
         def _finalize(fut: asyncio.Task[None]) -> None:
             try:
+                if fut.cancelled():
+                    logger.debug("Token refresh task cancelled")
+                    return
                 fut.result()
-            except asyncio.CancelledError:  # pragma: no cover - cancellation path
-                logger.debug("Token refresh task cancelled")
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("❌ Background token refresh failed", exc_info=exc)
             finally:
@@ -318,11 +320,13 @@ class TokenManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.build_api_base(
+            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+        )
         refresh_url = f"{backend_api_url}/auth/refresh"
 
         client = ResilientClient(
-            max_retries=3,
+            max_retries=MAX_RETRIES,
             base_delay=1.0,
             max_delay=10.0,
             jitter_factor=0.1,
@@ -485,11 +489,7 @@ class TokenManager:
         Returns:
             AuthCredentials populated with token data
         """
-        from traigent.cloud.auth import (
-            AuthCredentials,
-            AuthMode,
-            TokenExpiredError,
-        )
+        from traigent.cloud.auth import AuthCredentials, AuthMode, TokenExpiredError
 
         expires_in = token_data.get("expires_in")
         expires_at = time.time() + expires_in if expires_in else None

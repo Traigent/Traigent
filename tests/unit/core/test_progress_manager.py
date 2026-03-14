@@ -182,7 +182,7 @@ class TestLogProgress:
         with patch("traigent.core.progress_manager.logger") as mock_logger:
             log_progress(trial_count=5, state=state)
             call_args = mock_logger.info.call_args[0][0]
-            assert "0.0000" in call_args  # default best score
+            assert "N/A" in call_args
 
 
 class TestProgressManager:

@@ -438,7 +438,10 @@ class TestTraigentDiagnostics:
 
         TraigentDiagnostics._check_permissions(report)
 
-        # Should succeed for all test paths
+        # Should succeed for all test paths and exercise write/unlink mocks
+        assert (
+            mock_write.called
+        ), "write_text should have been called to test permissions"
         assert len(report.successes) >= 1
         assert any("Can write to" in s["message"] for s in report.successes)
 

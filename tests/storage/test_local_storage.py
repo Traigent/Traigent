@@ -68,6 +68,21 @@ class TestLocalStorageManager:
         session_file = self.storage_path / "sessions" / f"{session_id}.json"
         assert session_file.exists()
 
+    def test_create_session_ids_are_unique_even_with_same_timestamp(self):
+        """Session IDs should remain unique when creation time is identical."""
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return fixed_time
+
+        with patch("traigent.storage.local_storage.datetime", FrozenDateTime):
+            first = self.storage.create_session("duplicate_func")
+            second = self.storage.create_session("duplicate_func")
+
+        assert first != second
+
     def test_create_session_minimal_params(self):
         """Test session creation with minimal parameters."""
         session_id = self.storage.create_session("minimal_func")
@@ -77,6 +92,13 @@ class TestLocalStorageManager:
         assert session.optimization_config is None
         assert session.metadata == {}
         assert session.status == "pending"
+
+    def test_create_session_ids_are_unique(self):
+        """Session IDs should not collide for rapid consecutive sessions."""
+        session_id_1 = self.storage.create_session("same_func")
+        session_id_2 = self.storage.create_session("same_func")
+
+        assert session_id_1 != session_id_2
 
     def test_create_session_with_metadata(self):
         """Test session creation with comprehensive metadata."""
@@ -377,6 +399,47 @@ class TestLocalStorageManager:
         session = self.storage.load_session(session_id)
         assert len(session.trials) == 10
         assert session.best_score == 0.95  # Last trial had highest score
+
+    def test_acquire_lock_removes_stale_pid_lock(self):
+        """Stale lock files should be cleaned up when owner pid is dead."""
+        from traigent.utils.function_identity import sanitize_identifier
+
+        lock_dir = self.storage_path / ".locks"
+        lock_dir.mkdir(exist_ok=True, parents=True)
+        lock_path = lock_dir / f"{sanitize_identifier('stale_lock')}.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+
+        with patch.object(self.storage, "_is_process_alive", return_value=False):
+            with self.storage.acquire_lock("stale_lock", timeout=0.2):
+                assert lock_path.exists()
+
+        assert not lock_path.exists()
+
+    def test_acquire_lock_keeps_live_pid_lock(self):
+        """Active lock owner pid should not be treated as stale."""
+        from traigent.utils.function_identity import sanitize_identifier
+
+        lock_dir = self.storage_path / ".locks"
+        lock_dir.mkdir(exist_ok=True, parents=True)
+        lock_path = lock_dir / f"{sanitize_identifier('live_lock')}.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+
+        with patch.object(self.storage, "_is_process_alive", return_value=True):
+            with pytest.raises(TimeoutError, match="Could not acquire lock"):
+                with self.storage.acquire_lock("live_lock", timeout=0.1):
+                    pass
+
+    def test_is_process_alive_uses_psutil_pid_exists(self):
+        """PID liveness checks should rely on psutil instead of signaling."""
+        with patch("traigent.storage.local_storage.psutil.pid_exists", return_value=True) as pid_exists:
+            assert self.storage._is_process_alive(12345) is True
+        pid_exists.assert_called_once_with(12345)
+
+    def test_is_process_alive_rejects_non_positive_pids(self):
+        """Non-positive PIDs should be rejected before consulting psutil."""
+        with patch("traigent.storage.local_storage.psutil.pid_exists") as pid_exists:
+            assert self.storage._is_process_alive(0) is False
+        pid_exists.assert_not_called()
 
     def test_edge_case_large_data(self):
         """Test handling of large configuration and metadata."""
