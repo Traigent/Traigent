@@ -13,13 +13,34 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
+from typing import Any
 
 import pytest
 
 from traigent.api.config_space import ConfigSpace, _ImportedConstraintExpression
 from traigent.api.constraints import implies, require
-from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
+from traigent.api.parameter_ranges import (
+    Choices,
+    IntRange,
+    LogRange,
+    ParameterRange,
+    Range,
+)
 from traigent.api.validation_protocol import SatStatus
+
+
+class DummyParameterRange(ParameterRange):
+    """Minimal ParameterRange used to exercise fallback TVL logic."""
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+        self.name = None
+
+    def to_config_value(self) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
+        return self.value
+
+    def get_default(self) -> Any | None:
+        return None
 
 
 class TestConfigSpaceCreation:
@@ -697,6 +718,219 @@ class TestTVLImport:
                     ]
                 }
             )
+
+    def test_from_tvl_spec_supports_legacy_configuration_space(self) -> None:
+        """Legacy configuration_space specs should still import."""
+        restored = ConfigSpace.from_tvl_spec(
+            {
+                "configuration_space": {
+                    "temperature": {"low": 0.0, "high": 1.0},
+                    "model": {"choices": ["gpt-4o", "gpt-4.1"]},
+                },
+                "constraints": [
+                    {
+                        "expr": "params.temperature >= 0.1",
+                        "description": "positive temp",
+                        "id": "legacy-1",
+                    }
+                ],
+                "description": "legacy spec",
+            }
+        )
+
+        assert isinstance(restored.tvars["temperature"], Range)
+        assert isinstance(restored.tvars["model"], Choices)
+        assert restored.description == "legacy spec"
+        assert restored.constraints[0].id == "legacy-1"
+
+    def test_from_tvl_spec_rejects_invalid_top_level_sections(self) -> None:
+        """Top-level TVL import validation should fail fast on malformed input."""
+        with pytest.raises(ValueError, match="must define either 'tvars' or 'configuration_space'"):
+            ConfigSpace.from_tvl_spec({"description": "missing space"})
+
+        with pytest.raises(ValueError, match="configuration_space must be a mapping"):
+            ConfigSpace.from_tvl_spec({"configuration_space": []})
+
+        with pytest.raises(ValueError, match="description must be a string"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "temperature",
+                            "type": "float",
+                            "domain": [0.0, 1.0],
+                        }
+                    ],
+                    "description": 123,
+                }
+            )
+
+    def test_from_tvl_spec_rejects_invalid_tvar_entries(self) -> None:
+        """TVAR import should validate list shape, names, and domains."""
+        with pytest.raises(ValueError, match="must be a non-empty list"):
+            ConfigSpace.from_tvl_spec({"tvars": []})
+
+        with pytest.raises(ValueError, match="TVAR at index 0 must be a mapping"):
+            ConfigSpace.from_tvl_spec({"tvars": ["bad"]})
+
+        with pytest.raises(ValueError, match="requires a 'name' string"):
+            ConfigSpace.from_tvl_spec({"tvars": [{"type": "float", "domain": [0.0, 1.0]}]})
+
+        with pytest.raises(ValueError, match="range domain must contain a 2-item list"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "temperature",
+                            "type": "float",
+                            "domain": {"kind": "range", "range": [0.0]},
+                        }
+                    ]
+                }
+            )
+
+        with pytest.raises(ValueError, match="unsupported domain kind"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "temperature",
+                            "type": "float",
+                            "domain": {"kind": "mystery", "range": [0.0, 1.0]},
+                        }
+                    ]
+                }
+            )
+
+        with pytest.raises(ValueError, match="domain must be a list or mapping"):
+            ConfigSpace.from_tvl_spec(
+                {"tvars": [{"name": "temperature", "type": "float", "domain": "bad"}]}
+            )
+
+    def test_from_tvl_spec_rejects_invalid_choices_extension_shape(self) -> None:
+        """Choices extension import requires a values list."""
+        with pytest.raises(ValueError, match="Choices spec requires 'values'"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "model",
+                            "type": "enum[str]",
+                            "x_traigent_parameter_range": "Choices",
+                            "domain": {"kind": "range", "range": [0.0, 1.0]},
+                        }
+                    ]
+                }
+            )
+
+    def test_from_tvl_spec_rejects_invalid_integral_values(self) -> None:
+        """Integer field coercion should reject invalid bool/string inputs."""
+        with pytest.raises(ValueError, match="got bool"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "beam_width",
+                            "type": "int",
+                            "x_traigent_parameter_range": "IntRange",
+                            "domain": {"kind": "range", "range": [True, 8]},
+                        }
+                    ]
+                }
+            )
+
+        with pytest.raises(ValueError, match="got str"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "beam_width",
+                            "type": "int",
+                            "x_traigent_parameter_range": "IntRange",
+                            "domain": {"kind": "range", "range": [1, 8]},
+                            "default": "2",
+                        }
+                    ]
+                }
+            )
+
+    def test_from_tvl_spec_rejects_invalid_constraints(self) -> None:
+        """Constraint import should validate structure and metadata types."""
+        with pytest.raises(ValueError, match="constraints must be a list or mapping"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                    ],
+                    "constraints": "bad",
+                }
+            )
+
+        with pytest.raises(ValueError, match="Constraint at index 0 must be a mapping"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                    ],
+                    "constraints": [123],
+                }
+            )
+
+        with pytest.raises(ValueError, match="description must be a string"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                    ],
+                    "constraints": [{"expr": "params.temperature >= 0.1", "description": 123}],
+                }
+            )
+
+        with pytest.raises(ValueError, match="id must be a string"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                    ],
+                    "constraints": [{"expr": "params.temperature >= 0.1", "id": 123}],
+                }
+            )
+
+        with pytest.raises(ValueError, match="must define 'expr' or both 'when' and 'then'"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                    ],
+                    "constraints": [{"when": "params.temperature >= 0.1"}],
+                }
+            )
+
+    def test_imported_constraint_expression_explain_and_list_constraints(self) -> None:
+        """Imported expression wrappers should support explain and list-style constraints."""
+        restored = ConfigSpace.from_tvl_spec(
+            {
+                "tvars": [
+                    {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
+                ],
+                "constraints": [{"expr": "params.temperature >= 0.1"}],
+            }
+        )
+
+        expr = restored.constraints[0].expr
+        assert isinstance(expr, _ImportedConstraintExpression)
+        assert expr.explain() == "params.temperature >= 0.1"
+
+    def test_fallback_domain_and_type_logic_for_unknown_parameter_range(self) -> None:
+        """Unknown ParameterRange subclasses should use generic fallback export."""
+        list_domain = ConfigSpace._tvar_to_domain(DummyParameterRange(["a", "b"]))
+        tuple_domain = ConfigSpace._tvar_to_domain(DummyParameterRange((1, 2)))
+        scalar_domain = ConfigSpace._tvar_to_domain(DummyParameterRange({"kind": "x"}))
+
+        assert ConfigSpace._infer_tvar_type(DummyParameterRange(["x"])) == "float"
+        assert list_domain == {"kind": "enum", "values": ["a", "b"]}
+        assert tuple_domain == {"kind": "range", "range": [1, 2]}
+        assert scalar_domain == {"kind": "enum", "values": [{"kind": "x"}]}
 
 
 class TestInferTvarType:
