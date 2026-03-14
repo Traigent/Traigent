@@ -5,26 +5,42 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": {
+        "import": "./dist/index.d.ts",
+        "require": "./dist/index.d.cts"
+      },
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
     "./langchain": {
-      "types": "./dist/integrations/langchain/index.d.ts",
+      "types": {
+        "import": "./dist/integrations/langchain/index.d.ts",
+        "require": "./dist/integrations/langchain/index.d.cts"
+      },
       "import": "./dist/integrations/langchain/index.js",
       "require": "./dist/integrations/langchain/index.cjs"
     },
     "./vercel-ai": {
-      "types": "./dist/integrations/vercel-ai/index.d.ts",
+      "types": {
+        "import": "./dist/integrations/vercel-ai/index.d.ts",
+        "require": "./dist/integrations/vercel-ai/index.d.cts"
+      },
       "import": "./dist/integrations/vercel-ai/index.js",
       "require": "./dist/integrations/vercel-ai/index.cjs"
     },
     "./openai": {
-      "types": "./dist/integrations/openai/index.d.ts",
+      "types": {
+        "import": "./dist/integrations/openai/index.d.ts",
+        "require": "./dist/integrations/openai/index.d.cts"
+      },
       "import": "./dist/integrations/openai/index.js",
       "require": "./dist/integrations/openai/index.cjs"
     },
     "./babel-plugin-seamless": {
+      "types": {
+        "import": "./dist/seamless/babel-plugin.d.ts",
+        "require": "./dist/seamless/babel-plugin.d.cts"
+      },
       "import": "./dist/seamless/babel-plugin.js",
       "require": "./dist/seamless/babel-plugin.cjs"
     }

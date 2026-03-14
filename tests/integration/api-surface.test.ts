@@ -77,6 +77,7 @@ describe('stable API declaration surface', () => {
       openai: collectDeclarationExports(resolve(ROOT, 'dist/integrations/openai/index.d.ts')),
       langchain: collectDeclarationExports(resolve(ROOT, 'dist/integrations/langchain/index.d.ts')),
       vercelAi: collectDeclarationExports(resolve(ROOT, 'dist/integrations/vercel-ai/index.d.ts')),
+      seamless: collectDeclarationExports(resolve(ROOT, 'dist/seamless/babel-plugin.d.ts')),
     };
 
     const expected = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as typeof actual;
