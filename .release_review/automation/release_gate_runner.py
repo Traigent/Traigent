@@ -348,11 +348,15 @@ def write_inventories(run_dir: Path) -> None:
     test_files = sorted(str(path) for path in Path("tests").rglob("*.py")) if Path("tests").exists() else []
 
     src_files = sorted(src_files)
-    resolve_child_path(inventories, "src_files.txt").write_text(
-        "\n".join(src_files) + ("\n" if src_files else "")
+    write_guarded_text(
+        inventories,
+        "src_files.txt",
+        "\n".join(src_files) + ("\n" if src_files else ""),
     )
-    resolve_child_path(inventories, "tests_files.txt").write_text(
-        "\n".join(test_files) + ("\n" if test_files else "")
+    write_guarded_text(
+        inventories,
+        "tests_files.txt",
+        "\n".join(test_files) + ("\n" if test_files else ""),
     )
 
 

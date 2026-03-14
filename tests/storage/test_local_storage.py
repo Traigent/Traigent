@@ -429,6 +429,18 @@ class TestLocalStorageManager:
                 with self.storage.acquire_lock("live_lock", timeout=0.1):
                     pass
 
+    def test_is_process_alive_uses_psutil_pid_exists(self):
+        """PID liveness checks should rely on psutil instead of signaling."""
+        with patch("traigent.storage.local_storage.psutil.pid_exists", return_value=True) as pid_exists:
+            assert self.storage._is_process_alive(12345) is True
+        pid_exists.assert_called_once_with(12345)
+
+    def test_is_process_alive_rejects_non_positive_pids(self):
+        """Non-positive PIDs should be rejected before consulting psutil."""
+        with patch("traigent.storage.local_storage.psutil.pid_exists") as pid_exists:
+            assert self.storage._is_process_alive(0) is False
+        pid_exists.assert_not_called()
+
     def test_edge_case_large_data(self):
         """Test handling of large configuration and metadata."""
         large_config = {f"param_{i}": f"value_{i}" for i in range(1000)}
