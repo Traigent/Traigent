@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
@@ -95,6 +96,7 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 
 
 logger = get_logger(__name__)
+_ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -714,6 +716,37 @@ class BackendIntegratedClient:
         merged_headers.setdefault("User-Agent", "Traigent-SDK/1.0")
         return merged_headers
 
+    def _build_feature_upload_url(self, experiment_run_id: str) -> str | None:
+        """Return a sanitized feature-upload URL for the configured backend API."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            logger.debug(
+                "Skipping example feature upload because api_base_url is invalid: %s",
+                self.api_base_url,
+            )
+            return None
+
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            logger.debug(
+                "Skipping example feature upload because api_base_url contains unsupported URL components"
+            )
+            return None
+
+        encoded_run_id = quote(experiment_run_id, safe="")
+        upload_path = (
+            f"{parsed.path.rstrip('/')}/analytics/example-scoring/"
+            f"{encoded_run_id}/features"
+        )
+        return urlunparse(
+            parsed._replace(path=upload_path, params="", query="", fragment="")
+        )
+
     def upload_example_features(
         self,
         experiment_run_id: str,
@@ -722,6 +755,13 @@ class BackendIntegratedClient:
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
         if not experiment_run_id or not feature_kind or not features:
+            return False
+
+        if feature_kind not in _ALLOWED_EXAMPLE_FEATURE_KINDS:
+            logger.debug(
+                "Skipping example feature upload for unsupported feature kind: %s",
+                feature_kind,
+            )
             return False
 
         try:
@@ -733,11 +773,9 @@ class BackendIntegratedClient:
             return False
 
         headers = self._get_sync_auth_headers(target="backend")
-
-        url = (
-            f"{self.api_base_url}/analytics/example-scoring/"
-            f"{experiment_run_id}/features"
-        )
+        url = self._build_feature_upload_url(experiment_run_id)
+        if not url:
+            return False
         payload = {"feature_kind": feature_kind, "features": features}
 
         try:

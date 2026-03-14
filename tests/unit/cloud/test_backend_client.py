@@ -243,6 +243,47 @@ class TestBackendIntegratedClient:
         assert call_args.kwargs["json"]["feature_kind"] == "simhash_v1"
         assert call_args.kwargs["headers"]["Authorization"] == "Bearer test-token"
 
+    @patch("requests.post")
+    def test_upload_example_features_rejects_unsupported_feature_kind(
+        self, mock_post, backend_client
+    ):
+        """Example feature upload only accepts supported feature kinds."""
+        result = backend_client.upload_example_features(
+            "run_123",
+            "unknown_v1",
+            [{"example_id": "ex_1", "feature": "0f0f"}],
+        )
+
+        assert result is False
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_upload_example_features_url_encodes_run_id(
+        self, mock_post, backend_client
+    ):
+        """Run IDs are path-encoded before constructing the upload URL."""
+        mock_response = MagicMock(status_code=200, text="ok")
+        mock_post.return_value = mock_response
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ):
+            result = backend_client.upload_example_features(
+                "run/../unsafe",
+                "simhash_v1",
+                [{"example_id": "ex_1", "feature": "0f0f"}],
+            )
+
+        assert result is True
+        assert (
+            mock_post.call_args.args[0]
+            == (
+                f"{backend_client.api_base_url}/analytics/example-scoring/"
+                "run%2F..%2Funsafe/features"
+            )
+        )
+
 
 class TestPrivacyFirstOptimization:
     """Test privacy-first optimization functionality."""
