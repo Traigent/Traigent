@@ -19,8 +19,11 @@ jobs:
 
       - name: Check smoke configuration
         id: config
+        env:
+          TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}
+          TRAIGENT_API_URL: ${{ secrets.TRAIGENT_API_URL }}
         run: |
-          if [ -z "${{ secrets.TRAIGENT_API_KEY }}" ] || [ -z "${{ secrets.TRAIGENT_API_URL }}" ]; then
+          if [ -z "$TRAIGENT_API_KEY" ] || [ -z "$TRAIGENT_API_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "Typed session smoke is not configured; skipping."
           else

@@ -15,6 +15,17 @@ _TOKEN_PATTERN = re.compile(r"\w+")
 _SIMHASH_BITS = 64
 
 
+def _simhash_digest(token: str) -> bytes:
+    """Return a stable digest for simhash weighting.
+
+    Simhash uses hashing for deterministic fingerprinting, not for security.
+    """
+    try:
+        return hashlib.sha256(token.encode("utf-8"), usedforsecurity=False).digest()
+    except TypeError:  # pragma: no cover - compatibility for older hashlib builds
+        return hashlib.sha256(token.encode("utf-8")).digest()
+
+
 class SimhashFeatureExtractor:
     """Build per-example simhash features for backend-side content analytics."""
 
@@ -38,7 +49,7 @@ class SimhashFeatureExtractor:
         bit_scores = [0] * _SIMHASH_BITS
 
         for token, weight in weights.items():
-            token_hash = hashlib.sha256(token.encode("utf-8")).digest()
+            token_hash = _simhash_digest(token)
             token_bits = int.from_bytes(token_hash[:8], byteorder="big", signed=False)
             for bit in range(_SIMHASH_BITS):
                 mask = 1 << bit
