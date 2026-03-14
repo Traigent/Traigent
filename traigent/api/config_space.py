@@ -32,7 +32,9 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from traigent.api.constraints import Constraint
@@ -54,7 +56,7 @@ if TYPE_CHECKING:
     from traigent.tvl.models import StructuralConstraint, TVarDecl
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigSpace:
     """A complete configuration space with TVARs and constraints.
 
@@ -67,8 +69,8 @@ class ConfigSpace:
     the TVL ecosystem.
 
     Attributes:
-        tvars: Dict mapping parameter names to their ParameterRange definitions
-        constraints: List of structural constraints on the configuration space
+        tvars: Read-only mapping of parameter names to ParameterRange definitions
+        constraints: Immutable tuple of structural constraints on the space
         description: Optional description of the configuration space
 
     Example:
@@ -84,12 +86,15 @@ class ConfigSpace:
         ... )
     """
 
-    tvars: dict[str, ParameterRange]
-    constraints: list[Constraint] = field(default_factory=list)
+    tvars: Mapping[str, ParameterRange]
+    constraints: tuple[Constraint, ...] = field(default_factory=tuple)
     description: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the configuration space after initialization."""
+        object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+        object.__setattr__(self, "constraints", tuple(self.constraints))
+
         # Ensure all tvars have unique names
         seen_names: set[str] = set()
         for name, tvar in self.tvars.items():
@@ -105,9 +110,9 @@ class ConfigSpace:
     @classmethod
     def from_decorator_args(
         cls,
-        configuration_space: dict[str, Any] | None = None,
-        inline_params: dict[str, Any] | None = None,
-        constraints: list[Constraint] | None = None,
+        configuration_space: Mapping[str, Any] | None = None,
+        inline_params: Mapping[str, Any] | None = None,
+        constraints: Sequence[Constraint] | None = None,
         description: str | None = None,
     ) -> ConfigSpace:
         """Build ConfigSpace from decorator arguments.
@@ -119,8 +124,8 @@ class ConfigSpace:
         3. Or a combination of both
 
         Args:
-            configuration_space: Dict of parameter definitions
-            inline_params: Inline parameter definitions from **kwargs
+            configuration_space: Mapping of parameter definitions
+            inline_params: Mapping of inline parameter definitions
             constraints: List of structural constraints
             description: Optional description
 
@@ -143,18 +148,18 @@ class ConfigSpace:
 
         return cls(
             tvars=tvars,
-            constraints=constraints or [],
+            constraints=tuple(constraints or ()),
             description=description,
         )
 
     @classmethod
     def _process_param_dict(
-        cls, params: dict[str, Any], tvars: dict[str, ParameterRange]
+        cls, params: Mapping[str, Any], tvars: dict[str, ParameterRange]
     ) -> None:
         """Process a parameter dictionary and add ranges to tvars.
 
         Args:
-            params: Dictionary of parameter definitions
+            params: Mapping of parameter definitions
             tvars: Target dictionary to populate with ParameterRange instances
         """
         for name, value in params.items():

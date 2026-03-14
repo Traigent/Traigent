@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
@@ -999,17 +999,20 @@ def normalize_configuration_space(
 
     # Start with explicit config_space (lower precedence)
     if config_space:
+        normalized_config_space: Mapping[str, Any]
         # Handle ConfigSpace objects by extracting their tvars
         if hasattr(config_space, "tvars") and hasattr(config_space, "constraints"):
-            # It's a ConfigSpace object - extract the tvars dict
-            config_space = config_space.tvars
-        elif not isinstance(config_space, dict):
+            # It's a ConfigSpace object - extract the tvars mapping
+            normalized_config_space = config_space.tvars
+        elif isinstance(config_space, Mapping):
+            normalized_config_space = config_space
+        else:
             from traigent.utils.exceptions import ValidationError
 
             raise ValidationError(
                 f"Expected dictionary for configuration_space, got {type(config_space).__name__}"
             )
-        for key, value in config_space.items():
+        for key, value in normalized_config_space.items():
             _process_param_entry(key, value, result, defaults)
 
     # Add/override with inline parameters (higher precedence)
