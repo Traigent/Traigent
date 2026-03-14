@@ -11,6 +11,9 @@ Tests cover:
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+from types import MappingProxyType
+
 import pytest
 
 from traigent.api.config_space import ConfigSpace
@@ -55,6 +58,36 @@ class TestConfigSpaceCreation:
         )
 
         assert space.description == "Test config space"
+
+    def test_tvars_and_constraints_are_stored_immutably(self) -> None:
+        """ConfigSpace should snapshot mutable constructor inputs."""
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        constraints = [implies(model.equals("gpt-4"), temp.lte(0.7))]
+        tvars = {"temperature": temp}
+
+        space = ConfigSpace(tvars=tvars, constraints=constraints)
+
+        assert isinstance(space.tvars, MappingProxyType)
+        assert isinstance(space.constraints, tuple)
+
+        tvars["model"] = model
+        constraints.append(require(temp.gte(0.1)))
+
+        assert list(space.tvars.keys()) == ["temperature"]
+        assert len(space.constraints) == 1
+
+    def test_config_space_is_frozen(self) -> None:
+        """Direct mutation should be rejected."""
+        temp = Range(0.0, 2.0, name="temperature")
+        space = ConfigSpace(tvars={"temperature": temp})
+
+        with pytest.raises(TypeError):
+            space.tvars["model"] = Choices(["gpt-4"], name="model")
+        with pytest.raises(AttributeError):
+            space.constraints.append(require(temp.gte(0.1)))  # type: ignore[attr-defined]
+        with pytest.raises(FrozenInstanceError):
+            space.description = "mutated"
 
     def test_repr(self) -> None:
         """Test ConfigSpace string representation."""
@@ -145,6 +178,32 @@ class TestConfigSpaceFromDecoratorArgs:
         )
 
         assert len(space.constraints) == 1
+
+    def test_from_decorator_args_snapshots_mapping_and_constraints(self) -> None:
+        """Factory inputs should be copied into immutable ConfigSpace storage."""
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        constraint = require(temp.gte(0.1))
+        raw_configuration_space = {"temperature": temp}
+        raw_inline_params = {"model": model}
+        constraints = [constraint]
+
+        space = ConfigSpace.from_decorator_args(
+            configuration_space=MappingProxyType(raw_configuration_space),
+            inline_params=MappingProxyType(raw_inline_params),
+            constraints=constraints,
+        )
+
+        assert isinstance(space.tvars, MappingProxyType)
+        assert isinstance(space.constraints, tuple)
+
+        raw_configuration_space["max_tokens"] = IntRange(100, 4096, name="max_tokens")
+        raw_inline_params["model"] = Choices(["gpt-4o-mini"], name="model")
+        constraints.append(require(model.equals("gpt-4")))
+
+        assert list(space.tvars.keys()) == ["temperature", "model"]
+        assert tuple(space.tvars["model"].values) == ("gpt-4", "gpt-3.5")
+        assert space.constraints == (constraint,)
 
     def test_from_decorator_args_skips_non_range_values(self) -> None:
         """Test that non-range values are skipped."""

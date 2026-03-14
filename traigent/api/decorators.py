@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -773,8 +773,8 @@ def _build_constraint_scope_var_names(
         sources.append(raw_configuration_space)
     elif hasattr(raw_configuration_space, "tvars"):
         tvars = getattr(raw_configuration_space, "tvars", None)
-        if isinstance(tvars, dict):
-            sources.append(tvars)
+        if isinstance(tvars, Mapping):
+            sources.append(dict(tvars))
     if inline_params:
         sources.append(inline_params)
 
