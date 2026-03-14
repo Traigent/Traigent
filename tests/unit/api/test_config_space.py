@@ -531,6 +531,126 @@ class TestTVLExport:
 
         assert spec["description"] == "Test space"
 
+    def test_to_tvl_spec_includes_range_type_extension_and_agent(self) -> None:
+        """TVL export should retain SDK-specific ParameterRange identity."""
+        learning_rate = LogRange(
+            1e-5,
+            1e-1,
+            name="learning_rate",
+            unit="ratio",
+            default=1e-3,
+            agent="optimizer",
+        )
+
+        spec = ConfigSpace(tvars={"learning_rate": learning_rate}).to_tvl_spec()
+
+        tvar = spec["tvars"][0]
+        assert tvar["x_traigent_parameter_range"] == "LogRange"
+        assert tvar["agent"] == "optimizer"
+        assert tvar["unit"] == "ratio"
+        assert tvar["default"] == 1e-3
+
+
+class TestTVLImport:
+    """Tests for ConfigSpace.from_tvl_spec."""
+
+    def test_from_tvl_spec_round_trips_parameter_range_subclasses(self) -> None:
+        """Import should preserve exact ParameterRange subclasses and metadata."""
+        space = ConfigSpace(
+            tvars={
+                "temperature": Range(
+                    0.1,
+                    1.5,
+                    step=0.1,
+                    default=0.7,
+                    name="temperature",
+                    unit="ratio",
+                    agent="writer",
+                ),
+                "learning_rate": LogRange(
+                    1e-5,
+                    1e-1,
+                    default=1e-3,
+                    name="learning_rate",
+                    unit="ratio",
+                    agent="optimizer",
+                ),
+                "beam_width": IntRange(
+                    1,
+                    8,
+                    step=1,
+                    default=2,
+                    name="beam_width",
+                    unit="count",
+                    agent="planner",
+                ),
+                "model": Choices(
+                    ["gpt-4o", "gpt-4.1"],
+                    default="gpt-4o",
+                    name="model",
+                    agent="router",
+                ),
+            },
+            description="TVL round-trip",
+        )
+
+        restored = ConfigSpace.from_tvl_spec(space.to_tvl_spec())
+
+        assert isinstance(restored.tvars["temperature"], Range)
+        assert not isinstance(restored.tvars["temperature"], LogRange)
+        assert restored.tvars["temperature"].step == 0.1
+        assert restored.tvars["temperature"].agent == "writer"
+
+        assert isinstance(restored.tvars["learning_rate"], LogRange)
+        assert restored.tvars["learning_rate"].default == 1e-3
+        assert restored.tvars["learning_rate"].agent == "optimizer"
+
+        assert isinstance(restored.tvars["beam_width"], IntRange)
+        assert restored.tvars["beam_width"].log is False
+        assert restored.tvars["beam_width"].step == 1
+        assert restored.tvars["beam_width"].agent == "planner"
+
+        assert isinstance(restored.tvars["model"], Choices)
+        assert tuple(restored.tvars["model"].values) == ("gpt-4o", "gpt-4.1")
+        assert restored.tvars["model"].default == "gpt-4o"
+        assert restored.tvars["model"].agent == "router"
+        assert restored.description == "TVL round-trip"
+
+    def test_from_tvl_spec_round_trips_constraints(self) -> None:
+        """Import should preserve constraint structure and metadata."""
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        space = ConfigSpace(
+            tvars={"temperature": temp, "model": model},
+            constraints=[
+                imply := implies(
+                    model.equals("gpt-4"),
+                    temp.lte(0.7),
+                    description="GPT-4 requires low temperature",
+                    id="c1",
+                ),
+                standalone := require(
+                    temp.gte(0.1),
+                    description="Temperature must stay positive",
+                    id="c2",
+                ),
+            ],
+            description="Constraint round-trip",
+        )
+
+        spec = space.to_tvl_spec()
+        restored = ConfigSpace.from_tvl_spec(spec)
+
+        assert restored.description == "Constraint round-trip"
+        assert len(restored.constraints) == 2
+        assert [c.id for c in restored.constraints] == [imply.id, standalone.id]
+        assert [c.description for c in restored.constraints] == [
+            imply.description,
+            standalone.description,
+        ]
+        assert restored.to_tvl_spec() == spec
+
 
 class TestInferTvarType:
     """Tests for ConfigSpace._infer_tvar_type."""
