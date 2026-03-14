@@ -43,6 +43,34 @@ def generate_structural_constraints(
     return constraints
 
 
+def _extract_json_text(response: str) -> str:
+    """Extract JSON array text from a possibly markdown-wrapped response."""
+    text = response.strip()
+    if "```" not in text:
+        return text
+    for part in text.split("```"):
+        stripped = part.strip()
+        if stripped.startswith("json"):
+            stripped = stripped[4:].strip()
+        if stripped.startswith("["):
+            return stripped
+    return text
+
+
+def _parse_constraint_item(item: dict) -> StructuralConstraintSpec | None:
+    """Parse a single LLM-suggested constraint, or *None* if invalid."""
+    desc = item.get("description", "")
+    code = item.get("constraint_code", "")
+    if not desc or not code:
+        return None
+    return StructuralConstraintSpec(
+        description=desc,
+        constraint_code=code,
+        source="llm",
+        reasoning=item.get("reasoning", ""),
+    )
+
+
 def _llm_suggest_constraints(
     tvars: list[TVarSpec],
     llm: ConfigGenLLM,
@@ -73,15 +101,7 @@ def _llm_suggest_constraints(
     except BudgetExhausted:
         return []
 
-    text = response.strip()
-    if "```" in text:
-        for part in text.split("```"):
-            stripped = part.strip()
-            if stripped.startswith("json"):
-                stripped = stripped[4:].strip()
-            if stripped.startswith("["):
-                text = stripped
-                break
+    text = _extract_json_text(response)
 
     try:
         data = json.loads(text)
@@ -91,18 +111,4 @@ def _llm_suggest_constraints(
     if not isinstance(data, list):
         return []
 
-    results: list[StructuralConstraintSpec] = []
-    for item in data:
-        desc = item.get("description", "")
-        code = item.get("constraint_code", "")
-        reasoning = item.get("reasoning", "")
-        if desc and code:
-            results.append(
-                StructuralConstraintSpec(
-                    description=desc,
-                    constraint_code=code,
-                    source="llm",
-                    reasoning=reasoning,
-                )
-            )
-    return results
+    return [c for item in data if (c := _parse_constraint_item(item)) is not None]

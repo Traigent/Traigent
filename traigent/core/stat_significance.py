@@ -55,6 +55,67 @@ class EquivalenceGroupResult:
     badge_name: str
 
 
+def _is_significantly_worse_than_any(
+    trial: dict,
+    top_group: list[dict],
+    *,
+    direction: Literal["greater", "less"],
+    higher_is_better: bool,
+    alpha: float,
+    epsilon: float,
+    badge_name: str,
+) -> bool:
+    """Return True if *trial* is significantly worse than any member of *top_group*."""
+    for top_trial in top_group:
+        result = paired_comparison_test(
+            x_samples=top_trial["values"],
+            y_samples=trial["values"],
+            epsilon=epsilon,
+            direction=direction,
+        )
+        if higher_is_better:
+            top_is_better = top_trial["metric_value"] > trial["metric_value"]
+        else:
+            top_is_better = top_trial["metric_value"] < trial["metric_value"]
+
+        if result.p_value < alpha and top_is_better:
+            logger.debug(
+                "%s: trial %d significantly worse than trial %d "
+                "(p=%.4f, effect=%.6f)",
+                badge_name,
+                trial["trial_idx"],
+                top_trial["trial_idx"],
+                result.p_value,
+                result.effect_size,
+            )
+            return True
+    return False
+
+
+def _verify_winners(
+    top_group: list[dict],
+    rest_group: list[dict],
+    *,
+    direction: Literal["greater", "less"],
+    alpha: float,
+    epsilon: float,
+) -> list[int]:
+    """Return indices of top-group trials that significantly beat at least one rest trial."""
+    verified: list[int] = []
+    for top_trial in top_group:
+        for rest_trial in rest_group:
+            result = paired_comparison_test(
+                x_samples=top_trial["values"],
+                y_samples=rest_trial["values"],
+                epsilon=epsilon,
+                direction=direction,
+            )
+            if result.p_value < alpha:
+                verified.append(top_trial["trial_idx"])
+                break
+    return verified
+
+
 def find_equivalence_group(
     trial_data: list[dict],
     alpha: float = 0.05,
@@ -110,35 +171,15 @@ def find_equivalence_group(
     rest_group: list[dict] = []
 
     for trial in sorted_trials[1:]:
-        is_significantly_worse = False
-
-        for top_trial in top_group:
-            result = paired_comparison_test(
-                x_samples=top_trial["values"],
-                y_samples=trial["values"],
-                epsilon=epsilon,
-                direction=direction,
-            )
-
-            if higher_is_better:
-                top_is_better = top_trial["metric_value"] > trial["metric_value"]
-            else:
-                top_is_better = top_trial["metric_value"] < trial["metric_value"]
-
-            if result.p_value < alpha and top_is_better:
-                is_significantly_worse = True
-                logger.debug(
-                    "%s: trial %d significantly worse than trial %d "
-                    "(p=%.4f, effect=%.6f)",
-                    badge_name,
-                    trial["trial_idx"],
-                    top_trial["trial_idx"],
-                    result.p_value,
-                    result.effect_size,
-                )
-                break
-
-        if is_significantly_worse:
+        if _is_significantly_worse_than_any(
+            trial,
+            top_group,
+            direction=direction,
+            higher_is_better=higher_is_better,
+            alpha=alpha,
+            epsilon=epsilon,
+            badge_name=badge_name,
+        ):
             rest_group.append(trial)
         else:
             top_group.append(trial)
@@ -161,18 +202,13 @@ def find_equivalence_group(
         )
 
     # Verify: each top trial must significantly beat at least one rest trial
-    verified = []
-    for top_trial in top_group:
-        for rest_trial in rest_group:
-            result = paired_comparison_test(
-                x_samples=top_trial["values"],
-                y_samples=rest_trial["values"],
-                epsilon=epsilon,
-                direction=direction,
-            )
-            if result.p_value < alpha:
-                verified.append(top_trial["trial_idx"])
-                break
+    verified = _verify_winners(
+        top_group,
+        rest_group,
+        direction=direction,
+        alpha=alpha,
+        epsilon=epsilon,
+    )
 
     logger.debug(
         "%s: winners=%s (top=%s, rest=%s)",
@@ -188,6 +224,24 @@ def find_equivalence_group(
         rest_group=rest_indices,
         badge_name=badge_name,
     )
+
+
+def _extract_example_map(
+    example_results: list[Any],
+    metric_name: str,
+) -> dict[str, float]:
+    """Build {example_id: metric_value} from a trial's example_results list."""
+    example_map: dict[str, float] = {}
+    for er in example_results:
+        if isinstance(er, dict):
+            eid = er.get("example_id")
+            metrics = er.get("metrics", {})
+        else:
+            eid = getattr(er, "example_id", None)
+            metrics = getattr(er, "metrics", {})
+        if eid and metric_name in metrics:
+            example_map[eid] = metrics[metric_name]
+    return example_map
 
 
 def extract_trial_data_for_metric(
@@ -218,17 +272,7 @@ def extract_trial_data_for_metric(
         if not example_results:
             continue
 
-        example_map: dict[str, float] = {}
-        for er in example_results:
-            if isinstance(er, dict):
-                eid = er.get("example_id")
-                metrics = er.get("metrics", {})
-            else:
-                eid = getattr(er, "example_id", None)
-                metrics = getattr(er, "metrics", {})
-            if eid and metric_name in metrics:
-                example_map[eid] = metrics[metric_name]
-
+        example_map = _extract_example_map(example_results, metric_name)
         if example_map:
             trial_maps.append((i, example_map, trial.metrics[metric_name]))
 

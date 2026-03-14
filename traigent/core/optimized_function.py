@@ -896,6 +896,106 @@ class OptimizedFunction:
         if "default_config" in tvl_state:
             self.default_config = tvl_state["default_config"]
 
+    def _apply_discovered_objective_schema(
+        self, state: dict[str, Any], discovered_spec: dict[str, Any]
+    ) -> None:
+        """Apply discovered objective schema and preserve prior state."""
+        discovered_schema = discovered_spec.get("objective_schema")
+        if discovered_schema is None:
+            return
+        state["objective_schema"] = self.objective_schema
+        self.objective_schema = discovered_schema
+
+    def _apply_discovered_constraints(
+        self, state: dict[str, Any], discovered_spec: dict[str, Any]
+    ) -> None:
+        """Merge discovered constraints into the current optimization state."""
+        discovered_constraints = discovered_spec.get("constraints")
+        if not (isinstance(discovered_constraints, list) and discovered_constraints):
+            return
+        state["constraints"] = list(self.constraints or [])
+        self.constraints = list(self.constraints or []) + discovered_constraints
+
+    def _apply_discovered_default_config(
+        self, state: dict[str, Any], discovered_spec: dict[str, Any]
+    ) -> None:
+        """Replace default config from discovery results when provided."""
+        discovered_defaults = discovered_spec.get("default_config")
+        if not (isinstance(discovered_defaults, dict) and discovered_defaults):
+            return
+        state["default_config"] = copy.deepcopy(self.default_config)
+        self.default_config = discovered_defaults.copy()
+
+    def _apply_discovered_runtime_overrides(
+        self,
+        algorithm: str | None,
+        max_trials: int | None,
+        evaluation_timeout: float | None,
+        algorithm_kwargs: dict[str, Any],
+        discovered_spec: dict[str, Any],
+    ) -> tuple[str | None, int | None, float | None]:
+        """Apply runtime overrides returned by hybrid discovery."""
+        runtime_overrides = discovered_spec.get("runtime_overrides")
+        if not (isinstance(runtime_overrides, dict) and runtime_overrides):
+            return algorithm, max_trials, evaluation_timeout
+        return self._apply_tvl_runtime_overrides(
+            algorithm,
+            max_trials,
+            evaluation_timeout,
+            algorithm_kwargs,
+            runtime_overrides,
+        )
+
+    def _apply_discovered_promotion_policy(
+        self, state: dict[str, Any], discovered_spec: dict[str, Any]
+    ) -> None:
+        """Apply discovered promotion policy if present."""
+        promotion_policy = discovered_spec.get("promotion_policy")
+        if promotion_policy is None:
+            return
+
+        from traigent.tvl.promotion_gate import PromotionGate
+
+        state["promotion_gate"] = getattr(self, "promotion_gate", None)
+        self.promotion_gate = PromotionGate.from_policy(
+            promotion_policy=promotion_policy,
+            objective_schema=self.objective_schema,
+        )
+
+    @staticmethod
+    def _merge_discovered_metrics(
+        objectives: Sequence[str], discovered_measures: Sequence[Any]
+    ) -> list[str]:
+        """Build a unique evaluator metric list preserving existing order."""
+        merged_metrics: list[str] = []
+        for metric_name in [*objectives, *discovered_measures]:
+            if isinstance(metric_name, str) and metric_name not in merged_metrics:
+                merged_metrics.append(metric_name)
+        return merged_metrics
+
+    def _apply_discovered_measures(
+        self,
+        state: dict[str, Any],
+        evaluator: BaseEvaluator,
+        discovered_spec: dict[str, Any],
+    ) -> None:
+        """Update evaluator metrics from discovered measures."""
+        discovered_measures = discovered_spec.get("measures")
+        if not isinstance(discovered_measures, list):
+            return
+        if not (
+            hasattr(evaluator, "metrics")
+            and isinstance(getattr(evaluator, "metrics", None), list)
+        ):
+            return
+
+        state["evaluator_metrics"] = list(evaluator.metrics)
+        merged_metrics = self._merge_discovered_metrics(
+            self.objectives, discovered_measures
+        )
+        if merged_metrics:
+            evaluator.metrics = merged_metrics
+
     async def _apply_hybrid_discovery_overrides(
         self,
         evaluator: BaseEvaluator,
@@ -908,7 +1008,6 @@ class OptimizedFunction:
     ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
         """Apply hybrid config-space discovery data to runtime settings."""
         from traigent.hybrid.discovery import merge_config_spaces
-        from traigent.tvl.promotion_gate import PromotionGate
 
         state: dict[str, Any] = {}
 
@@ -944,56 +1043,20 @@ class OptimizedFunction:
                 state,
             )
 
-        discovered_schema = discovered_spec.get("objective_schema")
-        if discovered_schema is not None:
-            state["objective_schema"] = self.objective_schema
-            self.objective_schema = discovered_schema
-
-        discovered_constraints = discovered_spec.get("constraints")
-        if isinstance(discovered_constraints, list) and discovered_constraints:
-            state["constraints"] = list(self.constraints or [])
-            self.constraints = list(self.constraints or []) + discovered_constraints
-
-        discovered_defaults = discovered_spec.get("default_config")
-        if isinstance(discovered_defaults, dict) and discovered_defaults:
-            state["default_config"] = copy.deepcopy(self.default_config)
-            self.default_config = discovered_defaults.copy()
-
-        runtime_overrides = discovered_spec.get("runtime_overrides")
-        if isinstance(runtime_overrides, dict) and runtime_overrides:
-            (
-                algorithm,
-                max_trials,
-                evaluation_timeout,
-            ) = self._apply_tvl_runtime_overrides(
+        self._apply_discovered_objective_schema(state, discovered_spec)
+        self._apply_discovered_constraints(state, discovered_spec)
+        self._apply_discovered_default_config(state, discovered_spec)
+        algorithm, max_trials, evaluation_timeout = (
+            self._apply_discovered_runtime_overrides(
                 algorithm,
                 max_trials,
                 evaluation_timeout,
                 algorithm_kwargs,
-                runtime_overrides,
+                discovered_spec,
             )
-
-        promotion_policy = discovered_spec.get("promotion_policy")
-        if promotion_policy is not None:
-            state["promotion_gate"] = getattr(self, "promotion_gate", None)
-            self.promotion_gate = PromotionGate.from_policy(
-                promotion_policy=promotion_policy,
-                objective_schema=self.objective_schema,
-            )
-
-        discovered_measures = discovered_spec.get("measures")
-        if (
-            isinstance(discovered_measures, list)
-            and hasattr(evaluator, "metrics")
-            and isinstance(getattr(evaluator, "metrics", None), list)
-        ):
-            state["evaluator_metrics"] = list(evaluator.metrics)
-            merged_metrics: list[str] = []
-            for metric_name in [*self.objectives, *discovered_measures]:
-                if isinstance(metric_name, str) and metric_name not in merged_metrics:
-                    merged_metrics.append(metric_name)
-            if merged_metrics:
-                evaluator.metrics = merged_metrics
+        )
+        self._apply_discovered_promotion_policy(state, discovered_spec)
+        self._apply_discovered_measures(state, evaluator, discovered_spec)
 
         return (
             algorithm,
@@ -1735,11 +1798,7 @@ class OptimizedFunction:
         Returns:
             OptimizationResult from cloud service
         """
-        from traigent.api.types import TrialResult, TrialStatus
-        from traigent.cloud.client import CloudOptimizationResult, TraigentCloudClient
-
-        async def _resolve_awaitable(value: Any) -> Any:
-            return await value if inspect.isawaitable(value) else value
+        from traigent.cloud.client import TraigentCloudClient
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
@@ -1752,122 +1811,17 @@ class OptimizedFunction:
         async with self._cloud_client as client:
             # Extract configuration_space from kwargs if provided
             config_space_override = kwargs.pop("configuration_space", None)
-            effective_config_space = (
+            effective_config_space = self._resolve_cloud_config_space(
                 config_space_override
-                if config_space_override is not None
-                else self.configuration_space
             )
-
-            # Import ConfigurationSpaceContext here to avoid circular imports
-            from traigent.config.context import ConfigurationSpaceContext
-
-            # Set the configuration space context for framework overrides
-            with ConfigurationSpaceContext(effective_config_space):
-                # Run cloud optimization
-                cloud_candidate = await client.optimize_function(
-                    function_name=self.func.__name__,
-                    dataset=dataset,
-                    configuration_space=effective_config_space,
-                    objectives=self.objectives,
-                    max_trials=max_trials if max_trials is not None else 50,
-                    local_function=self.func,
-                )
-                cloud_result: CloudOptimizationResult = cast(
-                    CloudOptimizationResult,
-                    await _resolve_awaitable(cloud_candidate),
-                )
-
-            best_config_raw = await _resolve_awaitable(
-                getattr(cloud_result, "best_config", {})
+            cloud_result = await self._execute_cloud_service_optimization(
+                client,
+                dataset,
+                effective_config_space,
+                max_trials,
             )
-            best_config = (
-                best_config_raw.copy() if isinstance(best_config_raw, dict) else {}
-            )
-
-            best_metrics_raw = await _resolve_awaitable(
-                getattr(cloud_result, "best_metrics", {})
-            )
-            best_metrics: dict[str, float] = {}
-            if isinstance(best_metrics_raw, dict):
-                for key, raw_value in best_metrics_raw.items():
-                    try:
-                        best_metrics[str(key)] = float(raw_value)
-                    except (TypeError, ValueError):
-                        continue
-
-            trials_count_raw = await _resolve_awaitable(
-                getattr(cloud_result, "trials_count", 0)
-            )
-            try:
-                trials_count = int(trials_count_raw)
-            except (TypeError, ValueError):
-                trials_count = 0
-
-            cost_reduction_raw = await _resolve_awaitable(
-                getattr(cloud_result, "cost_reduction", 0.0)
-            )
-            try:
-                cost_reduction = float(cost_reduction_raw)
-            except (TypeError, ValueError):
-                cost_reduction = 0.0
-
-            optimization_time_raw = await _resolve_awaitable(
-                getattr(cloud_result, "optimization_time", 0.0)
-            )
-            try:
-                optimization_time = float(optimization_time_raw)
-            except (TypeError, ValueError):
-                optimization_time = 0.0
-
-            subset_used_raw = await _resolve_awaitable(
-                getattr(cloud_result, "subset_used", False)
-            )
-            subset_used = bool(subset_used_raw)
-
-            subset_size_raw = await _resolve_awaitable(
-                getattr(cloud_result, "subset_size", None)
-            )
-            subset_size = subset_size_raw if isinstance(subset_size_raw, int) else None
-            primary_objective = self.objectives[0] if self.objectives else None
-            if primary_objective and primary_objective in best_metrics:
-                best_score = best_metrics[primary_objective]
-            elif best_metrics:
-                best_score = next(iter(best_metrics.values()))
-            else:
-                best_score = 0.0
-
-            # Convert cloud result to standard OptimizationResult
-            mock_trial = TrialResult(
-                trial_id="cloud_best",
-                config=best_config,
-                metrics=best_metrics,
-                status=TrialStatus.COMPLETED,
-                duration=optimization_time,
-                timestamp=datetime.now(UTC),
-                metadata={},
-            )
-
-            from traigent.api.types import OptimizationResult, OptimizationStatus
-
-            result = OptimizationResult(
-                trials=[mock_trial],  # Cloud service doesn't expose all trials
-                best_config=best_config,
-                best_score=best_score,
-                optimization_id=f"cloud_{int(time.time())}",
-                duration=optimization_time,
-                convergence_info={},
-                status=OptimizationStatus.COMPLETED,
-                objectives=self.objectives,
-                algorithm="cloud_service",
-                timestamp=datetime.now(UTC),
-                metadata={
-                    "cloud_service": True,
-                    "cost_reduction": cost_reduction,
-                    "subset_used": subset_used,
-                    "subset_size": subset_size,
-                    "trials_count": trials_count,
-                },
-            )
+            cloud_payload = await self._extract_cloud_result_payload(cloud_result)
+            result = self._build_cloud_optimization_result(cloud_payload)
 
             # Store results
             self._optimization_results = result
@@ -1881,11 +1835,172 @@ class OptimizedFunction:
 
             logger.info(
                 "Cloud optimization completed: %s trials, %.1f%% cost reduction",
-                trials_count,
-                cost_reduction * 100,
+                cloud_payload["trials_count"],
+                cloud_payload["cost_reduction"] * 100,
             )
 
             return result
+
+    @staticmethod
+    async def _resolve_awaitable_value(value: Any) -> Any:
+        """Await values only when necessary."""
+        return await value if inspect.isawaitable(value) else value
+
+    def _resolve_cloud_config_space(
+        self, config_space_override: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Resolve the configuration space used for cloud optimization."""
+        if config_space_override is not None:
+            return config_space_override
+        return self.configuration_space
+
+    async def _execute_cloud_service_optimization(
+        self,
+        client: Any,
+        dataset: Dataset,
+        effective_config_space: dict[str, Any],
+        max_trials: int | None,
+    ) -> Any:
+        """Run the cloud optimization request inside the configuration context."""
+        from traigent.config.context import ConfigurationSpaceContext
+
+        with ConfigurationSpaceContext(effective_config_space):
+            cloud_candidate = await client.optimize_function(
+                function_name=self.func.__name__,
+                dataset=dataset,
+                configuration_space=effective_config_space,
+                objectives=self.objectives,
+                max_trials=max_trials if max_trials is not None else 50,
+                local_function=self.func,
+            )
+            return await self._resolve_awaitable_value(cloud_candidate)
+
+    async def _resolve_cloud_result_attribute(
+        self, cloud_result: Any, attribute: str, default: Any
+    ) -> Any:
+        """Resolve a cloud-result attribute that may be awaitable."""
+        value = getattr(cloud_result, attribute, default)
+        return await self._resolve_awaitable_value(value)
+
+    @staticmethod
+    def _coerce_cloud_metric_map(raw_metrics: Any) -> dict[str, float]:
+        """Normalize cloud metrics into a string-to-float mapping."""
+        if not isinstance(raw_metrics, dict):
+            return {}
+
+        best_metrics: dict[str, float] = {}
+        for key, raw_value in raw_metrics.items():
+            try:
+                best_metrics[str(key)] = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+        return best_metrics
+
+    @staticmethod
+    def _coerce_cloud_int(raw_value: Any, default: int = 0) -> int:
+        """Convert cloud numeric fields to ints with a stable fallback."""
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_cloud_float(raw_value: Any, default: float = 0.0) -> float:
+        """Convert cloud numeric fields to floats with a stable fallback."""
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_optional_cloud_int(raw_value: Any) -> int | None:
+        """Convert optional cloud integer fields when valid."""
+        return raw_value if isinstance(raw_value, int) else None
+
+    def _select_cloud_best_score(self, best_metrics: dict[str, float]) -> float:
+        """Resolve the best score using the primary objective when available."""
+        primary_objective = self.objectives[0] if self.objectives else None
+        if primary_objective and primary_objective in best_metrics:
+            return best_metrics[primary_objective]
+        if best_metrics:
+            return next(iter(best_metrics.values()))
+        return 0.0
+
+    async def _extract_cloud_result_payload(self, cloud_result: Any) -> dict[str, Any]:
+        """Normalize cloud result attributes into a local payload dict."""
+        best_config_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "best_config", {}
+        )
+        best_metrics_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "best_metrics", {}
+        )
+        trials_count_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "trials_count", 0
+        )
+        cost_reduction_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "cost_reduction", 0.0
+        )
+        optimization_time_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "optimization_time", 0.0
+        )
+        subset_used_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "subset_used", False
+        )
+        subset_size_raw = await self._resolve_cloud_result_attribute(
+            cloud_result, "subset_size", None
+        )
+
+        best_config = (
+            best_config_raw.copy() if isinstance(best_config_raw, dict) else {}
+        )
+        best_metrics = self._coerce_cloud_metric_map(best_metrics_raw)
+        return {
+            "best_config": best_config,
+            "best_metrics": best_metrics,
+            "trials_count": self._coerce_cloud_int(trials_count_raw),
+            "cost_reduction": self._coerce_cloud_float(cost_reduction_raw),
+            "optimization_time": self._coerce_cloud_float(optimization_time_raw),
+            "subset_used": bool(subset_used_raw),
+            "subset_size": self._coerce_optional_cloud_int(subset_size_raw),
+            "best_score": self._select_cloud_best_score(best_metrics),
+        }
+
+    def _build_cloud_optimization_result(self, cloud_result: Any) -> OptimizationResult:
+        """Convert a cloud result payload into a standard optimization result."""
+        from traigent.api.types import TrialResult, TrialStatus
+
+        best_config = cloud_result["best_config"]
+        best_metrics = cloud_result["best_metrics"]
+        optimization_time = cloud_result["optimization_time"]
+        mock_trial = TrialResult(
+            trial_id="cloud_best",
+            config=best_config,
+            metrics=best_metrics,
+            status=TrialStatus.COMPLETED,
+            duration=optimization_time,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+
+        return OptimizationResult(
+            trials=[mock_trial],  # Cloud service doesn't expose all trials
+            best_config=best_config,
+            best_score=cloud_result["best_score"],
+            optimization_id=f"cloud_{int(time.time())}",
+            duration=optimization_time,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=self.objectives,
+            algorithm="cloud_service",
+            timestamp=datetime.now(UTC),
+            metadata={
+                "cloud_service": True,
+                "cost_reduction": cloud_result["cost_reduction"],
+                "subset_used": cloud_result["subset_used"],
+                "subset_size": cloud_result["subset_size"],
+                "trials_count": cloud_result["trials_count"],
+            },
+        )
 
     def _load_dataset(self) -> Dataset:
         """Load evaluation dataset.

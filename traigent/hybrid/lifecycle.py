@@ -109,7 +109,7 @@ class AgentLifecycleManager:
         logger.debug(f"Created new session ID: {session_id}")
         return session_id
 
-    async def register(self, session_id: str) -> None:
+    async def register(self, session_id: str) -> None:  # NOSONAR(S7503)
         """Register a session for keep-alive management.
 
         Starts the background heartbeat task if not already running.

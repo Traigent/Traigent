@@ -258,7 +258,7 @@ class BackendConfig:
                     len(stored_key),
                 )
                 return stored_key
-        except (ImportError, Exception):
+        except Exception:
             pass
 
         # Only warn if not in offline mode - offline mode doesn't need API keys
@@ -285,7 +285,7 @@ class BackendConfig:
             from traigent.cloud.credential_manager import CredentialManager
 
             stored_creds = CredentialManager.get_credentials()
-        except (ImportError, Exception):
+        except Exception:
             return False
 
         return bool(stored_creds.get("api_key") or stored_creds.get("jwt_token"))

@@ -397,6 +397,68 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
         return seamless_wrapper
 
+    def _lookup_cached(
+        self,
+        cache_key: str,
+        func_name: str,
+    ) -> Callable[..., Any] | None:
+        """Return a cached transformation if present, evicting LRU if needed."""
+        with self._cache_lock:
+            if cache_key in self._compiled_cache:
+                self._cache_access_count[cache_key] = (
+                    self._cache_access_count.get(cache_key, 0) + 1
+                )
+                logger.debug(f"Using cached transformation for {func_name}")
+                return self._compiled_cache[cache_key]
+            # Enforce cache size limit (LRU eviction) only when adding new entries
+            if (
+                len(self._compiled_cache) >= self._max_cache_size
+                and self._cache_access_count
+            ):
+                lru_key = min(
+                    self._cache_access_count,
+                    key=lambda k: self._cache_access_count[k],
+                )
+                del self._compiled_cache[lru_key]
+                del self._cache_access_count[lru_key]
+                logger.debug(f"Evicted {lru_key} from cache (LRU)")
+        return None
+
+    def _cache_and_track(
+        self,
+        cache_key: str,
+        compiled_func: Callable[..., Any],
+        stat_key: str,
+    ) -> None:
+        """Store *compiled_func* in the cache and bump the stat counter."""
+        with self._cache_lock:
+            self._compiled_cache[cache_key] = compiled_func
+            self._cache_access_count[cache_key] = 1
+        with self._stats_lock:
+            self._stats[stat_key] += 1
+
+    def _execute_and_cache(
+        self,
+        compiled_func: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        cache_key: str,
+        stat_key: str,
+        error_handler: Callable[[Exception], None],
+    ) -> tuple[bool, Any]:
+        """Run *compiled_func*, cache on success, delegate errors.
+
+        Returns ``(True, result)`` on success or ``(False, None)`` when the
+        error handler re-raises (caller should treat as unreachable).
+        """
+        try:
+            result = compiled_func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            error_handler(exc)
+            return False, None  # unreachable if handler re-raises
+        self._cache_and_track(cache_key, compiled_func, stat_key)
+        return True, result
+
     def _seamless_run(
         self,
         func: Callable[..., Any],
@@ -439,126 +501,122 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 ) from exc
             raise
 
-        # Check cache for already transformed function
         cache_key = self._get_cache_key(func, active_config)
-        cached_func = None
-        with self._cache_lock:
-            if cache_key in self._compiled_cache:
-                cached_func = self._compiled_cache[cache_key]
-                self._cache_access_count[cache_key] = (
-                    self._cache_access_count.get(cache_key, 0) + 1
-                )
-                logger.debug(f"Using cached transformation for {func.__name__}")
-            else:
-                # Enforce cache size limit (LRU eviction) only when adding new entries
-                if len(self._compiled_cache) >= self._max_cache_size:
-                    # Remove least recently used item
-                    if self._cache_access_count:  # Guard against empty dict
-                        lru_key = min(
-                            self._cache_access_count,
-                            key=lambda k: self._cache_access_count[k],
-                        )
-                        del self._compiled_cache[lru_key]
-                        del self._cache_access_count[lru_key]
-                        logger.debug(f"Evicted {lru_key} from cache (LRU)")
 
-        # Execute cached function OUTSIDE the lock to avoid holding it during execution
+        # Fast path: return cached transformation
+        cached_func = self._lookup_cached(cache_key, func.__name__)
         if cached_func is not None:
             return cached_func(*args, **kwargs)
 
         # Transform the function
         try:
-            # Don't log sensitive config values
-            config_keys = list(active_config.keys()) if active_config else []
-            logger.debug(
-                f"Transforming function {func.__name__} with config keys: {config_keys}"
+            return self._seamless_transform_and_run(
+                func, active_config, args, kwargs, cache_key, _handle_injection_error
             )
-            transformed_func, modified_vars = self._transform_function(
-                func, active_config
-            )
-
-            if not callable(transformed_func):
-                raise ConfigurationError("Transformed function must be callable")
-
-            should_shim, signature = self._should_apply_runtime_shim(
-                func, active_config, modified_vars
-            )
-
-            if should_shim:
-                shimmed = create_runtime_shim(func, active_config, signature=signature)
-                try:
-                    result = shimmed(*args, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    _handle_injection_error(exc)
-                else:
-                    with self._cache_lock:
-                        self._compiled_cache[cache_key] = shimmed
-                        self._cache_access_count[cache_key] = 1
-                    with self._stats_lock:
-                        self._stats["runtime_shims"] += 1
-                    logger.debug(
-                        f"Seamless provider using runtime shim for {func.__name__}"
-                    )
-                    return result
-            if modified_vars:
-                try:
-                    result = transformed_func(*args, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    _handle_injection_error(exc)
-                else:
-                    with self._cache_lock:
-                        self._compiled_cache[cache_key] = transformed_func
-                        self._cache_access_count[cache_key] = 1
-                    with self._stats_lock:
-                        self._stats["ast_rewrites"] += 1
-                    logger.debug(f"Cached and executing transformed {func.__name__}")
-                    return result
-
-            # No assignments were modified and no shim required
-            with self._cache_lock:
-                self._compiled_cache[cache_key] = func
-                self._cache_access_count[cache_key] = 1
-            with self._stats_lock:
-                self._stats["fallback_triggers"]["no_injection"].append(
-                    sorted(active_config.keys())
-                )
-            logger.debug(
-                f"Seamless provider found no injectable targets for {func.__name__}; "
-                "configuration keys were %s",
-                sorted(active_config.keys()),
-            )
-            return func(*args, **kwargs)
-
         except Exception as e:  # noqa: BLE001
-            logger.debug(
-                "Failed to transform function %s. Attempting runtime shim fallback.",
-                func.__name__,
-                exc_info=False,
+            return self._seamless_fallback(
+                func, active_config, args, kwargs, cache_key, e, _handle_injection_error
             )
-            import traceback
 
-            logger.debug("Traceback: %s", traceback.format_exc())
-            with self._stats_lock:
-                self._stats["fallback_triggers"]["transform_failure"].append(str(e))
-            try:
-                signature = self._get_signature(func)
-                shimmed = create_runtime_shim(func, active_config, signature=signature)
-            except Exception as shim_build_exc:  # noqa: BLE001
-                raise ConfigurationError(
-                    "Failed to inject configuration via seamless provider"
-                ) from shim_build_exc
+    def _seamless_transform_and_run(
+        self,
+        func: Callable[..., Any],
+        active_config: dict[str, Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        cache_key: str,
+        error_handler: Callable[[Exception], None],
+    ) -> Any:
+        """Attempt AST transform + optional runtime shim for *func*."""
+        config_keys = list(active_config.keys()) if active_config else []
+        logger.debug(
+            f"Transforming function {func.__name__} with config keys: {config_keys}"
+        )
+        transformed_func, modified_vars = self._transform_function(func, active_config)
 
-            try:
-                result = shimmed(*args, **kwargs)
-            except Exception as shim_exc:  # noqa: BLE001
-                _handle_injection_error(shim_exc)
-            else:
-                with self._cache_lock:
-                    self._compiled_cache[cache_key] = shimmed
-                    self._cache_access_count[cache_key] = 1
-                with self._stats_lock:
-                    self._stats["runtime_shims"] += 1
+        if not callable(transformed_func):
+            raise ConfigurationError("Transformed function must be callable")
+
+        should_shim, signature = self._should_apply_runtime_shim(
+            func, active_config, modified_vars
+        )
+
+        if should_shim:
+            shimmed = create_runtime_shim(func, active_config, signature=signature)
+            ok, result = self._execute_and_cache(
+                shimmed, args, kwargs, cache_key, "runtime_shims", error_handler
+            )
+            if ok:
+                logger.debug(
+                    f"Seamless provider using runtime shim for {func.__name__}"
+                )
                 return result
+
+        if modified_vars:
+            ok, result = self._execute_and_cache(
+                transformed_func,
+                args,
+                kwargs,
+                cache_key,
+                "ast_rewrites",
+                error_handler,
+            )
+            if ok:
+                logger.debug(f"Cached and executing transformed {func.__name__}")
+                return result
+
+        # No assignments were modified and no shim required
+        with self._cache_lock:
+            self._compiled_cache[cache_key] = func
+            self._cache_access_count[cache_key] = 1
+        with self._stats_lock:
+            self._stats["fallback_triggers"]["no_injection"].append(
+                sorted(active_config.keys())
+            )
+        logger.debug(
+            f"Seamless provider found no injectable targets for {func.__name__}; "
+            "configuration keys were %s",
+            sorted(active_config.keys()),
+        )
+        return func(*args, **kwargs)
+
+    def _seamless_fallback(
+        self,
+        func: Callable[..., Any],
+        active_config: dict[str, Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        cache_key: str,
+        original_exc: Exception,
+        error_handler: Callable[[Exception], None],
+    ) -> Any:
+        """Fallback to runtime shim when AST transformation fails."""
+        logger.debug(
+            "Failed to transform function %s. Attempting runtime shim fallback.",
+            func.__name__,
+            exc_info=False,
+        )
+        import traceback
+
+        logger.debug("Traceback: %s", traceback.format_exc())
+        with self._stats_lock:
+            self._stats["fallback_triggers"]["transform_failure"].append(
+                str(original_exc)
+            )
+
+        try:
+            signature = self._get_signature(func)
+            shimmed = create_runtime_shim(func, active_config, signature=signature)
+        except Exception as shim_build_exc:  # noqa: BLE001
+            raise ConfigurationError(
+                "Failed to inject configuration via seamless provider"
+            ) from shim_build_exc
+
+        ok, result = self._execute_and_cache(
+            shimmed, args, kwargs, cache_key, "runtime_shims", error_handler
+        )
+        if ok:
+            return result
 
     def _transform_function(
         self, func: Callable[..., Any], config: dict[str, Any]

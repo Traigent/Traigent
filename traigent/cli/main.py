@@ -742,6 +742,24 @@ def _format_diff_colored(diff: float, fmt: str = ".4f") -> str:
     return f"{diff:+{fmt}}"
 
 
+def _visible_metric_names(*metric_sets: dict[str, Any] | None) -> list[str]:
+    """Return sorted non-internal metric names across one or more metric dicts."""
+    names = {
+        metric
+        for metrics in metric_sets
+        for metric in (metrics or {})
+        if not metric.startswith("_")
+    }
+    return sorted(names)
+
+
+def _format_metric_diff(m1: Any, m2: Any) -> str:
+    """Format the delta between two metric values when both are numeric."""
+    if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
+        return f"{m2 - m1:+.4f}"
+    return "-"
+
+
 def _print_result_summary(result: Any) -> None:
     """Print the summary section of a result."""
     console.print("[bold]Summary[/bold]")
@@ -781,9 +799,8 @@ def _print_metrics_table(metrics: dict[str, Any] | None) -> None:
     metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     metrics_table.add_column("Metric")
     metrics_table.add_column("Value", justify="right")
-    for metric, value in metrics.items():
-        if not metric.startswith("_"):
-            metrics_table.add_row(metric, _format_metric_value(value))
+    for metric in _visible_metric_names(metrics):
+        metrics_table.add_row(metric, _format_metric_value(metrics.get(metric)))
     console.print(metrics_table)
 
 
@@ -890,20 +907,14 @@ def _build_metrics_comparison_table(
     metrics_table.add_column(name2, justify="right")
     metrics_table.add_column("Δ", justify="right")
 
-    all_metrics = set((metrics1 or {}).keys()) | set((metrics2 or {}).keys())
-    for metric in sorted(all_metrics):
-        if metric.startswith("_"):
-            continue
+    for metric in _visible_metric_names(metrics1, metrics2):
         m1 = (metrics1 or {}).get(metric)
         m2 = (metrics2 or {}).get(metric)
-        diff_str = "-"
-        if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
-            diff_str = f"{m2 - m1:+.4f}"
         metrics_table.add_row(
             metric,
             _format_metric_value(m1) if m1 else "-",
             _format_metric_value(m2) if m2 else "-",
-            diff_str,
+            _format_metric_diff(m1, m2),
         )
 
     return metrics_table

@@ -139,6 +139,30 @@ def _serialize_datetime(
     return value.timestamp()
 
 
+def _try_to_dict(
+    value: Any,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> tuple[bool, Any]:
+    """Attempt to call ``value.to_dict()``, returning *(ok, result)*.
+
+    Tries passing *datetime_format* first, then falls back to a bare call.
+    Returns ``(False, None)`` when the object has no usable ``to_dict``.
+    """
+    if not (hasattr(value, "to_dict") and callable(value.to_dict)):
+        return False, None
+
+    to_dict = value.to_dict
+    try:
+        return True, to_dict(datetime_format=datetime_format)
+    except TypeError:
+        pass
+    try:
+        return True, to_dict()
+    except TypeError:
+        return False, None
+
+
 def _json_safe_trial_value(
     value: Any,
     *,
@@ -148,22 +172,9 @@ def _json_safe_trial_value(
     if value is None:
         return None
 
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        to_dict = value.to_dict
-        try:
-            return _json_safe_trial_value(
-                to_dict(datetime_format=datetime_format),
-                datetime_format=datetime_format,
-            )
-        except TypeError:
-            try:
-                return _json_safe_trial_value(
-                    to_dict(),
-                    datetime_format=datetime_format,
-                )
-            except TypeError:
-                # Some objects may expose a to_dict method with required arguments.
-                pass
+    ok, converted = _try_to_dict(value, datetime_format=datetime_format)
+    if ok:
+        return _json_safe_trial_value(converted, datetime_format=datetime_format)
 
     if isinstance(value, datetime):
         return _serialize_datetime(value, datetime_format=datetime_format)
@@ -174,19 +185,7 @@ def _json_safe_trial_value(
             for key, item in value.items()
         }
 
-    if isinstance(value, list):
-        return [
-            _json_safe_trial_value(item, datetime_format=datetime_format)
-            for item in value
-        ]
-
-    if isinstance(value, tuple):
-        return [
-            _json_safe_trial_value(item, datetime_format=datetime_format)
-            for item in value
-        ]
-
-    if isinstance(value, set):
+    if isinstance(value, (list, tuple, set)):
         return [
             _json_safe_trial_value(item, datetime_format=datetime_format)
             for item in value

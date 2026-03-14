@@ -153,69 +153,50 @@ def _names_in_expr(node: ast.expr | None) -> set[str]:
     return names
 
 
+def _iter_expr_children(node: ast.AST) -> list[ast.AST]:
+    """Return child nodes that may contain referenced variable names."""
+    if isinstance(node, ast.Attribute):
+        return [node.value]
+    if isinstance(node, ast.Subscript):
+        return [node.value, node.slice]
+    if isinstance(node, ast.BinOp):
+        return [node.left, node.right]
+    if isinstance(node, ast.UnaryOp):
+        return [node.operand]
+    if isinstance(node, ast.BoolOp):
+        return list(node.values)
+    if isinstance(node, ast.Compare):
+        return [node.left, *node.comparators]
+    if isinstance(node, ast.IfExp):
+        return [node.test, node.body, node.orelse]
+    if isinstance(node, ast.Call):
+        return [
+            node.func,
+            *node.args,
+            *(keyword.value for keyword in node.keywords),
+        ]
+    if isinstance(node, ast.Starred):
+        return [node.value]
+    if isinstance(node, ast.JoinedStr):
+        return [
+            value.value
+            for value in node.values
+            if isinstance(value, ast.FormattedValue)
+        ]
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return list(node.elts)
+    if isinstance(node, ast.Dict):
+        return [*(key for key in node.keys if key is not None), *node.values]
+    return []
+
+
 def _names_in_expr_acc(node: ast.AST, acc: set[str]) -> None:
     """Accumulate Name.id references from *node* into *acc*."""
     if isinstance(node, ast.Name):
         acc.add(node.id)
         return
-    if isinstance(node, ast.Attribute):
-        # obj.attr  →  extract `obj`
-        _names_in_expr_acc(node.value, acc)
-        return
-    if isinstance(node, ast.Subscript):
-        # obj[key]  →  extract `obj` and `key`
-        _names_in_expr_acc(node.value, acc)
-        _names_in_expr_acc(node.slice, acc)
-        return
-    if isinstance(node, ast.BinOp):
-        _names_in_expr_acc(node.left, acc)
-        _names_in_expr_acc(node.right, acc)
-        return
-    if isinstance(node, ast.UnaryOp):
-        _names_in_expr_acc(node.operand, acc)
-        return
-    if isinstance(node, ast.BoolOp):
-        for v in node.values:
-            _names_in_expr_acc(v, acc)
-        return
-    if isinstance(node, ast.Compare):
-        _names_in_expr_acc(node.left, acc)
-        for comp in node.comparators:
-            _names_in_expr_acc(comp, acc)
-        return
-    if isinstance(node, ast.IfExp):
-        _names_in_expr_acc(node.test, acc)
-        _names_in_expr_acc(node.body, acc)
-        _names_in_expr_acc(node.orelse, acc)
-        return
-    if isinstance(node, ast.Call):
-        _names_in_expr_acc(node.func, acc)
-        for arg in node.args:
-            _names_in_expr_acc(arg, acc)
-        for kw in node.keywords:
-            _names_in_expr_acc(kw.value, acc)
-        return
-    if isinstance(node, ast.Starred):
-        _names_in_expr_acc(node.value, acc)
-        return
-    if isinstance(node, ast.JoinedStr):
-        # f-string: extract interpolated values
-        for v in node.values:
-            if isinstance(v, ast.FormattedValue):
-                _names_in_expr_acc(v.value, acc)
-        return
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        for elt in node.elts:
-            _names_in_expr_acc(elt, acc)
-        return
-    if isinstance(node, ast.Dict):
-        for k in node.keys:
-            if k is not None:
-                _names_in_expr_acc(k, acc)
-        for v in node.values:
-            _names_in_expr_acc(v, acc)
-        return
-    # ast.Constant, ast.Slice, etc. — no Name references
+    for child in _iter_expr_children(node):
+        _names_in_expr_acc(child, acc)
 
 
 def _receiver_name(node: ast.expr) -> str | None:

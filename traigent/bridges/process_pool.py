@@ -45,6 +45,7 @@ logger = get_logger(__name__)
 DEFAULT_ACQUIRE_TIMEOUT_SECONDS = 60.0
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+_POOL_SHUTTING_DOWN_MESSAGE = "Pool is shutting down"
 
 
 class PoolCapacityError(JSBridgeError):
@@ -217,10 +218,10 @@ class JSProcessPool:
         """
         async with self._lock:
             if self._shutdown:
-                raise PoolShutdownError("Pool is shutting down")
+                raise PoolShutdownError(_POOL_SHUTTING_DOWN_MESSAGE)
             await self._start_workers()
 
-    async def acquire(self, timeout: float | None = None) -> JSBridge:
+    async def acquire(self, timeout: float | None = None) -> JSBridge:  # NOSONAR(S7483)
         """Acquire an available worker from the pool.
 
         This method blocks until a worker is available or times out.
@@ -237,12 +238,12 @@ class JSProcessPool:
             PoolShutdownError: If pool is shutting down.
         """
         if self._shutdown:
-            raise PoolShutdownError("Pool is shutting down")
+            raise PoolShutdownError(_POOL_SHUTTING_DOWN_MESSAGE)
 
         # Start workers if not already started (with lock protection)
         async with self._lock:
             if self._shutdown:
-                raise PoolShutdownError("Pool is shutting down")
+                raise PoolShutdownError(_POOL_SHUTTING_DOWN_MESSAGE)
             if not self._started:
                 await self._start_workers()
 
@@ -340,7 +341,7 @@ class JSProcessPool:
     async def run_trial(
         self,
         trial_config: dict[str, Any],
-        timeout: float | None = None,
+        timeout: float | None = None,  # NOSONAR(S7483)
     ) -> JSTrialResult:
         """Run a trial on an available worker.
 
@@ -366,7 +367,7 @@ class JSProcessPool:
         finally:
             await self.release(worker)
 
-    async def shutdown(self, timeout: float | None = None) -> None:
+    async def shutdown(self, timeout: float | None = None) -> None:  # NOSONAR(S7483)
         """Gracefully shutdown all workers.
 
         This stops accepting new work, drains the queue, and terminates

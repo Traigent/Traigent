@@ -154,6 +154,41 @@ def _normalize_weights(objectives: list[ObjectiveSpec]) -> list[ObjectiveSpec]:
     ]
 
 
+def _extract_json_text(response: str) -> str:
+    """Extract JSON array text from a possibly markdown-wrapped response."""
+    text = response.strip()
+    if "```" not in text:
+        return text
+    for part in text.split("```"):
+        stripped = part.strip()
+        if stripped.startswith("json"):
+            stripped = stripped[4:].strip()
+        if stripped.startswith("["):
+            return stripped
+    return text
+
+
+def _parse_objective_item(item: dict, current_names: set[str]) -> ObjectiveSpec | None:
+    """Parse a single LLM-suggested objective, or *None* if invalid."""
+    name = item.get("name", "")
+    if not name or name in current_names:
+        return None
+    orientation = item.get("orientation", "maximize")
+    if orientation not in ("maximize", "minimize"):
+        return None
+    try:
+        weight = float(item.get("weight", 0.15))
+    except (ValueError, TypeError):
+        weight = 0.15
+    return ObjectiveSpec(
+        name=name,
+        orientation=orientation,
+        weight=weight,
+        source="llm",
+        reasoning=item.get("reasoning", "LLM-suggested objective"),
+    )
+
+
 def _llm_enrich_objectives(
     source_code: str,
     current_objectives: list[ObjectiveSpec],
@@ -181,16 +216,7 @@ def _llm_enrich_objectives(
     except BudgetExhausted:
         return None
 
-    # Parse response
-    text = response.strip()
-    if "```" in text:
-        for part in text.split("```"):
-            stripped = part.strip()
-            if stripped.startswith("json"):
-                stripped = stripped[4:].strip()
-            if stripped.startswith("["):
-                text = stripped
-                break
+    text = _extract_json_text(response)
 
     try:
         data = json.loads(text)
@@ -200,30 +226,11 @@ def _llm_enrich_objectives(
     if not isinstance(data, list):
         return None
 
-    # Merge with current objectives
     merged = list(current_objectives)
     for item in data:
-        name = item.get("name", "")
-        if not name or name in current_names:
-            continue
-        orientation = item.get("orientation", "maximize")
-        if orientation not in ("maximize", "minimize"):
-            continue
-        try:
-            weight = float(item.get("weight", 0.15))
-        except (ValueError, TypeError):
-            weight = 0.15
-        reasoning = item.get("reasoning", "LLM-suggested objective")
-
-        merged.append(
-            ObjectiveSpec(
-                name=name,
-                orientation=orientation,
-                weight=weight,
-                source="llm",
-                reasoning=reasoning,
-            )
-        )
-        current_names.add(name)
+        obj = _parse_objective_item(item, current_names)
+        if obj is not None:
+            merged.append(obj)
+            current_names.add(obj.name)
 
     return merged if len(merged) > len(current_objectives) else None

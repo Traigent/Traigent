@@ -1065,107 +1065,108 @@ def whoami(key: str) -> None:
     backend_api_url = BackendConfig.get_cloud_api_url()
     console.print(f"[dim]Backend: {backend_api_url}[/dim]")
 
-    async def check_key() -> bool:
-        try:
-            import aiohttp
-        except ImportError:
-            console.print(
-                "[red]aiohttp dependency not installed; cannot validate API key.[/red]"
-            )
-            return False
-
-        url = f"{backend_api_url}/keys/validate"
-        headers = {"X-API-Key": key}
-
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=15)
-            ) as session:
-                async with session.post(url, headers=headers) as response:
-                    if response.status == 200:
-                        try:
-                            data = await response.json(content_type=None)
-                        except Exception:
-                            data = {}
-
-                        # Response format: {"valid": true, "data": {...key_metadata...}}
-                        if isinstance(data, dict) and data.get("valid"):
-                            key_data = data.get("data", {})
-
-                            table = Table(show_header=False, box=None)
-                            table.add_column("Field", style="cyan")
-                            table.add_column("Value")
-
-                            table.add_row("Status", "[green]✅ Valid[/green]")
-                            table.add_row("Category", "authenticated")
-                            table.add_row("HTTP", "200")
-                            table.add_row(
-                                "Key Name", key_data.get("key_name", "Unknown")
-                            )
-                            table.add_row(
-                                "User ID", str(key_data.get("user_id", "Unknown"))
-                            )
-                            table.add_row(
-                                "Created",
-                                key_data.get("created_at", "Unknown"),
-                            )
-
-                            console.print(table)
-                            console.print()
-                            return True
-                        else:
-                            console.print("[red]❌ Invalid API key[/red]")
-                            console.print("[yellow]Category:[/yellow] authentication")
-                            console.print()
-                            return False
-
-                    body_preview = (
-                        (await response.text()).strip().replace("\n", " ")[:220]
-                    )
-                    if response.status in (401, 403):
-                        console.print("[red]❌ Invalid or unauthorized API key[/red]")
-                        console.print("[yellow]Category:[/yellow] authentication")
-                    elif response.status == 404:
-                        console.print("[red]❌ Backend endpoint mismatch[/red]")
-                        console.print(
-                            "[yellow]Category:[/yellow] backend_endpoint_mismatch"
-                        )
-                        console.print(
-                            "[yellow]Hint:[/yellow] Check TRAIGENT_BACKEND_URL / TRAIGENT_API_URL"
-                        )
-                    elif response.status == 408:
-                        console.print("[red]❌ Backend request timed out[/red]")
-                        console.print("[yellow]Category:[/yellow] timeout")
-                    elif response.status == 409:
-                        console.print(
-                            "[red]❌ Backend reported a request conflict[/red]"
-                        )
-                        console.print("[yellow]Category:[/yellow] backend_conflict")
-                    elif response.status == 429:
-                        console.print("[red]❌ Backend rate limit exceeded[/red]")
-                        console.print("[yellow]Category:[/yellow] rate_limited")
-                    elif 500 <= response.status <= 599:
-                        console.print("[red]❌ Backend server error[/red]")
-                        console.print("[yellow]Category:[/yellow] server_error")
-                    else:
-                        console.print(
-                            "[red]❌ Unable to validate API key (unexpected backend response)[/red]"
-                        )
-                        console.print(
-                            "[yellow]Category:[/yellow] backend_response_error"
-                        )
-
-                    console.print(f"[yellow]HTTP status:[/yellow] {response.status}")
-                    if body_preview:
-                        console.print(f"[dim]Response preview:[/dim] {body_preview}")
-                    console.print()
-                    return False
-        except (TimeoutError, aiohttp.ClientError) as exc:
-            console.print("[red]❌ Cannot reach backend to validate API key[/red]")
-            console.print("[yellow]Category:[/yellow] connectivity_error")
-            console.print(f"[yellow]Error:[/yellow] {type(exc).__name__}: {exc}")
-            console.print()
-            return False
-
-    success = asyncio.run(check_key())
+    success = asyncio.run(_check_api_key(backend_api_url, key))
     sys.exit(0 if success else 1)
+
+
+def _print_valid_key_info(key_data: dict[str, Any]) -> None:
+    """Print a table with valid API key metadata."""
+    table = Table(show_header=False, box=None)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Status", "[green]✅ Valid[/green]")
+    table.add_row("Category", "authenticated")
+    table.add_row("HTTP", "200")
+    table.add_row("Key Name", key_data.get("key_name", "Unknown"))
+    table.add_row("User ID", str(key_data.get("user_id", "Unknown")))
+    table.add_row("Created", key_data.get("created_at", "Unknown"))
+
+    console.print(table)
+    console.print()
+
+
+_ERROR_STATUS_MAP: dict[int | str, tuple[str, str]] = {
+    401: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
+    403: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
+    404: ("[red]❌ Backend endpoint mismatch[/red]", "backend_endpoint_mismatch"),
+    408: ("[red]❌ Backend request timed out[/red]", "timeout"),
+    409: ("[red]❌ Backend reported a request conflict[/red]", "backend_conflict"),
+    429: ("[red]❌ Backend rate limit exceeded[/red]", "rate_limited"),
+    "5xx": ("[red]❌ Backend server error[/red]", "server_error"),
+}
+
+
+def _print_error_status(status: int, body_preview: str) -> None:
+    """Print error details for a non-200 validation response."""
+    if status in _ERROR_STATUS_MAP:
+        msg, category = _ERROR_STATUS_MAP[status]
+    elif 500 <= status <= 599:
+        msg, category = _ERROR_STATUS_MAP["5xx"]
+    else:
+        msg = "[red]❌ Unable to validate API key (unexpected backend response)[/red]"
+        category = "backend_response_error"
+
+    console.print(msg)
+    console.print(f"[yellow]Category:[/yellow] {category}")
+    if status == 404:
+        console.print(
+            "[yellow]Hint:[/yellow] Check TRAIGENT_BACKEND_URL / TRAIGENT_API_URL"
+        )
+    console.print(f"[yellow]HTTP status:[/yellow] {status}")
+    if body_preview:
+        console.print(f"[dim]Response preview:[/dim] {body_preview}")
+    console.print()
+
+
+async def _check_api_key(backend_api_url: str, key: str) -> bool:
+    """Validate an API key against the backend."""
+    try:
+        import aiohttp
+    except ImportError:
+        console.print(
+            "[red]aiohttp dependency not installed; cannot validate API key.[/red]"
+        )
+        return False
+
+    url = f"{backend_api_url}/keys/validate"
+    headers = {"X-API-Key": key}
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as session:
+            async with session.post(url, headers=headers) as response:
+                if response.status == 200:
+                    return _handle_200_response(await _safe_parse_json(response))
+
+                body_preview = (await response.text()).strip().replace("\n", " ")[:220]
+                _print_error_status(response.status, body_preview)
+                return False
+    except (TimeoutError, aiohttp.ClientError) as exc:
+        console.print("[red]❌ Cannot reach backend to validate API key[/red]")
+        console.print("[yellow]Category:[/yellow] connectivity_error")
+        console.print(f"[yellow]Error:[/yellow] {type(exc).__name__}: {exc}")
+        console.print()
+        return False
+
+
+async def _safe_parse_json(response: Any) -> dict[str, Any]:
+    """Parse JSON response body, returning empty dict on failure."""
+    try:
+        data = await response.json(content_type=None)
+    except Exception:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _handle_200_response(data: dict[str, Any]) -> bool:
+    """Handle a 200 response from the key validation endpoint."""
+    if data.get("valid"):
+        _print_valid_key_info(data.get("data", {}))
+        return True
+
+    console.print("[red]❌ Invalid API key[/red]")
+    console.print("[yellow]Category:[/yellow] authentication")
+    console.print()
+    return False
