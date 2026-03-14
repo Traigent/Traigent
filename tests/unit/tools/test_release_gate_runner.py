@@ -57,3 +57,23 @@ def test_ensure_run_workspace_writes_guarded_manifest(tmp_path: Path) -> None:
     manifest = module.resolve_child_path(run_dir, "run_manifest.json")
     assert manifest.exists()
     assert manifest.is_relative_to(run_dir.resolve())
+
+
+def test_write_summary_markdown_writes_guarded_summary(tmp_path: Path) -> None:
+    module = _load_release_gate_runner_module()
+    gate_results = tmp_path / "gate_results"
+    gate_results.mkdir()
+
+    module.write_summary_markdown(
+        output_dir=gate_results,
+        release_id="release-1",
+        mode="ci",
+        strict=True,
+        started_at="2026-03-14T00:00:00Z",
+        finished_at="2026-03-14T00:01:00Z",
+        results=[],
+    )
+
+    summary = module.resolve_child_path(gate_results, "summary.md")
+    assert summary.exists()
+    assert summary.is_relative_to(gate_results.resolve())
