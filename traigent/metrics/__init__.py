@@ -10,6 +10,7 @@ _METRIC_REGISTRY_MODULE = "traigent.core.metric_registry"
 _RAGAS_METRICS_MODULE = "traigent.metrics.ragas_metrics"
 
 _AGENT_METRICS_MODULE = "traigent.metrics.agent_metrics"
+_CONTENT_FEATURES_MODULE = "traigent.metrics.content_features"
 
 _LAZY_IMPORTS = {
     # From registry module
@@ -43,6 +44,8 @@ _LAZY_IMPORTS = {
     "extract_namespaced_config_for_agent": _AGENT_METRICS_MODULE,
     "validate_agent_id": _AGENT_METRICS_MODULE,
     "validate_agent_metrics": _AGENT_METRICS_MODULE,
+    # From content_features
+    "SimhashFeatureExtractor": _CONTENT_FEATURES_MODULE,
 }
 
 
@@ -90,4 +93,6 @@ __all__ = [
     "extract_namespaced_config_for_agent",
     "validate_agent_id",
     "validate_agent_metrics",
+    # Content features
+    "SimhashFeatureExtractor",
 ]
