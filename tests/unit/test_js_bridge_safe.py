@@ -1,0 +1,119 @@
+"""Safe unit tests for JS bridge shutdown logic.
+
+These tests do not spawn Node.js. They only exercise mocked bridge and pool
+shutdown paths that are otherwise hard to cover without the JS runtime.
+"""
+
+from __future__ import annotations
+
+import signal
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+
+from traigent.bridges.js_bridge import JSBridge, JSBridgeConfig
+from traigent.bridges.process_pool import JSProcessPool, JSProcessPoolConfig
+
+
+def _make_bridge(**config_overrides: object) -> JSBridge:
+    config = JSBridgeConfig(module_path="./fake.js", **config_overrides)
+    return JSBridge(config)
+
+
+def test_send_signal_to_group_requires_opt_in() -> None:
+    bridge = _make_bridge()
+    bridge._process = MagicMock(pid=1234)
+
+    with patch("os.killpg") as mock_killpg:
+        assert bridge._send_signal_to_group(signal.SIGTERM) is False
+
+    mock_killpg.assert_not_called()
+
+
+def test_send_signal_to_group_uses_killpg_when_enabled() -> None:
+    bridge = _make_bridge(use_process_group_signals=True)
+    bridge._process = MagicMock(pid=1234)
+
+    with patch("os.killpg") as mock_killpg:
+        assert bridge._send_signal_to_group(signal.SIGTERM) is True
+
+    mock_killpg.assert_called_once_with(1234, signal.SIGTERM)
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_active_trial_before_shutdown() -> None:
+    bridge = _make_bridge()
+    bridge._started = True
+    bridge._process = MagicMock(returncode=None)
+
+    parent = MagicMock()
+    bridge.cancel_active_trial = AsyncMock()
+    bridge._send_request = AsyncMock(return_value={"status": "success", "payload": {}})
+    bridge._wait_for_process_exit = AsyncMock(return_value=True)
+    bridge._finalize_shutdown = AsyncMock()
+
+    parent.attach_mock(bridge.cancel_active_trial, "cancel_active_trial")
+    parent.attach_mock(bridge._send_request, "send_request")
+    parent.attach_mock(bridge._wait_for_process_exit, "wait_for_process_exit")
+    parent.attach_mock(bridge._finalize_shutdown, "finalize_shutdown")
+
+    await bridge.stop(timeout=3.0)
+
+    assert parent.mock_calls == [
+        call.cancel_active_trial(),
+        call.send_request(action="shutdown", payload={}, timeout=3.0),
+        call.wait_for_process_exit(3.0),
+        call.finalize_shutdown(),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_trial_clears_active_trial_id_after_completion() -> None:
+    bridge = _make_bridge()
+    bridge._started = True
+    bridge._process = MagicMock()
+    bridge._send_request = AsyncMock(
+        return_value={
+            "status": "success",
+            "payload": {
+                "trial_id": "trial-123",
+                "status": "completed",
+                "metrics": {"accuracy": 0.9},
+                "duration": 1.0,
+            },
+        }
+    )
+
+    result = await bridge.run_trial(
+        {"trial_id": "trial-123", "config": {}},
+        timeout=2.0,
+    )
+
+    assert result.trial_id == "trial-123"
+    assert bridge._active_trial_id is None
+    bridge._send_request.assert_awaited_once_with(
+        action="run_trial",
+        payload={"trial_id": "trial-123", "config": {}, "timeout_ms": 2000},
+        timeout=7.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_pool_shutdown_requests_cancel_before_stop() -> None:
+    pool = JSProcessPool(JSProcessPoolConfig(module_path="./fake.js"))
+    worker_one = MagicMock()
+    worker_one.cancel_active_trial = AsyncMock()
+    worker_one.stop = AsyncMock()
+    worker_two = MagicMock()
+    worker_two.cancel_active_trial = AsyncMock()
+    worker_two.stop = AsyncMock()
+
+    pool._workers = [worker_one, worker_two]
+    pool._started = True
+
+    await pool.shutdown(timeout=1.0)
+
+    worker_one.cancel_active_trial.assert_awaited_once()
+    worker_two.cancel_active_trial.assert_awaited_once()
+    worker_one.stop.assert_awaited_once()
+    worker_two.stop.assert_awaited_once()

@@ -43,8 +43,8 @@ PROTOCOL_VERSION = "1.0"
 # 4. os.killpg() would then kill a completely different process group!
 #
 # Instead, we rely on:
-# - start_new_session=True: Creates a new process group, so child processes
-#   don't receive signals sent to the parent's process group
+# - Optional start_new_session=True: Creates a new process group when explicit
+#   process-group signalling is enabled
 # - Explicit cleanup: JSBridge.stop() and context manager __aexit__
 # - OS cleanup: When Python exits, orphan processes in separate sessions
 #   continue running but are eventually cleaned up by the OS (init/systemd)
@@ -55,6 +55,21 @@ DEFAULT_TRIAL_TIMEOUT_SECONDS = 300
 
 # Default timeout for ping/shutdown commands (10 seconds)
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 10
+
+_PROCESS_GROUP_SIGNALS_ENV = "TRAIGENT_JS_USE_PROCESS_GROUP_SIGNALS"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_process_group_signals() -> bool:
+    """Use direct child termination by default for local safety."""
+    return _env_flag(_PROCESS_GROUP_SIGNALS_ENV, default=False)
 
 
 class JSBridgeError(Exception):
@@ -90,6 +105,10 @@ class JSBridgeConfig:
         node_args: Additional arguments to pass to Node.js.
         trial_timeout_seconds: Timeout for trial execution in seconds.
         command_timeout_seconds: Timeout for ping/shutdown commands.
+        use_process_group_signals: Whether to terminate the whole subprocess
+            group with Unix signals. Disabled by default for local desktop
+            safety; enable explicitly when child-process cleanup is more
+            important than keeping the host stable during forced shutdown.
         env: Additional environment variables for the Node.js process.
         cwd: Working directory for the Node.js process.
     """
@@ -102,6 +121,9 @@ class JSBridgeConfig:
     node_args: list[str] = field(default_factory=list)
     trial_timeout_seconds: float = DEFAULT_TRIAL_TIMEOUT_SECONDS
     command_timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS
+    use_process_group_signals: bool = field(
+        default_factory=_default_process_group_signals
+    )
     env: dict[str, str] | None = None
     cwd: str | None = None
 
@@ -161,6 +183,7 @@ class JSBridge:
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._started = False
         self._shutdown_requested = False
+        self._active_trial_id: str | None = None
         self._lock = asyncio.Lock()
 
     async def __aenter__(self) -> JSBridge:
@@ -237,10 +260,12 @@ class JSBridge:
             logger.info("Starting JS bridge: %s", " ".join(cmd))
 
             try:
-                # start_new_session=True creates a new process group on Unix.
-                # This allows us to kill all child processes at once with killpg(),
-                # preventing orphan processes if the bridge is terminated.
-                start_new_session = sys.platform != "win32"
+                # start_new_session=True isolates the JS runner in its own
+                # process group. This is only enabled when explicit process-
+                # group signalling is requested.
+                start_new_session = (
+                    self._config.use_process_group_signals and sys.platform != "win32"
+                )
 
                 self._process = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -289,17 +314,34 @@ class JSBridge:
             self._shutdown_requested = True
             timeout = timeout or self._config.command_timeout_seconds
 
+            shutdown_failed = False
+
             try:
-                # Send shutdown command
+                await self.cancel_active_trial()
                 await self._send_request(
                     action="shutdown",
                     payload={},
                     timeout=timeout,
                 )
+            except JSProcessError as e:
+                logger.info("JS process exited during shutdown: %s", e)
             except Exception as e:
-                logger.warning("Shutdown command failed, terminating: %s", e)
-            finally:
-                await self._terminate()
+                shutdown_failed = True
+                logger.warning("Shutdown command failed: %s", e)
+
+            if self._process is not None and self._process.returncode is None:
+                if not await self._wait_for_process_exit(timeout):
+                    if shutdown_failed:
+                        logger.warning(
+                            "JS process did not exit after failed shutdown command; terminating"
+                        )
+                    else:
+                        logger.warning(
+                            "JS process did not exit after shutdown command; terminating"
+                        )
+                    await self._terminate_process()
+
+            await self._finalize_shutdown()
 
     def _send_signal_to_group(self, sig: signal.Signals) -> bool:
         """Send signal to process group (Unix only).
@@ -307,6 +349,8 @@ class JSBridge:
         Returns True if signal was sent, False if fallback to direct is needed.
         """
         if self._process is None:
+            return False
+        if not self._config.use_process_group_signals:
             return False
         pid = self._process.pid
         if sys.platform == "win32" or pid is None:
@@ -334,11 +378,36 @@ class JSBridge:
         with suppress(asyncio.CancelledError):
             await task
 
-    async def _terminate(self) -> None:
-        """Force terminate the Node.js process and all its children."""
-        if self._process is not None:
-            await self._terminate_process()
+    async def cancel_active_trial(self) -> None:
+        """Request cooperative cancellation for the active trial, if any."""
+        if not self._started or self._process is None:
+            return
 
+        trial_id = self._active_trial_id
+        if not trial_id:
+            return
+
+        try:
+            await self.cancel(trial_id)
+        except Exception as e:
+            logger.debug("Active trial cancellation failed for %s: %s", trial_id, e)
+
+    async def _wait_for_process_exit(self, timeout: float) -> bool:
+        """Wait for the child process to exit."""
+        if self._process is None or self._process.returncode is not None:
+            return True
+
+        try:
+            async with asyncio.timeout(timeout):
+                await self._process.wait()
+            return True
+        except TimeoutError:
+            return False
+        except ProcessLookupError:
+            return True
+
+    async def _finalize_shutdown(self) -> None:
+        """Release local resources after the process has exited or been terminated."""
         self._fail_pending_requests(JSBridgeError("Bridge shutdown"))
         await self._cancel_task(self._reader_task)
         await self._cancel_task(self._stderr_task)
@@ -347,6 +416,14 @@ class JSBridge:
         self._reader_task = None
         self._stderr_task = None
         self._started = False
+        self._active_trial_id = None
+
+    async def _terminate(self) -> None:
+        """Force terminate the Node.js process and all its children."""
+        if self._process is not None:
+            await self._terminate_process()
+
+        await self._finalize_shutdown()
 
     async def _terminate_process(self) -> None:
         """Terminate the Node.js process with graceful fallback to force kill."""
@@ -430,6 +507,8 @@ class JSBridge:
         # Add timeout to payload so JS can also enforce it
         payload = dict(trial_config)
         payload["timeout_ms"] = int(timeout * 1000)
+        trial_id = trial_config.get("trial_id")
+        self._active_trial_id = str(trial_id) if trial_id is not None else None
 
         try:
             response = await self._send_request(
@@ -446,6 +525,10 @@ class JSBridge:
             raise JSTrialTimeoutError(
                 f"Trial {trial_config.get('trial_id')} timed out after {timeout}s"
             ) from None
+        finally:
+            normalized_trial_id = str(trial_id) if trial_id is not None else None
+            if self._active_trial_id == normalized_trial_id:
+                self._active_trial_id = None
 
         return self._parse_trial_response(response)
 
