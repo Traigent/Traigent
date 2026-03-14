@@ -79,3 +79,26 @@ def test_write_summary_markdown_writes_guarded_summary(tmp_path: Path) -> None:
     summary = module.resolve_child_path(gate_results, "summary.md")
     assert summary.exists()
     assert summary.is_relative_to(gate_results.resolve())
+
+
+def test_write_inventories_writes_guarded_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_release_gate_runner_module()
+    run_dir = tmp_path / "run-1"
+    inventories = run_dir / "inventories"
+    inventories.mkdir(parents=True)
+
+    project_dir = tmp_path / "project"
+    (project_dir / "traigent").mkdir(parents=True)
+    (project_dir / "tests").mkdir(parents=True)
+    (project_dir / "traigent" / "sample.py").write_text("print('src')\n", encoding="utf-8")
+    (project_dir / "tests" / "test_sample.py").write_text("def test_sample():\n    pass\n", encoding="utf-8")
+
+    monkeypatch.chdir(project_dir)
+    module.write_inventories(run_dir)
+
+    src_inventory = module.resolve_child_path(inventories, "src_files.txt")
+    tests_inventory = module.resolve_child_path(inventories, "tests_files.txt")
+    assert src_inventory.exists()
+    assert tests_inventory.exists()
+    assert src_inventory.is_relative_to(inventories.resolve())
+    assert tests_inventory.is_relative_to(inventories.resolve())
