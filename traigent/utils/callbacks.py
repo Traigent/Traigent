@@ -625,6 +625,8 @@ class CallbackManager:
                     )
                     return None
 
+            # Start callbacks in a fresh context so pooled worker threads do not
+            # retain or inherit caller-specific contextvars across invocations.
             future = executor.submit(contextvars.Context().run, method_func, *args)
             self._running_callbacks[key] = future
 
