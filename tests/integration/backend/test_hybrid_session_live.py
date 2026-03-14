@@ -10,7 +10,7 @@ from traigent.cloud.client import TraigentCloudClient
 
 
 def _resolve_backend_url() -> str | None:
-    return os.getenv("TRAIGENT_BACKEND_URL") or os.getenv("TRAIGENT_API_URL")
+    return os.getenv("TRAIGENT_API_URL") or os.getenv("TRAIGENT_BACKEND_URL")
 
 
 def _score_config(config: dict[str, object]) -> dict[str, float]:
@@ -33,7 +33,7 @@ def _score_config(config: dict[str, object]) -> dict[str, float]:
     not os.getenv("TRAIGENT_HYBRID_LIVE"),
     reason=(
         "Set TRAIGENT_HYBRID_LIVE=1 plus TRAIGENT_API_KEY and "
-        "TRAIGENT_BACKEND_URL or TRAIGENT_API_URL to run live hybrid session tests"
+        "TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL to run live hybrid session tests"
     ),
 )
 async def test_live_hybrid_session_round_trip() -> None:
@@ -46,7 +46,7 @@ async def test_live_hybrid_session_round_trip() -> None:
 
     if not backend_url:
         pytest.skip(
-            "Set TRAIGENT_BACKEND_URL or TRAIGENT_API_URL for the live hybrid session test"
+            "Set TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL for the live hybrid session test"
         )
 
     session_id: str | None = None
