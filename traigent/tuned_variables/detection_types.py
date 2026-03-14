@@ -220,9 +220,11 @@ def _candidate_to_config_value(
     format: str,
 ) -> Any:
     """Convert a candidate's suggested range into the requested output format."""
-    assert candidate.suggested_range is not None
+    suggested_range = candidate.suggested_range
+    if suggested_range is None:
+        raise ValueError(f"Candidate '{candidate.name}' is missing a suggested range")
     if format == "normalized":
-        return candidate.suggested_range.kwargs
+        return suggested_range.kwargs
     if format == "ranges":
-        return candidate.suggested_range.to_parameter_range()
+        return suggested_range.to_parameter_range()
     raise ValueError("format must be 'normalized' or 'ranges', " f"got {format!r}")

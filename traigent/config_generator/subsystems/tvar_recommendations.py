@@ -10,6 +10,7 @@ from traigent.config_generator.agent_classifier import ClassificationResult
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.range_presets import get_preset_range
 from traigent.config_generator.types import TVarRecommendation, TVarSpec
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 
 def generate_recommendations(
@@ -183,20 +184,6 @@ def _preset_recommendations(
 _VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})
 
 
-def _extract_json_text(response: str) -> str:
-    """Extract JSON array text from a possibly markdown-wrapped response."""
-    text = response.strip()
-    if "```" not in text:
-        return text
-    for part in text.split("```"):
-        stripped = part.strip()
-        if stripped.startswith("json"):
-            stripped = stripped[4:].strip()
-        if stripped.startswith("["):
-            return stripped
-    return text
-
-
 def _parse_recommendation_item(item: dict) -> TVarRecommendation | None:
     """Parse a single LLM-suggested recommendation, or *None* if invalid."""
     name = item.get("name", "")
@@ -246,7 +233,7 @@ def _llm_recommend(
     except BudgetExhausted:
         return []
 
-    text = _extract_json_text(response)
+    text = extract_json_array_text(response)
 
     try:
         data = json.loads(text)

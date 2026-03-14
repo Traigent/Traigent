@@ -10,6 +10,7 @@ from __future__ import annotations
 from traigent.config_generator.agent_classifier import ClassificationResult
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.types import ObjectiveSpec, TVarSpec
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 # Framework import patterns that suggest latency is a relevant objective
 _LLM_FRAMEWORK_PATTERNS = frozenset(
@@ -154,20 +155,6 @@ def _normalize_weights(objectives: list[ObjectiveSpec]) -> list[ObjectiveSpec]:
     ]
 
 
-def _extract_json_text(response: str) -> str:
-    """Extract JSON array text from a possibly markdown-wrapped response."""
-    text = response.strip()
-    if "```" not in text:
-        return text
-    for part in text.split("```"):
-        stripped = part.strip()
-        if stripped.startswith("json"):
-            stripped = stripped[4:].strip()
-        if stripped.startswith("["):
-            return stripped
-    return text
-
-
 def _parse_objective_item(item: dict, current_names: set[str]) -> ObjectiveSpec | None:
     """Parse a single LLM-suggested objective, or *None* if invalid."""
     name = item.get("name", "")
@@ -216,7 +203,7 @@ def _llm_enrich_objectives(
     except BudgetExhausted:
         return None
 
-    text = _extract_json_text(response)
+    text = extract_json_array_text(response)
 
     try:
         data = json.loads(text)

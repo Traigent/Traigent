@@ -617,6 +617,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
         )
         if ok:
             return result
+        return None  # pragma: no cover - unreachable while error_handler re-raises
 
     def _transform_function(
         self, func: Callable[..., Any], config: dict[str, Any]

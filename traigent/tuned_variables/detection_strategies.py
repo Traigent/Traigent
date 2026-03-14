@@ -25,6 +25,7 @@ from traigent.tuned_variables.detection_types import (
     SuggestedRange,
     TunedVariableCandidate,
 )
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 logger = logging.getLogger(__name__)
 
@@ -565,19 +566,6 @@ Function to analyze:
 """
 
 
-def _extract_json_from_markdown(text: str) -> str:
-    """Strip markdown code fences and return the inner JSON text."""
-    if "```" not in text:
-        return text
-    for part in text.split("```"):
-        stripped = part.strip()
-        if stripped.startswith("json"):
-            stripped = stripped[4:].strip()
-        if stripped.startswith("["):
-            return stripped
-    return text
-
-
 def _parse_candidate_item(item: Any) -> TunedVariableCandidate | None:
     """Parse a single dict from the LLM response into a candidate."""
     if not isinstance(item, dict) or "name" not in item:
@@ -669,7 +657,7 @@ class LLMDetectionStrategy:
 
     def _parse_response(self, response: str) -> list[TunedVariableCandidate]:
         """Parse LLM JSON response into candidates."""
-        text = _extract_json_from_markdown(response.strip())
+        text = extract_json_array_text(response)
 
         try:
             items = json.loads(text)

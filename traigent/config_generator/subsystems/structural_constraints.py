@@ -11,6 +11,7 @@ from traigent.config_generator.presets.constraint_templates import (
     get_matching_constraints,
 )
 from traigent.config_generator.types import StructuralConstraintSpec, TVarSpec
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 
 def generate_structural_constraints(
@@ -41,20 +42,6 @@ def generate_structural_constraints(
         constraints.extend(llm_constraints)
 
     return constraints
-
-
-def _extract_json_text(response: str) -> str:
-    """Extract JSON array text from a possibly markdown-wrapped response."""
-    text = response.strip()
-    if "```" not in text:
-        return text
-    for part in text.split("```"):
-        stripped = part.strip()
-        if stripped.startswith("json"):
-            stripped = stripped[4:].strip()
-        if stripped.startswith("["):
-            return stripped
-    return text
 
 
 def _parse_constraint_item(item: dict) -> StructuralConstraintSpec | None:
@@ -101,7 +88,7 @@ def _llm_suggest_constraints(
     except BudgetExhausted:
         return []
 
-    text = _extract_json_text(response)
+    text = extract_json_array_text(response)
 
     try:
         data = json.loads(text)
