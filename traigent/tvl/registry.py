@@ -421,6 +421,38 @@ class FileRegistryResolver:
         values = [v.strip().strip("'\"") for v in values_str.split(",") if v.strip()]
         return [i for i in items if i.get(field) in values]
 
+    @staticmethod
+    def _parse_comparison_filter(filter_expr: str) -> tuple[str, str, str] | None:
+        """Parse a comparison filter without regex backtracking risk."""
+        expr = filter_expr.strip()
+        if not expr:
+            return None
+
+        field_end = 0
+        while field_end < len(expr) and (
+            expr[field_end].isalnum() or expr[field_end] == "_"
+        ):
+            field_end += 1
+
+        field = expr[:field_end]
+        if not field:
+            return None
+
+        remainder = expr[field_end:].lstrip()
+        for op in (">=", "<=", ">", "<"):
+            if remainder.startswith(op):
+                value = remainder[len(op) :].strip()
+                if not value:
+                    return None
+                if value[0] in {"'", '"'}:
+                    quote = value[0]
+                    if len(value) < 2 or not value.endswith(quote):
+                        return None
+                    value = value[1:-1]
+                return field, op, value
+
+        return None
+
     def _apply_simple_filter(
         self, items: list[dict[str, Any]], filter_expr: str
     ) -> list[dict[str, Any]]:
@@ -450,11 +482,9 @@ class FileRegistryResolver:
             return self._apply_equality_filter(items, field, op, value)
 
         # Parse comparison: field >= 'value'
-        comparison_match = re.match(
-            r"^\s*(\w+)\s*(>=|<=|>|<)\s*['\"]?([^'\"]+)['\"]?\s*$", filter_expr
-        )
-        if comparison_match:
-            field, op, value = comparison_match.groups()
+        comparison_filter = self._parse_comparison_filter(filter_expr)
+        if comparison_filter:
+            field, op, value = comparison_filter
             return self._apply_comparison(items, field, op, value)
 
         # Parse 'in' expression: field in ['a', 'b']

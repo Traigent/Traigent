@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import psutil
+
 from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
@@ -136,15 +138,7 @@ class LocalStorageManager:
         """Best-effort check whether a process is alive."""
         if pid <= 0:
             return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except OSError:
-            return False
-        return True
+        return bool(psutil.pid_exists(pid))
 
     def _read_lock_pid(self, lock_path: Path) -> int | None:
         """Read owning PID from lock file, if present."""
