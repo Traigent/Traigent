@@ -1,13 +1,10 @@
-name: Auto-Tune on Staging
+name: Example Auto-Tune Demo
+
+# Example workflow for SDK users exploring auto-tuning patterns.
+# This is not part of the SDK release gate and is intended for
+# explicit, maintainer-triggered demos in either mock or real-infra mode.
 
 on:
-  push:
-    branches:
-      - staging
-      - 'release/*'
-  pull_request:
-    types: [labeled]
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -27,17 +24,17 @@ on:
         description: 'Maximum budget in USD'
         required: false
         default: '5.0'
+      apply_changes:
+        description: 'Allow DVC push and PR creation'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   auto-tune:
-    # Only run if PR has 'auto-tune' label or on staging/release branches
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && contains(github.event.label.name, 'auto-tune')) ||
-      github.event_name == 'workflow_dispatch'
-
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: write
       pull-requests: write
       issues: write
@@ -66,12 +63,12 @@ jobs:
       - name: Setup DVC
         uses: iterative/setup-dvc@175771be1dc3d119268e00a896b52a4b77decb5e  # v1.2.0
 
-      - name: Configure AWS credentials (for DVC storage)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+      - name: Configure AWS credentials via OIDC (for DVC storage)
+        if: github.event.inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          role-session-name: github-actions-auto-tune
           aws-region: us-east-1
 
       - name: Pull DVC data
@@ -82,15 +79,7 @@ jobs:
       - name: Determine environment
         id: env
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-            echo "environment=staging" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
-            echo "environment=production" >> $GITHUB_OUTPUT
-          else
-            echo "environment=development" >> $GITHUB_OUTPUT
-          fi
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
 
       - name: Set tuning parameters
         id: params
@@ -180,11 +169,10 @@ jobs:
             tail -n 20 reports/performance_report.md >> report.md
           fi
 
-          # Send report as PR comment
-          cml comment create report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push to DVC
-        if: success() && github.event_name == 'push'
+        if: success() && github.event.inputs.apply_changes == 'true'
         run: |
           # Add optimization results to DVC
           dvc add optimization_results/latest.json
@@ -197,7 +185,7 @@ jobs:
           git diff --staged --quiet || git commit -m "Update optimization results [skip ci]"
 
       - name: Create PR with improvements
-        if: success() && steps.env.outputs.environment == 'staging'
+        if: success() && github.event.inputs.apply_changes == 'true' && steps.env.outputs.environment == 'staging'
         uses: peter-evans/create-pull-request@4e1beaa7521e8b457b572c090b25bd3db56bf1c5  # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -230,20 +218,3 @@ jobs:
             reports/
             performance_plots/
           retention-days: 30
-
-  notify:
-    needs: auto-tune
-    if: always()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Send notification
-        if: github.event_name == 'push' && contains(github.ref, 'release')
-        uses: 8398a7/action-slack@047b09b154480ed39076984b64f324fff010d703  # v3.9.3
-        with:
-          status: ${{ job.status }}
-          text: |
-            Auto-tuning ${{ job.status }} for ${{ github.ref }}
-            View results: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-          fields: repo,message,commit,author,action,eventName,ref,workflow

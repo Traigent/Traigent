@@ -18,24 +18,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Load secrets from AWS
-      if: hashFiles('scripts/secrets/pull_secret.sh') != ''
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}
-        AWS_SESSION_TOKEN: ${{ secrets.CI_AWS_SESSION_TOKEN }}
-        AWS_REGION: ${{ secrets.CI_AWS_REGION }}
-        TRAIGENT_SECRET_ID: ${{ secrets.TRAIGENT_ENV_SECRET_ID }}
-      shell: bash
-      run: |
-        # Skip if no AWS credentials configured
-        [ -z "$AWS_ACCESS_KEY_ID" ] && echo "No AWS credentials, skipping" && exit 0
-        scripts/secrets/pull_secret.sh ci.env
-        while IFS= read -r line; do
-          [[ -z "$line" || "$line" == \#* ]] && continue
-          echo "$line" >> "$GITHUB_ENV"
-        done < ci.env
-
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -92,23 +74,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Load secrets from AWS
-      if: hashFiles('scripts/secrets/pull_secret.sh') != ''
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}
-        AWS_SESSION_TOKEN: ${{ secrets.CI_AWS_SESSION_TOKEN }}
-        AWS_REGION: ${{ secrets.CI_AWS_REGION }}
-        TRAIGENT_SECRET_ID: ${{ secrets.TRAIGENT_ENV_SECRET_ID }}
-      shell: bash
-      run: |
-        [ -z "$AWS_ACCESS_KEY_ID" ] && echo "No AWS credentials, skipping" && exit 0
-        scripts/secrets/pull_secret.sh ci.env
-        while IFS= read -r line; do
-          [[ -z "$line" || "$line" == \#* ]] && continue
-          echo "$line" >> "$GITHUB_ENV"
-        done < ci.env
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
