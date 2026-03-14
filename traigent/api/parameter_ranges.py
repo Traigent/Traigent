@@ -86,10 +86,13 @@ class IntRangeConfigDict(TypedDict):
 
 FloatRangeTuple: TypeAlias = tuple[float, float]
 IntRangeTuple: TypeAlias = tuple[int, int]
+ChoicesConfigValue: TypeAlias = list[T]
 FloatRangeConfigValue: TypeAlias = FloatRangeTuple | FloatRangeConfigDict
 IntRangeConfigValue: TypeAlias = IntRangeTuple | IntRangeConfigDict
+# ParameterRange itself is not generic, so the categorical branch erases the
+# element type at the aggregate alias and is recovered on concrete overloads.
 ParameterRangeConfigValue: TypeAlias = (
-    FloatRangeConfigValue | IntRangeConfigValue | list[Any]
+    FloatRangeConfigValue | IntRangeConfigValue | ChoicesConfigValue[Any]
 )
 
 
@@ -717,7 +720,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
                 f"Set enforce_type=False to allow mixed types."
             )
 
-    def to_config_value(self) -> list[T]:
+    def to_config_value(self) -> ChoicesConfigValue[T]:
         """Convert to internal list format."""
         return list(self.values)
 
@@ -980,7 +983,7 @@ def normalize_config_value(value: LogRange) -> FloatRangeConfigDict: ...
 
 
 @overload
-def normalize_config_value(value: Choices[T]) -> list[T]: ...
+def normalize_config_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
 
 
 @overload
@@ -1032,7 +1035,7 @@ def normalize_parameter_value(value: LogRange) -> FloatRangeConfigDict: ...
 
 
 @overload
-def normalize_parameter_value(value: Choices[T]) -> list[T]: ...
+def normalize_parameter_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
 
 
 @overload
@@ -1159,6 +1162,7 @@ __all__ = [
     "IntRangeConfigDict",
     "FloatRangeTuple",
     "IntRangeTuple",
+    "ChoicesConfigValue",
     "FloatRangeConfigValue",
     "IntRangeConfigValue",
     "ParameterRangeConfigValue",
