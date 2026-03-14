@@ -191,6 +191,9 @@ cython_debug/
 
 # Internal design docs (IP/private during implementation)
 resampling_configs.md
+Traigent_vs_Langfuse_Gap_Analysis.xlsx
+docs/feature_matrices/enterprise_beta_execution_plan.md
+docs/feature_matrices/enterprise_beta_execution_tracker.md
 
 # Traigent specific
 *.jsonl
@@ -212,6 +215,7 @@ temp/
 .traigent/
 # Cost approval tokens (user-specific, should never be committed)
 **/cost_approval.token
+.playwright-cli/
 
 # Mutation testing artifacts (mutmut)
 mutants/
