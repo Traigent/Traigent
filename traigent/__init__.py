@@ -97,6 +97,7 @@ from traigent.api.types import (
     ParetoFront,
     SensitivityAnalysis,
     StrategyConfig,
+    TrialError,
     TrialResult,
     serialize_trials,
 )
@@ -251,6 +252,7 @@ __all__ = [
     "create_quick_plot",
     # Result types
     "OptimizationResult",
+    "TrialError",
     "TrialResult",
     "serialize_trials",
     "SensitivityAnalysis",
