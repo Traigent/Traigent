@@ -366,7 +366,7 @@ Connect your SDK to the Traigent cloud to see optimization results in the [porta
 
 2. Log in:
    ```bash
-   TRAIGENT_BACKEND_URL=https://api.traigent.ai traigent auth login
+   traigent auth login
    ```
 
 3. Run your optimization — results appear in the portal automatically:
@@ -378,12 +378,13 @@ No environment variables needed after login — the SDK picks up stored credenti
 
 **Credential priority order:**
 
-| Credential  | 1st (highest)              | 2nd                        | 3rd (default)       |
-|-------------|----------------------------|----------------------------|---------------------|
-| API Key     | `TRAIGENT_API_KEY` env var | Stored CLI credentials     | None (local only)   |
-| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000`    |
+| Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
+|-------------|--------------------------------|------------------------|----------------------|
+| API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000` (generic SDK) |
 
 > **Tip:** Use env vars for CI/automation. Use `traigent auth login` for local development.
+> Cloud-facing entry points such as `traigent auth login`, `TraigentCloudClient`, and `SyncManager` default to `portal.traigent.ai` when no backend URL is configured.
 
 ### Testing Models from Multiple Providers
 
@@ -551,6 +552,53 @@ def my_agent(query: str) -> str:
 | `algorithm` | `.optimize()` method call | Search algorithm: `"random"`, `"grid"`, `"bayesian"` |
 | `max_trials` | `.optimize()` method call | Number of configurations to test |
 
+### Attach Datasets After Decoration
+
+`eval_dataset` does not have to be fixed in the decorator. You can attach or replace
+it on the wrapped function before calling `.optimize()`.
+
+```python
+import asyncio
+
+import traigent
+from traigent.evaluators.base import Dataset, EvaluationExample
+
+
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    objectives=["accuracy"],
+)
+def classify_review(text: str) -> str:
+    return run_classifier(text)
+
+
+classify_review.eval_dataset = Dataset(
+    examples=[
+        EvaluationExample(
+            input_data={"text": "fast shipping and great packaging"},
+            expected_output="positive",
+        ),
+        EvaluationExample(
+            input_data={"text": "arrived broken and late"},
+            expected_output="negative",
+        ),
+    ],
+    name="review-smoke-test",
+)
+
+result = asyncio.run(classify_review.optimize(max_trials=4))
+```
+
+Notes:
+
+- Supported values are the same as in the decorator: a JSONL path, a list of JSONL
+  paths, or a `Dataset` object.
+- The optimized function still runs one example at a time. Traigent reads
+  `func.eval_dataset`, then calls your function with the current example's
+  `input_data` fields as normal function arguments.
+- If you need different evaluation sets for separate runs, update
+  `func.eval_dataset` between calls to `.optimize()`.
+
 ## 🎯 Configuration Injection Modes
 
 Traigent supports two ways to inject optimized parameters into your code:
@@ -676,6 +724,19 @@ results = await my_agent.optimize()
 print(f"Total optimization cost: ${results.total_cost:.4f}")
 print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 ```
+
+### Callback Timeout Semantics
+
+Traigent isolates callback failures so a slow or broken callback does not block the
+optimization loop. When timeout protection is enabled in `CallbackManager`:
+
+- the optimization loop stops waiting after the timeout expires
+- the callback may still continue running in its worker thread
+- `future.cancel()` only prevents execution if the callback has not started yet
+
+For callbacks with external side effects, prefer idempotent writes and avoid holding
+locks or scarce resources for a long time. If a callback must finish before the next
+trial progresses, disable timeout protection for that callback manager instance.
 
 ## 🎓 More Examples
 

@@ -12,6 +12,8 @@ from traigent.cloud.billing import (
     BillingPlan,
     UsageRecord,
     UsageTracker,
+    _read_json_file,
+    _write_json_file,
 )
 
 
@@ -157,6 +159,15 @@ class TestBillingPlan:
 
 class TestUsageTracker:
     """Test cases for UsageTracker."""
+
+    def test_json_helpers_round_trip(self, tmp_path):
+        """The async file helpers should preserve JSON payloads."""
+        payload = {"usage_records": [{"function_name": "test_func"}]}
+        storage_path = tmp_path / "usage.json"
+
+        _write_json_file(storage_path, payload)
+
+        assert _read_json_file(storage_path) == payload
 
     def test_usage_tracker_initialization_default_path(self):
         """Test UsageTracker initialization with default path."""

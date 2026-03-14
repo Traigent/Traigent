@@ -19,6 +19,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -36,6 +37,29 @@ except ImportError:
     pass
 
 
+def normalize_backend_url(backend_url: str) -> str:
+    """Validate and normalize the backend URL before issuing HTTP requests."""
+    candidate = backend_url.strip()
+    parsed = urlparse(candidate)
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Backend URL must start with http:// or https://")
+    if not parsed.netloc:
+        raise ValueError("Backend URL must include a hostname")
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("Backend URL must not include params, query strings, or fragments")
+
+    normalized_path = parsed.path.rstrip("/")
+    return urlunparse(
+        parsed._replace(
+            path=normalized_path,
+            params="",
+            query="",
+            fragment="",
+        )
+    )
+
+
 def get_api_key(email: str, password: str, backend_url: str, verbose: bool = True) -> str:
     """Authenticate and create an API key.
 
@@ -51,6 +75,8 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
     Raises:
         Exception: If authentication or API key creation fails
     """
+    backend_url = normalize_backend_url(backend_url)
+
     # Step 1: Login to get JWT token
     login_url = f"{backend_url}/api/v1/auth/login"
     print(f"\n{'='*60}")
@@ -64,6 +90,7 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
         login_url,
         json={"email": email, "password": password},
         timeout=30,
+        allow_redirects=False,
     )
 
     print(f"\n--- Response ---")
@@ -104,6 +131,7 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
         headers={"Authorization": f"Bearer {token}"},
         json={"key_name": "CLI Generated Key"},
         timeout=30,
+        allow_redirects=False,
     )
 
     print(f"\n--- Response ---")

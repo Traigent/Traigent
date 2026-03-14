@@ -265,6 +265,42 @@ class OptimizationOrchestrator:
         self._initialized = True
 
     @staticmethod
+    def _extract_raw_model_candidates(definition: Any) -> Sequence[Any] | None:
+        """Extract raw candidate values from a config-space definition."""
+        if isinstance(definition, str):
+            return (definition,)
+        if isinstance(definition, Sequence) and not isinstance(
+            definition, (str, bytes, bytearray)
+        ):
+            return definition
+        if not isinstance(definition, dict):
+            return None
+
+        values = definition.get("values")
+        if isinstance(values, str):
+            return (values,)
+        if isinstance(values, Sequence) and not isinstance(
+            values, (str, bytes, bytearray)
+        ):
+            return values
+        return None
+
+    @staticmethod
+    def _normalize_model_candidates(
+        raw_candidates: Sequence[Any] | None,
+    ) -> tuple[str, ...]:
+        """Normalize candidate model values into a deduplicated tuple."""
+        if raw_candidates is None:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                candidate.strip()
+                for candidate in raw_candidates
+                if isinstance(candidate, str) and candidate.strip()
+            )
+        )
+
+    @staticmethod
     def _extract_model_candidates_from_config_space(
         config_space: dict[str, Any] | None,
     ) -> tuple[str, ...]:
@@ -273,37 +309,15 @@ class OptimizationOrchestrator:
             return ()
 
         for key in ("model", "model_name"):
-            if key not in config_space:
-                continue
-
-            definition = config_space[key]
-            raw_candidates: Sequence[Any] | None = None
-
-            if isinstance(definition, str):
-                raw_candidates = (definition,)
-            elif isinstance(definition, Sequence) and not isinstance(
-                definition, (str, bytes, bytearray)
-            ):
-                raw_candidates = definition
-            elif isinstance(definition, dict):
-                values = definition.get("values")
-                if isinstance(values, str):
-                    raw_candidates = (values,)
-                elif isinstance(values, Sequence) and not isinstance(
-                    values, (str, bytes, bytearray)
-                ):
-                    raw_candidates = values
-
-            if raw_candidates is None:
-                continue
-
-            return tuple(
-                dict.fromkeys(
-                    candidate.strip()
-                    for candidate in raw_candidates
-                    if isinstance(candidate, str) and candidate.strip()
+            normalized_candidates = (
+                OptimizationOrchestrator._normalize_model_candidates(
+                    OptimizationOrchestrator._extract_raw_model_candidates(
+                        config_space.get(key)
+                    )
                 )
             )
+            if normalized_candidates:
+                return normalized_candidates
 
         return ()
 

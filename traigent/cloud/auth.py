@@ -29,7 +29,6 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
-from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
@@ -149,9 +148,9 @@ class UnifiedAuthConfig:
 
     default_mode: AuthMode = AuthMode.API_KEY
     backend_base_url: str | None = (
-        None  # Will be set from BackendConfig if not provided
+        None  # Will be set from cloud backend config if not provided
     )
-    cloud_base_url: str = DEFAULT_LOCAL_URL
+    cloud_base_url: str = ""  # Resolved from cloud backend config in __post_init__
     token_refresh_threshold: float = 300.0  # Refresh if expires within 5 minutes
     auto_refresh: bool = True
     cache_credentials: bool = True
@@ -161,11 +160,13 @@ class UnifiedAuthConfig:
     api_key_critical_days: int = 7
 
     def __post_init__(self) -> None:
-        """Set backend URL from centralized config if not provided."""
-        if self.backend_base_url is None:
-            from traigent.config.backend_config import BackendConfig
+        """Set backend/cloud URLs from centralized config if not provided."""
+        from traigent.config.backend_config import BackendConfig
 
-            self.backend_base_url = BackendConfig.get_backend_url()
+        if self.backend_base_url is None:
+            self.backend_base_url = BackendConfig.get_cloud_backend_url()
+        if not self.cloud_base_url:
+            self.cloud_base_url = BackendConfig.get_cloud_backend_url()
 
 
 @dataclass
@@ -221,7 +222,7 @@ class APIKey:
 
         if isinstance(value, datetime):
             dt = value
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             dt = datetime.fromtimestamp(float(value), tz=UTC)
         elif isinstance(value, str):
             raw = value.strip()
@@ -1083,7 +1084,7 @@ class AuthManager:
         expires_dt: datetime | None
         if isinstance(expires_at, datetime):
             expires_dt = expires_at
-        elif isinstance(expires_at, (int, float)):
+        elif isinstance(expires_at, int | float):
             expires_dt = datetime.fromtimestamp(expires_at, tz=UTC)
         else:
             expires_dt = None
@@ -1432,7 +1433,9 @@ class AuthManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_backend_api_url()
+        backend_api_url = BackendConfig.build_api_base(
+            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+        )
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(

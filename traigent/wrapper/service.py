@@ -38,6 +38,7 @@ import copy
 import inspect
 import json
 import math
+import os
 import re
 import time
 import uuid
@@ -45,8 +46,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
+from traigent.hybrid.protocol import EstimatedTokensPerExample
 from traigent.utils.logging import get_logger
-from traigent.wrapper.errors import HybridAPIError
+from traigent.wrapper.errors import BadRequestError, HybridAPIError
 
 logger = get_logger(__name__)
 
@@ -54,6 +56,44 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
+_ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
+_ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
+
+
+def _estimated_tokens_from_env() -> EstimatedTokensPerExample | None:
+    """Return optional per-example token estimate from environment variables."""
+    input_tokens = os.environ.get(_ESTIMATED_INPUT_TOKENS_ENV)
+    output_tokens = os.environ.get(_ESTIMATED_OUTPUT_TOKENS_ENV)
+    if input_tokens is None and output_tokens is None:
+        return None
+    if input_tokens is None or output_tokens is None:
+        logger.warning(
+            "Both %s and %s must be set together; ignoring partial token estimate configuration.",
+            _ESTIMATED_INPUT_TOKENS_ENV,
+            _ESTIMATED_OUTPUT_TOKENS_ENV,
+        )
+        return None
+    return EstimatedTokensPerExample.from_dict(
+        {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+    )
+
+
+def _resolve_estimated_tokens_per_example(
+    value: EstimatedTokensPerExample | dict[str, Any] | None,
+) -> EstimatedTokensPerExample | None:
+    """Normalize optional per-example token estimate from config or env."""
+    if value is None:
+        return _estimated_tokens_from_env()
+    if isinstance(value, EstimatedTokensPerExample):
+        return value
+    if isinstance(value, dict):
+        return EstimatedTokensPerExample.from_dict(value)
+    raise TypeError(
+        "estimated_tokens_per_example must be an EstimatedTokensPerExample instance, a dict, or None"
+    )
 
 
 @dataclass
@@ -73,6 +113,8 @@ class ServiceConfig:
         promotion_policy: Optional promotion policy definition.
         defaults: Optional default configuration values.
         measures: Optional declared measure names.
+        estimated_tokens_per_example: Optional per-example token estimate used
+            for hybrid pre-run approval checks.
     """
 
     tunable_id: str = "default"
@@ -87,6 +129,7 @@ class ServiceConfig:
     promotion_policy: dict[str, Any] | None = None
     defaults: dict[str, Any] | None = None
     measures: list[str] | None = None
+    estimated_tokens_per_example: EstimatedTokensPerExample | None = None
 
 
 @dataclass
@@ -144,6 +187,9 @@ class TraigentService:
         promotion_policy: dict[str, Any] | None = None,
         defaults: dict[str, Any] | None = None,
         measures: list[str] | None = None,
+        estimated_tokens_per_example: (
+            EstimatedTokensPerExample | dict[str, Any] | None
+        ) = None,
     ) -> None:
         """Initialize TraigentService.
 
@@ -159,6 +205,9 @@ class TraigentService:
             promotion_policy: Optional promotion policy.
             defaults: Optional default tunable values.
             measures: Optional declared measure names.
+            estimated_tokens_per_example: Optional per-example token estimate
+                for cost approval. Falls back to environment variables when not
+                provided.
         """
         self.config = ServiceConfig(
             tunable_id=tunable_id,
@@ -172,6 +221,9 @@ class TraigentService:
             promotion_policy=promotion_policy,
             defaults=defaults,
             measures=measures,
+            estimated_tokens_per_example=_resolve_estimated_tokens_per_example(
+                estimated_tokens_per_example
+            ),
         )
 
         # Registered handlers
@@ -416,6 +468,10 @@ class TraigentService:
             response["defaults"] = defaults
         if measures is not None:
             response["measures"] = measures
+        if self.config.estimated_tokens_per_example is not None:
+            response["estimated_tokens_per_example"] = (
+                self.config.estimated_tokens_per_example.to_dict()
+            )
         return response
 
     def _normalize_tvars(self, tvars: dict[str, Any]) -> dict[str, Any]:
@@ -529,17 +585,13 @@ class TraigentService:
 
         session_id = request.get("session_id")
 
-        # Validate benchmark_id is present
+        # Validate benchmark_id is present before any handler work.
         benchmark_id = request.get("benchmark_id")
         if not benchmark_id:
-            return {
-                "request_id": request_id,
-                "status": "failed",
-                "error": {
-                    "code": "INVALID_BENCHMARK_ID",
-                    "message": "Missing required field 'benchmark_id' in execute request",
-                },
-            }
+            raise BadRequestError(
+                "Missing required field 'benchmark_id' in execute request",
+                error_code="INVALID_BENCHMARK_ID",
+            )
 
         if not isinstance(examples, list) or len(examples) == 0:
             raise ValueError("examples must be a non-empty list")
@@ -714,17 +766,13 @@ class TraigentService:
         config = request.get("config", {})
         session_id = request.get("session_id")
 
-        # Validate benchmark_id is present
+        # Validate benchmark_id is present before any handler work.
         benchmark_id = request.get("benchmark_id")
         if not benchmark_id:
-            return {
-                "request_id": request_id,
-                "status": "failed",
-                "error": {
-                    "code": "INVALID_BENCHMARK_ID",
-                    "message": "Missing required field 'benchmark_id' in evaluate request",
-                },
-            }
+            raise BadRequestError(
+                "Missing required field 'benchmark_id' in evaluate request",
+                error_code="INVALID_BENCHMARK_ID",
+            )
 
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")

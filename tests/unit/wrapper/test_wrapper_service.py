@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from traigent.hybrid.protocol import EstimatedTokensPerExample
+from traigent.wrapper.errors import BadRequestError
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 
@@ -35,6 +37,7 @@ class TestServiceConfig:
         assert cfg.promotion_policy is None
         assert cfg.defaults is None
         assert cfg.measures is None
+        assert cfg.estimated_tokens_per_example is None
 
     def test_custom_values(self) -> None:
         """Test ServiceConfig with custom values."""
@@ -51,6 +54,9 @@ class TestServiceConfig:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            estimated_tokens_per_example=EstimatedTokensPerExample(
+                input_tokens=100, output_tokens=50
+            ),
         )
         assert cfg.tunable_id == "qa_agent"
         assert cfg.version == "2.5"
@@ -64,6 +70,9 @@ class TestServiceConfig:
         assert cfg.promotion_policy is not None
         assert cfg.defaults == {"model": "gpt-4"}
         assert cfg.measures == ["accuracy"]
+        assert cfg.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=100, output_tokens=50
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +123,7 @@ class TestTraigentServiceInit:
         assert svc._evaluate_handler is None
         assert svc._sessions == {}
         assert svc._cached_tvars is None
+        assert svc.config.estimated_tokens_per_example is None
 
     def test_custom_init(self) -> None:
         """Test TraigentService with custom parameters."""
@@ -128,6 +138,7 @@ class TestTraigentServiceInit:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
         )
         assert svc.config.tunable_id == "my_agent"
         assert svc.config.version == "3.0"
@@ -139,6 +150,9 @@ class TestTraigentServiceInit:
         assert svc.config.promotion_policy == {"dominance": "epsilon_pareto"}
         assert svc.config.defaults == {"model": "gpt-4"}
         assert svc.config.measures == ["accuracy"]
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=100, output_tokens=50
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +433,7 @@ class TestGetConfigSpace:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy", "cost"],
+            estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
         )
         result = svc.get_config_space()
         assert result["constraints"] == {
@@ -429,6 +444,10 @@ class TestGetConfigSpace:
         assert result["promotion_policy"] == {"dominance": "epsilon_pareto"}
         assert result["defaults"] == {"model": "gpt-4"}
         assert result["measures"] == ["accuracy", "cost"]
+        assert result["estimated_tokens_per_example"] == {
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
 
     def test_config_space_decorator_sections_override_init_values(self) -> None:
         """Decorator-declared sections override constructor-provided values."""
@@ -448,6 +467,72 @@ class TestGetConfigSpace:
         result = svc.get_config_space()
         assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
         assert result["defaults"] == {"model": "gpt-4"}
+
+    def test_config_space_omits_estimated_tokens_when_unconfigured(self) -> None:
+        """Config-space response should not emit token estimates by default."""
+        svc = TraigentService()
+        result = svc.get_config_space()
+        assert "estimated_tokens_per_example" not in result
+
+    def test_env_estimated_tokens_are_used_when_constructor_omits_them(self) -> None:
+        """Wrapper should support environment-driven token estimate configuration."""
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE": "60",
+            },
+            clear=False,
+        ):
+            svc = TraigentService()
+
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=120, output_tokens=60
+        )
+
+    def test_constructor_estimated_tokens_override_environment(self) -> None:
+        """Explicit wrapper config should beat environment fallback values."""
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE": "60",
+            },
+            clear=False,
+        ):
+            svc = TraigentService(
+                estimated_tokens_per_example={"input_tokens": 10, "output_tokens": 5}
+            )
+
+        assert svc.config.estimated_tokens_per_example == EstimatedTokensPerExample(
+            input_tokens=10, output_tokens=5
+        )
+
+    def test_partial_env_estimated_tokens_are_ignored_with_warning(self) -> None:
+        """Partial env config should be ignored rather than coercing missing values to zero."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE": "120",
+                },
+                clear=False,
+            ),
+            patch("traigent.wrapper.service.logger") as mock_logger,
+        ):
+            svc = TraigentService()
+
+        assert svc.config.estimated_tokens_per_example is None
+        mock_logger.warning.assert_called_once()
+        assert "must be set together" in mock_logger.warning.call_args[0][0]
+
+    def test_invalid_estimated_tokens_type_raises_helpful_error(self) -> None:
+        """Invalid constructor values should explain all supported input types."""
+        with pytest.raises(
+            TypeError,
+            match="EstimatedTokensPerExample instance, a dict, or None",
+        ):
+            TraigentService(estimated_tokens_per_example=123)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -820,6 +905,31 @@ class TestHandleExecute:
 
         with pytest.raises(ValueError, match="examples must be a non-empty list"):
             await svc.handle_execute({"benchmark_id": "bench_001", "examples": []})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"examples": [{"example_id": "i1", "data": {}}]},
+            {"benchmark_id": "", "examples": [{"example_id": "i1", "data": {}}]},
+        ],
+    )
+    async def test_missing_benchmark_id_raises_structured_error(
+        self, payload: dict[str, object]
+    ) -> None:
+        """Execute requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(example_id, data, config):
+            return {"output": "ok"}
+
+        with pytest.raises(BadRequestError) as exc_info:
+            await svc.handle_execute(payload)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_example_without_example_id_gets_uuid(self) -> None:
@@ -1414,6 +1524,40 @@ class TestHandleEvaluateEdgeCases:
             await svc.handle_evaluate(
                 {"benchmark_id": "bench_001", "evaluations": "not_a_list"}
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ]
+            },
+            {
+                "benchmark_id": "",
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            },
+        ],
+    )
+    async def test_missing_benchmark_id_raises_structured_error(
+        self, payload: dict[str, object]
+    ) -> None:
+        """Evaluate requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(BadRequestError) as exc_info:
+            await svc.handle_evaluate(payload)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_evaluation_with_output_id(self) -> None:

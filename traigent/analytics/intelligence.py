@@ -8,6 +8,7 @@ separate modules for better maintainability.
 
 from __future__ import annotations
 
+import math
 import statistics
 import threading
 import time
@@ -511,7 +512,9 @@ class CostOptimizationAI:
                     ],
                     "recommendation": (
                         "adjust estimates by factor"
-                        if schedule_optimization["duration_adjustment_factor"] != 1.0
+                        if not math.isclose(
+                            schedule_optimization["duration_adjustment_factor"], 1.0
+                        )
                         else "estimates are accurate"
                     ),
                 }

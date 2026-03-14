@@ -97,7 +97,9 @@ from traigent.api.types import (
     ParetoFront,
     SensitivityAnalysis,
     StrategyConfig,
+    TrialError,
     TrialResult,
+    serialize_trials,
 )
 from traigent.api.validation_protocol import (
     ConstraintValidator,
@@ -250,7 +252,9 @@ __all__ = [
     "create_quick_plot",
     # Result types
     "OptimizationResult",
+    "TrialError",
     "TrialResult",
+    "serialize_trials",
     "SensitivityAnalysis",
     "ConfigurationComparison",
     "ParetoFront",

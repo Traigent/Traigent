@@ -1072,16 +1072,8 @@ class MockRemoteService(RemoteOptimizationService):
         # Ensure we don't exceed available examples
         subset_size = min(subset_size, total_examples)
 
-        # Mock intelligent selection (in real service, this would be much more sophisticated)
-        if selection_strategy == "diverse_sampling":
-            # Try to get diverse examples across different difficulty levels
-            selected = random.sample(full_dataset, subset_size)
-        elif selection_strategy == "representative_sampling":
-            # Balanced selection representing the full dataset
-            selected = random.sample(full_dataset, subset_size)
-        else:  # high_confidence_sampling
-            # Focus on examples that give reliable signals
-            selected = random.sample(full_dataset, subset_size)
+        # Mock selection currently ignores strategy; the real service would vary sampling.
+        selected = random.sample(full_dataset, subset_size)
 
         return DatasetSubset(
             examples=selected,

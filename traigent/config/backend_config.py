@@ -29,7 +29,8 @@ class BackendConfig:
 
     # Default backend URLs (overridable via environment variables)
     _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
-    DEFAULT_PROD_URL = DEFAULT_LOCAL_URL  # No cloud service yet; default to local
+    DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
+    DEFAULT_PROD_URL = DEFAULT_CLOUD_URL  # Backward-compatible alias
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
@@ -99,16 +100,8 @@ class BackendConfig:
         return (origin, path)
 
     @classmethod
-    def get_backend_url(cls) -> str:
-        """Get backend origin URL from environment, stored credentials, or default.
-
-        Priority:
-            1. TRAIGENT_BACKEND_URL environment variable
-            2. TRAIGENT_API_URL environment variable (origin extracted)
-            3. Stored CLI credentials (backend_url from ``traigent auth login``)
-            4. Default URL based on TRAIGENT_ENV
-        """
-
+    def _get_configured_backend_origin(cls) -> str | None:
+        """Return an explicitly configured backend origin, if any."""
         backend_env = os.environ.get("TRAIGENT_BACKEND_URL")
         api_env = os.environ.get("TRAIGENT_API_URL")
 
@@ -136,22 +129,49 @@ class BackendConfig:
         except Exception:
             pass
 
-        env = os.environ.get("TRAIGENT_ENV", "production").lower()
-        if env in ("development", "dev", "local"):
-            default_local = cls._get_default_local_url()
-            logger.debug("Using default local URL: %s", default_local)
-            return default_local
-
-        logger.debug("Using default production URL: %s", cls.DEFAULT_PROD_URL)
-        return cls.DEFAULT_PROD_URL
+        return None
 
     @classmethod
-    def get_backend_api_url(cls) -> str:
-        """Return the base API URL (including version path)."""
+    def get_configured_backend_url(cls) -> str | None:
+        """Return an explicitly configured backend origin, if available."""
+
+        return cls._get_configured_backend_origin()
+
+    @classmethod
+    def get_backend_url(cls) -> str:
+        """Get backend origin URL from environment, stored credentials, or local default.
+
+        Priority:
+            1. TRAIGENT_BACKEND_URL environment variable
+            2. TRAIGENT_API_URL environment variable (origin extracted)
+            3. Stored CLI credentials (backend_url from ``traigent auth login``)
+            4. Local default URL
+        """
+
+        configured_origin = cls._get_configured_backend_origin()
+        if configured_origin:
+            return configured_origin
+
+        default_local = cls._get_default_local_url()
+        logger.debug("Using default local URL: %s", default_local)
+        return default_local
+
+    @classmethod
+    def get_cloud_backend_url(cls) -> str:
+        """Get backend origin URL for cloud-facing entry points."""
+
+        configured_origin = cls._get_configured_backend_origin()
+        if configured_origin:
+            return configured_origin
+
+        logger.debug("Using default cloud URL: %s", cls.DEFAULT_CLOUD_URL)
+        return cls.DEFAULT_CLOUD_URL
+
+    @classmethod
+    def _build_api_url(cls, backend_origin: str) -> str:
+        """Return the API base URL, respecting explicit API-path overrides."""
 
         api_env = os.environ.get("TRAIGENT_API_URL")
-        backend_origin = cls.get_backend_url()
-
         if api_env:
             origin, path = cls._extract_origin_and_path(api_env)
             if origin:
@@ -159,6 +179,18 @@ class BackendConfig:
                 return f"{origin}{api_path}"
 
         return f"{backend_origin}{cls._DEFAULT_API_PATH}"
+
+    @classmethod
+    def get_backend_api_url(cls) -> str:
+        """Return the base API URL (including version path)."""
+
+        return cls._build_api_url(cls.get_backend_url())
+
+    @classmethod
+    def get_cloud_api_url(cls) -> str:
+        """Return the cloud API base URL (including version path)."""
+
+        return cls._build_api_url(cls.get_cloud_backend_url())
 
     @classmethod
     def normalize_backend_origin(cls, value: str | None) -> str | None:
@@ -184,6 +216,18 @@ class BackendConfig:
         """Public helper returning origin/path components for an API URL."""
 
         return cls._extract_origin_and_path(value)
+
+    @classmethod
+    def is_local_origin(cls, value: str | None) -> bool:
+        """Return True when the provided backend origin targets localhost."""
+
+        normalized = cls._normalize_origin(value)
+        if not normalized:
+            return False
+
+        parsed = urlparse(normalized)
+        hostname = (parsed.hostname or "").lower()
+        return hostname in {"localhost", "127.0.0.1", "::1"}
 
     @classmethod
     def get_api_key(cls) -> str | None:
@@ -228,14 +272,32 @@ class BackendConfig:
         return None
 
     @classmethod
+    def has_auth_credentials(cls) -> bool:
+        """Check whether any non-empty backend credentials are available.
+
+        This broader predicate is intended for UX warnings that should stay
+        silent when the user is already authenticated via either API key or JWT.
+        """
+        if os.environ.get("TRAIGENT_API_KEY") or os.environ.get("TRAIGENT_JWT_TOKEN"):
+            return True
+
+        try:
+            from traigent.cloud.credential_manager import CredentialManager
+
+            stored_creds = CredentialManager.get_credentials()
+        except (ImportError, Exception):
+            return False
+
+        return bool(stored_creds.get("api_key") or stored_creds.get("jwt_token"))
+
+    @classmethod
     def is_local_backend(cls) -> bool:
         """Check if using local backend URL.
 
         Returns:
             bool: True if backend URL points to localhost
         """
-        backend_url = cls.get_backend_url()
-        return "localhost" in backend_url or "127.0.0.1" in backend_url
+        return cls.is_local_origin(cls.get_backend_url())
 
     @classmethod
     def requires_authentication(cls) -> bool:

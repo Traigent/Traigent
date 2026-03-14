@@ -2099,3 +2099,38 @@ class TestCostEstimation:
         )
 
         assert result == (None, None)
+
+    def test_extract_raw_model_candidates_accepts_supported_shapes(self) -> None:
+        """Candidate extraction helper should support string, list, and dict values."""
+        assert OptimizationOrchestrator._extract_raw_model_candidates("gpt-4o") == (
+            "gpt-4o",
+        )
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            ["gpt-4o", "gpt-4o-mini"]
+        ) == ["gpt-4o", "gpt-4o-mini"]
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            {"values": "gpt-4o"}
+        ) == ("gpt-4o",)
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            {"values": ["gpt-4o", "gpt-4o-mini"]}
+        ) == ["gpt-4o", "gpt-4o-mini"]
+
+    def test_extract_raw_model_candidates_rejects_unsupported_shapes(self) -> None:
+        """Unsupported candidate shapes should be ignored safely."""
+        assert OptimizationOrchestrator._extract_raw_model_candidates(object()) is None
+        assert (
+            OptimizationOrchestrator._extract_raw_model_candidates({"values": 123})
+            is None
+        )
+        assert OptimizationOrchestrator._extract_raw_model_candidates(b"gpt-4o") is None
+
+    def test_extract_model_candidates_from_config_space_uses_fallback_key(self) -> None:
+        """Invalid model entries should fall through to model_name definitions."""
+        result = OptimizationOrchestrator._extract_model_candidates_from_config_space(
+            {
+                "model": object(),
+                "model_name": {"values": [" gpt-4o-mini ", "gpt-4o-mini", "", 1]},
+            }
+        )
+
+        assert result == ("gpt-4o-mini",)

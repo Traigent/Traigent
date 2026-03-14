@@ -8,19 +8,16 @@ Current open issue count in `Traigent/Traigent`: 29
 
 ## Active SDK Issues
 
-No currently verified SDK release-blocking issues remain after the local fixes for `#246`, `#325`, and `#277`. The remaining open public issues are enhancement/backlog work that should be prioritized by release value rather than issue number.
-
 | Issue | Title | Classification | Current status | Next action |
 | --- | --- | --- | --- | --- |
+| #325 | Hybrid API: pass config to Evaluate endpoint for evaluation-time tuning | SDK + Cloud contract gap | Verified open. `HybridEvaluateRequest` supports `config`, but `HybridAPIEvaluator` does not pass trial config into the evaluate call. | Thread config through evaluator and add coverage. |
+| #277 | when no api exist, show user link to - https://portal.traigent.ai/login to get api key | SDK UX cleanup | Verified open, low priority. CLI still points users to `https://traigent.ai/signup`. | Update onboarding/auth copy and portal links. |
 
 ## Fixed Locally Pending Push
 
 | Issue | Title | Classification | Current status | Verification |
 | --- | --- | --- | --- | --- |
 | #246 | Cost estimator overestimates by ~1000x in hybrid_api mode | SDK defect | Implemented locally. The estimator now uses the most expensive resolvable model candidate from optimizer config space and honors optional `estimated_tokens_per_example` metadata from hybrid config-space discovery instead of always assuming `2000/500` tokens. Matching schema changes were also made on `traigent-api` branch `fix/hybrid-config-space-token-estimates`, and first-party adopter rollout is tracked in `docs/reviews/hybrid_config_space_token_estimate_rollout.md`. Keep the GitHub issue open until changes are pushed/merged. | `.venv/bin/pytest -q tests/unit/hybrid/test_protocol.py` -> `42 passed`; `.venv/bin/pytest -q tests/unit/hybrid/test_discovery.py` -> `30 passed`; `.venv/bin/pytest -q tests/unit/core/test_cost_estimator.py` -> `23 passed`; `.venv/bin/pytest -q tests/unit/core/test_orchestrator.py -k 'cost_estimate or optimizer_model_candidates or hybrid_token_estimate'` -> `4 passed` |
-| #325 | Hybrid API: pass config to Evaluate endpoint for evaluation-time tuning | SDK defect | Implemented locally. `HybridAPIEvaluator` now threads the same trial config used for `/execute` into `HybridEvaluateRequest.config` for two-phase hybrid evaluation, including preserving `{}` instead of omitting config, so evaluation-time tunables such as judge-model selection can reach `/traigent/v1/evaluate` consistently. Keep the GitHub issue open until changes are pushed/merged. | `.venv/bin/python -m py_compile traigent/evaluators/hybrid_api.py tests/unit/evaluators/test_hybrid_api_evaluator.py` succeeded; direct async sanity checks confirmed the evaluate request carries `{'model': 'gpt-4', 'judge_model': 'gpt-4.1-mini'}`, preserves `timeout_ms=12500`, and keeps empty config as `{}` |
-| #277 | when no api exist, show user link to - https://portal.traigent.ai/login to get api key | SDK UX cleanup | Implemented locally for the user-facing CLI paths called out by the issue. Auth failure messaging now points users to `https://portal.traigent.ai/login`, and the local sync upsell points to the portal login and portal home instead of the old signup/app URLs. Keep the GitHub issue open until changes are pushed/merged. | `.venv/bin/python -m py_compile traigent/cli/auth_commands.py traigent/cli/local_commands.py` succeeded; literal repo search confirms the old CLI `https://traigent.ai/signup` link is gone |
-| #238 | sdk - enforce (pre run) up to 100% objective weights, objective as percentage | SDK enhancement | Mostly already superseded by `ObjectiveSchema`, which automatically normalizes positive weights. Implemented locally: documented that percentage-style weights are valid and now reject zero-weight objectives so dead objectives fail fast instead of being silently normalized to `0.0`. Keep the GitHub issue open until changes are pushed/merged, then likely close or re-scope the remaining non-code product questions. | `.venv/bin/python -m py_compile traigent/core/objectives.py tests/unit/core/test_objectives.py` succeeded; direct sanity check confirmed `70/30 -> {'accuracy': 0.7, 'cost': 0.3}` and zero-weight definitions now raise `Weight must be positive` |
 
 ## Public Repo Recommendation
 

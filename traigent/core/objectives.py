@@ -47,7 +47,7 @@ class ObjectiveDefinition:
         name: Name of the objective (e.g., "accuracy", "cost")
         orientation: Whether to maximize or minimize this objective.
             For banded objectives, this is set to "band".
-        weight: Non-negative weight for this objective
+        weight: Positive weight for this objective
         normalization: Normalization strategy (default: "min_max")
         bounds: Optional bounds for the objective values
         unit: Optional unit of measurement (e.g., "USD", "percentage")

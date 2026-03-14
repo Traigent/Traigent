@@ -1030,13 +1030,14 @@ class LocalEvaluator(BaseEvaluator):
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "
                 f"comprehensive cost={comprehensive_metrics['cost']}"
             )
-            if (
-                aggregated_metrics.get("cost", 0.0) == 0.0
-                and comprehensive_metrics["cost"] != 0.0
+            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
+            comprehensive_cost = float(comprehensive_metrics["cost"])
+            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
+                comprehensive_cost, 0.0, abs_tol=1e-9
             ):
                 logger.info(
                     f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_metrics.get('cost', 0.0)} -> {comprehensive_metrics['cost']}"
+                    f"{aggregated_cost} -> {comprehensive_cost}"
                 )
 
         for key, value in comprehensive_metrics.items():

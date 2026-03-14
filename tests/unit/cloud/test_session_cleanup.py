@@ -48,12 +48,12 @@ asyncio.run(main())
             text=True,
             timeout=60,
         )
-        assert (
-            result.returncode == 0
-        ), f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
-        assert (
-            "Unclosed client session" not in result.stderr
-        ), f"Got unclosed session warning:\n{result.stderr}"
+        assert result.returncode == 0, (
+            f"Subprocess crashed (rc={result.returncode}):\n{result.stderr}"
+        )
+        assert "Unclosed client session" not in result.stderr, (
+            f"Got unclosed session warning:\n{result.stderr}"
+        )
 
     @pytest.mark.asyncio
     async def test_aexit_delegates_to_close(self):
@@ -82,7 +82,9 @@ asyncio.run(main())
         client._session = mock_session
         client._session_lock = asyncio.Lock()
 
-        with patch("traigent.cloud.backend_client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch(
+            "traigent.cloud.backend_client.asyncio.sleep", new_callable=AsyncMock
+        ):
             await client._reset_http_session("retry")
 
     @pytest.mark.asyncio

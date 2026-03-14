@@ -977,14 +977,16 @@ class TestComputeAggregatedMetrics:
         assert comparability["coverage_ratio"] == pytest.approx(1.0)
         assert comparability["ranking_eligible"] is True
         assert comparability["evaluation_mode"] == "evaluated"
-        assert comparability["per_metric_coverage"]["accuracy"]["ratio"] == pytest.approx(
-            1.0
-        )
-        assert comparability["per_metric_coverage"]["total_cost"]["ratio"] == pytest.approx(
-            1.0
-        )
+        assert comparability["per_metric_coverage"]["accuracy"][
+            "ratio"
+        ] == pytest.approx(1.0)
+        assert comparability["per_metric_coverage"]["total_cost"][
+            "ratio"
+        ] == pytest.approx(1.0)
 
-    def test_comparability_payload_partial_coverage(self, ev: HybridAPIEvaluator) -> None:
+    def test_comparability_payload_partial_coverage(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
         """Missing primary objective on examples is flagged as partial coverage."""
         results = [
             HybridExampleResult(
