@@ -93,7 +93,7 @@ def _load_example_content_map_schema() -> dict[str, Any]:
         from traigent_schema import load_schema as tg_load_schema
 
         return cast(dict[str, Any], tg_load_schema("example_content_map_schema"))
-    except (ImportError, ModuleNotFoundError):
+    except ImportError:
         return _fallback_example_content_map_schema()
 
 

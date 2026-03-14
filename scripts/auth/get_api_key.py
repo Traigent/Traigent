@@ -16,7 +16,9 @@ Usage:
 """
 
 import argparse
+import ipaddress
 import os
+import socket
 import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -46,8 +48,54 @@ def normalize_backend_url(backend_url: str) -> str:
         raise ValueError("Backend URL must start with http:// or https://")
     if not parsed.netloc:
         raise ValueError("Backend URL must include a hostname")
+    if parsed.username or parsed.password:
+        raise ValueError("Backend URL must not include embedded credentials")
     if parsed.params or parsed.query or parsed.fragment:
         raise ValueError("Backend URL must not include params, query strings, or fragments")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Backend URL must include a hostname")
+
+    normalized_host = hostname.lower()
+    is_localhost = normalized_host in {"localhost", "127.0.0.1", "::1"}
+
+    if not is_localhost and parsed.scheme != "https":
+        raise ValueError("Non-local backend URLs must use https")
+
+    if normalized_host.endswith(".local"):
+        raise ValueError("Backend URL must not target .local hosts")
+
+    try:
+        ip_addr = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        ip_addr = None
+
+    if ip_addr is not None:
+        if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+            if not is_localhost:
+                raise ValueError("Backend URL must not target private or loopback IPs")
+        if ip_addr.is_multicast or ip_addr.is_reserved or ip_addr.is_unspecified:
+            raise ValueError("Backend URL must not target multicast, reserved, or unspecified IPs")
+    elif not is_localhost:
+        try:
+            addr_infos = socket.getaddrinfo(normalized_host, None)
+        except socket.gaierror:
+            addr_infos = []
+        for _family, _socktype, _proto, _canon, sockaddr in addr_infos:
+            try:
+                resolved_ip = ipaddress.ip_address(sockaddr[0])
+            except ValueError:
+                continue
+            if (
+                resolved_ip.is_private
+                or resolved_ip.is_loopback
+                or resolved_ip.is_link_local
+                or resolved_ip.is_multicast
+                or resolved_ip.is_reserved
+                or resolved_ip.is_unspecified
+            ):
+                raise ValueError("Backend URL must not resolve to private or unsafe IPs")
 
     normalized_path = parsed.path.rstrip("/")
     return urlunparse(

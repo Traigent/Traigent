@@ -170,37 +170,61 @@ class DetectionResult:
             Dictionary suitable for passing to ``@traigent.optimize(
             configuration_space=...)``.
         """
-        confidence_order = {
-            DetectionConfidence.HIGH: 2,
-            DetectionConfidence.MEDIUM: 1,
-            DetectionConfidence.LOW: 0,
-        }
         threshold = (
             DetectionConfidence(min_confidence)
             if isinstance(min_confidence, str)
             else min_confidence
         )
-        min_order = confidence_order[threshold]
-        include_set = set(include) if include is not None else None
-        exclude_set = set(exclude) if exclude is not None else set()
+        filtered = _filter_candidates(self.candidates, threshold, include, exclude)
 
         config: dict[str, Any] = {}
-        for c in self.candidates:
-            if c.suggested_range is None:
-                continue
-            if confidence_order[c.confidence] < min_order:
-                continue
-            if include_set is not None and c.name not in include_set:
-                continue
-            if c.name in exclude_set:
-                continue
-
-            if format == "normalized":
-                config[c.name] = c.suggested_range.kwargs
-            elif format == "ranges":
-                config[c.name] = c.suggested_range.to_parameter_range()
-            else:
-                raise ValueError(
-                    "format must be 'normalized' or 'ranges', " f"got {format!r}"
-                )
+        for c in filtered:
+            config[c.name] = _candidate_to_config_value(c, format)
         return config
+
+
+_CONFIDENCE_ORDER = {
+    DetectionConfidence.HIGH: 2,
+    DetectionConfidence.MEDIUM: 1,
+    DetectionConfidence.LOW: 0,
+}
+
+
+def _filter_candidates(
+    candidates: tuple[TunedVariableCandidate, ...],
+    threshold: DetectionConfidence,
+    include: Collection[str] | None,
+    exclude: Collection[str] | None,
+) -> list[TunedVariableCandidate]:
+    """Return candidates that pass confidence, include, and exclude filters."""
+    min_order = _CONFIDENCE_ORDER[threshold]
+    include_set = set(include) if include is not None else None
+    exclude_set = set(exclude) if exclude is not None else set()
+
+    result: list[TunedVariableCandidate] = []
+    for c in candidates:
+        if c.suggested_range is None:
+            continue
+        if _CONFIDENCE_ORDER[c.confidence] < min_order:
+            continue
+        if include_set is not None and c.name not in include_set:
+            continue
+        if c.name in exclude_set:
+            continue
+        result.append(c)
+    return result
+
+
+def _candidate_to_config_value(
+    candidate: TunedVariableCandidate,
+    format: str,
+) -> Any:
+    """Convert a candidate's suggested range into the requested output format."""
+    suggested_range = candidate.suggested_range
+    if suggested_range is None:
+        raise ValueError(f"Candidate '{candidate.name}' is missing a suggested range")
+    if format == "normalized":
+        return suggested_range.kwargs
+    if format == "ranges":
+        return suggested_range.to_parameter_range()
+    raise ValueError("format must be 'normalized' or 'ranges', " f"got {format!r}")

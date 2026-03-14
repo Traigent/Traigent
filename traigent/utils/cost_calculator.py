@@ -585,6 +585,40 @@ def _estimation_cost_from_tokens(
     return 0.0, 0.0
 
 
+def _build_model_candidates(model_name: str) -> list[str]:
+    """Build deduplicated list of model name candidates for pricing lookup."""
+    normalized = _normalize_model_name(model_name)
+    alias_resolved = _resolve_litellm_alias(normalized)
+    candidates = [c for c in [model_name, normalized, alias_resolved] if c]
+    return list(dict.fromkeys(candidates))
+
+
+def _try_litellm_per_token_rates(
+    candidates: list[str],
+) -> tuple[float, float] | None:
+    """Try litellm.cost_per_token for each candidate, returning per-token rates.
+
+    Returns:
+        ``(input_cost_per_token, output_cost_per_token)`` or ``None``.
+    """
+    if not LITELLM_AVAILABLE:
+        return None
+    for candidate in candidates:
+        try:
+            input_cost, output_cost = litellm.cost_per_token(
+                model=candidate, prompt_tokens=1, completion_tokens=1
+            )
+            if input_cost > 0 or output_cost > 0:
+                return float(input_cost), float(output_cost)
+            if _is_model_known_to_litellm(candidate):
+                return float(input_cost), float(output_cost)
+        except Exception:
+            logger.debug(
+                "litellm pricing lookup failed for %r", candidate, exc_info=True
+            )
+    return None
+
+
 def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     """Get per-token pricing for a model with fail-fast behavior.
 
@@ -603,27 +637,11 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     if not model_name or not model_name.strip():
         raise UnknownModelError(_unknown_model_resolution_message(model_name))
 
-    normalized = _normalize_model_name(model_name)
-    alias_resolved = _resolve_litellm_alias(normalized)
-    candidates = [
-        candidate for candidate in [model_name, normalized, alias_resolved] if candidate
-    ]
-    candidates = list(dict.fromkeys(candidates))
+    candidates = _build_model_candidates(model_name)
 
-    if LITELLM_AVAILABLE:
-        for candidate in candidates:
-            try:
-                input_cost, output_cost = litellm.cost_per_token(
-                    model=candidate, prompt_tokens=1, completion_tokens=1
-                )
-                if input_cost > 0 or output_cost > 0:
-                    return float(input_cost), float(output_cost), "litellm"
-                if _is_model_known_to_litellm(candidate):
-                    return float(input_cost), float(output_cost), "litellm"
-            except Exception:
-                logger.debug(
-                    "litellm pricing lookup failed for %r", candidate, exc_info=True
-                )
+    litellm_rates = _try_litellm_per_token_rates(candidates)
+    if litellm_rates is not None:
+        return litellm_rates[0], litellm_rates[1], "litellm"
 
     custom_pricing = _try_custom_model_pricing(model_name)
     if custom_pricing is not None:
@@ -865,6 +883,47 @@ class CostCalculator:
 # ---------------------------------------------------------------------------
 
 
+def _try_litellm_cost(
+    candidates: list[str],
+    input_tokens: int,
+    output_tokens: int,
+) -> tuple[float, float] | None:
+    """Try litellm cost_per_token and model_cost lookup for each candidate.
+
+    Returns:
+        ``(input_cost_usd, output_cost_usd)`` or ``None`` if no pricing found.
+    """
+    # Try cost_per_token API first
+    for candidate in candidates:
+        try:
+            input_cost, output_cost = litellm.cost_per_token(
+                model=candidate,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+            if input_cost > 0 or output_cost > 0:
+                return float(input_cost), float(output_cost)
+            if _is_model_known_to_litellm(candidate):
+                return float(input_cost), float(output_cost)
+        except Exception:
+            continue
+
+    # Direct lookup in litellm.model_cost (case-insensitive)
+    model_cost_lower = {k.lower(): k for k in litellm.model_cost}
+    for candidate in candidates:
+        actual_key = model_cost_lower.get(candidate.lower())
+        if actual_key:
+            cost_info = litellm.model_cost[actual_key]
+            input_cpt = cost_info.get("input_cost_per_token", 0.0)
+            output_cpt = cost_info.get("output_cost_per_token", 0.0)
+            return (
+                float(input_tokens * input_cpt),
+                float(output_tokens * output_cpt),
+            )
+
+    return None
+
+
 def cost_from_tokens(
     input_tokens: int,
     output_tokens: int,
@@ -898,50 +957,21 @@ def cost_from_tokens(
             f"input={input_tokens}, output={output_tokens}"
         )
 
+    if not LITELLM_AVAILABLE and strict:
+        raise RuntimeError(
+            "litellm is required for cost tracking but is not installed. "
+            "Install it with: pip install litellm"
+        )
     if not LITELLM_AVAILABLE:
-        if strict:
-            raise RuntimeError(
-                "litellm is required for cost tracking but is not installed. "
-                "Install it with: pip install litellm"
-            )
         logger.warning("litellm not available — returning zero cost")
         return 0.0, 0.0
 
-    normalized = _normalize_model_name(model)
-    alias_resolved = _resolve_litellm_alias(normalized)
-    candidates = [
-        candidate for candidate in [model, normalized, alias_resolved] if candidate
-    ]
-    candidates = list(dict.fromkeys(candidates))
+    candidates = _build_model_candidates(model)
 
-    # Step 1: Try litellm.cost_per_token (handles provider prefixes internally)
-    for candidate in candidates:
-        try:
-            input_cost, output_cost = litellm.cost_per_token(
-                model=candidate,
-                prompt_tokens=input_tokens,
-                completion_tokens=output_tokens,
-            )
-            if input_cost > 0 or output_cost > 0:
-                return float(input_cost), float(output_cost)
-            # Model is known but returns (0, 0) — legitimate free tier
-            if _is_model_known_to_litellm(candidate):
-                return float(input_cost), float(output_cost)
-        except Exception:
-            continue
-
-    # Step 2: Try direct lookup in litellm.model_cost (case-insensitive)
-    model_cost_lower = {k.lower(): k for k in litellm.model_cost}
-    for candidate in candidates:
-        actual_key = model_cost_lower.get(candidate.lower())
-        if actual_key:
-            cost_info = litellm.model_cost[actual_key]
-            input_cpt = cost_info.get("input_cost_per_token", 0.0)
-            output_cpt = cost_info.get("output_cost_per_token", 0.0)
-            return (
-                float(input_tokens * input_cpt),
-                float(output_tokens * output_cpt),
-            )
+    # Step 1-2: Try litellm pricing (cost_per_token API + model_cost dict)
+    litellm_result = _try_litellm_cost(candidates, input_tokens, output_tokens)
+    if litellm_result is not None:
+        return litellm_result
 
     # Step 3: explicit custom pricing (user-provided)
     custom_pricing = _try_custom_model_pricing(model)
@@ -952,7 +982,6 @@ def cost_from_tokens(
             float(output_tokens * output_rate),
         )
 
-    # Model not found in litellm or custom pricing config
     if strict:
         raise UnknownModelError(_unknown_model_resolution_message(model))
 

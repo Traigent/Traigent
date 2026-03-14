@@ -182,9 +182,9 @@ class TestBackendIntegratedClient:
             client = BackendIntegratedClient(backend_config=backend_config)
             # Check that the aiohttp warning was logged (among possibly other warnings)
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any("aiohttp not available" in msg for msg in warning_calls), (
-                f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
-            )
+            assert any(
+                "aiohttp not available" in msg for msg in warning_calls
+            ), f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
             assert client is not None
 
     def test_async_context_manager(self, backend_client):
@@ -214,6 +214,72 @@ class TestBackendIntegratedClient:
         import asyncio
 
         asyncio.run(run_test())
+
+    @patch("requests.post")
+    def test_upload_example_features_posts_to_analytics_endpoint(
+        self, mock_post, backend_client
+    ):
+        """Example features upload uses the analytics feature endpoint."""
+        mock_response = MagicMock(status_code=200, text="ok")
+        mock_post.return_value = mock_response
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ) as mock_get_headers:
+            result = backend_client.upload_example_features(
+                "run_123",
+                "simhash_v1",
+                [{"example_id": "ex_1", "feature": "0f0f"}],
+            )
+
+        assert result is True
+        mock_get_headers.assert_awaited_once_with(target="backend")
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args.args[0].endswith(
+            "/api/v1/analytics/example-scoring/run_123/features"
+        )
+        assert call_args.kwargs["json"]["feature_kind"] == "simhash_v1"
+        assert call_args.kwargs["headers"]["Authorization"] == "Bearer test-token"
+
+    @patch("requests.post")
+    def test_upload_example_features_rejects_unsupported_feature_kind(
+        self, mock_post, backend_client
+    ):
+        """Example feature upload only accepts supported feature kinds."""
+        result = backend_client.upload_example_features(
+            "run_123",
+            "unknown_v1",
+            [{"example_id": "ex_1", "feature": "0f0f"}],
+        )
+
+        assert result is False
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_upload_example_features_url_encodes_run_id(
+        self, mock_post, backend_client
+    ):
+        """Run IDs are path-encoded before constructing the upload URL."""
+        mock_response = MagicMock(status_code=200, text="ok")
+        mock_post.return_value = mock_response
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ):
+            result = backend_client.upload_example_features(
+                "run/../unsafe",
+                "simhash_v1",
+                [{"example_id": "ex_1", "feature": "0f0f"}],
+            )
+
+        assert result is True
+        assert mock_post.call_args.args[0] == (
+            f"{backend_client.api_base_url}/analytics/example-scoring/"
+            "run%2F..%2Funsafe/features"
+        )
 
 
 class TestPrivacyFirstOptimization:

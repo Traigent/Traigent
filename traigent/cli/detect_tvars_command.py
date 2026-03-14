@@ -164,6 +164,52 @@ def _output_json(results: list[DetectionResult]) -> None:
     click.echo(json.dumps(output, indent=2))
 
 
+def _build_function_table(result: DetectionResult, show_suggestions: bool) -> Table:
+    """Build a rich Table for a single function's candidates."""
+    table = Table(
+        title=f"[cyan]{result.function_name}[/cyan]",
+        show_header=True,
+        header_style="bold magenta",
+        box=None,
+        padding=(0, 1),
+    )
+    table.add_column("Variable", style="bold")
+    table.add_column("Type", style="dim")
+    table.add_column("Confidence")
+    table.add_column("Value")
+    if show_suggestions:
+        table.add_column("Suggested Range", style="green")
+
+    for c in result.candidates:
+        color = _CONFIDENCE_COLORS.get(c.confidence, "")
+        confidence_str = f"[{color}]{c.confidence.value}[/{color}]"
+        value_str = repr(c.current_value) if c.current_value is not None else "—"
+        suggestion_str = (
+            c.suggested_range.to_parameter_range_code() if c.suggested_range else "—"
+        )
+        row = [c.name, c.candidate_type.value, confidence_str, value_str]
+        if show_suggestions:
+            row.append(suggestion_str)
+        table.add_row(*row)
+    return table
+
+
+def _print_config_snippet(results: list[DetectionResult]) -> None:
+    """Print a copy-paste-ready config space snippet."""
+    config_snippet: dict[str, Any] = {}
+    for r in results:
+        config_snippet.update(r.to_configuration_space())
+
+    if not config_snippet:
+        return
+    console.print("[bold]Suggested configuration_space snippet:[/bold]")
+    console.print("[dim]# Add to your @traigent.optimize decorator:[/dim]")
+    console.print("[dim]configuration_space = {[/dim]")
+    for name, kwargs in config_snippet.items():
+        console.print(f"[dim]    {name!r}: {kwargs!r},[/dim]")
+    console.print("[dim]}[/dim]\n")
+
+
 def _output_table(results: list[DetectionResult], show_suggestions: bool) -> None:
     """Print results as a rich table."""
     if not results:
@@ -179,54 +225,9 @@ def _output_table(results: list[DetectionResult], show_suggestions: bool) -> Non
     for result in results:
         if result.count == 0:
             continue
-
-        table = Table(
-            title=f"[cyan]{result.function_name}[/cyan]",
-            show_header=True,
-            header_style="bold magenta",
-            box=None,
-            padding=(0, 1),
-        )
-        table.add_column("Variable", style="bold")
-        table.add_column("Type", style="dim")
-        table.add_column("Confidence")
-        table.add_column("Value")
-        if show_suggestions:
-            table.add_column("Suggested Range", style="green")
-
-        for c in result.candidates:
-            color = _CONFIDENCE_COLORS.get(c.confidence, "")
-            confidence_str = f"[{color}]{c.confidence.value}[/{color}]"
-            value_str = repr(c.current_value) if c.current_value is not None else "—"
-            suggestion_str = (
-                c.suggested_range.to_parameter_range_code()
-                if c.suggested_range
-                else "—"
-            )
-
-            row = [c.name, c.candidate_type.value, confidence_str, value_str]
-            if show_suggestions:
-                row.append(suggestion_str)
-            table.add_row(*row)
-
-        console.print(table)
-
-        if result.warnings:
-            for w in result.warnings:
-                console.print(f"  [yellow]⚠ {w}[/yellow]")
-
+        console.print(_build_function_table(result, show_suggestions))
+        for w in result.warnings:
+            console.print(f"  [yellow]⚠ {w}[/yellow]")
         console.print()
 
-    # Print a copy-paste-ready config space snippet
-    config_snippet: dict[str, Any] = {}
-    for r in results:
-        cs = r.to_configuration_space()
-        config_snippet.update(cs)
-
-    if config_snippet:
-        console.print("[bold]Suggested configuration_space snippet:[/bold]")
-        console.print("[dim]# Add to your @traigent.optimize decorator:[/dim]")
-        console.print("[dim]configuration_space = {[/dim]")
-        for name, kwargs in config_snippet.items():
-            console.print(f"[dim]    {name!r}: {kwargs!r},[/dim]")
-        console.print("[dim]}[/dim]\n")
+    _print_config_snippet(results)
