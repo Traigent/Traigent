@@ -1227,7 +1227,7 @@ class CostTracker:
 
             # Load existing cache
             cached_items = []
-            if cache_path.exists():
+            if await asyncio.to_thread(cache_path.exists):
                 cached_items = await asyncio.to_thread(_read_json_file, cache_path)
 
             # Add new item
