@@ -671,6 +671,74 @@ class BackendIntegratedClient:
         Delegates to session_operations module."""
         return self._session_ops.get_session_mapping(session_id)
 
+    def upload_example_features(
+        self,
+        experiment_run_id: str,
+        feature_kind: str,
+        features: list[dict[str, Any]] | dict[str, Any],
+    ) -> bool:
+        """Upload per-run example features for backend-side analytics."""
+        if not experiment_run_id or not feature_kind or not features:
+            return False
+
+        try:
+            import requests
+        except ImportError:  # pragma: no cover - requests is a required dependency
+            logger.debug(
+                "Skipping example feature upload because requests is unavailable"
+            )
+            return False
+
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK/1.0",
+        }
+
+        auth = getattr(self.auth_manager, "auth", None)
+        if auth is not None:
+            get_api_key = getattr(auth, "_get_api_key_for_internal_use", None)
+            api_key = get_api_key() if callable(get_api_key) else None
+            if api_key:
+                headers["X-API-Key"] = api_key
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            credentials = getattr(auth, "_credentials", None)
+            jwt_token = getattr(credentials, "jwt_token", None) if credentials else None
+            if jwt_token and "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {jwt_token}"
+
+        url = (
+            f"{self.api_base_url}/analytics/example-scoring/"
+            f"{experiment_run_id}/features"
+        )
+        payload = {"feature_kind": feature_kind, "features": features}
+
+        try:
+            response = requests.post(  # nosec B113 — timeout is provided
+                url,
+                json=payload,
+                headers=headers,
+                timeout=min(self.timeout, 30.0),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Example feature upload failed for run %s: %s",
+                experiment_run_id,
+                exc,
+            )
+            return False
+
+        if response.status_code >= 400:
+            logger.debug(
+                "Example feature upload rejected for run %s: HTTP %s %s",
+                experiment_run_id,
+                response.status_code,
+                response.text[:200],
+            )
+            return False
+
+        return True
+
     # Trial Operations
     async def register_trial_start(
         self,

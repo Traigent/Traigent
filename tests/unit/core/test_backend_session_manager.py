@@ -4,7 +4,7 @@ Tests the extracted backend session lifecycle manager with stub backend client.
 """
 
 import re
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -12,7 +12,7 @@ from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResu
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.objectives import create_default_objectives
-from traigent.evaluators.base import Dataset
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.function_identity import resolve_function_descriptor
 
 
@@ -21,6 +21,10 @@ def mock_backend_client():
     """Create mock backend client."""
     client = Mock()
     client.create_session = Mock(return_value="test-session-id")
+    client.get_session_mapping = Mock(
+        return_value=MagicMock(experiment_run_id="run_test_123")
+    )
+    client.upload_example_features = Mock(return_value=True)
     client.submit_result = Mock()
     client.register_trial_start = AsyncMock()
     client._submit_trial_result_via_session = AsyncMock(return_value=True)
@@ -84,7 +88,17 @@ def mock_dataset():
     """Create mock dataset."""
     dataset = Mock(spec=Dataset)
     dataset.name = "test_dataset"
-    dataset.__len__ = Mock(return_value=10)
+    dataset.examples = [
+        EvaluationExample(
+            input_data={"query": "What is AI?"},
+            expected_output="AI is artificial intelligence.",
+        ),
+        EvaluationExample(
+            input_data={"query": "What is ML?"},
+            expected_output="ML is machine learning.",
+        ),
+    ]
+    dataset.__len__ = Mock(return_value=len(dataset.examples))
     return dataset
 
 
@@ -147,6 +161,11 @@ class TestBackendSessionManagerCreation:
         )
         assert call_kwargs["metadata"]["function_name"] == descriptor.identifier
         assert call_kwargs["metadata"]["function_slug"] == descriptor.slug
+        mock_backend_client.upload_example_features.assert_called_once()
+        upload_args = mock_backend_client.upload_example_features.call_args[0]
+        assert upload_args[0] == "run_test_123"
+        assert upload_args[1] == "simhash_v1"
+        assert len(upload_args[2]) == len(mock_dataset)
 
     def test_create_session_without_backend(
         self, traigent_config, objective_schema, mock_optimizer, mock_dataset

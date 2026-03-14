@@ -174,6 +174,14 @@ class MockEvaluator(BaseEvaluator):
 class TestOptimizationOrchestrator:
     """Comprehensive tests for OptimizationOrchestrator."""
 
+    @pytest.fixture(autouse=True)
+    def isolated_optimization_logs(self, monkeypatch, tmp_path):
+        """Keep orchestrator logging isolated from developer-local log history."""
+        monkeypatch.setenv(
+            "TRAIGENT_OPTIMIZATION_LOG_DIR",
+            str(tmp_path / "optimization_logs"),
+        )
+
     @pytest.fixture
     def config_space(self):
         """Sample configuration space."""
@@ -1744,7 +1752,6 @@ class TestOptimizationOrchestrator:
             trial_result=trial_result,
             session_id="session-123",
             dataset_name="dataset",  # default value from orchestrator
-            content_scores=None,  # default value from orchestrator
         )
 
 
