@@ -424,22 +424,29 @@ class TestBuildFailedResult:
 
     def test_basic_failed_result(self, eval_config):
         """Test basic failed result construction."""
-        error = ValueError("Test error")
-
-        result = build_failed_result(
-            trial_id="trial_789",
-            evaluation_config=eval_config,
-            duration=0.3,
-            error=error,
-            progress_state=None,
-            optuna_trial_id=None,
-        )
+        try:
+            raise ValueError("Test error")
+        except ValueError as error:
+            result = build_failed_result(
+                trial_id="trial_789",
+                evaluation_config=eval_config,
+                duration=0.3,
+                error=error,
+                progress_state=None,
+                optuna_trial_id=None,
+            )
 
         assert result.trial_id == "trial_789"
         assert result.config == eval_config
         assert result.status == TrialStatus.FAILED
         assert result.duration == 0.3
         assert result.error_message == "Test error"
+        assert result.error is not None
+        assert result.error.message == "Test error"
+        assert result.error.error_type == "ValueError"
+        assert "raise ValueError" in result.error.traceback
+        assert result.error.config == eval_config
+        assert result.error.timestamp.tzinfo == UTC
 
     def test_failed_with_progress_state(self, eval_config, progress_state):
         """Test failed result with progress state."""

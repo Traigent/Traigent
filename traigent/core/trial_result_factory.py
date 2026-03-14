@@ -10,6 +10,7 @@ from typing import Any
 from traigent.api.types import (
     ComparabilityInfo,
     MetricCoverage,
+    TrialError,
     TrialResult,
     TrialStatus,
 )
@@ -356,6 +357,7 @@ def build_failed_result(
     """Create a failed :class:`TrialResult` instance."""
 
     logger.warning("Trial %s failed: %s", trial_id, error)
+    error_details = TrialError.from_exception(error, config=evaluation_config)
 
     metadata: dict[str, Any] = (
         {"optuna_trial_id": optuna_trial_id} if optuna_trial_id is not None else {}
@@ -399,6 +401,7 @@ def build_failed_result(
         timestamp=datetime.now(UTC),
         error_message=str(error),
         metadata=metadata,
+        error=error_details,
     )
 
 
