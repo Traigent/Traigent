@@ -21,6 +21,8 @@ def test_parameter_range_config_value_typing_with_mypy(tmp_path: Path) -> None:
             from typing import Literal, assert_type
 
             from traigent.api.parameter_ranges import (
+                Choices,
+                ChoicesConfigValue,
                 FloatRangeConfigDict,
                 FloatRangeConfigValue,
                 IntRange,
@@ -47,10 +49,14 @@ def test_parameter_range_config_value_typing_with_mypy(tmp_path: Path) -> None:
             log_value = LogRange(0.001, 1.0).to_config_value()
             assert_type(log_value, FloatRangeConfigDict)
             assert_type(log_value["type"], Literal["float"])
+
+            choices: Choices[str] = Choices(["gpt-4", "gpt-4.1"])
+            choice_value = choices.to_config_value()
+            assert_type(choice_value, ChoicesConfigValue[str])
             """
         ),
-            encoding="utf-8",
-        )
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
