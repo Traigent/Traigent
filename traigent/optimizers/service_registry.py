@@ -76,18 +76,22 @@ class RemoteServiceRegistry:
 
     def _register_background_task(self, task: asyncio.Task[Any]) -> None:
         """Keep background tasks alive until completion and surface failures."""
+        self._background_tasks.add(task)
 
-        def _on_done(fut: asyncio.Task[Any]) -> None:
-            self._background_tasks.discard(fut)
-            if fut.cancelled():
-                return
+        async def _monitor_background_task() -> None:
             try:
-                fut.result()
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                return
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("Background service task failed", exc_info=exc)
+            finally:
+                self._background_tasks.discard(task)
 
-        self._background_tasks.add(task)
-        task.add_done_callback(_on_done)
+        asyncio.create_task(
+            _monitor_background_task(),
+            name=f"{task.get_name()}_monitor",
+        )
 
     def register_service(
         self, service: RemoteOptimizationService, auto_connect: bool = True
