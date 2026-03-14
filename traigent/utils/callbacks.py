@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+CallbackInvocationKey = tuple[int, str]
+
 
 def _shutdown_callback_executor(
     executor: concurrent.futures.ThreadPoolExecutor,
@@ -549,6 +551,10 @@ class CallbackManager:
         self._executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._executor_lock = threading.Lock()
         self._executor_finalizer: weakref.finalize | None = None
+        self._running_callbacks: dict[
+            CallbackInvocationKey, concurrent.futures.Future[Any]
+        ] = {}
+        self._running_callbacks_lock = threading.Lock()
 
     def _ensure_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         """Create or return the shared callback executor."""
@@ -578,8 +584,59 @@ class CallbackManager:
             self._executor = None
             self._executor_finalizer = None
 
+        with self._running_callbacks_lock:
+            self._running_callbacks.clear()
+
         if finalizer is not None and finalizer.alive:
             finalizer()
+
+    def _clear_running_callback(
+        self,
+        key: CallbackInvocationKey,
+        future: concurrent.futures.Future[Any],
+    ) -> None:
+        """Remove a completed callback from the running-callback registry."""
+        with self._running_callbacks_lock:
+            current_future = self._running_callbacks.get(key)
+            if current_future is future:
+                self._running_callbacks.pop(key, None)
+
+    def _submit_callback(
+        self,
+        callback_name: str,
+        callback: OptimizationCallback,
+        method_name: str,
+        method_func: Callable[..., Any],
+        *args: Any,
+    ) -> concurrent.futures.Future[Any] | None:
+        """Submit a callback unless the same method is already running."""
+        executor = self._ensure_executor()
+        key = (id(callback), method_name)
+
+        with self._running_callbacks_lock:
+            current_future = self._running_callbacks.get(key)
+            if current_future is not None:
+                if current_future.done():
+                    self._running_callbacks.pop(key, None)
+                else:
+                    logger.warning(
+                        f"Callback {callback_name}.{method_name} is still running "
+                        "from a previous invocation - skipping"
+                    )
+                    return None
+
+            future = executor.submit(contextvars.Context().run, method_func, *args)
+            self._running_callbacks[key] = future
+
+        self_ref = weakref.ref(self)
+
+        def _cleanup(done_future: concurrent.futures.Future[Any]) -> None:
+            manager = self_ref()
+            if manager is not None:
+                manager._clear_running_callback(key, done_future)
+
+        future.add_done_callback(_cleanup)
+        return future
 
     def _invoke_callback_safe(
         self,
@@ -617,8 +674,16 @@ class CallbackManager:
 
         # Use a shared ThreadPoolExecutor for timeout protection to avoid
         # creating a new thread pool per callback invocation.
-        executor = self._ensure_executor()
-        future = executor.submit(contextvars.Context().run, method_func, *args)
+        future = self._submit_callback(
+            callback_name,
+            callback,
+            method_name,
+            method_func,
+            *args,
+        )
+        if future is None:
+            return
+
         try:
             future.result(timeout=self.timeout)
         except concurrent.futures.TimeoutError:
