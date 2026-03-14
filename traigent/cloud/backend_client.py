@@ -97,6 +97,8 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
+_JSON_CONTENT_TYPE = "application/json"
+_SDK_USER_AGENT = "Traigent-SDK/1.0"
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -454,11 +456,11 @@ class BackendIntegratedClient:
             except Exception as exc:
                 logger.warning("Could not get auth headers: %s", exc)
                 headers = {
-                    "Content-Type": "application/json",
-                    "User-Agent": "Traigent-SDK/1.0",
+                    "Content-Type": _JSON_CONTENT_TYPE,
+                    "User-Agent": _SDK_USER_AGENT,
                 }
             else:
-                headers.setdefault("Content-Type", "application/json")
+                headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
 
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -681,8 +683,8 @@ class BackendIntegratedClient:
         path, including JWT refresh behavior when available.
         """
         default_headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Traigent-SDK/1.0",
+            "Content-Type": _JSON_CONTENT_TYPE,
+            "User-Agent": _SDK_USER_AGENT,
         }
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
@@ -712,8 +714,8 @@ class BackendIntegratedClient:
             return default_headers
 
         merged_headers = dict(headers or {})
-        merged_headers.setdefault("Content-Type", "application/json")
-        merged_headers.setdefault("User-Agent", "Traigent-SDK/1.0")
+        merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+        merged_headers.setdefault("User-Agent", _SDK_USER_AGENT)
         return merged_headers
 
     def _build_feature_upload_url(self, experiment_run_id: str) -> str | None:

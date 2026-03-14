@@ -413,7 +413,9 @@ class TestSyncManager:
 
             assert result["success"] is True
             assert result["agent_id"] == "test_agent"
-            expected_endpoint = f"{BackendConfig.get_cloud_api_url().rstrip('/')}/agents"
+            expected_endpoint = (
+                f"{BackendConfig.get_cloud_api_url().rstrip('/')}/agents"
+            )
             mock_post.assert_called_with(
                 expected_endpoint,
                 json=agent_data,

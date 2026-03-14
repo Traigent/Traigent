@@ -337,36 +337,51 @@ class LocalStorageManager:
         logger.debug(f"Added trial result to session {session_id}: score={score}")
 
     @staticmethod
+    def _extract_objective_name_candidate(candidate: Any) -> str | None:
+        """Extract an objective name from a string or mapping candidate."""
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        if isinstance(candidate, dict):
+            name = candidate.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return None
+
+    @classmethod
+    def _extract_primary_name_from_list(cls, value: Any) -> str | None:
+        """Extract the first valid objective name from a list-like config field."""
+        if not (isinstance(value, list) and value):
+            return None
+        return cls._extract_objective_name_candidate(value[0])
+
+    @classmethod
+    def _extract_primary_name_from_schema(
+        cls, optimization_config: dict[str, Any | None]
+    ) -> str | None:
+        """Extract the primary objective name from objective_schema when present."""
+        objective_schema = optimization_config.get("objective_schema")
+        if not isinstance(objective_schema, dict):
+            return None
+        return cls._extract_primary_name_from_list(objective_schema.get("objectives"))
+
+    @classmethod
     def _resolve_primary_objective_name(
+        cls,
         optimization_config: dict[str, Any | None] | None,
     ) -> str:
         """Resolve primary objective name from stored optimization config."""
         if not isinstance(optimization_config, dict):
             return "score"
 
-        def _extract_name(candidate: Any) -> str | None:
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-            if isinstance(candidate, dict):
-                name = candidate.get("name")
-                if isinstance(name, str) and name.strip():
-                    return name.strip()
-            return None
+        name = cls._extract_primary_name_from_list(
+            optimization_config.get("objectives")
+        )
+        if name:
+            return name
 
-        for key in ("objectives",):
-            value = optimization_config.get(key)
-            if isinstance(value, list) and value:
-                name = _extract_name(value[0])
-                if name:
-                    return name
-
-        objective_schema = optimization_config.get("objective_schema")
-        if isinstance(objective_schema, dict):
-            schema_objectives = objective_schema.get("objectives")
-            if isinstance(schema_objectives, list) and schema_objectives:
-                name = _extract_name(schema_objectives[0])
-                if name:
-                    return name
+        name = cls._extract_primary_name_from_schema(optimization_config)
+        if name:
+            return name
 
         return "score"
 

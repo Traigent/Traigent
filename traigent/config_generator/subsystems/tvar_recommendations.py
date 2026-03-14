@@ -10,6 +10,7 @@ from traigent.config_generator.agent_classifier import ClassificationResult
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.range_presets import get_preset_range
 from traigent.config_generator.types import TVarRecommendation, TVarSpec
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 
 def generate_recommendations(
@@ -180,6 +181,28 @@ def _preset_recommendations(
     return recs
 
 
+_VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})
+
+
+def _parse_recommendation_item(item: dict) -> TVarRecommendation | None:
+    """Parse a single LLM-suggested recommendation, or *None* if invalid."""
+    name = item.get("name", "")
+    range_type = item.get("range_type", "")
+    kwargs = item.get("kwargs", {})
+    if not name or not range_type or not isinstance(kwargs, dict):
+        return None
+    if range_type not in _VALID_RANGE_TYPES:
+        return None
+    return TVarRecommendation(
+        name=name,
+        range_type=range_type,
+        range_kwargs=kwargs,
+        category=item.get("category", ""),
+        reasoning=item.get("reasoning", "LLM-suggested"),
+        impact_estimate=item.get("impact", "medium"),
+    )
+
+
 def _llm_recommend(
     tvars: list[TVarSpec],
     agent_type: str,
@@ -210,15 +233,7 @@ def _llm_recommend(
     except BudgetExhausted:
         return []
 
-    text = response.strip()
-    if "```" in text:
-        for part in text.split("```"):
-            stripped = part.strip()
-            if stripped.startswith("json"):
-                stripped = stripped[4:].strip()
-            if stripped.startswith("["):
-                text = stripped
-                break
+    text = extract_json_array_text(response)
 
     try:
         data = json.loads(text)
@@ -228,25 +243,4 @@ def _llm_recommend(
     if not isinstance(data, list):
         return []
 
-    results: list[TVarRecommendation] = []
-    for item in data:
-        name = item.get("name", "")
-        range_type = item.get("range_type", "")
-        kwargs = item.get("kwargs", {})
-        if not name or not range_type or not isinstance(kwargs, dict):
-            continue
-        if range_type not in ("Range", "IntRange", "LogRange", "Choices"):
-            continue
-
-        results.append(
-            TVarRecommendation(
-                name=name,
-                range_type=range_type,
-                range_kwargs=kwargs,
-                category=item.get("category", ""),
-                reasoning=item.get("reasoning", "LLM-suggested"),
-                impact_estimate=item.get("impact", "medium"),
-            )
-        )
-
-    return results
+    return [r for item in data if (r := _parse_recommendation_item(item)) is not None]

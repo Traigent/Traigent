@@ -54,6 +54,61 @@ def _validate_summary_metric_value(metric_key: str, value: Any) -> bool:
     )
 
 
+def _validate_comparability_coverage_ratio(comparability: dict) -> None:
+    """Validate comparability.coverage_ratio field."""
+    if "coverage_ratio" not in comparability:
+        return
+    ratio = comparability["coverage_ratio"]
+    if not isinstance(ratio, (int, float)):
+        raise ValueError(
+            f"comparability.coverage_ratio must be numeric, got {type(ratio)}"
+        )
+    if ratio < 0 or ratio > 1:
+        raise ValueError("comparability.coverage_ratio must be between 0 and 1")
+
+
+def _validate_comparability_string_lists(comparability: dict) -> None:
+    """Validate comparability list fields (warning_codes, missing_example_ids)."""
+    for list_field in ("warning_codes", "missing_example_ids"):
+        if list_field not in comparability:
+            continue
+        list_value = comparability[list_field]
+        if not isinstance(list_value, list):
+            raise ValueError(
+                f"comparability.{list_field} must be an array, got {type(list_value)}"
+            )
+        if not all(isinstance(item, str) for item in list_value):
+            raise ValueError(f"comparability.{list_field} must contain only strings")
+
+
+def _validate_per_metric_coverage_entry(metric_name: str, metric_coverage: Any) -> None:
+    """Validate a single per_metric_coverage entry."""
+    if not isinstance(metric_name, str):
+        raise ValueError("comparability.per_metric_coverage keys must be strings")
+    if not isinstance(metric_coverage, dict):
+        raise ValueError("comparability.per_metric_coverage entries must be objects")
+    for field, expected in (("present", int), ("total", int), ("ratio", (int, float))):
+        value = metric_coverage.get(field)
+        if value is not None and not isinstance(value, expected):
+            type_label = "integer" if expected is int else "numeric"
+            raise ValueError(
+                f"comparability.per_metric_coverage.{field} must be {type_label}"
+            )
+
+
+def _validate_per_metric_coverage(comparability: dict) -> None:
+    """Validate comparability.per_metric_coverage field."""
+    if "per_metric_coverage" not in comparability:
+        return
+    coverage = comparability["per_metric_coverage"]
+    if not isinstance(coverage, dict):
+        raise ValueError(
+            f"comparability.per_metric_coverage must be an object, got {type(coverage)}"
+        )
+    for metric_name, metric_coverage in coverage.items():
+        _validate_per_metric_coverage_entry(metric_name, metric_coverage)
+
+
 def validate_comparability_metadata(comparability: Any) -> bool:
     """Validate comparability metadata payload when present."""
     if not isinstance(comparability, dict):
@@ -61,8 +116,7 @@ def validate_comparability_metadata(comparability: Any) -> bool:
             f"comparability metadata must be an object, got {type(comparability)}"
         )
 
-    numeric_int_fields = ("total_examples", "examples_with_primary_metric")
-    for field_name in numeric_int_fields:
+    for field_name in ("total_examples", "examples_with_primary_metric"):
         if field_name in comparability and not isinstance(
             comparability[field_name], int
         ):
@@ -70,64 +124,39 @@ def validate_comparability_metadata(comparability: Any) -> bool:
                 f"comparability.{field_name} must be an integer, got {type(comparability[field_name])}"
             )
 
-    if "coverage_ratio" in comparability:
-        ratio = comparability["coverage_ratio"]
-        if not isinstance(ratio, (int, float)):
-            raise ValueError(
-                f"comparability.coverage_ratio must be numeric, got {type(ratio)}"
-            )
-        if ratio < 0 or ratio > 1:
-            raise ValueError("comparability.coverage_ratio must be between 0 and 1")
+    _validate_comparability_coverage_ratio(comparability)
 
     if "ranking_eligible" in comparability and not isinstance(
         comparability["ranking_eligible"], bool
     ):
         raise ValueError("comparability.ranking_eligible must be boolean when provided")
 
-    for list_field in ("warning_codes", "missing_example_ids"):
-        if list_field in comparability:
-            list_value = comparability[list_field]
-            if not isinstance(list_value, list):
-                raise ValueError(
-                    f"comparability.{list_field} must be an array, got {type(list_value)}"
-                )
-            if not all(isinstance(item, str) for item in list_value):
-                raise ValueError(
-                    f"comparability.{list_field} must contain only strings"
-                )
-
-    if "per_metric_coverage" in comparability:
-        coverage = comparability["per_metric_coverage"]
-        if not isinstance(coverage, dict):
-            raise ValueError(
-                f"comparability.per_metric_coverage must be an object, got {type(coverage)}"
-            )
-        for metric_name, metric_coverage in coverage.items():
-            if not isinstance(metric_name, str):
-                raise ValueError(
-                    "comparability.per_metric_coverage keys must be strings"
-                )
-            if not isinstance(metric_coverage, dict):
-                raise ValueError(
-                    "comparability.per_metric_coverage entries must be objects"
-                )
-            present = metric_coverage.get("present")
-            total = metric_coverage.get("total")
-            ratio = metric_coverage.get("ratio")
-            if present is not None and not isinstance(present, int):
-                raise ValueError(
-                    "comparability.per_metric_coverage.present must be integer"
-                )
-            if total is not None and not isinstance(total, int):
-                raise ValueError(
-                    "comparability.per_metric_coverage.total must be integer"
-                )
-            if ratio is not None and not isinstance(ratio, (int, float)):
-                raise ValueError(
-                    "comparability.per_metric_coverage.ratio must be numeric"
-                )
+    _validate_comparability_string_lists(comparability)
+    _validate_per_metric_coverage(comparability)
 
     return True
+
+
+_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validate_metric_entries(entries: dict, key_label: str, value_label: str) -> None:
+    """Validate key/value pairs in a metrics dict.
+
+    Args:
+        entries: The dict of metric key-value pairs.
+        key_label: Label for error messages about keys (e.g. "measure", "metric").
+        value_label: Label for error messages about values.
+    """
+    for key, value in entries.items():
+        if not _IDENTIFIER_PATTERN.match(key):
+            raise ValueError(
+                f"Invalid {key_label} key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+            )
+        if value is not None and not isinstance(value, (int, float, str)):
+            raise ValueError(
+                f"{value_label} value for '{key}' must be number, string, or null, got {type(value)}"
+            )
 
 
 def validate_measure_results(measure: Any) -> bool:
@@ -148,14 +177,8 @@ def validate_measure_results(measure: Any) -> bool:
             f"MeasureResults must be a dict, got {type(measure)}"
         ) from None
 
-    # Validate that all keys match the pattern [a-zA-Z_][a-zA-Z0-9_]*
-    pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-
     # Check if this is nested format (has example_id and metrics)
-    is_nested = "example_id" in measure and "metrics" in measure
-
-    if is_nested:
-        # Nested format validation
+    if "example_id" in measure and "metrics" in measure:
         example_id = measure.get("example_id")
         if example_id is not None and not isinstance(example_id, str):
             raise ValueError(f"example_id must be a string, got {type(example_id)}")
@@ -164,30 +187,9 @@ def validate_measure_results(measure: Any) -> bool:
         if not isinstance(metrics, dict):
             raise ValueError(f"metrics must be a dict, got {type(metrics)}")
 
-        # Validate metrics dict
-        for key, value in metrics.items():
-            if not pattern.match(key):
-                raise ValueError(
-                    f"Invalid metric key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
-                )
-            if value is not None and not isinstance(value, (int, float, str)):
-                raise ValueError(
-                    f"Metric value for '{key}' must be number, string, or null, got {type(value)}"
-                )
+        _validate_metric_entries(metrics, "metric", "Metric")
     else:
-        # Flat format validation (legacy)
-        for key, value in measure.items():
-            # Check key format
-            if not pattern.match(key):
-                raise ValueError(
-                    f"Invalid measure key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
-                )
-
-            # Check value type (must be number, string, or null)
-            if value is not None and not isinstance(value, (int, float, str)):
-                raise ValueError(
-                    f"Measure value for '{key}' must be number, string, or null, got {type(value)}"
-                )
+        _validate_metric_entries(measure, "measure", "Measure")
 
     return True
 
@@ -286,6 +288,28 @@ def validate_summary_stats(summary_stats: Any) -> bool:
     return metrics_valid and comparability_valid
 
 
+def _validate_submission_metadata(metadata: Any) -> None:
+    """Validate top-level metadata field in a configuration run submission."""
+    if metadata is None:
+        return
+    if not isinstance(metadata, dict):
+        raise ValueError(f"metadata must be an object or null, got {type(metadata)}")
+    comparability = metadata.get("comparability")
+    if comparability is not None:
+        validate_comparability_metadata(comparability)
+
+
+def _validate_metrics_no_misplaced_fields(metrics: Any) -> None:
+    """Ensure metrics dict does not contain fields that belong at the top level."""
+    if not isinstance(metrics, dict):
+        return
+    for field in ("measures", "summary_stats"):
+        if field in metrics:
+            raise ValueError(
+                f"metrics dict should not contain '{field}' - it should be a separate field"
+            )
+
+
 def validate_configuration_run_submission(data: dict[str, Any]) -> bool:
     """Validate a complete configuration run submission.
 
@@ -295,34 +319,16 @@ def validate_configuration_run_submission(data: dict[str, Any]) -> bool:
     Returns:
         True if valid, raises ValueError if invalid
     """
-    # Validate measures if present
     if "measures" in data:
         validate_measures_array(data["measures"])
 
-    # Validate summary_stats if present
     if "summary_stats" in data:
         validate_summary_stats(data["summary_stats"])
 
     if "metadata" in data:
-        metadata = data["metadata"]
-        if metadata is not None and not isinstance(metadata, dict):
-            raise ValueError(
-                f"metadata must be an object or null, got {type(metadata)}"
-            )
-        if isinstance(metadata, dict):
-            comparability = metadata.get("comparability")
-            if comparability is not None:
-                validate_comparability_metadata(comparability)
+        _validate_submission_metadata(data["metadata"])
 
-    # Validate metrics should NOT contain measures or summary_stats
-    if "metrics" in data and isinstance(data["metrics"], dict):
-        if "measures" in data["metrics"]:
-            raise ValueError(
-                "metrics dict should not contain 'measures' - it should be a separate field"
-            )
-        if "summary_stats" in data["metrics"]:
-            raise ValueError(
-                "metrics dict should not contain 'summary_stats' - it should be a separate field"
-            )
+    if "metrics" in data:
+        _validate_metrics_no_misplaced_fields(data["metrics"])
 
     return True

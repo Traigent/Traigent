@@ -1572,15 +1572,6 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
-        if self._aio_session is None:
-            auth_result_candidate: Any = self.auth.authenticate_with_result()
-            if inspect.isawaitable(auth_result_candidate):
-                auth_result = await auth_result_candidate
-            else:
-                auth_result = auth_result_candidate
-            if not auth_result.success:
-                raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
-
         await self._ensure_session()
 
         # Default objectives

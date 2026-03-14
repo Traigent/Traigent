@@ -401,42 +401,42 @@ def validate_config_against_tvars(
                 errors.append(f"Missing required configuration: {tvar.name}")
             continue
 
-        value = config[tvar.name]
-
-        # Type-specific validation
-        if tvar.type == "bool":
-            if not isinstance(value, bool):
-                errors.append(f"{tvar.name}: expected bool, got {type(value).__name__}")
-
-        elif tvar.type == "int":
-            if not isinstance(value, int) or isinstance(value, bool):
-                errors.append(f"{tvar.name}: expected int, got {type(value).__name__}")
-            else:
-                range_spec = tvar.domain.get("range", [])
-                if len(range_spec) >= 2:
-                    if value < range_spec[0] or value > range_spec[1]:
-                        errors.append(
-                            f"{tvar.name}: {value} not in range "
-                            f"[{range_spec[0]}, {range_spec[1]}]"
-                        )
-
-        elif tvar.type == "float":
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                errors.append(
-                    f"{tvar.name}: expected float, got {type(value).__name__}"
-                )
-            else:
-                range_spec = tvar.domain.get("range", [])
-                if len(range_spec) >= 2:
-                    if value < range_spec[0] or value > range_spec[1]:
-                        errors.append(
-                            f"{tvar.name}: {value} not in range "
-                            f"[{range_spec[0]}, {range_spec[1]}]"
-                        )
-
-        elif tvar.type == "enum" or tvar.type == "str":
-            allowed = tvar.domain.get("values", [])
-            if allowed and value not in allowed:
-                errors.append(f"{tvar.name}: '{value}' not in allowed values {allowed}")
+        error = _validate_tvar_value(tvar, config[tvar.name])
+        if error:
+            errors.append(error)
 
     return errors
+
+
+def _validate_tvar_value(tvar: TVARDefinition, value: Any) -> str | None:
+    """Validate a single value against its TVAR definition. Returns error or None."""
+    if tvar.type == "bool":
+        if not isinstance(value, bool):
+            return f"{tvar.name}: expected bool, got {type(value).__name__}"
+
+    elif tvar.type == "int":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{tvar.name}: expected int, got {type(value).__name__}"
+        return _check_range(tvar, value)
+
+    elif tvar.type == "float":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return f"{tvar.name}: expected float, got {type(value).__name__}"
+        return _check_range(tvar, value)
+
+    elif tvar.type in ("enum", "str"):
+        allowed = tvar.domain.get("values", [])
+        if allowed and value not in allowed:
+            return f"{tvar.name}: '{value}' not in allowed values {allowed}"
+
+    return None
+
+
+def _check_range(tvar: TVARDefinition, value: int | float) -> str | None:
+    """Return a range error string if value is outside the TVAR domain range."""
+    range_spec = tvar.domain.get("range", [])
+    if len(range_spec) >= 2 and (value < range_spec[0] or value > range_spec[1]):
+        return (
+            f"{tvar.name}: {value} not in range " f"[{range_spec[0]}, {range_spec[1]}]"
+        )
+    return None

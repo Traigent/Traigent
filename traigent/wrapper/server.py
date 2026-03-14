@@ -87,6 +87,76 @@ def _get_timeout_ms(
     return int(timeout_ms)
 
 
+async def _parse_request(receive: Callable) -> dict[str, Any]:
+    """Read and decode a JSON request body."""
+    body = await read_body(receive)
+    if not body:
+        return {}
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise ValueError("Request body must be a JSON object")
+    return parsed
+
+
+async def _run_with_timeout(
+    operation: Any,
+    timeout_ms: int | None,
+    endpoint: str,
+) -> dict[str, Any]:
+    """Await an operation with optional contract-compliant timeout handling."""
+    result: Any
+    if timeout_ms is None:
+        result = await operation
+    else:
+        try:
+            result = await asyncio.wait_for(operation, timeout=timeout_ms / 1000.0)
+        except TimeoutError as exc:
+            raise RequestTimeoutError(
+                f"Request timed out after {timeout_ms}ms",
+                details={"endpoint": endpoint, "timeout_ms": timeout_ms},
+            ) from exc
+
+    if not isinstance(result, dict):
+        raise ValueError("Wrapper service handler must return a JSON object")
+    return result
+
+
+async def _send_with_request_id(
+    send: Callable,
+    response: dict[str, Any],
+    trace_headers: dict[str, str],
+    request_id: Any | None,
+) -> None:
+    """Send a JSON response with request correlation headers when present."""
+    response_headers = _response_headers_with_request_id(trace_headers, request_id)
+    await send_json_response(send, 200, response, headers=response_headers)
+
+
+async def _handle_keep_alive(
+    service: TraigentService,
+    request: dict[str, Any],
+    send: Callable,
+    trace_headers: dict[str, str],
+) -> None:
+    """Handle keep-alive requests for wrapper sessions."""
+    session_id = request.get("session_id", "")
+    if service.handle_keep_alive(session_id):
+        await send_json_response(
+            send,
+            200,
+            {"status": "alive", "session_id": session_id},
+            headers=trace_headers,
+        )
+        return
+
+    await send_json_response(
+        send,
+        404,
+        _make_error_response("SESSION_NOT_FOUND", f"Session not found: {session_id}"),
+        headers=trace_headers,
+    )
+
+
 def create_app(service: TraigentService) -> Callable[..., Any]:
     """Create ASGI application for TraigentService.
 
@@ -110,119 +180,51 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
         # Route to handler
         try:
             if path == CAPABILITIES_PATH and method == "GET":
-                response = service.get_capabilities()
                 await send_json_response(
-                    send,
-                    200,
-                    response,
-                    headers=trace_headers,
+                    send, 200, service.get_capabilities(), headers=trace_headers
                 )
 
             elif path == CONFIG_SPACE_PATH and method == "GET":
-                response = service.get_config_space()
                 await send_json_response(
-                    send,
-                    200,
-                    response,
-                    headers=trace_headers,
+                    send, 200, service.get_config_space(), headers=trace_headers
                 )
 
             elif path == EXECUTE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                timeout_ms = _get_timeout_ms(request, default_ms=30000)
-
-                try:
-                    response = await asyncio.wait_for(
-                        service.handle_execute(request),
-                        timeout=(timeout_ms / 1000.0) if timeout_ms else None,
-                    )
-                except TimeoutError as exc:
-                    raise RequestTimeoutError(
-                        f"Request timed out after {timeout_ms}ms",
-                        details={
-                            "endpoint": EXECUTE_PATH,
-                            "timeout_ms": timeout_ms,
-                        },
-                    ) from exc
-
-                response_headers = _response_headers_with_request_id(
-                    trace_headers,
-                    response.get("request_id"),
+                request = await _parse_request(receive)
+                response = await _run_with_timeout(
+                    service.handle_execute(request),
+                    _get_timeout_ms(request, default_ms=30000),
+                    EXECUTE_PATH,
                 )
-                await send_json_response(send, 200, response, headers=response_headers)
+                await _send_with_request_id(
+                    send, response, trace_headers, response.get("request_id")
+                )
 
             elif path == EVALUATE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                timeout_ms = _get_timeout_ms(request, default_ms=None)
-
-                if timeout_ms is not None:
-                    try:
-                        response = await asyncio.wait_for(
-                            service.handle_evaluate(request),
-                            timeout=timeout_ms / 1000.0,
-                        )
-                    except TimeoutError as exc:
-                        raise RequestTimeoutError(
-                            f"Request timed out after {timeout_ms}ms",
-                            details={
-                                "endpoint": EVALUATE_PATH,
-                                "timeout_ms": timeout_ms,
-                            },
-                        ) from exc
-                else:
-                    response = await service.handle_evaluate(request)
-
-                response_headers = _response_headers_with_request_id(
-                    trace_headers,
-                    response.get("request_id"),
+                request = await _parse_request(receive)
+                response = await _run_with_timeout(
+                    service.handle_evaluate(request),
+                    _get_timeout_ms(request, default_ms=None),
+                    EVALUATE_PATH,
                 )
-                await send_json_response(send, 200, response, headers=response_headers)
+                await _send_with_request_id(
+                    send, response, trace_headers, response.get("request_id")
+                )
 
             elif path == HEALTH_PATH and method == "GET":
-                response = service.get_health()
                 await send_json_response(
-                    send,
-                    200,
-                    response,
-                    headers=trace_headers,
+                    send, 200, service.get_health(), headers=trace_headers
                 )
 
             elif path == KEEP_ALIVE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                session_id = request.get("session_id", "")
-                alive = service.handle_keep_alive(session_id)
-                if alive:
-                    await send_json_response(
-                        send,
-                        200,
-                        {
-                            "status": "alive",
-                            "session_id": session_id,
-                        },
-                        headers=trace_headers,
-                    )
-                else:
-                    await send_json_response(
-                        send,
-                        404,
-                        _make_error_response(
-                            "SESSION_NOT_FOUND",
-                            f"Session not found: {session_id}",
-                        ),
-                        headers=trace_headers,
-                    )
+                request = await _parse_request(receive)
+                await _handle_keep_alive(service, request, send, trace_headers)
 
             else:
                 await send_json_response(
                     send,
                     404,
-                    _make_error_response(
-                        "NOT_FOUND",
-                        f"Not found: {method} {path}",
-                    ),
+                    _make_error_response("NOT_FOUND", f"Not found: {method} {path}"),
                     headers=trace_headers,
                 )
 

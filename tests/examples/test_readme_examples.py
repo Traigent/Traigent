@@ -350,7 +350,7 @@ if 'customer_support_agent' in locals():
 
         test_code = "\n".join(
             [
-                'import os',
+                "import os",
                 'os.environ["TRAIGENT_MOCK_LLM"] = "true"',
                 'os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret',
                 *required_imports,

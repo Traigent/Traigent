@@ -576,6 +576,44 @@ def override_config(
     return override
 
 
+def _validate_budget_configuration_inputs(
+    budget_usd: float,
+    min_instances: int,
+    reserve_ratio: float,
+    max_parallel_workers: int | None,
+    model_pricing: Mapping[str, float],
+) -> None:
+    """Validate inputs for budget-aware optimization configuration."""
+    if budget_usd <= 0:
+        raise ValueError("budget_usd must be > 0")
+    if min_instances < 1:
+        raise ValueError("min_instances must be >= 1")
+    if not 0 <= reserve_ratio < 1:
+        raise ValueError("reserve_ratio must be in [0, 1)")
+    if max_parallel_workers is not None and max_parallel_workers < 1:
+        raise ValueError("max_parallel_workers must be >= 1 when provided")
+    if not model_pricing:
+        raise ValueError("model_pricing must not be empty")
+
+
+def _normalize_model_pricing(model_pricing: Mapping[str, float]) -> dict[str, float]:
+    """Normalize model pricing inputs to validated positive floats."""
+    normalized_pricing: dict[str, float] = {}
+    for model, raw_cost in model_pricing.items():
+        if not model:
+            raise ValueError("model_pricing keys must be non-empty model names")
+        try:
+            cost = float(raw_cost)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"model_pricing['{model}'] must be numeric, got {raw_cost!r}"
+            ) from exc
+        if cost <= 0:
+            raise ValueError(f"model_pricing['{model}'] must be > 0")
+        normalized_pricing[model] = cost
+    return normalized_pricing
+
+
 def configure_for_budget(
     *,
     budget_usd: float,
@@ -605,30 +643,14 @@ def configure_for_budget(
         intentionally safe to pass directly as ``@optimize(**overrides)``.
         When ``return_diagnostics=True``, returns ``(overrides, diagnostics)``.
     """
-    if budget_usd <= 0:
-        raise ValueError("budget_usd must be > 0")
-    if min_instances < 1:
-        raise ValueError("min_instances must be >= 1")
-    if not 0 <= reserve_ratio < 1:
-        raise ValueError("reserve_ratio must be in [0, 1)")
-    if max_parallel_workers is not None and max_parallel_workers < 1:
-        raise ValueError("max_parallel_workers must be >= 1 when provided")
-    if not model_pricing:
-        raise ValueError("model_pricing must not be empty")
-
-    normalized_pricing: dict[str, float] = {}
-    for model, raw_cost in model_pricing.items():
-        if not model:
-            raise ValueError("model_pricing keys must be non-empty model names")
-        try:
-            cost = float(raw_cost)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"model_pricing['{model}'] must be numeric, got {raw_cost!r}"
-            ) from exc
-        if cost <= 0:
-            raise ValueError(f"model_pricing['{model}'] must be > 0")
-        normalized_pricing[model] = cost
+    _validate_budget_configuration_inputs(
+        budget_usd,
+        min_instances,
+        reserve_ratio,
+        max_parallel_workers,
+        model_pricing,
+    )
+    normalized_pricing = _normalize_model_pricing(model_pricing)
 
     effective_budget = budget_usd * (1.0 - reserve_ratio)
     affordable_items = sorted(

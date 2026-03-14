@@ -713,7 +713,11 @@ class TestTVLImport:
                             "name": "beam_width",
                             "type": "int",
                             "x_traigent_parameter_range": "IntRange",
-                            "domain": {"kind": "range", "range": [1, 8], "resolution": 1.5},
+                            "domain": {
+                                "kind": "range",
+                                "range": [1, 8],
+                                "resolution": 1.5,
+                            },
                         }
                     ]
                 }
@@ -745,7 +749,9 @@ class TestTVLImport:
 
     def test_from_tvl_spec_rejects_invalid_top_level_sections(self) -> None:
         """Top-level TVL import validation should fail fast on malformed input."""
-        with pytest.raises(ValueError, match="must define either 'tvars' or 'configuration_space'"):
+        with pytest.raises(
+            ValueError, match="must define either 'tvars' or 'configuration_space'"
+        ):
             ConfigSpace.from_tvl_spec({"description": "missing space"})
 
         with pytest.raises(ValueError, match="configuration_space must be a mapping"):
@@ -774,7 +780,9 @@ class TestTVLImport:
             ConfigSpace.from_tvl_spec({"tvars": ["bad"]})
 
         with pytest.raises(ValueError, match="requires a 'name' string"):
-            ConfigSpace.from_tvl_spec({"tvars": [{"type": "float", "domain": [0.0, 1.0]}]})
+            ConfigSpace.from_tvl_spec(
+                {"tvars": [{"type": "float", "domain": [0.0, 1.0]}]}
+            )
 
         with pytest.raises(ValueError, match="range domain must contain a 2-item list"):
             ConfigSpace.from_tvl_spec(
@@ -882,7 +890,9 @@ class TestTVLImport:
                     "tvars": [
                         {"name": "temperature", "type": "float", "domain": [0.0, 1.0]}
                     ],
-                    "constraints": [{"expr": "params.temperature >= 0.1", "description": 123}],
+                    "constraints": [
+                        {"expr": "params.temperature >= 0.1", "description": 123}
+                    ],
                 }
             )
 
@@ -896,7 +906,9 @@ class TestTVLImport:
                 }
             )
 
-        with pytest.raises(ValueError, match="must define 'expr' or both 'when' and 'then'"):
+        with pytest.raises(
+            ValueError, match="must define 'expr' or both 'when' and 'then'"
+        ):
             ConfigSpace.from_tvl_spec(
                 {
                     "tvars": [

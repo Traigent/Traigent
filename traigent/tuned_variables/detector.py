@@ -197,35 +197,13 @@ class TunedVariableDetector:
         if len(all_candidate_lists) <= 1:
             return all_candidate_lists[0] if all_candidate_lists else []
 
-        # Index by name for deduplication (scoped to single function)
         seen: dict[str, TunedVariableCandidate] = {}
-
         for candidates in all_candidate_lists:
             for c in candidates:
-                key = c.name
-                if key not in seen:
-                    seen[key] = c
-                else:
-                    # Merge: upgrade confidence and combine reasoning
-                    existing = seen[key]
-                    merged_confidence = _upgrade_confidence(
-                        existing.confidence, c.confidence
-                    )
-                    merged_reasoning = existing.reasoning
-                    if c.reasoning and c.reasoning not in merged_reasoning:
-                        merged_reasoning = f"{merged_reasoning}; {c.reasoning}"
-
-                    seen[key] = TunedVariableCandidate(
-                        name=existing.name,
-                        candidate_type=existing.candidate_type,
-                        confidence=merged_confidence,
-                        location=existing.location,
-                        current_value=existing.current_value or c.current_value,
-                        suggested_range=existing.suggested_range or c.suggested_range,
-                        detection_source="combined",
-                        reasoning=merged_reasoning,
-                        canonical_name=existing.canonical_name or c.canonical_name,
-                    )
+                existing = seen.get(c.name)
+                seen[c.name] = (
+                    _merge_two_candidates(existing, c) if existing is not None else c
+                )
 
         return list(seen.values())
 
@@ -249,3 +227,24 @@ def _upgrade_confidence(
     if max_level == 1:
         return DetectionConfidence.MEDIUM
     return DetectionConfidence.HIGH
+
+
+def _merge_two_candidates(
+    existing: TunedVariableCandidate, new: TunedVariableCandidate
+) -> TunedVariableCandidate:
+    """Merge *new* into *existing*: upgrade confidence, combine reasoning."""
+    merged_reasoning = existing.reasoning
+    if new.reasoning and new.reasoning not in merged_reasoning:
+        merged_reasoning = f"{merged_reasoning}; {new.reasoning}"
+
+    return TunedVariableCandidate(
+        name=existing.name,
+        candidate_type=existing.candidate_type,
+        confidence=_upgrade_confidence(existing.confidence, new.confidence),
+        location=existing.location,
+        current_value=existing.current_value or new.current_value,
+        suggested_range=existing.suggested_range or new.suggested_range,
+        detection_source="combined",
+        reasoning=merged_reasoning,
+        canonical_name=existing.canonical_name or new.canonical_name,
+    )

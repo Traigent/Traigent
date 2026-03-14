@@ -135,6 +135,50 @@ class RandomSearchOptimizer(BaseOptimizer):
 
         return config
 
+    def _sample_range_int(self, param_name: str, param_def: dict) -> int:
+        """Sample an integer value from a range-dict definition."""
+        low_f, high_f = float(param_def["low"]), float(param_def["high"])
+        if not low_f.is_integer() or not high_f.is_integer():
+            raise OptimizationError(
+                f"Integer parameter '{param_name}' requires integral low/high bounds"
+            )
+
+        step_raw = param_def.get("step", 1) or 1
+        step_f = float(step_raw)
+        if step_f <= 0 or not step_f.is_integer():
+            raise OptimizationError(
+                f"Invalid step for integer parameter '{param_name}': {step_raw}"
+            )
+
+        low_i, high_i, int_step = int(low_f), int(high_f), max(int(step_f), 1)
+        if low_i > high_i:
+            raise OptimizationError(
+                f"Invalid integer range for parameter '{param_name}': "
+                f"low ({low_i}) must be <= high ({high_i})"
+            )
+
+        values = list(range(low_i, high_i + 1, int_step))
+        if not values:
+            values = [low_i]
+        elif values[-1] != high_i:
+            values.append(high_i)
+        return self._random.choice(values)
+
+    def _sample_range_float(self, param_name: str, param_def: dict) -> float:
+        """Sample a float value from a range-dict definition."""
+        low_f, high_f = float(param_def["low"]), float(param_def["high"])
+        val = self._random.uniform(low_f, high_f)
+        step_raw = param_def.get("step")
+        if step_raw is not None:
+            step = float(step_raw)
+            if step <= 0:
+                raise OptimizationError(
+                    f"Invalid step for float parameter '{param_name}': {step}"
+                )
+            snapped = round((val - low_f) / step) * step + low_f
+            val = min(max(snapped, low_f), high_f)
+        return round(val, 6)
+
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
         """Sample a single parameter value.
 
@@ -149,72 +193,22 @@ class RandomSearchOptimizer(BaseOptimizer):
             OptimizationError: If parameter definition is invalid
         """
         if isinstance(param_def, list):
-            # Categorical parameter - random choice
             return self._random.choice(param_def)
 
-        elif isinstance(param_def, tuple) and len(param_def) == 2:
-            # Continuous parameter - uniform random sample
+        if isinstance(param_def, tuple) and len(param_def) == 2:
             low, high = param_def
             if isinstance(low, int) and isinstance(high, int):
-                # Integer range
                 return self._random.randint(low, high)
-            else:
-                # Float range
-                return self._random.uniform(low, high)
+            return self._random.uniform(low, high)
 
-        elif isinstance(param_def, dict) and "low" in param_def and "high" in param_def:
-            # Range dict from hybrid discovery: {"low": x, "high": y, "type": "int"}
-            low, high = param_def["low"], param_def["high"]
+        if isinstance(param_def, dict) and "low" in param_def and "high" in param_def:
             param_type = str(param_def.get("type", "")).lower()
             if param_type in {"int", "integer"}:
-                low_f, high_f = float(low), float(high)
-                if not low_f.is_integer() or not high_f.is_integer():
-                    raise OptimizationError(
-                        "Integer parameter "
-                        f"'{param_name}' requires integral low/high bounds"
-                    )
+                return self._sample_range_int(param_name, param_def)
+            return self._sample_range_float(param_name, param_def)
 
-                step_raw = param_def.get("step", 1) or 1
-                step_f = float(step_raw)
-                if step_f <= 0 or not step_f.is_integer():
-                    raise OptimizationError(
-                        f"Invalid step for integer parameter '{param_name}': {step_raw}"
-                    )
-
-                low_i, high_i = int(low_f), int(high_f)
-                int_step = int(step_f)
-                if low_i > high_i:
-                    raise OptimizationError(
-                        f"Invalid integer range for parameter '{param_name}': "
-                        f"low ({low_i}) must be <= high ({high_i})"
-                    )
-
-                if int_step < 1:
-                    int_step = 1
-                values = list(range(low_i, high_i + 1, int_step))
-                if not values:
-                    values = [low_i]
-                elif values[-1] != high_i:
-                    values.append(high_i)
-                return self._random.choice(values)
-
-            low_f, high_f = float(low), float(high)
-            val = self._random.uniform(low_f, high_f)
-            step_raw = param_def.get("step")
-            if step_raw is not None:
-                step = float(step_raw)
-                if step <= 0:
-                    raise OptimizationError(
-                        f"Invalid step for float parameter '{param_name}': {step}"
-                    )
-                # Snap to the nearest step offset from low and clamp to range.
-                snapped = round((val - low_f) / step) * step + low_f
-                val = min(max(snapped, low_f), high_f)
-            return round(val, 6)
-
-        else:
-            # Fixed parameter
-            return param_def
+        # Fixed parameter
+        return param_def
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.

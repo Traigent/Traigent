@@ -268,6 +268,8 @@ def build_backend_metadata(
     Returns:
         Metadata dict ready for backend submission
     """
+    _ = content_scores
+
     trial_metadata: dict[str, Any] = {
         "duration": trial_result.duration,
         "trial_id": trial_result.trial_id,
