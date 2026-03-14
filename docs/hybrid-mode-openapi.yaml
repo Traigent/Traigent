@@ -202,15 +202,24 @@ paths:
                   tokens_output: 450
                 quality_metrics: null
         '400':
-          description: Invalid request (e.g., missing required fields, invalid config values)
+          description: Invalid request (e.g., missing benchmark_id, empty examples, tunable mismatch)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: INVALID_CONFIG
-                  message: 'Invalid configuration: temperature must be between 0 and 2'
+              examples:
+                missing-benchmark-id:
+                  summary: Missing benchmark_id
+                  value:
+                    error:
+                      code: INVALID_BENCHMARK_ID
+                      message: Missing required field 'benchmark_id' in execute request
+                invalid-request:
+                  summary: Wrapper-level request validation failure
+                  value:
+                    error:
+                      code: INVALID_REQUEST
+                      message: examples must be a non-empty list
         '401':
           description: Unauthorized
           content:
@@ -336,15 +345,24 @@ paths:
                         std: 0.04
                         'n': 5
         '400':
-          description: Invalid request (e.g., missing required fields, unknown execution_id)
+          description: Invalid request (e.g., missing benchmark_id or malformed evaluations payload)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: INVALID_REQUEST
-                  message: execution_id exec_unknown not found
+              examples:
+                missing-benchmark-id:
+                  summary: Missing benchmark_id
+                  value:
+                    error:
+                      code: INVALID_BENCHMARK_ID
+                      message: Missing required field 'benchmark_id' in evaluate request
+                invalid-request:
+                  summary: Wrapper-level request validation failure
+                  value:
+                    error:
+                      code: INVALID_REQUEST
+                      message: evaluations must be a list
         '401':
           description: Unauthorized
           content:
@@ -1096,11 +1114,10 @@ components:
           additionalProperties: true
         examples:
           type: array
-          description: List of examples to process. Actual limit is max_batch_size from capabilities (default 100).
+          description: List of examples to process. Actual limit is enforced by max_batch_size from capabilities (default 100), not by a static schema cap.
           items:
             $ref: '#/components/schemas/ExampleItem'
           minItems: 1
-          maxItems: 100000
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1246,8 +1263,7 @@ components:
           example: 2 of 5 inputs failed due to upstream timeout
         failed_examples:
           type: array
-          description: List of failed example IDs
-          maxItems: 10000
+          description: List of failed example IDs. Length matches the failed subset of the request batch.
           items:
             type: string
             maxLength: 256
@@ -1282,10 +1298,9 @@ components:
             - failed
         outputs:
           type: array
-          description: Per-input results
+          description: Per-input results. Length matches the request batch size after wrapper validation.
           items:
             $ref: '#/components/schemas/OutputItem'
-          maxItems: 10000
         operational_metrics:
           description: Aggregate operational metrics from the execution batch
           $ref: '#/components/schemas/OperationalMetrics'
@@ -1382,9 +1397,8 @@ components:
           example: exec_20240115_001
         evaluations:
           type: array
-          description: List of output+target pairs to evaluate
+          description: List of output+target pairs to evaluate. Implementations should reject oversize batches at runtime instead of relying on a static schema cap.
           minItems: 1
-          maxItems: 10000
           items:
             $ref: '#/components/schemas/EvaluationItem'
         config:
@@ -1495,10 +1509,9 @@ components:
             - failed
         results:
           type: array
-          description: Per-example evaluation results
+          description: Per-example evaluation results. Length matches the evaluated request batch after wrapper validation.
           items:
             $ref: '#/components/schemas/EvaluationResult'
-          maxItems: 10000
         aggregate_metrics:
           type: object
           description: Aggregated statistics per metric

@@ -460,12 +460,7 @@ class TestCreateAppErrorHandling:
 
     @pytest.mark.asyncio
     async def test_empty_body_treated_as_empty_dict(self) -> None:
-        """Test that empty request body is treated as empty dict.
-
-        An empty body becomes ``{}``, which lacks ``benchmark_id``.
-        The service returns a failed response with INVALID_BENCHMARK_ID
-        (not a raised exception), so the server sends it back as 200.
-        """
+        """Empty execute payloads should return a structured 400 benchmark error."""
         svc = TraigentService()
 
         @svc.execute
@@ -479,9 +474,36 @@ class TestCreateAppErrorHandling:
             _make_receive(b""),
             send,
         )
-        assert send.status == 200
-        assert send.body_json["status"] == "failed"
+        assert send.status == 400
         assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_evaluate_missing_benchmark_returns_400(self) -> None:
+        """Evaluate requests without benchmark_id should fail with INVALID_BENCHMARK_ID."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        send = _SendCollector()
+        request_body = json.dumps(
+            {
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ]
+            }
+        ).encode()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
+        assert "benchmark_id" in send.body_json["error"]["message"]
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ from typing import Any, Literal, TypeVar
 
 from traigent.hybrid.protocol import EstimatedTokensPerExample
 from traigent.utils.logging import get_logger
-from traigent.wrapper.errors import HybridAPIError
+from traigent.wrapper.errors import BadRequestError, HybridAPIError
 
 logger = get_logger(__name__)
 
@@ -585,17 +585,13 @@ class TraigentService:
 
         session_id = request.get("session_id")
 
-        # Validate benchmark_id is present
+        # Validate benchmark_id is present before any handler work.
         benchmark_id = request.get("benchmark_id")
         if not benchmark_id:
-            return {
-                "request_id": request_id,
-                "status": "failed",
-                "error": {
-                    "code": "INVALID_BENCHMARK_ID",
-                    "message": "Missing required field 'benchmark_id' in execute request",
-                },
-            }
+            raise BadRequestError(
+                "Missing required field 'benchmark_id' in execute request",
+                error_code="INVALID_BENCHMARK_ID",
+            )
 
         if not isinstance(examples, list) or len(examples) == 0:
             raise ValueError("examples must be a non-empty list")
@@ -770,17 +766,13 @@ class TraigentService:
         config = request.get("config", {})
         session_id = request.get("session_id")
 
-        # Validate benchmark_id is present
+        # Validate benchmark_id is present before any handler work.
         benchmark_id = request.get("benchmark_id")
         if not benchmark_id:
-            return {
-                "request_id": request_id,
-                "status": "failed",
-                "error": {
-                    "code": "INVALID_BENCHMARK_ID",
-                    "message": "Missing required field 'benchmark_id' in evaluate request",
-                },
-            }
+            raise BadRequestError(
+                "Missing required field 'benchmark_id' in evaluate request",
+                error_code="INVALID_BENCHMARK_ID",
+            )
 
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
