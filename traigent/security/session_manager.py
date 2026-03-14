@@ -23,11 +23,7 @@ logger = get_logger(__name__)
 # Try to import Redis, fallback to in-memory if not available
 try:
     import redis
-
-    if TYPE_CHECKING:
-        from redis import Redis
-    else:
-        from redis import Redis
+    from redis import Redis
 
     REDIS_AVAILABLE = True
 except ImportError:

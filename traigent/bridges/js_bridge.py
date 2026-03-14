@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -156,6 +157,7 @@ class JSBridge:
         self._config = config
         self._process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._started = False
         self._shutdown_requested = False
@@ -264,7 +266,7 @@ class JSBridge:
             self._reader_task = asyncio.create_task(self._read_responses())
 
             # Start background task to log stderr
-            asyncio.create_task(self._log_stderr())
+            self._stderr_task = asyncio.create_task(self._log_stderr())
 
             # Verify the process started successfully with a ping
             try:
@@ -323,14 +325,14 @@ class JSBridge:
                 future.set_exception(error)
         self._pending_requests.clear()
 
-    async def _cancel_reader_task(self) -> None:
-        """Cancel and await the reader task."""
-        if self._reader_task is not None:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass  # Intentionally suppress - we initiated this cancellation
+    async def _cancel_task(self, task: asyncio.Task[None] | None) -> None:
+        """Cancel and await a background task."""
+        if task is None:
+            return
+
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
     async def _terminate(self) -> None:
         """Force terminate the Node.js process and all its children."""
@@ -338,10 +340,12 @@ class JSBridge:
             await self._terminate_process()
 
         self._fail_pending_requests(JSBridgeError("Bridge shutdown"))
-        await self._cancel_reader_task()
+        await self._cancel_task(self._reader_task)
+        await self._cancel_task(self._stderr_task)
 
         self._process = None
         self._reader_task = None
+        self._stderr_task = None
         self._started = False
 
     async def _terminate_process(self) -> None:
