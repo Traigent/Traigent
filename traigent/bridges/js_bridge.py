@@ -20,8 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import signal
-import sys
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -43,11 +41,11 @@ PROTOCOL_VERSION = "1.0"
 # 4. os.killpg() would then kill a completely different process group!
 #
 # Instead, we rely on:
-# - Optional start_new_session=True: Creates a new process group when explicit
-#   process-group signalling is enabled
 # - Explicit cleanup: JSBridge.stop() and context manager __aexit__
-# - OS cleanup: When Python exits, orphan processes in separate sessions
-#   continue running but are eventually cleaned up by the OS (init/systemd)
+# - Direct child termination: We only signal the spawned JS process, avoiding
+#   process-group signals that can destabilize local desktop environments
+# - OS cleanup: If the JS runner has child processes, the OS is responsible
+#   for reaping any remaining descendants after parent exit
 
 
 # Default timeout for trial execution (5 minutes)
@@ -55,21 +53,6 @@ DEFAULT_TRIAL_TIMEOUT_SECONDS = 300
 
 # Default timeout for ping/shutdown commands (10 seconds)
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 10
-
-_PROCESS_GROUP_SIGNALS_ENV = "TRAIGENT_JS_USE_PROCESS_GROUP_SIGNALS"
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Parse a boolean environment variable."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _default_process_group_signals() -> bool:
-    """Use direct child termination by default for local safety."""
-    return _env_flag(_PROCESS_GROUP_SIGNALS_ENV, default=False)
 
 
 class JSBridgeError(Exception):
@@ -105,10 +88,6 @@ class JSBridgeConfig:
         node_args: Additional arguments to pass to Node.js.
         trial_timeout_seconds: Timeout for trial execution in seconds.
         command_timeout_seconds: Timeout for ping/shutdown commands.
-        use_process_group_signals: Whether to terminate the whole subprocess
-            group with Unix signals. Disabled by default for local desktop
-            safety; enable explicitly when child-process cleanup is more
-            important than keeping the host stable during forced shutdown.
         env: Additional environment variables for the Node.js process.
         cwd: Working directory for the Node.js process.
     """
@@ -121,9 +100,6 @@ class JSBridgeConfig:
     node_args: list[str] = field(default_factory=list)
     trial_timeout_seconds: float = DEFAULT_TRIAL_TIMEOUT_SECONDS
     command_timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS
-    use_process_group_signals: bool = field(
-        default_factory=_default_process_group_signals
-    )
     env: dict[str, str] | None = None
     cwd: str | None = None
 
@@ -260,13 +236,6 @@ class JSBridge:
             logger.info("Starting JS bridge: %s", " ".join(cmd))
 
             try:
-                # start_new_session=True isolates the JS runner in its own
-                # process group. This is only enabled when explicit process-
-                # group signalling is requested.
-                start_new_session = (
-                    self._config.use_process_group_signals and sys.platform != "win32"
-                )
-
                 self._process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.PIPE,
@@ -274,7 +243,6 @@ class JSBridge:
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
                     cwd=self._config.cwd,
-                    start_new_session=start_new_session,
                 )
             except FileNotFoundError as e:
                 raise JSProcessError(
@@ -342,25 +310,6 @@ class JSBridge:
                     await self._terminate_process()
 
             await self._finalize_shutdown()
-
-    def _send_signal_to_group(self, sig: signal.Signals) -> bool:
-        """Send signal to process group (Unix only).
-
-        Returns True if signal was sent, False if fallback to direct is needed.
-        """
-        if self._process is None:
-            return False
-        if not self._config.use_process_group_signals:
-            return False
-        pid = self._process.pid
-        if sys.platform == "win32" or pid is None:
-            return False
-        try:
-            os.killpg(pid, sig)
-            logger.debug("Sent %s to process group %d", sig.name, pid)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
 
     def _fail_pending_requests(self, error: Exception) -> None:
         """Fail all pending requests with the given error."""
@@ -431,18 +380,15 @@ class JSBridge:
             return
 
         try:
-            # Try process group termination first, fall back to direct
-            if not self._send_signal_to_group(signal.SIGTERM):
-                self._process.terminate()
+            self._process.terminate()
 
             # Wait for graceful termination
             try:
                 async with asyncio.timeout(5.0):
                     await self._process.wait()
             except TimeoutError:
-                logger.warning("JS process did not terminate, sending SIGKILL")
-                if not self._send_signal_to_group(signal.SIGKILL):
-                    self._process.kill()
+                logger.warning("JS process did not terminate, sending kill()")
+                self._process.kill()
                 await self._process.wait()
         except ProcessLookupError:
             pass  # Already dead

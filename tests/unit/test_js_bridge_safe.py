@@ -6,7 +6,7 @@ shutdown paths that are otherwise hard to cover without the JS runtime.
 
 from __future__ import annotations
 
-import signal
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -18,26 +18,6 @@ from traigent.bridges.process_pool import JSProcessPool, JSProcessPoolConfig
 def _make_bridge(**config_overrides: object) -> JSBridge:
     config = JSBridgeConfig(module_path="./fake.js", **config_overrides)
     return JSBridge(config)
-
-
-def test_send_signal_to_group_requires_opt_in() -> None:
-    bridge = _make_bridge()
-    bridge._process = MagicMock(pid=1234)
-
-    with patch("os.killpg") as mock_killpg:
-        assert bridge._send_signal_to_group(signal.SIGTERM) is False
-
-    mock_killpg.assert_not_called()
-
-
-def test_send_signal_to_group_uses_killpg_when_enabled() -> None:
-    bridge = _make_bridge(use_process_group_signals=True)
-    bridge._process = MagicMock(pid=1234)
-
-    with patch("os.killpg") as mock_killpg:
-        assert bridge._send_signal_to_group(signal.SIGTERM) is True
-
-    mock_killpg.assert_called_once_with(1234, signal.SIGTERM)
 
 
 @pytest.mark.asyncio
@@ -63,6 +43,36 @@ async def test_stop_cancels_active_trial_before_shutdown() -> None:
         call.cancel_active_trial(),
         call.send_request(action="shutdown", payload={}, timeout=3.0),
         call.wait_for_process_exit(3.0),
+        call.finalize_shutdown(),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stop_terminates_when_process_does_not_exit() -> None:
+    bridge = _make_bridge()
+    bridge._started = True
+    bridge._process = MagicMock(returncode=None)
+
+    parent = MagicMock()
+    bridge.cancel_active_trial = AsyncMock()
+    bridge._send_request = AsyncMock(return_value={"status": "success", "payload": {}})
+    bridge._wait_for_process_exit = AsyncMock(return_value=False)
+    bridge._terminate_process = AsyncMock()
+    bridge._finalize_shutdown = AsyncMock()
+
+    parent.attach_mock(bridge.cancel_active_trial, "cancel_active_trial")
+    parent.attach_mock(bridge._send_request, "send_request")
+    parent.attach_mock(bridge._wait_for_process_exit, "wait_for_process_exit")
+    parent.attach_mock(bridge._terminate_process, "terminate_process")
+    parent.attach_mock(bridge._finalize_shutdown, "finalize_shutdown")
+
+    await bridge.stop(timeout=3.0)
+
+    assert parent.mock_calls == [
+        call.cancel_active_trial(),
+        call.send_request(action="shutdown", payload={}, timeout=3.0),
+        call.wait_for_process_exit(3.0),
+        call.terminate_process(),
         call.finalize_shutdown(),
     ]
 
@@ -96,6 +106,41 @@ async def test_run_trial_clears_active_trial_id_after_completion() -> None:
         payload={"trial_id": "trial-123", "config": {}, "timeout_ms": 2000},
         timeout=7.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_finalize_shutdown_clears_state() -> None:
+    bridge = _make_bridge()
+    bridge._started = True
+    bridge._process = MagicMock()
+    pending = asyncio.get_running_loop().create_future()
+    bridge._pending_requests["req-1"] = pending
+    bridge._active_trial_id = "trial-123"
+    bridge._reader_task = asyncio.create_task(asyncio.sleep(3600))
+    bridge._stderr_task = asyncio.create_task(asyncio.sleep(3600))
+
+    await bridge._finalize_shutdown()
+
+    assert isinstance(pending.exception(), Exception)
+    assert bridge._pending_requests == {}
+    assert bridge._process is None
+    assert bridge._reader_task is None
+    assert bridge._stderr_task is None
+    assert bridge._active_trial_id is None
+    assert bridge._started is False
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_uses_kill_after_timeout() -> None:
+    bridge = _make_bridge()
+    bridge._process = MagicMock(returncode=None)
+    bridge._process.wait = AsyncMock(side_effect=[TimeoutError(), 0])
+
+    await bridge._terminate_process()
+
+    bridge._process.terminate.assert_called_once()
+    bridge._process.kill.assert_called_once()
+    assert bridge._process.wait.await_count == 2
 
 
 @pytest.mark.asyncio

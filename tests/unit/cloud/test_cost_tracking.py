@@ -1,6 +1,7 @@
 """Tests for Traigent cloud cost tracking module."""
 
 import asyncio
+import json
 import time
 from unittest.mock import patch
 
@@ -365,6 +366,61 @@ class TestCostTrackerAsync:
             await asyncio.sleep(0.1)
             # Verify cost item was added to the tracker
             assert cost_item in cost_tracker_with_sync._cost_items
+
+    @pytest.mark.asyncio
+    async def test_cache_cost_item_writes_and_appends_local_cache(self, tmp_path):
+        """Cache writes should create and update the local JSON cache."""
+        cache_path = tmp_path / "costs" / "cache.json"
+        tracker = CostTracker(
+            CostTrackingConfig(
+                enable_server_sync=False,
+                cache_costs_locally=True,
+                cost_cache_file=str(cache_path),
+            )
+        )
+
+        first_item = CostItem(
+            item_id="item-1",
+            category=CostCategory.OPTIMIZATION,
+            description="First",
+            quantity=1.0,
+            unit_cost=0.5,
+            total_cost=0.5,
+        )
+        second_item = CostItem(
+            item_id="item-2",
+            category=CostCategory.INFERENCE,
+            description="Second",
+            quantity=2.0,
+            unit_cost=0.25,
+            total_cost=0.5,
+        )
+
+        await tracker._cache_cost_item(first_item)
+        await tracker._cache_cost_item(second_item)
+
+        cached_items = json.loads(cache_path.read_text())
+        assert [item["item_id"] for item in cached_items] == ["item-1", "item-2"]
+
+    @pytest.mark.asyncio
+    async def test_register_background_task_discards_cancelled_task(self):
+        """Cancelled tasks should be dropped from the tracker set."""
+        tracker = CostTracker(
+            CostTrackingConfig(enable_server_sync=False, cache_costs_locally=False)
+        )
+
+        async def wait_forever() -> None:
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(wait_forever())
+        tracker._register_background_task(task)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        await asyncio.sleep(0)
+        assert task not in tracker._background_tasks
 
 
 class TestCostTrackerIntegration:

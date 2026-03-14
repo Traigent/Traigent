@@ -342,6 +342,23 @@ class TestRemoteServiceRegistryBasics:
             # Should have attempted to connect
             mock_connect.assert_called_once_with("BasicService")
 
+    @pytest.mark.asyncio
+    async def test_register_background_task_discards_cancelled_task(self, registry):
+        """Cancelled background tasks should be removed from the registry."""
+
+        async def wait_forever() -> None:
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(wait_forever())
+        registry._register_background_task(task)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        await asyncio.sleep(0)
+        assert task not in registry._background_tasks
+
     def test_get_registered_services(
         self, registry, mock_service_basic, mock_service_advanced
     ):
