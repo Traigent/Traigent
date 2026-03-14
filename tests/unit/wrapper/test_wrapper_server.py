@@ -459,7 +459,7 @@ class TestCreateAppErrorHandling:
         assert "unexpected" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
-    async def test_empty_body_treated_as_empty_dict(self) -> None:
+    async def test_empty_body_returns_400_benchmark_error(self) -> None:
         """Empty execute payloads should return a structured 400 benchmark error."""
         svc = TraigentService()
 
