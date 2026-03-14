@@ -6,15 +6,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import traceback as traceback_module
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
-
-import numpy as np
-import pandas as pd
 
 from traigent.utils.logging import get_logger
 
@@ -22,6 +20,9 @@ logger = get_logger(__name__)
 
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
+    import numpy as np
+    import pandas as pd
+
     from traigent.core.objectives import ObjectiveSchema
 
 
@@ -48,6 +49,55 @@ class TrialStatus(StrEnum):
     PRUNED = "pruned"
 
 
+@dataclass(slots=True)
+class MetricCoverage:
+    """Coverage summary for a single metric across examples."""
+
+    present: int
+    total: int
+    ratio: float
+
+
+@dataclass(slots=True)
+class ComparabilityInfo:
+    """Comparability metadata for ranking-safety decisions."""
+
+    schema_version: str = "1.0"
+    primary_objective: str = "accuracy"
+    evaluation_mode: str = "unknown"
+    total_examples: int = 0
+    examples_with_primary_metric: int = 0
+    coverage_ratio: float = 0.0
+    derivation_path: str = "none"
+    ranking_eligible: bool = False
+    warning_codes: list[str] = field(default_factory=list)
+    per_metric_coverage: dict[str, MetricCoverage] = field(default_factory=dict)
+    missing_example_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-safe dictionary."""
+        return {
+            "schema_version": self.schema_version,
+            "primary_objective": self.primary_objective,
+            "evaluation_mode": self.evaluation_mode,
+            "total_examples": int(self.total_examples),
+            "examples_with_primary_metric": int(self.examples_with_primary_metric),
+            "coverage_ratio": float(self.coverage_ratio),
+            "derivation_path": self.derivation_path,
+            "ranking_eligible": bool(self.ranking_eligible),
+            "warning_codes": list(self.warning_codes),
+            "per_metric_coverage": {
+                metric: {
+                    "present": int(coverage.present),
+                    "total": int(coverage.total),
+                    "ratio": float(coverage.ratio),
+                }
+                for metric, coverage in self.per_metric_coverage.items()
+            },
+            "missing_example_ids": list(self.missing_example_ids),
+        }
+
+
 # Type alias for optimization stop reasons
 # Using Literal provides type safety and IDE autocompletion
 StopReason = Literal[
@@ -64,6 +114,98 @@ StopReason = Literal[
     "network_error",  # Connectivity failure
 ]
 
+TrialDatetimeFormat = Literal["iso", "epoch"]
+
+
+def _validate_trial_datetime_format(datetime_format: TrialDatetimeFormat) -> None:
+    """Validate supported datetime formats for public trial serialization."""
+    if datetime_format not in ("iso", "epoch"):
+        raise ValueError(
+            "datetime_format must be 'iso' or 'epoch', " f"got {datetime_format!r}"
+        )
+
+
+def _serialize_datetime(
+    value: datetime,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> str | float:
+    """Serialize datetime using the requested wire format."""
+    _validate_trial_datetime_format(datetime_format)
+
+    if datetime_format == "iso":
+        return value.isoformat()
+
+    return value.timestamp()
+
+
+def _try_to_dict(
+    value: Any,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> tuple[bool, Any]:
+    """Attempt to call ``value.to_dict()``, returning *(ok, result)*.
+
+    Tries passing *datetime_format* first, then falls back to a bare call.
+    Returns ``(False, None)`` when the object has no usable ``to_dict``.
+    """
+    if not (hasattr(value, "to_dict") and callable(value.to_dict)):
+        return False, None
+
+    to_dict = value.to_dict
+    try:
+        return True, to_dict(datetime_format=datetime_format)
+    except TypeError:
+        pass
+    try:
+        return True, to_dict()
+    except TypeError:
+        return False, None
+
+
+def _json_safe_trial_value(
+    value: Any,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> Any:
+    """Convert a value into a JSON-safe representation for trial export."""
+    if value is None:
+        return None
+
+    ok, converted = _try_to_dict(value, datetime_format=datetime_format)
+    if ok:
+        return _json_safe_trial_value(converted, datetime_format=datetime_format)
+
+    if isinstance(value, datetime):
+        return _serialize_datetime(value, datetime_format=datetime_format)
+
+    if isinstance(value, dict):
+        return {
+            key: _json_safe_trial_value(item, datetime_format=datetime_format)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [
+            _json_safe_trial_value(item, datetime_format=datetime_format)
+            for item in value
+        ]
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
+
 
 @dataclass
 class Trial:
@@ -74,6 +216,84 @@ class Trial:
     timestamp: datetime
     status: TrialStatus = TrialStatus.PENDING
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TrialError:
+    """Structured diagnostic context for a failed trial."""
+
+    message: str
+    error_type: str
+    traceback: str
+    timestamp: datetime
+    config: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: Exception,
+        *,
+        config: Mapping[str, Any],
+        timestamp: datetime | None = None,
+    ) -> TrialError:
+        """Build a structured trial error from an exception."""
+        formatted_traceback = "".join(
+            traceback_module.format_exception(type(exc), exc, exc.__traceback__)
+        ).strip()
+        if not formatted_traceback:
+            formatted_traceback = "".join(
+                traceback_module.format_exception_only(type(exc), exc)
+            ).strip()
+
+        return cls(
+            message=str(exc),
+            error_type=type(exc).__name__,
+            traceback=formatted_traceback,
+            timestamp=timestamp or datetime.now(UTC),
+            config=dict(config),
+        )
+
+    def to_dict(
+        self,
+        *,
+        datetime_format: TrialDatetimeFormat = "iso",
+    ) -> dict[str, Any]:
+        """Convert structured error details to a JSON-ready dictionary."""
+        return {
+            "message": self.message,
+            "error_type": self.error_type,
+            "traceback": self.traceback,
+            "timestamp": _serialize_datetime(
+                self.timestamp, datetime_format=datetime_format
+            ),
+            "config": _json_safe_trial_value(
+                self.config, datetime_format=datetime_format
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
+        """Reconstruct a structured trial error from a dictionary."""
+        raw_timestamp = data.get("timestamp")
+        timestamp = datetime.now(UTC)
+        if isinstance(raw_timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp)
+            except ValueError:
+                pass
+        elif isinstance(raw_timestamp, (int, float)):
+            timestamp = datetime.fromtimestamp(raw_timestamp, UTC)
+
+        raw_config = data.get("config")
+        config = raw_config if isinstance(raw_config, dict) else {}
+
+        return cls(
+            message=str(data.get("message", "")),
+            error_type=str(data.get("error_type", "")),
+            traceback=str(data.get("traceback", "")),
+            timestamp=timestamp,
+            config=config,
+        )
 
 
 @dataclass
@@ -88,6 +308,7 @@ class TrialResult:
     timestamp: datetime
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    error: TrialError | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -97,6 +318,90 @@ class TrialResult:
     def get_metric(self, name: str, default: float | None = None) -> float | None:
         """Get a specific metric value."""
         return self.metrics.get(name, default)
+
+    @property
+    def error_type(self) -> str | None:
+        """Get the error type for a failed trial, when available."""
+        return self.error.error_type if self.error else None
+
+    @property
+    def error_traceback(self) -> str | None:
+        """Get the formatted traceback for a failed trial, when available."""
+        return self.error.traceback if self.error else None
+
+    def to_dict(
+        self,
+        *,
+        include_config: bool = True,
+        include_metrics: bool = True,
+        include_metadata: bool = True,
+        datetime_format: TrialDatetimeFormat = "iso",
+    ) -> dict[str, Any]:
+        """Convert the trial result to a JSON-ready dictionary.
+
+        Args:
+            include_config: Include the trial configuration payload.
+            include_metrics: Include the trial metrics payload.
+            include_metadata: Include metadata captured during the trial.
+            datetime_format: Timestamp encoding, either ``"iso"`` or ``"epoch"``.
+        """
+        result: dict[str, Any] = {
+            "trial_id": self.trial_id,
+            "status": self.status.value,
+            "duration": float(self.duration),
+            "timestamp": _serialize_datetime(
+                self.timestamp, datetime_format=datetime_format
+            ),
+            "error_message": self.error_message,
+            "error": _json_safe_trial_value(
+                self.error, datetime_format=datetime_format
+            ),
+        }
+
+        if include_config:
+            result["config"] = _json_safe_trial_value(
+                self.config, datetime_format=datetime_format
+            )
+        if include_metrics:
+            result["metrics"] = _json_safe_trial_value(
+                self.metrics, datetime_format=datetime_format
+            )
+        if include_metadata:
+            result["metadata"] = _json_safe_trial_value(
+                self.metadata, datetime_format=datetime_format
+            )
+
+        return result
+
+
+def serialize_trials(
+    trials: Sequence[TrialResult],
+    *,
+    include_config: bool = True,
+    include_metrics: bool = True,
+    include_metadata: bool = True,
+    datetime_format: TrialDatetimeFormat = "iso",
+) -> list[dict[str, Any]]:
+    """Serialize trial results into JSON-ready dictionaries.
+
+    Args:
+        trials: Trial results to serialize.
+        include_config: Include each trial's configuration payload.
+        include_metrics: Include each trial's metrics payload.
+        include_metadata: Include each trial's metadata payload.
+        datetime_format: Timestamp encoding, either ``"iso"`` or ``"epoch"``.
+    """
+    _validate_trial_datetime_format(datetime_format)
+
+    return [
+        trial.to_dict(
+            include_config=include_config,
+            include_metrics=include_metrics,
+            include_metadata=include_metadata,
+            datetime_format=datetime_format,
+        )
+        for trial in trials
+    ]
 
 
 @dataclass
@@ -189,7 +494,7 @@ class OptimizationResult:
     Attributes:
         trials: List of all trial results from the optimization.
         best_config: The configuration that achieved the best score.
-        best_score: The best objective score achieved.
+        best_score: The best objective score achieved (None when no eligible trial).
         optimization_id: Unique identifier for this optimization run.
         duration: Total wall-clock time in seconds.
         convergence_info: Dictionary with convergence statistics.
@@ -216,7 +521,7 @@ class OptimizationResult:
 
     trials: list[TrialResult]
     best_config: dict[str, Any]
-    best_score: float
+    best_score: float | None
     optimization_id: str
     duration: float
     convergence_info: dict[str, Any]
@@ -746,11 +1051,6 @@ class OptimizationResult:
         else:
             normalized = (numeric - min_val) / span
 
-        # Clip to [0, 1]
-        if normalized < 0.0:
-            return 0.0
-        if normalized > 1.0:
-            return 1.0
         return float(normalized)
 
     def _normalize_trial_metrics(
@@ -902,6 +1202,8 @@ class OptimizationResult:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to pandas DataFrame."""
+        import pandas as pd  # noqa: PLC0415
+
         data = []
         for trial in self.trials:
             row = {
@@ -1030,6 +1332,8 @@ class OptimizationResult:
                 - <metric>_mean for each metric present
                 - duration_mean
         """
+        import pandas as pd  # noqa: PLC0415
+
         if not self.trials:
             return pd.DataFrame()
 
@@ -1244,6 +1548,8 @@ class ConfigurationComparison:
 
     def get_best_configuration(self, metric: str) -> tuple[int, dict[str, Any]]:
         """Get the best configuration for a specific metric."""
+        import numpy as np  # noqa: PLC0415
+
         if metric not in self.comparison_metrics:
             raise ValueError(f"Metric '{metric}' not found in comparison") from None
 
@@ -1263,6 +1569,8 @@ class ParetoFront:
 
     def get_best_balanced_config(self) -> dict[str, Any]:
         """Get configuration with best balance across objectives."""
+        import numpy as np  # noqa: PLC0415
+
         # Simple implementation: closest to ideal point
         if len(self.configurations) == 0 or self.objective_values.size == 0:
             raise ValueError("No configurations in Pareto front")
@@ -1298,7 +1606,7 @@ class ParetoFront:
             distances = np.linalg.norm(normalized - 1.0, axis=1)
             best_idx = np.argmin(distances)
 
-        return self.configurations[best_idx]
+        return self.configurations[best_idx]  # type: ignore[no-any-return]
 
     def plot_trade_offs(self, x_objective: str, y_objective: str) -> None:
         """Plot trade-offs between two objectives."""

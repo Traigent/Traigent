@@ -7,6 +7,7 @@ from __future__ import annotations
 from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
+    configure_for_budget,
     get_available_strategies,
     get_version_info,
     override_config,
@@ -37,7 +38,9 @@ from traigent.api.types import (
     SensitivityAnalysis,
     StopReason,
     StrategyConfig,
+    TrialError,
     TrialResult,
+    serialize_trials,
 )
 
 __all__ = [
@@ -45,13 +48,16 @@ __all__ = [
     "optimize",
     # Configuration functions
     "configure",
+    "configure_for_budget",
     "override_config",
     "set_strategy",
     "get_available_strategies",
     "get_version_info",
     # Result types
     "OptimizationResult",
+    "TrialError",
     "TrialResult",
+    "serialize_trials",
     "SensitivityAnalysis",
     "ConfigurationComparison",
     "ParetoFront",

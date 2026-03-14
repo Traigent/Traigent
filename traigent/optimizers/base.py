@@ -10,6 +10,7 @@ from typing import Any
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.validation import validate_objectives
 
 logger = get_logger(__name__)
@@ -223,8 +224,19 @@ class BaseOptimizer(ABC):
         # Get primary objective score
         primary_objective = self.objectives[0]
         score = trial.get_metric(primary_objective)
+        if score is None:
+            return
 
-        if score is not None and (self._best_score is None or score > self._best_score):
+        if self._best_score is None:
+            self._best_score = score
+            self._best_config = trial.config.copy()
+            return
+
+        minimization = is_minimization_objective(primary_objective)
+        is_better = (
+            score < self._best_score if minimization else score > self._best_score
+        )
+        if is_better:
             self._best_score = score
             self._best_config = trial.config.copy()
 
@@ -256,7 +268,17 @@ class BaseOptimizer(ABC):
         Returns:
             Cardinality count, 0 for empty, or None for continuous types.
         """
-        param_type = (definition.get("type") or "categorical").lower()
+        # Detect range dicts from hybrid discovery ({"low": x, "high": y})
+        # before falling back to "categorical" default
+        has_range = "low" in definition and "high" in definition
+        param_type = (definition.get("type") or "").lower()
+
+        if not param_type and has_range:
+            # No explicit type but has low/high → continuous float range
+            return None
+
+        if not param_type:
+            param_type = "categorical"
 
         if param_type in {"fixed", "constant"}:
             return 1

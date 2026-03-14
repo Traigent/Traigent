@@ -824,4 +824,4 @@ class TestCTDScenarios:
         if mappings:
             avg_confidence = sum(confidence.values()) / len(confidence)
             accepted = avg_confidence >= confidence_threshold
-            assert accepted == expected_acceptance or True  # Implementation dependent
+            assert accepted == expected_acceptance

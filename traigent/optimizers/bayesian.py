@@ -119,9 +119,8 @@ class BayesianOptimizer(BaseOptimizer):
         self.kappa = kappa
         self.random_seed = random_seed
 
-        # Set random seed
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        # Create a local RNG instance to avoid mutating NumPy's global RNG state
+        self._rng = np.random.default_rng(random_seed)
 
         # Initialize Gaussian Process
         # Increased alpha (noise) to prevent overconfidence
@@ -296,17 +295,18 @@ class BayesianOptimizer(BaseOptimizer):
         # Random continuous parameters
         for param in self._param_mapping["continuous"]:
             bounds = param["bounds"]
+            value: int | float
             if param.get("is_integer", False):
                 # For integer parameters, sample uniformly from integer range
-                value = np.random.randint(int(bounds[0]), int(bounds[1]) + 1)
+                value = int(self._rng.integers(int(bounds[0]), int(bounds[1]) + 1))
             else:
                 # For continuous parameters
-                value = np.random.uniform(bounds[0], bounds[1])
+                value = self._rng.uniform(bounds[0], bounds[1])
             config[param["name"]] = value
 
         # Random categorical parameters
         for param in self._param_mapping["categorical"]:
-            value = np.random.choice(param["values"])
+            value = self._rng.choice(param["values"])
             # Convert numpy types to native Python types
             if param.get("type") == "boolean" and hasattr(value, "item"):
                 value = bool(value.item())
@@ -333,7 +333,7 @@ class BayesianOptimizer(BaseOptimizer):
             imp = mu - y_best - self.xi
             Z = imp / sigma
             ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
-            ei[sigma == 0.0] = 0.0
+            ei[np.isclose(sigma, 0.0)] = 0.0
 
         return cast(np.ndarray[Any, Any], ei.flatten())
 
@@ -384,7 +384,7 @@ class BayesianOptimizer(BaseOptimizer):
         best_acquisition = float("inf")
 
         for _ in range(10):  # Try 10 random starting points
-            x0 = np.random.rand(n_dims)
+            x0 = self._rng.random(n_dims)
 
             try:
                 result = minimize(
@@ -403,7 +403,7 @@ class BayesianOptimizer(BaseOptimizer):
             logger.warning(
                 "All acquisition optimization methods failed, using random point"
             )
-            return cast(np.ndarray[Any, Any], np.random.rand(n_dims))
+            return cast(np.ndarray[Any, Any], self._rng.random(n_dims))
 
         logger.debug(f"L-BFGS-B fallback succeeded with fun={best_acquisition}")
         return cast(np.ndarray[Any, Any], best_x)
@@ -445,11 +445,14 @@ class BayesianOptimizer(BaseOptimizer):
         logger.debug(f"Successful trials so far: {len(successful_trials)}")
 
         for trial in successful_trials:
+            objective_value = trial.get_metric(primary_objective)
+            if objective_value is None:
+                continue
+
             config_array = self._config_to_array(trial.config)
             X.append(config_array)
 
             # Extract objective value
-            objective_value = trial.metrics.get(primary_objective, 0.0)
             y.append(objective_value)
 
             # Log trial history
@@ -487,9 +490,17 @@ class BayesianOptimizer(BaseOptimizer):
             logger.debug("Evaluating acquisition function for all models")
 
             # Get all unique models from config space
+            if not self._param_mapping["categorical"]:
+                logger.warning(
+                    "No categorical parameters found - falling back to random"
+                )
+                return self._random_config()
             model_values = self._param_mapping["categorical"][0][
                 "values"
             ]  # Assuming 'model' is first
+            if not model_values:
+                logger.warning("Empty categorical values - falling back to random")
+                return self._random_config()
 
             candidate_info: dict[Any, dict[str, Any]] = {}
             for model_val in model_values:
@@ -570,6 +581,25 @@ class BayesianOptimizer(BaseOptimizer):
             )
             return self._random_config()
 
+    def _has_converged(self, history: list[TrialResult]) -> bool:
+        """Check if recent successful trials show negligible improvement."""
+        successful_trials = [trial for trial in history if trial.is_successful]
+        if len(successful_trials) < 10:
+            return False
+        primary_objective = self.objectives[0]
+        recent_scores = [
+            score
+            for trial in successful_trials[-10:]
+            if (score := trial.get_metric(primary_objective)) is not None
+        ]
+        if len(recent_scores) < 10:
+            return False
+        improvement = max(recent_scores) - min(recent_scores)
+        if improvement < 0.01:  # Less than 1% improvement
+            logger.info("Convergence detected, stopping optimization")
+            return True
+        return False
+
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
 
@@ -579,24 +609,8 @@ class BayesianOptimizer(BaseOptimizer):
         Returns:
             True if optimization should stop
         """
-        # Basic stopping criterion
         if len(history) >= 100:  # Maximum trials
             return True
-
-        # Check for convergence (no improvement in last 10 trials)
-        if len(history) >= 20:
-            successful_trials = [trial for trial in history if trial.is_successful]
-            if len(successful_trials) >= 10:
-                primary_objective = self.objectives[0]
-                recent_scores = []
-                for trial in successful_trials[-10:]:
-                    score = trial.metrics.get(primary_objective, 0.0)
-                    recent_scores.append(score)
-
-                if len(recent_scores) >= 10:
-                    improvement = max(recent_scores) - min(recent_scores)
-                    if improvement < 0.01:  # Less than 1% improvement
-                        logger.info("Convergence detected, stopping optimization")
-                        return True
-
+        if len(history) >= 20 and self._has_converged(history):
+            return True
         return False

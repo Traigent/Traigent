@@ -8,11 +8,13 @@ services using the existing ProductionMCPClient infrastructure.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
@@ -21,10 +23,7 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import (
-    TransportConnectionError,
-    TransportError,
-)
+from traigent.hybrid.transport import TransportConnectionError, TransportError
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -80,19 +79,24 @@ class MCPTransport:
 
         self._owns_client = mcp_client is None
         self._client = mcp_client
+        self._client_lock = asyncio.Lock()
         self._mcp_config = mcp_config
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
 
     async def _get_client(self) -> ProductionMCPClient:
         """Get or create the MCP client."""
-        if self._client is None:
-            from traigent.cloud.production_mcp_client import ProductionMCPClient
+        if self._client is not None:
+            return self._client
 
-            if self._mcp_config is None:
-                raise ValueError("MCP config required to create client")
-            self._client = ProductionMCPClient(self._mcp_config)
-            self._owns_client = True
+        async with self._client_lock:
+            if self._client is None:
+                from traigent.cloud.production_mcp_client import ProductionMCPClient
+
+                if self._mcp_config is None:
+                    raise ValueError("MCP config required to create client")
+                self._client = ProductionMCPClient(self._mcp_config)
+                self._owns_client = True
 
         return self._client
 
@@ -209,10 +213,16 @@ class MCPTransport:
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions via MCP resource.
 
-        Reads the traigent://config-space resource.
+        Reads the traigent://config-space resource, optionally filtered
+        by tunable_id.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -220,8 +230,27 @@ class MCPTransport:
         Raises:
             TransportError: If discovery fails.
         """
-        data = await self._read_resource(CONFIG_SPACE_URI)
+        uri = CONFIG_SPACE_URI
+        if tunable_id is not None:
+            uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
+        data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
+
+    async def benchmarks(
+        self,
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks via MCP.
+
+        Not yet supported over MCP transport.
+
+        Raises:
+            NotImplementedError: Always — MCP benchmark discovery is not yet implemented.
+        """
+        raise NotImplementedError(
+            "Benchmark discovery is not yet supported over MCP transport. "
+            "Use HTTP transport or provide example IDs explicitly."
+        )
 
     async def execute(
         self,
@@ -310,8 +339,12 @@ class MCPTransport:
 
         try:
             data = await self._call_tool("keep_alive", {"session_id": session_id})
-            alive: bool = data.get("alive", False)
-            return alive
+            status = data.get("status")
+            if isinstance(status, str):
+                return status.lower() == "alive"
+
+            # Backward compatibility with older integrations.
+            return bool(data.get("alive", False))
         except TransportError as e:
             # Session expired or invalid
             if "not found" in str(e).lower():

@@ -19,8 +19,8 @@ async def test_trial_operations_register_forbidden_logs(caplog, monkeypatch):
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
 
     backend_config = SimpleNamespace(
-        backend_base_url="https://api.traigent.ai",
-        api_base_url="https://api.traigent.ai/v1",
+        backend_base_url="http://localhost:5000",
+        api_base_url="http://localhost:5000/v1",
     )
     auth_core = SimpleNamespace(
         get_headers=AsyncMock(return_value={"Authorization": "Bearer tok"}),
@@ -72,8 +72,8 @@ async def test_session_operations_status_forbidden():
     """Hybrid session status should surface ownership remediation on 403."""
 
     backend_config = SimpleNamespace(
-        backend_base_url="https://api.traigent.ai",
-        api_base_url="https://api.traigent.ai/v1",
+        backend_base_url="http://localhost:5000",
+        api_base_url="http://localhost:5000/v1",
     )
     auth_core = SimpleNamespace(
         get_headers=AsyncMock(return_value={"Authorization": "Bearer tok"}),

@@ -10,6 +10,8 @@ and MCP client operations.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -114,6 +116,7 @@ class IntegrationManager:
         self._initialized = False
 
         # State tracking
+        self._state_lock = threading.Lock()
         self._active_integrations: dict[str, dict[str, Any]] = {}
         self._integration_stats: dict[str, Any] = {
             "total_integrations": 0,
@@ -170,6 +173,8 @@ class IntegrationManager:
             logger.info("Integration manager initialized successfully")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize integration manager: {e}")
             return False
@@ -210,7 +215,8 @@ class IntegrationManager:
                 f"Starting {mode.value} optimization integration: {integration_id}"
             )
 
-            self._integration_stats["total_integrations"] += 1
+            with self._state_lock:
+                self._integration_stats["total_integrations"] += 1
 
             if mode == IntegrationMode.PRIVACY:
                 result = await self._start_privacy_integration(
@@ -231,25 +237,27 @@ class IntegrationManager:
             else:
                 raise ValueError(f"Unsupported integration mode: {mode}") from None
 
-            if result.success:
-                self._integration_stats["successful_integrations"] += 1
-                self._integration_stats["active_sessions"] += 1
-
-                # Store integration details
-                self._active_integrations[integration_id] = {
-                    "mode": mode.value,
-                    "optimization_request": optimization_request,
-                    "result": result,
-                    "start_time": time.time(),
-                }
-            else:
-                self._integration_stats["failed_integrations"] += 1
+            with self._state_lock:
+                if result.success:
+                    self._integration_stats["successful_integrations"] += 1
+                    self._integration_stats["active_sessions"] += 1
+                    self._active_integrations[integration_id] = {
+                        "mode": mode.value,
+                        "optimization_request": optimization_request,
+                        "result": result,
+                        "start_time": time.time(),
+                    }
+                else:
+                    self._integration_stats["failed_integrations"] += 1
 
             return result
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to start optimization integration: {e}")
-            self._integration_stats["failed_integrations"] += 1
+            with self._state_lock:
+                self._integration_stats["failed_integrations"] += 1
 
             return IntegrationResult(success=False, error_message=str(e))
 
@@ -283,6 +291,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Local integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -383,6 +393,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Privacy-first integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -451,6 +463,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Cloud SaaS integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -546,6 +560,8 @@ class IntegrationManager:
 
             return cast(TrialSuggestion | None, suggestion)
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to get next trial for session {session_id}: {e}")
             return None
@@ -603,6 +619,8 @@ class IntegrationManager:
 
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to submit trial results: {e}")
             return False
@@ -641,13 +659,17 @@ class IntegrationManager:
 
             # Update integration tracking
             integration_id = self._get_integration_id_for_session(session_id)
-            if integration_id and integration_id in self._active_integrations:
-                del self._active_integrations[integration_id]
-                self._integration_stats["active_sessions"] -= 1
+            if integration_id:
+                with self._state_lock:
+                    if integration_id in self._active_integrations:
+                        del self._active_integrations[integration_id]
+                        self._integration_stats["active_sessions"] -= 1
 
             logger.info(f"Finalized session {session_id}")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to finalize session {session_id}: {e}")
             return False
@@ -675,13 +697,17 @@ class IntegrationManager:
 
             # Update integration tracking
             integration_id = self._get_integration_id_for_session(session_id)
-            if integration_id and integration_id in self._active_integrations:
-                del self._active_integrations[integration_id]
-                self._integration_stats["active_sessions"] -= 1
+            if integration_id:
+                with self._state_lock:
+                    if integration_id in self._active_integrations:
+                        del self._active_integrations[integration_id]
+                        self._integration_stats["active_sessions"] -= 1
 
             logger.info(f"Cancelled session {session_id}")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to cancel session {session_id}: {e}")
             return False
@@ -690,30 +716,36 @@ class IntegrationManager:
 
     def _get_integration_for_session(self, session_id: str) -> dict[str, Any] | None:
         """Get integration details for session."""
-        for integration in self._active_integrations.values():
-            if integration["result"].session_id == session_id:
-                return integration
+        with self._state_lock:
+            for integration in self._active_integrations.values():
+                if integration["result"].session_id == session_id:
+                    return integration
         return None
 
     def _get_integration_id_for_session(self, session_id: str) -> str | None:
         """Get integration ID for session."""
-        for integration_id, integration in self._active_integrations.items():
-            if integration["result"].session_id == session_id:
-                return integration_id
+        with self._state_lock:
+            for integration_id, integration in self._active_integrations.items():
+                if integration["result"].session_id == session_id:
+                    return integration_id
         return None
 
     def get_integration_statistics(self) -> dict[str, Any]:
         """Get integration statistics."""
+        with self._state_lock:
+            stats_snapshot = dict(self._integration_stats)
+            active_count = len(self._active_integrations)
         return {
-            **self._integration_stats,
+            **stats_snapshot,
             "mcp_stats": self._mcp_client.get_statistics() if self._mcp_client else {},
             "lifecycle_stats": lifecycle_manager.get_statistics(),
-            "active_integrations": len(self._active_integrations),
+            "active_integrations": active_count,
         }
 
     def get_active_integrations(self) -> dict[str, dict[str, Any]]:
         """Get active integrations."""
-        return self._active_integrations.copy()
+        with self._state_lock:
+            return self._active_integrations.copy()
 
     async def health_check(self) -> dict[str, Any]:
         """Perform comprehensive health check."""
@@ -742,6 +774,8 @@ class IntegrationManager:
             # Check lifecycle manager
             health_status["components"]["lifecycle_manager"] = "healthy"
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             health_status["integration_manager"] = "unhealthy"
             health_status["error"] = str(e)
@@ -763,6 +797,8 @@ class IntegrationManager:
             self._initialized = False
             logger.info("Integration manager cleanup completed")
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error during integration manager cleanup: {e}")
 

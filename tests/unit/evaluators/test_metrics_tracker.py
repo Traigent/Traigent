@@ -1,5 +1,9 @@
 """Unit tests for MetricsTracker and summary_stats functionality."""
 
+from unittest.mock import patch
+
+import pytest
+
 from traigent.evaluators.metrics_tracker import (
     CostMetrics,
     ExampleMetrics,
@@ -200,6 +204,28 @@ class TestMetricsTracker:
         assert empty_stats["execution_time"] == 0.0
         assert empty_stats["total_examples"] == 0
         assert empty_stats["metadata"]["aggregation_method"] == "pandas.describe"
+
+    def test_extract_llm_metrics_unknown_model_raises_in_strict_mode(self):
+        """Strict cost accounting should fail on unknown priced model."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        response = {
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "true",
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_GENERATE_MOCKS": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(UnknownModelError):
+                extract_llm_metrics(
+                    response=response,
+                    model_name="unknown-model-xyz-123",
+                )
 
 
 class TestTokenMetrics:

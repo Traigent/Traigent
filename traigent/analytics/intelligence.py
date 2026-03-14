@@ -8,6 +8,7 @@ separate modules for better maintainability.
 
 from __future__ import annotations
 
+import math
 import statistics
 import threading
 import time
@@ -32,10 +33,7 @@ from .cost_optimization import (
     ResourceUsage,
 )
 from .meta_learning import OptimizationHistory
-from .scheduling import (
-    ScheduleType,
-    SmartScheduler,
-)
+from .scheduling import ScheduleType, SmartScheduler
 
 logger = get_logger(__name__)
 
@@ -514,7 +512,9 @@ class CostOptimizationAI:
                     ],
                     "recommendation": (
                         "adjust estimates by factor"
-                        if schedule_optimization["duration_adjustment_factor"] != 1.0
+                        if not math.isclose(
+                            schedule_optimization["duration_adjustment_factor"], 1.0
+                        )
                         else "estimates are accurate"
                     ),
                 }
@@ -1759,21 +1759,18 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         }
 
     def fetch_current_pricing(self, providers=None, **kwargs):
-        """Fetch current pricing information using litellm library with fallback."""
+        """Fetch current pricing data.
+
+        For LLM providers (OpenAI/Anthropic), returns per-1K USD rates as:
+        ``{"input": <usd_per_1k>, "output": <usd_per_1k>}``.
+        """
         if providers is None:
             providers = ["openai", "anthropic"]
 
         pricing: dict[str, Any] = {}
 
         try:
-            from traigent.utils.cost_calculator import (
-                calculate_completion_cost,
-                calculate_prompt_cost,
-            )
-
-            # Use litellm to get real-time pricing for common models
-            test_prompt = [{"role": "user", "content": "test"}]
-            test_completion = "test"
+            from traigent.utils.cost_calculator import get_model_pricing_per_1k
 
             # Common models to check pricing for
             model_mappings = {
@@ -1791,50 +1788,53 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                     pricing[provider] = {}
                     for model in model_mappings[provider]:
                         try:
-                            input_cost = calculate_prompt_cost(test_prompt, model)
-                            output_cost = calculate_completion_cost(
-                                test_completion, model
-                            )
-                            pricing[provider][model] = {
-                                "input": input_cost,
-                                "output": output_cost,
-                            }
+                            # Compute per-1K token rates (consistent with
+                            # fallback path) via canonical pricing API.
+                            input_cost, output_cost = get_model_pricing_per_1k(model)
+                            if input_cost > 0 or output_cost > 0:
+                                pricing[provider][model] = {
+                                    "input": float(input_cost),
+                                    "output": float(output_cost),
+                                }
                         except Exception as e:
-                            # Skip models that litellm doesn't recognize
-                            logger.debug(f"Skipping model {model}: litellm error: {e}")
+                            logger.debug(
+                                "Skipping model %s: pricing error: %s", model, e
+                            )
                             continue
 
         except ImportError:
-            # Fallback to static pricing data if litellm not available
-            pricing_data = {
-                "openai": {
-                    "gpt-4o": {"input": 0.01, "output": 0.03},
-                    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-                    "gpt-3.5-turbo": {"input": 0.0015, "output": 0.002},
-                },
-                "anthropic": {
-                    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
-                    "claude-3-5-haiku-latest": {"input": 0.00025, "output": 0.00125},
-                },
-            }
+            # Fallback: derive from canonical ESTIMATION_MODEL_PRICING
+            from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING
 
+            provider_prefixes = {
+                "openai": ("gpt-",),
+                "anthropic": ("claude-",),
+            }
             for provider in providers:
-                if provider in pricing_data:
-                    pricing[provider] = pricing_data[provider]
+                if provider not in provider_prefixes:
+                    continue
+                prefixes = provider_prefixes[provider]
+                provider_pricing: dict[str, Any] = {}
+                for model, p in ESTIMATION_MODEL_PRICING.items():
+                    if any(model.startswith(pfx) for pfx in prefixes):
+                        provider_pricing[model] = {
+                            "input": p["input_cost_per_token"] * 1000,
+                            "output": p["output_cost_per_token"] * 1000,
+                        }
+                if provider_pricing:
+                    pricing[provider] = provider_pricing
 
         # Add non-LLM pricing data (these aren't handled by litellm)
         if "aws" in providers:
             pricing["aws"] = {
                 "compute": {"on_demand": 0.1, "spot": 0.03},
                 "storage": {"standard": 0.02, "archive": 0.004},
-                "bedrock-claude": {"input": 0.008, "output": 0.024},
             }
 
         if "azure" in providers:
             pricing["azure"] = {
                 "compute": {"on_demand": 0.1, "spot": 0.03},
                 "storage": {"standard": 0.02, "archive": 0.004},
-                "gpt-4": {"input": 0.01, "output": 0.03},
             }
 
         return pricing

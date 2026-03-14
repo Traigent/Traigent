@@ -1,6 +1,10 @@
 import pytest
 
-from traigent.core.result_selection import SelectionResult, select_best_configuration
+from traigent.core.result_selection import (
+    NO_RANKING_ELIGIBLE_TRIALS,
+    SelectionResult,
+    select_best_configuration,
+)
 
 
 class FakeTrial:
@@ -23,6 +27,26 @@ class FakeTrial:
         FakeTrial._trial_counter += 1
         self.trial_id = trial_id or f"fake_trial_{FakeTrial._trial_counter}"
 
+        per_metric_coverage = {
+            metric_name: {"present": 1, "total": 1, "ratio": 1.0}
+            for metric_name, metric_value in self.metrics.items()
+            if isinstance(metric_value, int | float)
+        }
+        has_accuracy = "accuracy" in per_metric_coverage
+        self.metadata["comparability"] = {
+            "schema_version": "1.0",
+            "primary_objective": "accuracy",
+            "evaluation_mode": "evaluated" if success else "unknown",
+            "total_examples": 1,
+            "examples_with_primary_metric": 1 if has_accuracy else 0,
+            "coverage_ratio": 1.0 if has_accuracy else 0.0,
+            "derivation_path": "explicit" if has_accuracy else "none",
+            "ranking_eligible": has_accuracy and success,
+            "warning_codes": [],
+            "per_metric_coverage": per_metric_coverage,
+            "missing_example_ids": [],
+        }
+
     def get_metric(self, name: str, default: float | None = None) -> float | None:
         return self.metrics.get(name, default)
 
@@ -35,7 +59,21 @@ def test_returns_default_when_no_successful_trials():
         aggregate_configs=False,
     )
     assert result == SelectionResult(
-        best_config={}, best_score=0.0, session_summary=None
+        best_config={},
+        best_score=None,
+        session_summary={
+            "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
+            "ranking": {
+                "comparability_mode": "warn",
+                "total_input_trials": 1,
+                "total_successful_trials": 0,
+                "non_successful_count": 1,
+                "eligible_count": 0,
+                "excluded_count": 0,
+                "unknown_count": 0,
+            },
+        },
+        reason_code=NO_RANKING_ELIGIBLE_TRIALS,
     )
 
 
@@ -54,7 +92,8 @@ def test_selects_best_trial_without_aggregation():
 
     assert result.best_config == {"model": "B"}
     assert result.best_score == pytest.approx(0.82)
-    assert result.session_summary is None
+    assert result.session_summary is not None
+    assert result.session_summary["ranking"]["eligible_count"] == 2
 
 
 def test_minimization_objective_is_respected():
@@ -358,7 +397,131 @@ class TestSelectBestConfigurationWithTieBreakers:
         # A has lower accuracy (0.7), not in tie group
         # B and C both have 0.9, tie-breaker picks C (lower latency)
         assert result.best_config["model"] == "C"
-        assert result.best_score == pytest.approx(0.9)
+
+
+def test_missing_primary_objective_excluded_not_zero_coerced():
+    trial_missing = FakeTrial(metrics={"latency": 10.0}, config={"model": "A"})
+    trial_zero = FakeTrial(metrics={"accuracy": 0.0}, config={"model": "B"})
+
+    result = select_best_configuration(
+        trials=[trial_missing, trial_zero],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config["model"] == "B"
+    assert result.best_score == pytest.approx(0.0)
+
+
+def test_execute_only_operational_objective_is_eligible():
+    trial = FakeTrial(metrics={"total_cost": 0.12}, config={"model": "ops"})
+    trial.metadata["comparability"] = {
+        "schema_version": "1.0",
+        "primary_objective": "accuracy",
+        "evaluation_mode": "execute_only",
+        "total_examples": 3,
+        "examples_with_primary_metric": 0,
+        "coverage_ratio": 0.0,
+        "derivation_path": "none",
+        "ranking_eligible": False,
+        "warning_codes": ["MCI-004"],
+        "per_metric_coverage": {"total_cost": {"present": 3, "total": 3, "ratio": 1.0}},
+        "missing_example_ids": [],
+    }
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective="total_cost",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config["model"] == "ops"
+    assert result.best_score == pytest.approx(0.12)
+
+
+def test_execute_only_quality_objective_is_ineligible():
+    trial = FakeTrial(metrics={"accuracy": 0.9}, config={"model": "q"})
+    trial.metadata["comparability"] = {
+        "schema_version": "1.0",
+        "primary_objective": "accuracy",
+        "evaluation_mode": "execute_only",
+        "total_examples": 3,
+        "examples_with_primary_metric": 3,
+        "coverage_ratio": 1.0,
+        "derivation_path": "explicit",
+        "ranking_eligible": False,
+        "warning_codes": [],
+        "per_metric_coverage": {"accuracy": {"present": 3, "total": 3, "ratio": 1.0}},
+        "missing_example_ids": [],
+    }
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config == {}
+    assert result.best_score is None
+    assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+
+
+def test_unknown_comparability_is_excluded_by_default():
+    trial = FakeTrial(metrics={"accuracy": 0.8}, config={"model": "legacy"})
+    trial.metadata = {}
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config == {}
+    assert result.best_score is None
+    assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+    assert result.session_summary is not None
+    assert result.session_summary["ranking"]["unknown_count"] == 1
+
+
+def test_strict_mode_keeps_eligible_trials_when_some_are_excluded():
+    eligible = FakeTrial(metrics={"accuracy": 0.8}, config={"model": "eligible"})
+    unknown = FakeTrial(metrics={"accuracy": 0.9}, config={"model": "unknown"})
+    unknown.metadata = {}
+
+    result = select_best_configuration(
+        trials=[eligible, unknown],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        comparability_mode="strict",
+    )
+
+    assert result.best_config["model"] == "eligible"
+    assert result.best_score == pytest.approx(0.8)
+    assert result.session_summary is not None
+    assert result.session_summary["ranking"]["eligible_count"] == 1
+    assert result.session_summary["ranking"]["excluded_count"] == 1
+    assert result.session_summary["ranking"]["unknown_count"] == 1
+
+
+def test_legacy_mode_keeps_historic_unknown_trials_rankable():
+    trial = FakeTrial(metrics={"accuracy": 0.8}, config={"model": "legacy"})
+    trial.metadata = {}
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        comparability_mode="legacy",
+    )
+
+    assert result.best_config["model"] == "legacy"
+    assert result.best_score == pytest.approx(0.8)
 
 
 class TestMinimizationObjectiveTieBreaker:

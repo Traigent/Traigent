@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Release Review Evidence v2",
+  "type": "object",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "review_type": {
+            "enum": ["primary", "secondary", "tertiary"]
+          }
+        },
+        "required": ["review_type"]
+      },
+      "then": {
+        "properties": {
+          "tests": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "review_type": {
+            "enum": ["primary", "secondary", "tertiary", "reconciliation"]
+          }
+        },
+        "required": ["review_type"]
+      },
+      "then": {
+        "properties": {
+          "files_reviewed": {
+            "minItems": 1
+          },
+          "strengths": {
+            "minItems": 1
+          },
+          "checks_performed": {
+            "minItems": 1
+          },
+          "review_summary": {
+            "minLength": 50
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "schema_version",
+    "component",
+    "review_type",
+    "agent_type",
+    "reviewer_model",
+    "commit_sha",
+    "files_reviewed",
+    "findings",
+    "strengths",
+    "checks_performed",
+    "tests",
+    "review_summary",
+    "decision",
+    "timestamp_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "component": {
+      "type": "string",
+      "minLength": 1
+    },
+    "review_type": {
+      "type": "string",
+      "enum": ["primary", "secondary", "tertiary", "reconciliation", "captain"]
+    },
+    "agent_type": {
+      "type": "string",
+      "enum": ["codex_cli", "claude_cli", "copilot_cli"]
+    },
+    "reviewer_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$"
+    },
+    "files_reviewed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!.*\\.\\.)(?!.*//).+"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "file", "line", "title", "repro", "status"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["P0", "P1", "P2", "P3"]},
+          "file": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "title": {"type": "string", "minLength": 1},
+          "repro": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["open", "resolved", "waived"]}
+        }
+      }
+    },
+    "strengths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "file", "line", "title", "description"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["S0", "S1", "S2"]},
+          "file": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "title": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 10}
+        }
+      }
+    },
+    "checks_performed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "category", "result", "evidence"],
+        "properties": {
+          "check_id": {"type": "string", "minLength": 1},
+          "category": {
+            "type": "string",
+            "enum": [
+              "security",
+              "correctness",
+              "reliability",
+              "performance",
+              "maintainability",
+              "test_quality",
+              "operability",
+              "documentation"
+            ]
+          },
+          "result": {"type": "string", "enum": ["pass", "fail", "warning", "not_applicable"]},
+          "evidence": {"type": "string", "minLength": 10}
+        }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code", "summary"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer"},
+          "summary": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "review_summary": {
+      "type": "string",
+      "minLength": 50
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["approved", "changes_required", "blocked"]
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    }
+  }
+}

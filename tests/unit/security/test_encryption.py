@@ -144,6 +144,62 @@ class TestEncryptionManager:
             encrypted_result["classification"] == DataClassification.CONFIDENTIAL.value
         )
 
+    def test_zeroize_key_buffer_mutates_buffer_in_place(self):
+        """Key buffer zeroization should clear all bytes."""
+        key_buffer = bytearray(b"secret")
+
+        EncryptionManager._zeroize_key_buffer(key_buffer)
+
+        assert key_buffer == bytearray(b"\x00" * 6)
+
+    def test_encrypt_invokes_key_buffer_zeroization(self, monkeypatch):
+        """Encrypt path should invoke best-effort key buffer zeroization."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        observed_buffers: list[bytes] = []
+
+        def capture_and_zeroize(key_buffer: bytearray | None) -> None:
+            if key_buffer is not None:
+                observed_buffers.append(bytes(key_buffer))
+                for idx in range(len(key_buffer)):
+                    key_buffer[idx] = 0
+
+        monkeypatch.setattr(
+            EncryptionManager,
+            "_zeroize_key_buffer",
+            staticmethod(capture_and_zeroize),
+        )
+
+        encryption_manager.encrypt("buffer wipe check")
+
+        assert observed_buffers
+        assert any(any(byte != 0 for byte in before) for before in observed_buffers)
+
+    def test_decrypt_invokes_key_buffer_zeroization(self, monkeypatch):
+        """Decrypt path should invoke best-effort key buffer zeroization."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        encrypted_result = encryption_manager.encrypt("decrypt wipe check")
+        observed_buffers: list[bytes] = []
+
+        def capture_and_zeroize(key_buffer: bytearray | None) -> None:
+            if key_buffer is not None:
+                observed_buffers.append(bytes(key_buffer))
+                for idx in range(len(key_buffer)):
+                    key_buffer[idx] = 0
+
+        monkeypatch.setattr(
+            EncryptionManager,
+            "_zeroize_key_buffer",
+            staticmethod(capture_and_zeroize),
+        )
+
+        decrypted = encryption_manager.decrypt(encrypted_result)
+
+        assert decrypted == b"decrypt wipe check"
+        assert observed_buffers
+        assert any(any(byte != 0 for byte in before) for before in observed_buffers)
+
     def test_file_encryption(self):
         """Test file encryption and decryption"""
         key_manager = KeyManager()
@@ -568,3 +624,90 @@ class TestSecureStorage:
 
         decrypted = storage.retrieve_data("record-2")
         assert decrypted == "Secret One-Time Token"
+
+
+class TestEncryptionMockMode:
+    """Test mock encryption behavior and security guards."""
+
+    def test_mock_encrypt_decrypt_roundtrip(self):
+        """Test mock encryption produces b'mock_' prefix and round-trips."""
+        key_manager = KeyManager()
+        em = EncryptionManager(key_manager)
+        em.crypto_available = False  # Force mock path
+
+        result = em.encrypt("hello world")
+        assert result["ciphertext"].startswith(b"mock_")
+
+        decrypted = em.decrypt(result)
+        assert decrypted == b"hello world"
+
+    def test_decrypt_legacy_encrypted_prefix(self):
+        """Test backward compatibility with old b'encrypted_' prefix."""
+        key_manager = KeyManager()
+        em = EncryptionManager(key_manager)
+        em.crypto_available = False  # Force mock path
+
+        key_id = key_manager.generate_key("AES-256")
+        legacy_result = {
+            "ciphertext": b"encrypted_" + b"test data",
+            "iv": os.urandom(12),
+            "tag": os.urandom(16),
+            "key_id": key_id,
+        }
+        decrypted = em.decrypt(legacy_result)
+        assert decrypted == b"test data"
+
+    def test_decrypt_raw_ciphertext_passthrough(self):
+        """Test that ciphertext without known prefix is returned as-is in mock."""
+        key_manager = KeyManager()
+        em = EncryptionManager(key_manager)
+        em.crypto_available = False  # Force mock path
+
+        key_id = key_manager.generate_key("AES-256")
+        raw_result = {
+            "ciphertext": b"raw bytes here",
+            "iv": os.urandom(12),
+            "tag": os.urandom(16),
+            "key_id": key_id,
+        }
+        decrypted = em.decrypt(raw_result)
+        assert decrypted == b"raw bytes here"
+
+    def test_encrypt_rejects_non_mock_mode(self):
+        """Test encryption raises RuntimeError when not in mock mode and crypto unavailable."""
+        import unittest.mock
+
+        key_manager = KeyManager()
+
+        with unittest.mock.patch.dict(
+            os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=False
+        ):
+            em = EncryptionManager(key_manager)
+            em.crypto_available = False
+            with pytest.raises(
+                RuntimeError, match="requires the 'cryptography' package"
+            ):
+                em.encrypt("sensitive data")
+
+    def test_decrypt_rejects_non_mock_mode(self):
+        """Test decryption raises RuntimeError when not in mock mode and crypto unavailable."""
+        import unittest.mock
+
+        key_manager = KeyManager()
+
+        with unittest.mock.patch.dict(
+            os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=False
+        ):
+            em = EncryptionManager(key_manager)
+            em.crypto_available = False
+            key_id = key_manager.generate_key("AES-256")
+            encrypted = {
+                "ciphertext": b"mock_test",
+                "iv": os.urandom(12),
+                "tag": os.urandom(16),
+                "key_id": key_id,
+            }
+            with pytest.raises(
+                RuntimeError, match="requires the 'cryptography' package"
+            ):
+                em.decrypt(encrypted)

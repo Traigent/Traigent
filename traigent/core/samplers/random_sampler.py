@@ -9,9 +9,8 @@ import json
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Generic, TypeVar
-
-from .base import BaseSampler
 
 T = TypeVar("T")
 
@@ -79,7 +78,7 @@ class RandomSamplerPlan:
         )
 
 
-class RandomSampler(BaseSampler, Generic[T]):
+class RandomSampler(Generic[T]):
     """Sample elements uniformly at random until a limit is reached.
 
     Notes
@@ -101,7 +100,8 @@ class RandomSampler(BaseSampler, Generic[T]):
         plan: RandomSamplerPlan | Mapping[str, Any] | None = None,
         resume_random_after_plan: bool = False,
     ) -> None:
-        super().__init__()
+        self._lock = RLock()
+        self._exhausted: bool = False
         if sample_limit is not None and sample_limit <= 0:
             raise ValueError("sample_limit must be a positive integer or None")
         if not population:
@@ -134,6 +134,30 @@ class RandomSampler(BaseSampler, Generic[T]):
     @property
     def supports_plans(self) -> bool:
         return True
+
+    @property
+    def exhausted(self) -> bool:
+        """Return ``True`` when the sampler cannot yield more samples."""
+        with self._lock:
+            return self._exhausted
+
+    def reset(self) -> None:
+        """Reset internal state so sampling can start over."""
+        with self._lock:
+            self._exhausted = False
+            self._samples_drawn = 0
+            if not self._replace:
+                if self._initial_index_pool is None:
+                    self._initial_index_pool = tuple(range(self._population_size))
+                self._index_pool = list(self._initial_index_pool)
+            else:
+                self._index_pool = None
+            self._fixed_cursor = 0
+
+    def _mark_exhausted(self) -> None:
+        """Mark the sampler as exhausted."""
+        with self._lock:
+            self._exhausted = True
 
     def _ensure_fingerprint(self) -> str:
         if self._fingerprint_cache is None:
@@ -304,16 +328,6 @@ class RandomSampler(BaseSampler, Generic[T]):
             self._fixed_cursor = 0
             if resume_random_after_plan is not None:
                 self._resume_random_after_plan = bool(resume_random_after_plan)
-
-    def _reset_impl(self) -> None:
-        self._samples_drawn = 0
-        if not self._replace:
-            if self._initial_index_pool is None:
-                self._initial_index_pool = tuple(range(self._population_size))
-            self._index_pool = list(self._initial_index_pool)
-        else:
-            self._index_pool = None
-        self._fixed_cursor = 0
 
     def _post_sample_bookkeeping(self) -> None:
         if self._sample_limit is not None and self._samples_drawn >= self._sample_limit:

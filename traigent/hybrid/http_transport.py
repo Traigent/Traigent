@@ -8,11 +8,13 @@ following the Traigent hybrid API protocol.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
@@ -49,6 +51,7 @@ class HTTPTransport:
     # API endpoint paths (relative to base_url)
     CAPABILITIES_PATH = "/traigent/v1/capabilities"
     CONFIG_SPACE_PATH = "/traigent/v1/config-space"
+    BENCHMARKS_PATH = "/traigent/v1/benchmarks"
     EXECUTE_PATH = "/traigent/v1/execute"
     EVALUATE_PATH = "/traigent/v1/evaluate"
     HEALTH_PATH = "/traigent/v1/health"
@@ -60,6 +63,7 @@ class HTTPTransport:
         timeout: float = 300.0,
         max_connections: int = 10,
         auth_header: str | None = None,
+        require_http2: bool = False,
     ) -> None:
         """Initialize HTTP transport.
 
@@ -68,42 +72,121 @@ class HTTPTransport:
             timeout: Request timeout in seconds (default 300)
             max_connections: Maximum concurrent HTTP connections (default 10)
             auth_header: Optional Authorization header value
+            require_http2: Enforce HTTPS + HTTP/2 responses (strict mode)
         """
         self.base_url = base_url.rstrip("/")
+        if require_http2 and not self.base_url.startswith("https://"):
+            raise ValueError("require_http2=True requires an https:// base_url")
         self.timeout = timeout
         self.max_connections = max_connections
         self._auth_header = auth_header
+        self.require_http2 = require_http2
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client with connection pooling."""
-        if self._client is None or self._closed:
-            headers: dict[str, str] = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Traigent-SDK/1.0",
-            }
-            if self._auth_header:
-                headers["Authorization"] = self._auth_header
+        if self._client is not None and not self._closed:
+            return self._client
 
-            # Configure connection pooling
-            limits = httpx.Limits(
-                max_connections=self.max_connections,
-                max_keepalive_connections=self.max_connections,
-            )
+        async with self._client_lock:
+            if self._client is None or self._closed:
+                headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "Traigent-SDK/1.0",
+                }
+                if self._auth_header:
+                    headers["Authorization"] = self._auth_header
+                    headers["x-api-key"] = self._auth_header
 
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=headers,
-                timeout=httpx.Timeout(self.timeout),
-                limits=limits,
-                http2=True,  # Enable HTTP/2 for better performance
-            )
-            self._closed = False
+                # Configure connection pooling
+                limits = httpx.Limits(
+                    max_connections=self.max_connections,
+                    max_keepalive_connections=self.max_connections,
+                )
+
+                # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
+                try:
+                    import h2  # noqa: F401
+
+                    use_http2 = True
+                except ImportError:
+                    use_http2 = False
+                    logger.debug("h2 package not installed, using HTTP/1.1")
+
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers=headers,
+                    timeout=httpx.Timeout(self.timeout),
+                    limits=limits,
+                    http2=use_http2,
+                )
+                self._closed = False
 
         return self._client
+
+    @staticmethod
+    def _parse_retry_after(headers: httpx.Headers) -> float | None:
+        """Extract Retry-After value from response headers.
+
+        Returns:
+            Parsed float seconds, or None if absent/unparseable.
+        """
+        raw = headers.get("Retry-After")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None  # Could be HTTP-date format, ignore for now
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        """Raise the appropriate TransportError for non-2xx responses.
+
+        Args:
+            response: The HTTP response to inspect.
+        """
+        code = response.status_code
+
+        if code == 401:
+            raise TransportAuthError(
+                "Authentication failed",
+                status_code=401,
+                response_body=response.text,
+            )
+        if code == 403:
+            raise TransportAuthError(
+                "Authorization denied",
+                status_code=403,
+                response_body=response.text,
+            )
+        if code == 429:
+            raise TransportRateLimitError(
+                "Rate limit exceeded",
+                retry_after=self._parse_retry_after(response.headers),
+                response_body=response.text,
+            )
+        if code in (408, 504):
+            raise TransportTimeoutError(
+                f"Request timed out: HTTP {code}",
+                status_code=code,
+                response_body=response.text,
+            )
+        if code >= 500:
+            raise TransportServerError(
+                f"Server error: HTTP {code}",
+                status_code=code,
+                response_body=response.text,
+            )
+        if code >= 400:
+            raise TransportError(
+                f"HTTP {code}: {response.reason_phrase}",
+                status_code=code,
+                response_body=response.text,
+            )
 
     async def _request(
         self,
@@ -111,6 +194,7 @@ class HTTPTransport:
         path: str,
         json_data: dict[str, Any] | None = None,
         timeout_override: float | None = None,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request with error handling.
 
@@ -119,6 +203,7 @@ class HTTPTransport:
             path: URL path (relative to base_url)
             json_data: Optional JSON body
             timeout_override: Optional timeout override for this request
+            params: Optional query parameters
 
         Returns:
             Parsed JSON response.
@@ -142,48 +227,21 @@ class HTTPTransport:
                 method,
                 path,
                 json=json_data,
+                params=params,
                 timeout=timeout,
             )
 
-            # Handle HTTP errors
-            if response.status_code == 401:
-                raise TransportAuthError(
-                    "Authentication failed",
-                    status_code=401,
-                    response_body=response.text,
-                )
-            elif response.status_code == 403:
-                raise TransportAuthError(
-                    "Authorization denied",
-                    status_code=403,
-                    response_body=response.text,
-                )
-            elif response.status_code == 429:
-                # Parse Retry-After header if present
-                retry_after_str = response.headers.get("Retry-After")
-                retry_after: float | None = None
-                if retry_after_str:
-                    try:
-                        retry_after = float(retry_after_str)
-                    except ValueError:
-                        pass  # Could be HTTP-date format, ignore for now
-                raise TransportRateLimitError(
-                    "Rate limit exceeded",
-                    retry_after=retry_after,
-                    response_body=response.text,
-                )
-            elif response.status_code >= 500:
-                raise TransportServerError(
-                    f"Server error: HTTP {response.status_code}",
-                    status_code=response.status_code,
-                    response_body=response.text,
-                )
-            elif response.status_code >= 400:
+            if self.require_http2 and response.http_version != "HTTP/2":
                 raise TransportError(
-                    f"HTTP {response.status_code}: {response.reason_phrase}",
-                    status_code=response.status_code,
+                    (
+                        "HTTP/2 is required, but upstream responded with "
+                        f"{response.http_version}"
+                    ),
+                    status_code=426,
                     response_body=response.text,
                 )
+
+            self._raise_for_status(response)
 
             result: dict[str, Any] = response.json()
             return result
@@ -242,8 +300,13 @@ class HTTPTransport:
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions from external service.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -251,8 +314,78 @@ class HTTPTransport:
         Raises:
             TransportError: If discovery fails.
         """
-        data = await self._request("GET", self.CONFIG_SPACE_PATH)
+        params: dict[str, str] | None = None
+        if tunable_id is not None:
+            params = {"tunable_id": tunable_id}
+        data = await self._request("GET", self.CONFIG_SPACE_PATH, params=params)
         return ConfigSpaceResponse.from_dict(data)
+
+    async def benchmarks(
+        self,
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks and their example IDs.
+
+        Args:
+            tunable_id: Optional filter — only return benchmarks linked to this tunable.
+
+        Returns:
+            BenchmarksResponse with benchmark entries and example IDs.
+
+        Raises:
+            TransportError: If discovery fails or tunable_id is unknown.
+        """
+        params: dict[str, str] | None = None
+        if tunable_id is not None:
+            params = {"tunable_id": tunable_id}
+        data = await self._request("GET", self.BENCHMARKS_PATH, params=params)
+        return BenchmarksResponse.from_dict(data)
+
+    @staticmethod
+    def _build_legacy_payload(
+        request: HybridExecuteRequest,
+    ) -> dict[str, Any]:
+        """Build legacy execute payload using ``inputs``/``input_id`` keys.
+
+        Some deployed services still require the old shape.
+
+        Args:
+            request: The original execute request.
+
+        Returns:
+            Dict payload with ``inputs`` instead of ``examples``.
+        """
+        legacy_inputs: list[dict[str, Any]] = []
+        for item in request.examples:
+            if not isinstance(item, dict):
+                legacy_inputs.append({"input_id": str(item)})
+                continue
+
+            example_id = item.get("example_id")
+            payload_data = item.get("data")
+
+            input_id = example_id
+            if isinstance(payload_data, dict):
+                input_id = (
+                    payload_data.get("input_id")
+                    or payload_data.get("example_id")
+                    or example_id
+                )
+
+            legacy_inputs.append({"input_id": str(input_id or "")})
+
+        payload: dict[str, Any] = {
+            "request_id": request.request_id,
+            "tunable_id": request.tunable_id,
+            "benchmark_id": request.benchmark_id,
+            "config": request.config,
+            "inputs": legacy_inputs,
+        }
+        if request.session_id is not None:
+            payload["session_id"] = request.session_id
+        if request.timeout_ms is not None:
+            payload["timeout_ms"] = request.timeout_ms
+        return payload
 
     async def execute(
         self,
@@ -272,12 +405,37 @@ class HTTPTransport:
         # Use request timeout if specified
         timeout_s = request.timeout_ms / 1000.0 if request.timeout_ms > 0 else None
 
-        data = await self._request(
-            "POST",
-            self.EXECUTE_PATH,
-            json_data=request.to_dict(),
-            timeout_override=timeout_s,
-        )
+        request_payload = request.to_dict()
+        try:
+            data = await self._request(
+                "POST",
+                self.EXECUTE_PATH,
+                json_data=request_payload,
+                timeout_override=timeout_s,
+            )
+        except TransportError as exc:
+            # Legacy compatibility: some deployed services still require
+            # `inputs` with `input_id` instead of `examples` with `example_id`.
+            response_body = (exc.response_body or "").lower()
+            is_legacy_shape_error = (
+                exc.status_code == 400
+                and "missing required fields" in response_body
+                and "inputs" in response_body
+            )
+            if not is_legacy_shape_error:
+                raise
+
+            logger.info(
+                "Execute request falling back to legacy payload format "
+                "(inputs/input_id) for compatibility"
+            )
+            data = await self._request(
+                "POST",
+                self.EXECUTE_PATH,
+                json_data=self._build_legacy_payload(request),
+                timeout_override=timeout_s,
+            )
+
         return HybridExecuteResponse.from_dict(data)
 
     async def evaluate(
@@ -303,10 +461,16 @@ class HTTPTransport:
                 "External service does not support separate evaluate endpoint"
             )
 
+        timeout_s = (
+            request.timeout_ms / 1000.0
+            if request.timeout_ms is not None and request.timeout_ms > 0
+            else None
+        )
         data = await self._request(
             "POST",
             self.EVALUATE_PATH,
             json_data=request.to_dict(),
+            timeout_override=timeout_s,
         )
         return HybridEvaluateResponse.from_dict(data)
 
@@ -345,8 +509,15 @@ class HTTPTransport:
                 self.KEEP_ALIVE_PATH,
                 json_data={"session_id": session_id},
             )
-            alive: bool = data.get("alive", False)
-            return alive
+            status = data.get("status")
+            if isinstance(status, str):
+                return status.lower() == "alive"
+
+            # Backward compatibility with older wrapper servers
+            if "alive" in data:
+                return bool(data.get("alive"))
+
+            return False
         except TransportError as e:
             # Session expired or invalid
             if e.status_code == 404:

@@ -47,6 +47,8 @@ class TestHybridExportsImportable:
             "ServiceCapabilities",
             "TVARDefinition",
             "ConfigSpaceResponse",
+            "BenchmarkEntry",
+            "BenchmarksResponse",
             "HealthCheckResponse",
         ]
         for dto_class in protocol_classes:
@@ -107,6 +109,8 @@ class TestHybridAllList:
             "ServiceCapabilities",
             "TVARDefinition",
             "ConfigSpaceResponse",
+            "BenchmarkEntry",
+            "BenchmarksResponse",
             "HealthCheckResponse",
             # Lifecycle
             "AgentLifecycleManager",
@@ -238,6 +242,8 @@ class TestDirectImports:
         """Test direct import of protocol DTOs."""
         from traigent.hybrid import (  # noqa: F401
             BatchOptions,
+            BenchmarkEntry,
+            BenchmarksResponse,
             ConfigSpaceResponse,
             HealthCheckResponse,
             HybridEvaluateRequest,

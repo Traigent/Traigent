@@ -12,10 +12,7 @@ import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
-from traigent.cloud.models import (
-    AgentExecutionRequest,
-    AgentSpecification,
-)
+from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
 
 class TestFullOptimizationWorkflows:
@@ -24,7 +21,7 @@ class TestFullOptimizationWorkflows:
     @pytest.mark.asyncio
     async def test_complete_local_optimization_workflow(self):
         """Test complete local optimization workflow with authentication headers."""
-        api_key = "tg_integration_" + "a" * 50
+        api_key = "tg_integration_" + "a" * 50  # pragma: allowlist secret
 
         # Track all HTTP requests and their headers
         http_requests = []
@@ -194,7 +191,7 @@ class TestFullOptimizationWorkflows:
     @pytest.mark.asyncio
     async def test_optimization_workflow_with_errors_and_retry(self):
         """Test optimization workflow with error recovery maintains authentication."""
-        api_key = "tg_retry_test_" + "b" * 50
+        api_key = "tg_retry_test_" + "b" * 50  # pragma: allowlist secret
 
         request_count = 0
         headers_in_retries = []
@@ -313,7 +310,7 @@ class TestAgentWorkflows:
     @pytest.mark.asyncio
     async def test_complete_agent_optimization_workflow(self):
         """Test complete agent optimization workflow with authentication headers."""
-        api_key = "tg_agent_workflow_" + "c" * 45
+        api_key = "tg_agent_workflow_" + "c" * 45  # pragma: allowlist secret
 
         # Track agent-specific requests
         agent_requests = []
@@ -637,7 +634,7 @@ class TestBackendIntegrationWorkflows:
 
                 if (
                     method == "POST"
-                    and "/api/v1/sessions/hybrid" in str(url)
+                    and "/api/v1/hybrid/sessions" in str(url)
                     and "/finalize" not in str(url)
                 ):
                     mock_response.status = 201
@@ -652,7 +649,7 @@ class TestBackendIntegrationWorkflows:
                     mock_response.text = AsyncMock(return_value="Created")
                 elif (
                     method == "GET"
-                    and "/api/v1/sessions/hybrid/" in str(url)
+                    and "/api/v1/hybrid/sessions/" in str(url)
                     and "/status" in str(url)
                 ):
                     mock_response.status = 200
@@ -668,7 +665,7 @@ class TestBackendIntegrationWorkflows:
                     mock_response.text = AsyncMock(return_value="OK")
                 elif (
                     method == "POST"
-                    and "/api/v1/sessions/hybrid/" in str(url)
+                    and "/api/v1/hybrid/sessions/" in str(url)
                     and "/finalize" in str(url)
                 ):
                     mock_response.status = 200
@@ -899,9 +896,9 @@ class TestMultiClientWorkflows:
 
         # Different client configurations
         client_configs = [
-            {"api_key": "tg_client_alpha_" + "a" * 50, "name": "alpha"},
-            {"api_key": "tg_client_beta_" + "b" * 50, "name": "beta"},
-            {"api_key": "tg_client_gamma_" + "c" * 50, "name": "gamma"},
+            {"api_key": "tg_client_alpha_" + "a" * 50, "name": "alpha"},  # pragma: allowlist secret
+            {"api_key": "tg_client_beta_" + "b" * 50, "name": "beta"},  # pragma: allowlist secret
+            {"api_key": "tg_client_gamma_" + "c" * 50, "name": "gamma"},  # pragma: allowlist secret
         ]
 
         client_requests = {}
@@ -1013,8 +1010,8 @@ class TestMultiClientWorkflows:
     async def test_client_authentication_state_transitions(self):
         """Test authentication state transitions during workflow execution."""
 
-        api_key_1 = "tg_state_initial_" + "x" * 50
-        api_key_2 = "tg_state_updated_" + "y" * 50
+        api_key_1 = "tg_state_initial_" + "x" * 50  # pragma: allowlist secret
+        api_key_2 = "tg_state_updated_" + "y" * 50  # pragma: allowlist secret
 
         state_transitions = []
 

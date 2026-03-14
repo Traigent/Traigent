@@ -7,7 +7,7 @@ Release-ready, minimal install steps for the SDK and examples.
 ### Fast path (pip)
 
 ```bash
-git clone https://github.com/traigent/traigent-sdk.git
+git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
@@ -16,7 +16,7 @@ pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
 ### Faster path (uv)
 
 ```bash
-git clone https://github.com/traigent/traigent-sdk.git
+git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 uv venv && source .venv/bin/activate
 uv pip install -e ".[integrations]"       # Same extras, faster resolver

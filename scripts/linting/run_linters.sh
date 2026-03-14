@@ -33,7 +33,7 @@ echo ""
 # Run MyPy (if available)
 if command -v mypy &> /dev/null; then
     echo -e "${YELLOW}Running MyPy...${NC}"
-    mypy $DIRS --config-file=mypy.ini 2>/dev/null | sed 's/^/[MYPY] /'
+    mypy $DIRS 2>/dev/null | sed 's/^/[MYPY] /'
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         echo -e "${GREEN}✓ MyPy: No type issues found${NC}"
     else

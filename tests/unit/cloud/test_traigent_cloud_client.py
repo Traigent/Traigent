@@ -35,7 +35,7 @@ def sample_dataset():
 def mock_cloud_client():
     """Create mock cloud client for testing."""
     return TraigentCloudClient(
-        api_key="tg_test_" + "x" * 56,
+        api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
         base_url="http://localhost:8000",
         enable_fallback=True,
     )
@@ -47,15 +47,15 @@ class TestTraigentCloudClient:
     def test_client_initialization(self):
         """Test client initialization with different parameters."""
         client = TraigentCloudClient(
-            api_key="tg_test_key",
-            base_url="https://api.traigent.ai",
+            api_key="tg_test_key",  # pragma: allowlist secret
+            base_url="http://localhost:5000",
             enable_fallback=False,
             max_retries=5,
             timeout=60.0,
         )
 
-        assert client.base_url == "https://api.traigent.ai"
-        assert client.api_base_url == "https://api.traigent.ai/api/v1"
+        assert client.base_url == "http://localhost:5000"
+        assert client.api_base_url == "http://localhost:5000/api/v1"
         assert client.enable_fallback is False
         assert client.max_retries == 5
         assert client.timeout == 60.0
@@ -70,12 +70,15 @@ class TestTraigentCloudClient:
         ]:
             monkeypatch.delenv(var, raising=False)
 
-        monkeypatch.setenv("TRAIGENT_ENV", "production")
-
-        client = TraigentCloudClient()
+        with patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value=None,
+        ):
+            monkeypatch.setenv("TRAIGENT_ENV", "production")
+            client = TraigentCloudClient()
 
         assert client.base_url == BackendConfig.DEFAULT_PROD_URL
-        assert client.api_base_url == BackendConfig.get_backend_api_url()
+        assert client.api_base_url == BackendConfig.get_cloud_api_url()
         assert client.enable_fallback is True
         assert client.max_retries == 3
         assert client.timeout == 30.0
@@ -88,6 +91,21 @@ class TestTraigentCloudClient:
                 assert client._session is not None
 
             # Session should be closed after exit
+            assert mock_cloud_client._session is None
+
+        asyncio.run(run_test())
+
+    def test_close_clears_shared_session(self, mock_cloud_client):
+        """Public close() should release the shared HTTP session."""
+
+        async def run_test():
+            session = MagicMock()
+            session.close = AsyncMock()
+            mock_cloud_client._session = session
+
+            await mock_cloud_client.close()
+
+            session.close.assert_awaited_once()
             assert mock_cloud_client._session is None
 
         asyncio.run(run_test())
@@ -111,7 +129,6 @@ class TestTraigentCloudClient:
                 ),
                 patch.object(mock_cloud_client, "_submit_optimization") as mock_submit,
             ):
-
                 mock_submit.return_value = {
                     "best_config": {"param1": "value1", "param2": 0.5},
                     "best_metrics": {"accuracy": 0.85, "speed": 0.9},
@@ -155,7 +172,6 @@ class TestTraigentCloudClient:
                     side_effect=AuthenticationError("Not authenticated"),
                 ),
             ):
-
                 with pytest.raises(AuthenticationError, match="Not authenticated"):
                     async with mock_cloud_client:
                         pass  # The exception should be raised in __aenter__
@@ -164,6 +180,9 @@ class TestTraigentCloudClient:
 
     def test_optimize_function_with_fallback(self, mock_cloud_client, sample_dataset):
         """Test fallback to local optimization when cloud fails."""
+
+        async def local_function(text: str, param: int = 1) -> str:
+            return f"{text}:{param}"
 
         async def run_test():
             with (
@@ -187,24 +206,20 @@ class TestTraigentCloudClient:
                     "traigent.optimizers.registry.get_optimizer"
                 ) as mock_get_optimizer,
                 patch(
-                    "traigent.evaluators.local.LocalEvaluator"
-                ) as mock_evaluator_class,
+                    "traigent.core.orchestrator.OptimizationOrchestrator"
+                ) as mock_orchestrator_class,
             ):
-
-                # Mock the fallback local optimizer
                 mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
+                mock_get_optimizer.return_value = mock_optimizer
+
+                mock_orchestrator = mock_orchestrator_class.return_value
+                mock_orchestrator.optimize = AsyncMock(
                     return_value=MagicMock(
                         best_config={"param": 1},
                         best_metrics={"accuracy": 0.8},
-                        trials=[],
-                        duration=1.0,
+                        trials=[object(), object()],
                     )
                 )
-                mock_get_optimizer.return_value = mock_optimizer
-
-                # Mock the evaluator
-                mock_evaluator_class.return_value = MagicMock()
 
                 async with mock_cloud_client as client:
                     result = await client.optimize_function(
@@ -212,10 +227,14 @@ class TestTraigentCloudClient:
                         dataset=sample_dataset,
                         configuration_space={"param": [1, 2, 3]},
                         objectives=["accuracy"],
+                        local_function=local_function,
                     )
 
                 # Should get fallback result
                 assert isinstance(result, CloudOptimizationResult)
+                assert result.best_config == {"param": 1}
+                assert result.best_metrics == {"accuracy": 0.8}
+                assert result.trials_count == 2
                 assert result.subset_used is False
                 assert result.cost_reduction == 0.0
 
@@ -226,7 +245,8 @@ class TestTraigentCloudClient:
 
         async def run_test():
             client = TraigentCloudClient(
-                enable_fallback=False, api_key="tg_test_" + "x" * 56
+                enable_fallback=False,
+                api_key="tg_test_" + "x" * 56,  # pragma: allowlist secret
             )
 
             with (
@@ -245,7 +265,6 @@ class TestTraigentCloudClient:
                     side_effect=Exception("Network error"),
                 ),
             ):
-
                 async with client as c:
                     with pytest.raises(
                         CloudServiceError, match="Cloud optimization failed"

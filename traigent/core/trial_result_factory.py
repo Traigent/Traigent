@@ -7,25 +7,206 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from traigent.api.types import TrialResult, TrialStatus
+from traigent.api.types import (
+    ComparabilityInfo,
+    MetricCoverage,
+    TrialError,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
+from traigent.utils.objectives import classify_objective
 
 logger = get_logger(__name__)
 
 
-def build_success_result(
-    *,
-    trial_id: str,
-    evaluation_config: dict[str, Any],
+def _coerce_non_negative_int(value: Any) -> int:
+    """Best-effort integer conversion with non-negative fallback."""
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _infer_total_examples(eval_result: Any) -> tuple[int, Any, bool]:
+    """Infer total example count and whether detailed example results are present."""
+    total_examples = _coerce_non_negative_int(getattr(eval_result, "total_examples", 0))
+    example_results = getattr(eval_result, "example_results", None)
+    has_detailed_example_results = (
+        isinstance(example_results, list) and len(example_results) > 0
+    )
+    if isinstance(example_results, list) and total_examples <= 0:
+        total_examples = len(example_results)
+    return total_examples, example_results, has_detailed_example_results
+
+
+def _collect_per_metric_counts_from_examples(
+    example_results: list[Any],
+) -> dict[str, int]:
+    """Count how often each numeric metric appears across detailed example results."""
+    per_metric_counts: dict[str, int] = {}
+    for example_result in example_results:
+        metrics = getattr(example_result, "metrics", {}) or {}
+        if not isinstance(metrics, dict):
+            continue
+        for metric_name, value in metrics.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            per_metric_counts[metric_name] = per_metric_counts.get(metric_name, 0) + 1
+    return per_metric_counts
+
+
+def _collect_per_metric_counts_from_aggregate(
     eval_result: Any,
-    duration: float,
+    total_examples: int,
+) -> dict[str, int]:
+    """Assume aggregate numeric metrics apply to all evaluated examples."""
+    per_metric_counts: dict[str, int] = {}
+    agg_metrics = getattr(eval_result, "metrics", {}) or {}
+    if not isinstance(agg_metrics, dict) or total_examples <= 0:
+        return per_metric_counts
+    for metric_name, value in agg_metrics.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        per_metric_counts[metric_name] = total_examples
+    return per_metric_counts
+
+
+def _collect_per_metric_counts(
+    eval_result: Any,
+    total_examples: int,
+    example_results: Any,
+    has_detailed_example_results: bool,
+) -> dict[str, int]:
+    """Collect per-metric coverage counts from detailed or aggregate outputs."""
+    if has_detailed_example_results and isinstance(example_results, list):
+        return _collect_per_metric_counts_from_examples(example_results)
+    return _collect_per_metric_counts_from_aggregate(eval_result, total_examples)
+
+
+def _select_primary_objective(per_metric_counts: dict[str, int]) -> str:
+    """Choose a reasonable primary objective from available metric counts."""
+    for preferred in ("accuracy", "score"):
+        if preferred in per_metric_counts:
+            return preferred
+
+    accuracy_like = sorted(
+        metric_name
+        for metric_name in per_metric_counts
+        if metric_name.endswith("_accuracy")
+    )
+    if accuracy_like:
+        return accuracy_like[0]
+
+    for preferred in ("total_cost", "cost", "latency", "response_time_ms"):
+        if preferred in per_metric_counts:
+            return preferred
+
+    if per_metric_counts:
+        return sorted(per_metric_counts)[0]
+    return "unknown"
+
+
+def _infer_evaluation_mode(
+    has_detailed_example_results: bool,
+    per_metric_counts: dict[str, int],
+) -> str:
+    """Infer whether results came from evaluated or execute-only mode."""
+    if has_detailed_example_results:
+        return "evaluated"
+    if not per_metric_counts:
+        return "unknown"
+    objective_classes = {
+        classify_objective(metric_name) for metric_name in per_metric_counts
+    }
+    return "execute_only" if objective_classes == {"operational"} else "evaluated"
+
+
+def _build_warning_codes(
+    total_examples: int,
+    examples_with_primary_metric: int,
+    coverage_ratio: float,
+) -> list[str]:
+    """Derive comparability warning codes from coverage information."""
+    if total_examples <= 0:
+        return ["MCI-001"]
+    if examples_with_primary_metric <= 0:
+        return ["MCI-004"]
+    if coverage_ratio < 1.0:
+        return ["MCI-002"]
+    return []
+
+
+def _build_fallback_comparability(eval_result: Any) -> dict[str, Any]:
+    """Build comparability metadata when evaluator did not provide one."""
+    total_examples, example_results, has_detailed_example_results = (
+        _infer_total_examples(eval_result)
+    )
+    per_metric_counts = _collect_per_metric_counts(
+        eval_result,
+        total_examples,
+        example_results,
+        has_detailed_example_results,
+    )
+
+    per_metric_coverage = {
+        metric_name: MetricCoverage(
+            present=count,
+            total=total_examples,
+            ratio=(count / total_examples) if total_examples > 0 else 0.0,
+        )
+        for metric_name, count in per_metric_counts.items()
+    }
+
+    primary_objective = _select_primary_objective(per_metric_counts)
+    evaluation_mode = _infer_evaluation_mode(
+        has_detailed_example_results,
+        per_metric_counts,
+    )
+
+    examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
+    coverage_ratio = (
+        examples_with_primary_metric / total_examples
+        if total_examples > 0 and examples_with_primary_metric > 0
+        else 0.0
+    )
+    ranking_eligible = (
+        total_examples > 0
+        and examples_with_primary_metric == total_examples
+        and (
+            classify_objective(primary_objective) != "quality"
+            or evaluation_mode == "evaluated"
+        )
+    )
+    warning_codes = _build_warning_codes(
+        total_examples,
+        examples_with_primary_metric,
+        coverage_ratio,
+    )
+
+    return ComparabilityInfo(
+        primary_objective=primary_objective,
+        evaluation_mode=evaluation_mode,
+        total_examples=total_examples,
+        examples_with_primary_metric=examples_with_primary_metric,
+        coverage_ratio=coverage_ratio,
+        derivation_path="none",
+        ranking_eligible=ranking_eligible,
+        warning_codes=warning_codes,
+        per_metric_coverage=per_metric_coverage,
+        missing_example_ids=[],
+    ).to_dict()
+
+
+def _build_success_trial_metadata(
+    eval_result: Any,
     examples_attempted: int | None,
     total_cost: float | None,
-    optuna_trial_id: int | None,
-) -> TrialResult:
-    """Create a successful :class:`TrialResult` instance."""
-
+) -> dict[str, Any]:
+    """Build metadata for a successful trial result."""
     trial_metadata: dict[str, Any] = {
         "success_rate": getattr(eval_result, "success_rate", None),
         "has_errors": getattr(eval_result, "has_errors", None),
@@ -50,6 +231,64 @@ def build_success_result(
         except (TypeError, ValueError):
             pass
 
+    return trial_metadata
+
+
+def _set_metric_if_convertible(
+    metrics: dict[str, Any],
+    key: str,
+    raw_value: Any,
+    converter: type[int] | type[float],
+    trial_id: str,
+) -> None:
+    """Set a metric after conversion, logging instead of raising on invalid values."""
+    try:
+        metrics.setdefault(key, converter(raw_value))
+    except (TypeError, ValueError) as error:
+        logger.warning(
+            "Failed to convert %s to %s for trial %s: %s (value: %s)",
+            key,
+            converter.__name__,
+            trial_id,
+            error,
+            raw_value,
+        )
+
+
+def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
+    """Resolve comparability metadata from evaluator output or fallback synthesis."""
+    comparability_payload = getattr(eval_result, "comparability", None)
+    if isinstance(comparability_payload, dict):
+        return comparability_payload
+
+    summary_stats = getattr(eval_result, "summary_stats", None)
+    if isinstance(summary_stats, dict):
+        metadata = summary_stats.get("metadata")
+        if isinstance(metadata, dict):
+            summary_comp = metadata.get("comparability")
+            if isinstance(summary_comp, dict):
+                return summary_comp
+
+    return _build_fallback_comparability(eval_result)
+
+
+def build_success_result(
+    *,
+    trial_id: str,
+    evaluation_config: dict[str, Any],
+    eval_result: Any,
+    duration: float,
+    examples_attempted: int | None,
+    total_cost: float | None,
+    optuna_trial_id: int | None,
+) -> TrialResult:
+    """Create a successful :class:`TrialResult` instance."""
+    trial_metadata = _build_success_trial_metadata(
+        eval_result,
+        examples_attempted,
+        total_cost,
+    )
+
     trial_result = TrialResult(
         trial_id=trial_id,
         config=evaluation_config,
@@ -64,31 +303,27 @@ def build_success_result(
         trial_result.metadata.setdefault("optuna_trial_id", optuna_trial_id)
 
     if examples_attempted is not None:
-        try:
-            trial_result.metrics.setdefault(
-                "examples_attempted", int(examples_attempted)
-            )
-        except (TypeError, ValueError) as e:
-            logger.warning(
-                "Failed to convert examples_attempted to int for trial %s: %s (value: %s)",
-                trial_id,
-                e,
-                examples_attempted,
-            )
+        _set_metric_if_convertible(
+            trial_result.metrics,
+            "examples_attempted",
+            examples_attempted,
+            int,
+            trial_id,
+        )
 
     if total_cost is not None:
-        try:
-            trial_result.metrics.setdefault("total_cost", float(total_cost))
-        except (TypeError, ValueError) as e:
-            logger.warning(
-                "Failed to convert total_cost to float for trial %s: %s (value: %s)",
-                trial_id,
-                e,
-                total_cost,
-            )
+        _set_metric_if_convertible(
+            trial_result.metrics,
+            "total_cost",
+            total_cost,
+            float,
+            trial_id,
+        )
 
     if getattr(eval_result, "summary_stats", None):
         trial_result.summary_stats = eval_result.summary_stats  # type: ignore[attr-defined]
+
+    trial_result.metadata["comparability"] = _extract_success_comparability(eval_result)
 
     logger.debug(
         "Trial %s completed: %s, duration: %.2fs",
@@ -121,6 +356,25 @@ def build_pruned_result(
     }
     if optuna_trial_id is not None:
         metadata["optuna_trial_id"] = optuna_trial_id
+
+    pruned_example_count = len(prune_error.example_results or [])
+    progress_total_examples = _coerce_non_negative_int(
+        (progress_state or {}).get("total_examples")
+    )
+    comparability_total_examples = max(pruned_example_count, progress_total_examples)
+
+    metadata["comparability"] = ComparabilityInfo(
+        primary_objective="unknown",
+        evaluation_mode="unknown",
+        total_examples=comparability_total_examples,
+        examples_with_primary_metric=0,
+        coverage_ratio=0.0,
+        derivation_path="none",
+        ranking_eligible=False,
+        warning_codes=["MCI-007"],
+        per_metric_coverage={},
+        missing_example_ids=[],
+    ).to_dict()
 
     # Include partial example_results from the pruned trial
     # These are captured by the evaluator before raising TrialPrunedError
@@ -197,10 +451,23 @@ def build_failed_result(
     """Create a failed :class:`TrialResult` instance."""
 
     logger.warning("Trial %s failed: %s", trial_id, error)
+    error_details = TrialError.from_exception(error, config=evaluation_config)
 
     metadata: dict[str, Any] = (
         {"optuna_trial_id": optuna_trial_id} if optuna_trial_id is not None else {}
     )
+    metadata["comparability"] = ComparabilityInfo(
+        primary_objective="unknown",
+        evaluation_mode="unknown",
+        total_examples=0,
+        examples_with_primary_metric=0,
+        coverage_ratio=0.0,
+        derivation_path="none",
+        ranking_eligible=False,
+        warning_codes=["MCI-007"],
+        per_metric_coverage={},
+        missing_example_ids=[],
+    ).to_dict()
     metrics: dict[str, float] = {}
     if progress_state:
         evaluated = progress_state.get("evaluated", 0)
@@ -228,6 +495,7 @@ def build_failed_result(
         timestamp=datetime.now(UTC),
         error_message=str(error),
         metadata=metadata,
+        error=error_details,
     )
 
 

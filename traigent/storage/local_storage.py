@@ -14,11 +14,15 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+import psutil
 
 from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
+from ..utils.objectives import is_minimization_objective
 from ..utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
@@ -30,7 +34,7 @@ class TrialResult:
 
     trial_id: int
     config: dict[str, Any]
-    score: float
+    score: float | None
     timestamp: str
     metadata: dict[str, Any | None] | None = None
     error: str | None = None
@@ -130,6 +134,45 @@ class LocalStorageManager:
                 f"Failed to create storage directories: {e}"
             ) from e
 
+    def _is_process_alive(self, pid: int) -> bool:
+        """Best-effort check whether a process is alive."""
+        if pid <= 0:
+            return False
+        return bool(psutil.pid_exists(pid))
+
+    def _read_lock_pid(self, lock_path: Path) -> int | None:
+        """Read owning PID from lock file, if present."""
+        try:
+            with open(lock_path, encoding="utf-8") as lock_file:
+                raw_value = lock_file.read().strip()
+        except OSError:
+            return None
+
+        if not raw_value:
+            return None
+        try:
+            return int(raw_value)
+        except ValueError:
+            return None
+
+    def _try_cleanup_stale_lock(self, lock_path: Path, lock_name: str) -> bool:
+        """Remove stale lock when owner PID is no longer running."""
+        owner_pid = self._read_lock_pid(lock_path)
+        if owner_pid is None or self._is_process_alive(owner_pid):
+            return False
+
+        try:
+            os.unlink(str(lock_path))
+            logger.warning(
+                "Removed stale lock '%s' owned by dead pid %s", lock_name, owner_pid
+            )
+            return True
+        except FileNotFoundError:
+            # Another process removed it before us.
+            return True
+        except OSError:
+            return False
+
     @contextmanager
     def acquire_lock(self, lock_name: str, timeout: float = 5.0):
         """
@@ -145,9 +188,14 @@ class LocalStorageManager:
         Raises:
             TimeoutError: If lock cannot be acquired within timeout
         """
+        safe_lock_name = sanitize_identifier(lock_name)
         lock_dir = self.storage_path / ".locks"
         lock_dir.mkdir(exist_ok=True, parents=True)
-        lock_path = lock_dir / f"{lock_name}.lock"
+        lock_path = validate_path(
+            lock_dir / f"{safe_lock_name}.lock",
+            self.storage_path,
+            must_exist=False,
+        )
 
         start_time = time.time()
         backoff = 0.01
@@ -156,6 +204,7 @@ class LocalStorageManager:
             try:
                 # Atomic file creation works on all platforms
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.write(fd, str(os.getpid()).encode("utf-8"))
                 logger.debug(f"Acquired lock: {lock_name}")
                 try:
                     yield  # Lock acquired
@@ -169,13 +218,12 @@ class LocalStorageManager:
                 break
             except FileExistsError:
                 # Lock is held by another process
+                if self._try_cleanup_stale_lock(lock_path, lock_name):
+                    continue
                 if time.time() - start_time > timeout:
-                    logger.warning(
-                        f"Could not acquire lock {lock_name} after {timeout}s"
-                    )
-                    # Degrade gracefully - continue without lock
-                    yield
-                    break
+                    raise TimeoutError(
+                        f"Could not acquire lock '{lock_name}' after {timeout}s"
+                    ) from None
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 0.5)  # Exponential backoff with cap
 
@@ -198,7 +246,7 @@ class LocalStorageManager:
         """
         timestamp = datetime.now(UTC)
         safe_function = sanitize_identifier(function_name)
-        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{safe_function}"
+        session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
 
         session = OptimizationSession(
             session_id=session_id,
@@ -229,7 +277,7 @@ class LocalStorageManager:
         self,
         session_id: str,
         config: dict[str, Any],
-        score: float,
+        score: float | None,
         metadata: dict[str, Any | None] | None = None,
         error: str | None = None,
     ) -> None:
@@ -239,7 +287,7 @@ class LocalStorageManager:
         Args:
             session_id: Session identifier
             config: Configuration that was tested
-            score: Score achieved with this configuration
+            score: Score achieved with this configuration (may be None when unavailable)
             metadata: Additional trial metadata
             error: Error message if trial failed
         """
@@ -264,12 +312,72 @@ class LocalStorageManager:
         session.updated_at = datetime.now(UTC).isoformat()
 
         # Update best score if this is better
-        if session.best_score is None or score > session.best_score:
-            session.best_score = score
-            session.best_config = config.copy()
+        if score is not None:
+            primary_objective = self._resolve_primary_objective_name(
+                session.optimization_config
+            )
+            is_minimize = is_minimization_objective(primary_objective)
+            if session.best_score is None:
+                is_better = True
+            elif is_minimize:
+                is_better = score < session.best_score
+            else:
+                is_better = score > session.best_score
+            if is_better:
+                session.best_score = score
+                session.best_config = config.copy()
 
         self._save_session(session)
         logger.debug(f"Added trial result to session {session_id}: score={score}")
+
+    @staticmethod
+    def _extract_objective_name_candidate(candidate: Any) -> str | None:
+        """Extract an objective name from a string or mapping candidate."""
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        if isinstance(candidate, dict):
+            name = candidate.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return None
+
+    @classmethod
+    def _extract_primary_name_from_list(cls, value: Any) -> str | None:
+        """Extract the first valid objective name from a list-like config field."""
+        if not (isinstance(value, list) and value):
+            return None
+        return cls._extract_objective_name_candidate(value[0])
+
+    @classmethod
+    def _extract_primary_name_from_schema(
+        cls, optimization_config: dict[str, Any | None]
+    ) -> str | None:
+        """Extract the primary objective name from objective_schema when present."""
+        objective_schema = optimization_config.get("objective_schema")
+        if not isinstance(objective_schema, dict):
+            return None
+        return cls._extract_primary_name_from_list(objective_schema.get("objectives"))
+
+    @classmethod
+    def _resolve_primary_objective_name(
+        cls,
+        optimization_config: dict[str, Any | None] | None,
+    ) -> str:
+        """Resolve primary objective name from stored optimization config."""
+        if not isinstance(optimization_config, dict):
+            return "score"
+
+        name = cls._extract_primary_name_from_list(
+            optimization_config.get("objectives")
+        )
+        if name:
+            return name
+
+        name = cls._extract_primary_name_from_schema(optimization_config)
+        if name:
+            return name
+
+        return "score"
 
     def finalize_session(
         self, session_id: str, status: str | None = None
@@ -362,7 +470,11 @@ class LocalStorageManager:
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session from storage."""
-        session_file = self.storage_path / "sessions" / f"{session_id}.json"
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
 
         if session_file.exists():
             try:
@@ -400,11 +512,11 @@ class LocalStorageManager:
 
         try:
             path_obj = Path(export_path).expanduser()
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
             base_dir = (
                 path_obj.parent if path_obj.is_absolute() else Path.cwd().resolve()
             )
             path_obj = validate_path(path_obj, base_dir, must_exist=False)
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
 
             # Convert session to dict for JSON serialization
             session_data = asdict(session)
@@ -445,7 +557,11 @@ class LocalStorageManager:
                 "improvement": None,
             }
 
-        scores = [trial.score for trial in session.trials if trial.error is None]
+        scores = [
+            trial.score
+            for trial in session.trials
+            if trial.error is None and trial.score is not None
+        ]
         successful_trials = len(
             [trial for trial in session.trials if trial.error is None]
         )

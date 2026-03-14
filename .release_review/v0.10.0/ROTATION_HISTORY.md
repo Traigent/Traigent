@@ -1,18 +1,27 @@
-# Rotation History: v0.10.0
+/home/nimrodbu/Traigent_enterprise/Traigent/.venv/lib/python3.12/site-packages/instructor/providers/gemini/client.py:6: FutureWarning:
 
-<!-- BEGIN AUTO-GENERATED ROTATION -->
-# Rotation Schedule: v0.10.0 (Round 4)
+All support for the `google.generativeai` package has ended. It will no longer be receiving
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
 
-Generated: 2026-01-10T09:46:00.971243Z
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+# Rotation Schedule: v0.10.0 (Round 2)
+
+Generated: 2026-02-14T01:03:44.612481Z
 
 | Category | Primary | Secondary | Spot-Check |
 |----------|---------|-----------|------------|
-| Security/Core | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 |
-| Integrations | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 |
-| Packaging/CI | Gemini 3.0 | Claude Opus 4.5 | GPT-5.2 |
-| Docs/Examples | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 |
-<!-- END AUTO-GENERATED ROTATION -->
+| Security/Core | GPT-5.3 | Gemini 3 Pro | Claude Opus 4.6 |
+| Integrations | Gemini 3 Pro | Claude Opus 4.6 | GPT-5.3 |
+| Packaging/CI | Claude Opus 4.6 | GPT-5.3 | Gemini 3 Pro |
+| Docs/Examples | GPT-5.3 | Gemini 3 Pro | Claude Opus 4.6 |
 
-## Component Mapping
-
-(Fill in or link the component mapping for this release.)
+Save to history? [y/N]: Traceback (most recent call last):
+  File "/home/nimrodbu/Traigent_enterprise/Traigent/.release_review/automation/rotation_scheduler.py", line 524, in <module>
+    main()
+  File "/home/nimrodbu/Traigent_enterprise/Traigent/.release_review/automation/rotation_scheduler.py", line 460, in main
+    save = input("Save to history? [y/N]: ").strip().lower()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+EOFError: EOF when reading a line

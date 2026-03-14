@@ -9,9 +9,18 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestProcessChatMessage:
     """Tests for chat message processing."""
+
+    @pytest.fixture(autouse=True)
+    def _force_local_mode(self, monkeypatch):
+        """Use local fallback mode so tools_used is populated."""
+        monkeypatch.setattr(
+            "tests.optimizer_validation.viewer.serve.CHAT_USE_CLI", False
+        )
 
     def test_chat_returns_valid_response_structure(self) -> None:
         """Chat responses must have 'response', 'tools_used', and 'mode' keys."""
@@ -96,6 +105,13 @@ class TestChatFallbackBehavior:
     These tests verify that when external dependencies fail,
     the chat system falls back gracefully rather than exposing errors.
     """
+
+    @pytest.fixture(autouse=True)
+    def _force_local_mode(self, monkeypatch):
+        """Use local fallback mode to avoid CLI subprocess hangs in CI."""
+        monkeypatch.setattr(
+            "tests.optimizer_validation.viewer.serve.CHAT_USE_CLI", False
+        )
 
     def test_fallback_does_not_expose_cli_errors(self) -> None:
         """CLI errors should not be exposed to users.

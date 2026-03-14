@@ -85,7 +85,7 @@ def test_version_package_metadata_not_found():
                 importlib.reload(version_module)
                 result = version_module.get_version()
                 # Should fall back to hardcoded version
-                assert result == "0.9.0"
+                assert result == "0.10.0"
 
     # Clean up
     if "TRAIGENT_USE_PACKAGE_METADATA" in os.environ:
@@ -104,7 +104,7 @@ def test_get_version_info():
     assert "patch" in info
     # Version should be 0.9.0 format
     assert info["major"] == "0"
-    assert info["minor"] == "9"
+    assert info["minor"] == "10"
     assert info["patch"] == "0"
 
 
@@ -306,31 +306,39 @@ async def test_executor_batch_execute_invalid_concurrency_type():
 # =============================================================================
 
 
-def test_local_storage_lock_timeout_graceful_degradation():
-    """Test acquire_lock degrades gracefully on timeout."""
-    import time
-
+def test_local_storage_lock_timeout_raises():
+    """Test acquire_lock raises TimeoutError when lock is held."""
     from traigent.storage.local_storage import LocalStorageManager
+    from traigent.utils.function_identity import sanitize_identifier
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         storage = LocalStorageManager(tmp_dir)
         lock_dir = storage.storage_path / ".locks"
         lock_dir.mkdir(exist_ok=True, parents=True)
 
-        # Create a lock file to simulate another process holding it
-        lock_path = lock_dir / "test_lock.lock"
+        # Create lock file using the sanitized name (matches what acquire_lock creates)
+        safe_name = sanitize_identifier("test_lock")
+        lock_path = lock_dir / f"{safe_name}.lock"
         lock_path.touch()
 
-        # Try to acquire with very short timeout - should degrade gracefully
-        start = time.time()
-        with storage.acquire_lock("test_lock", timeout=0.1):
-            elapsed = time.time() - start
-            # Should have waited and then yielded (graceful degradation)
-            assert elapsed >= 0.1
+        # Try to acquire with very short timeout - should raise TimeoutError
+        with pytest.raises(TimeoutError, match="Could not acquire lock"):
+            with storage.acquire_lock("test_lock", timeout=0.1):
+                pass  # Should never reach here
 
         # Clean up
         if lock_path.exists():
             lock_path.unlink()
+
+
+def test_local_storage_delete_session_validates_path():
+    """Test delete_session uses path validation."""
+    from traigent.storage.local_storage import LocalStorageManager
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        storage = LocalStorageManager(tmp_dir)
+        # Non-existent session should return False (not crash)
+        assert storage.delete_session("nonexistent_session_id") is False
 
 
 def test_local_storage_export_session_unsupported_format():

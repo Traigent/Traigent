@@ -69,10 +69,9 @@ class TestExecutionModeMatrix:
     ) -> None:
         """Test that unsupported modes raise ConfigurationError."""
         with pytest.raises(ConfigurationError, match="not yet supported"):
-            # Try to create a scenario with unsupported mode
-            from traigent.config.types import resolve_execution_mode
+            from traigent.config.types import validate_execution_mode
 
-            resolve_execution_mode(execution_mode)
+            validate_execution_mode(execution_mode)
 
     @pytest.mark.parametrize("execution_mode", REMOVED_MODES)
     @pytest.mark.unit
@@ -82,9 +81,9 @@ class TestExecutionModeMatrix:
     ) -> None:
         """Test that removed modes raise ConfigurationError."""
         with pytest.raises(ConfigurationError, match="No such mode"):
-            from traigent.config.types import resolve_execution_mode
+            from traigent.config.types import validate_execution_mode
 
-            resolve_execution_mode(execution_mode)
+            validate_execution_mode(execution_mode)
 
 
 class TestInvalidExecutionMode:
@@ -112,7 +111,7 @@ class TestInvalidExecutionMode:
             max_trials=1,
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
-                error_type=ConfigurationError,
+                error_type=ValueError,
             ),
             gist_template="invalid-mode -> {error_type()} | {status()}",
         )
@@ -202,10 +201,10 @@ class TestPrivacyMode:
     @pytest.mark.unit
     def test_privacy_mode_raises_configuration_error(self) -> None:
         """Test privacy mode raises ConfigurationError (removed)."""
-        from traigent.config.types import resolve_execution_mode
+        from traigent.config.types import validate_execution_mode
 
         with pytest.raises(ConfigurationError, match="No such mode"):
-            resolve_execution_mode("privacy")
+            validate_execution_mode("privacy")
 
 
 class TestHybridMode:
@@ -214,10 +213,10 @@ class TestHybridMode:
     @pytest.mark.unit
     def test_hybrid_mode_raises_configuration_error(self) -> None:
         """Test hybrid mode raises ConfigurationError (not yet supported)."""
-        from traigent.config.types import resolve_execution_mode
+        from traigent.config.types import validate_execution_mode
 
         with pytest.raises(ConfigurationError, match="not yet supported"):
-            resolve_execution_mode("hybrid")
+            validate_execution_mode("hybrid")
 
 
 class TestStandardMode:
@@ -226,10 +225,10 @@ class TestStandardMode:
     @pytest.mark.unit
     def test_standard_mode_raises_configuration_error(self) -> None:
         """Test standard mode raises ConfigurationError (removed)."""
-        from traigent.config.types import resolve_execution_mode
+        from traigent.config.types import validate_execution_mode
 
         with pytest.raises(ConfigurationError, match="No such mode"):
-            resolve_execution_mode("standard")
+            validate_execution_mode("standard")
 
 
 class TestCloudMode:
@@ -238,10 +237,10 @@ class TestCloudMode:
     @pytest.mark.unit
     def test_cloud_mode_raises_configuration_error(self) -> None:
         """Test cloud mode raises ConfigurationError (not yet supported)."""
-        from traigent.config.types import resolve_execution_mode
+        from traigent.config.types import validate_execution_mode
 
         with pytest.raises(ConfigurationError, match="not yet supported"):
-            resolve_execution_mode("cloud")
+            validate_execution_mode("cloud")
 
 
 class TestExecutionModeEdgeCases:

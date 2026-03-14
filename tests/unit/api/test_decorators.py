@@ -40,6 +40,10 @@ class TestOptimizeDecorator:
             return f"Result from {model} with temp {temperature}"
 
         assert isinstance(llm_function, OptimizedFunction)
+        assert llm_function.configuration_space == {
+            "model": ["gpt-3.5", "gpt-4"],
+            "temperature": [0.0, 0.5, 1.0],
+        }
 
     def test_decorator_with_default_config(self):
         """Test decorator with default configuration."""
@@ -52,6 +56,106 @@ class TestOptimizeDecorator:
             return batch_size * lr
 
         assert isinstance(training_function, OptimizedFunction)
+        assert training_function.default_config == {"batch_size": 32, "lr": 0.01}
+
+    def test_execution_bundle_passes_hybrid_api_transport(self):
+        """Execution bundle should preserve preconfigured transport objects."""
+        from traigent.api.decorators import ExecutionOptions
+
+        transport = Mock(name="hybrid_transport")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution=ExecutionOptions(
+                execution_mode="hybrid_api",
+                hybrid_api_transport=transport,
+            ),
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "hybrid_api"
+        assert sample_function.hybrid_api_transport is transport
+
+    def test_execution_bundle_passes_cloud_fallback_policy(self):
+        """Execution bundle should propagate cloud fallback policy to runtime."""
+        from traigent.api.decorators import ExecutionOptions
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution=ExecutionOptions(
+                execution_mode="cloud",
+                cloud_fallback_policy="auto",
+            ),
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "cloud"
+        assert sample_function.cloud_fallback_policy == "auto"
+
+    def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
+        """Direct runtime options should accept hybrid_api_transport."""
+        transport = Mock(name="hybrid_transport_direct")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution_mode="hybrid_api",
+            hybrid_api_transport=transport,
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.hybrid_api_transport is transport
+
+    def test_decorator_max_trials_reaches_optimized_function(self):
+        """Regression: max_trials from decorator must reach OptimizedFunction.
+
+        Bug: max_trials went into combined_settings via record_option but was
+        never extracted, so OptimizedFunction always got the default of 50.
+        """
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            max_trials=10,
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert (
+            sample_function.max_trials == 10
+        ), f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+
+    def test_decorator_accepts_algorithm_runtime_default(self):
+        """Decorator-level algorithm should become the optimize() default."""
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            algorithm="grid",
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.algorithm == "grid"
+
+    def test_decorator_accepts_deprecated_strategy_alias(self):
+        """strategy=... should map to algorithm=... with deprecation warning."""
+        with pytest.warns(DeprecationWarning, match="strategy"):
+
+            @optimize(
+                configuration_space={"x": [1, 2]},
+                strategy="grid",
+            )
+            def sample_function(x: int) -> int:
+                return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.algorithm == "grid"
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""
@@ -91,6 +195,20 @@ class TestOptimizeDecorator:
             return f"Using {model}"
 
         assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.cloud_fallback_policy == "never"
+
+    def test_decorator_accepts_cost_limit_runtime_override(self):
+        """cost_limit should be accepted as a runtime override key."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            cost_limit=5.0,
+        )
+        def ai_function(prompt: str) -> str:
+            return prompt
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.kwargs["cost_limit"] == 5.0
 
     def test_decorator_with_auto_optimize(self):
         """Test decorator with auto optimization enabled."""
@@ -518,6 +636,41 @@ class TestConstraintNormalization:
         @optimize(configuration_space=config_space)
         def constrained_func(temperature: float, model: str) -> str:
             return f"{model} at {temperature}"
+
+        assert isinstance(constrained_func, OptimizedFunction)
+
+    def test_decorator_validates_constraint_scope_at_definition_time(self):
+        """Out-of-scope TVAR references should raise during decoration."""
+        from traigent.api.constraints import ConstraintScopeError, when
+        from traigent.api.parameter_ranges import Choices, Range
+
+        model = Choices(["a", "b"], name="model")
+        budget = Range(1.0, 100.0, name="budget")
+
+        with pytest.raises(ConstraintScopeError, match="budget"):
+
+            @optimize(
+                configuration_space={"model": model},
+                constraints=[when(budget.lte(10)).then(model.equals("a"))],
+            )
+            def constrained_func(model: str) -> str:
+                return model
+
+    def test_scope_validation_accepts_inline_unnamed_parameter_ranges(self):
+        """Inline unnamed ranges should still resolve correctly by identity."""
+        from traigent.api.constraints import when
+        from traigent.api.parameter_ranges import Choices, Range
+
+        model = Choices(["a", "b"])
+        temperature = Range(0.0, 2.0)
+
+        @optimize(
+            model=model,
+            temperature=temperature,
+            constraints=[when(model.equals("a")).then(temperature.lte(0.7))],
+        )
+        def constrained_func(model: str, temperature: float) -> str:
+            return f"{model}:{temperature}"
 
         assert isinstance(constrained_func, OptimizedFunction)
 

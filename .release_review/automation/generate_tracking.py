@@ -1,367 +1,654 @@
 #!/usr/bin/env python3
-"""Generate fresh pre-release review tracking file.
-
-This script scans traigent/ and tests/ directories to create a new tracking
-file with accurate file counts, SHA256 hashes, and fresh evidence placeholders.
-
-Usage:
-    python generate_tracking.py --version v0.10.0
-    python generate_tracking.py --version v0.10.0 --output custom_path.md
-"""
+"""Initialize release-review v2 run workspace and slim tracking board."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
+import fnmatch
 import json
+import re
+import shutil
 import subprocess
-import sys
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
 
-# Priority scoring weights (same as protocol)
-WEIGHT_CENTRALITY = 0.40
-WEIGHT_SEVERITY = 0.35
-WEIGHT_LIKELIHOOD = 0.25
-
-# Default L/S/C scores for modules (can be overridden)
-MODULE_SCORES: dict[str, tuple[int, int, int]] = {
-    # (Likelihood, Severity, Centrality)
-    "integrations": (5, 5, 5),
-    "config": (4, 5, 5),
-    "core": (4, 5, 5),
-    "optimizers": (4, 5, 5),
-    "invokers": (4, 5, 5),
-    "storage": (4, 4, 5),
-    "utils": (4, 4, 5),
-    "evaluators": (4, 4, 5),
-    "api": (3, 4, 5),
-    "security": (4, 5, 3),
-    "metrics": (3, 4, 4),
-    "cli": (3, 3, 4),
-    "cloud": (4, 3, 3),
-    "agents": (3, 3, 3),
-    "adapters": (2, 3, 3),
-    "hooks": (3, 3, 2),
-    "analytics": (3, 2, 2),
-    "telemetry": (2, 2, 2),
-    "visualization": (2, 2, 2),
-    "tvl": (2, 2, 2),
-    "plugins": (2, 2, 2),
-    "experimental": (3, 2, 1),
+RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+ALL_FILE_REVIEW_ANGLES = (
+    "security_authz",
+    "correctness_regression",
+    "async_concurrency_performance",
+    "dto_api_contract",
+)
+DEFAULT_REVIEW_MODES: dict[str, dict[str, object]] = {
+    "strict": {
+        "required_review_types": ["primary", "secondary", "tertiary", "reconciliation"],
+        "required_angles": list(ALL_FILE_REVIEW_ANGLES),
+        "allow_previous_artifact_reuse": True,
+        "skip_if_file_unchanged_and_artifact_exists": True,
+        "single_model": False,
+    },
+    "quick": {
+        "required_review_types": ["primary"],
+        "required_angles": [
+            "security_authz",
+            "correctness_regression",
+            "async_concurrency_performance",
+        ],
+        "allow_previous_artifact_reuse": True,
+        "skip_if_file_unchanged_and_artifact_exists": True,
+        "single_model": True,
+    },
 }
 
 
-def compute_priority(l_score: int, s_score: int, c_score: int) -> int:
-    """Compute priority score (0-100) from L/S/C scores."""
-    raw = WEIGHT_CENTRALITY * c_score + WEIGHT_SEVERITY * s_score + WEIGHT_LIKELIHOOD * l_score
-    return round(raw * 20)
+def utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def get_file_hash(filepath: Path) -> str:
-    """Compute SHA256 hash of a file."""
-    sha256 = hashlib.sha256()
+def parse_iso_utc(value: str) -> datetime | None:
     try:
-        # Security: filepath comes from controlled directory traversal, not user input
-        with open(filepath, "rb") as f:  # noqa: S311 - safe: path from internal scan
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha256.update(chunk)
-        return sha256.hexdigest()[:12]  # First 12 chars for brevity
-    except (OSError, IOError):
-        return "ERROR"
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
-def count_lines(filepath: Path) -> int:
-    """Count lines in a file."""
+def git_short_sha() -> str:
     try:
-        # Security: filepath comes from controlled directory traversal, not user input
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:  # noqa: S311
-            return sum(1 for _ in f)
-    except (OSError, IOError):
-        return 0
-
-
-def get_git_info() -> tuple[str, str]:
-    """Get current git commit SHA and branch."""
-    try:
-        sha = subprocess.check_output(
+        result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
             text=True,
-        ).strip()
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        return sha, branch
+            check=True,
+        )
+        return result.stdout.strip()
     except subprocess.CalledProcessError:
-        return "UNKNOWN", "UNKNOWN"
+        return "unknown"
 
 
-def get_last_modified(filepath: Path) -> str:
-    """Get last modification date of a file."""
+def git_merge_base(base_branch: str) -> str | None:
     try:
-        mtime = filepath.stat().st_mtime
-        return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-    except OSError:
-        return "UNKNOWN"
+        result = subprocess.run(
+            ["git", "merge-base", base_branch, "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
 
 
-def scan_module(module_path: Path) -> dict:
-    """Scan a module directory and collect stats."""
-    files = list(module_path.rglob("*.py"))
-    total_lines = sum(count_lines(f) for f in files)
+def git_changed_files(base_branch: str) -> list[str]:
+    merge_base = git_merge_base(base_branch)
+    if not merge_base:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{merge_base}..HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
-    # Compute combined hash of all files
-    combined = hashlib.sha256()
-    for f in sorted(files):
-        combined.update(get_file_hash(f).encode())
 
-    # Get most recent modification
-    if files:
-        last_mod = max(get_last_modified(f) for f in files)
-    else:
-        last_mod = "N/A"
+def _matches_any(path: str, patterns: list[str]) -> bool:
+    if not patterns:
+        return True
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
+def normalize_repo_path(value: str) -> str:
+    normalized = value.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def load_scope_config() -> dict:
+    scope_file = Path(".release_review/scope.yml")
+    if not scope_file.exists():
+        return {}
+    data = yaml.safe_load(scope_file.read_text())
+    return data if isinstance(data, dict) else {}
+
+
+def resolve_review_mode_config(review_mode: str) -> dict[str, object]:
+    scope_config = load_scope_config()
+    configured_modes = scope_config.get("review_modes")
+    mode_name = review_mode or str(scope_config.get("default_review_mode") or "strict")
+    if mode_name not in DEFAULT_REVIEW_MODES:
+        mode_name = "strict"
+
+    merged = dict(DEFAULT_REVIEW_MODES[mode_name])
+    if isinstance(configured_modes, dict) and isinstance(configured_modes.get(mode_name), dict):
+        merged.update(configured_modes[mode_name])
+    merged["name"] = mode_name
+    return merged
+
+
+def git_file_unchanged_since(commit_sha: str, file_path: str) -> bool:
+    if not commit_sha.strip():
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--quiet", commit_sha, "HEAD", "--", file_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def iter_previous_run_dirs(runs_root: Path, current_release_id: str) -> list[Path]:
+    manifests: list[tuple[tuple[int, str], Path]] = []
+    for manifest_path in runs_root.glob("*/run_manifest.json"):
+        run_dir = manifest_path.parent
+        if run_dir.name == current_release_id:
+            continue
+        data = json.loads(manifest_path.read_text())
+        if not isinstance(data, dict):
+            continue
+        stamp = str(
+            data.get("generated_at_utc") or data.get("created_at_utc") or ""
+        ).strip()
+        parsed = parse_iso_utc(stamp) if stamp else None
+        sort_key = (1, parsed.isoformat()) if parsed else (0, stamp)
+        manifests.append((sort_key, run_dir))
+    manifests.sort(reverse=True)
+    return [item[1] for item in manifests]
+
+
+def artifact_covers_requirement(
+    payload: dict[str, object],
+    *,
+    file_path: str,
+    required_role: str,
+    required_angles: set[str],
+) -> set[str]:
+    artifact_file = normalize_repo_path(str(payload.get("file") or payload.get("file_path") or ""))
+    if artifact_file != normalize_repo_path(file_path):
+        return set()
+    artifact_role = str(payload.get("review_type") or "").strip().lower()
+    if artifact_role != required_role:
+        return set()
+    if str(payload.get("decision") or "").strip().lower() != "approved":
+        return set()
+
+    raw_angles = payload.get("angles_reviewed", [])
+    if not isinstance(raw_angles, list):
+        return set()
 
     return {
-        "path": str(module_path),
-        "file_count": len(files),
-        "line_count": total_lines,
-        "last_modified": last_mod,
-        "combined_hash": combined.hexdigest()[:12],
-        "files": [str(f.relative_to(module_path.parent.parent)) for f in files],
+        str(angle).strip()
+        for angle in raw_angles
+        if str(angle).strip() in required_angles
     }
 
 
-def scan_tests(tests_path: Path, module_name: str) -> dict:
-    """Scan test files for a specific module."""
-    # Look for tests in multiple locations
-    test_patterns = [
-        tests_path / "unit" / module_name,
-        tests_path / "unit" / f"test_{module_name}.py",
-        tests_path / "integration" / f"test_{module_name}*.py",
-    ]
+def _force_rereview_requested(file_path: str, force_patterns: list[str]) -> bool:
+    return bool(force_patterns) and _matches_any(file_path, force_patterns)
 
-    test_files = []
-    for pattern in test_patterns:
-        if pattern.is_dir():
-            test_files.extend(pattern.rglob("test_*.py"))
-        elif pattern.exists():
-            test_files.append(pattern)
-        elif "*" in str(pattern):
-            test_files.extend(pattern.parent.glob(pattern.name))
 
-    # Count test functions (approximate)
-    test_count = 0
-    for tf in test_files:
-        try:
-            content = tf.read_text(encoding="utf-8", errors="ignore")
-            test_count += content.count("def test_")
-            test_count += content.count("async def test_")
-        except (OSError, IOError):
-            pass
+def _source_release_id(previous_run_dir: Path) -> str:
+    manifest_path = previous_run_dir / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    return str(manifest.get("release_id") or previous_run_dir.name)
 
-    return {
-        "test_files": [str(f) for f in test_files],
-        "test_count": test_count,
+
+def _record_reused_artifact_coverage(
+    *,
+    pending: list[str],
+    force_patterns: list[str],
+    required_roles: set[str],
+    required_angles: set[str],
+    coverage: dict[str, dict[str, set[str]]],
+    reuse_rows: list[dict[str, object]],
+    source_release_id: str,
+    artifact_path: Path,
+    payload: dict[str, object],
+) -> None:
+    commit_sha = str(payload.get("commit_sha") or "").strip()
+    for file_path in pending:
+        if _force_rereview_requested(file_path, force_patterns):
+            continue
+        if not git_file_unchanged_since(commit_sha, file_path):
+            continue
+        for role in required_roles:
+            covered_angles = artifact_covers_requirement(
+                payload,
+                file_path=file_path,
+                required_role=role,
+                required_angles=required_angles,
+            )
+            new_angles = covered_angles - coverage[file_path][role]
+            if not new_angles:
+                continue
+            coverage[file_path][role].update(new_angles)
+            reuse_rows.append(
+                {
+                    "file": file_path,
+                    "review_type": role,
+                    "angles_reused": sorted(new_angles),
+                    "source_run_id": source_release_id,
+                    "source_artifact": str(artifact_path),
+                    "commit_sha": commit_sha,
+                }
+            )
+
+
+def _partition_pending_files(
+    *,
+    pending: list[str],
+    force_patterns: list[str],
+    required_roles: set[str],
+    required_angles: set[str],
+    coverage: dict[str, dict[str, set[str]]],
+) -> tuple[list[str], list[str]]:
+    skipped: list[str] = []
+    remaining: list[str] = []
+    for file_path in pending:
+        if _force_rereview_requested(file_path, force_patterns):
+            remaining.append(file_path)
+            continue
+        if all(required_angles.issubset(coverage[file_path][role]) for role in required_roles):
+            skipped.append(file_path)
+        else:
+            remaining.append(file_path)
+    return sorted(remaining), sorted(skipped)
+
+
+def build_reuse_plan(
+    runs_root: Path,
+    current_release_id: str,
+    review_scope_files: list[str],
+    review_mode_config: dict[str, object],
+    force_rereview: list[str],
+) -> tuple[list[str], list[str], list[dict[str, object]]]:
+    pending = sorted(set(normalize_repo_path(path) for path in review_scope_files))
+    if not pending:
+        return [], [], []
+
+    if not review_mode_config.get("allow_previous_artifact_reuse", True):
+        return pending, [], []
+
+    required_roles = {
+        str(item).strip().lower()
+        for item in review_mode_config.get("required_review_types", [])
+        if str(item).strip()
     }
-
-
-def generate_evidence_placeholder(generated_time: str) -> str:
-    """Generate a fresh evidence JSON placeholder."""
-    evidence = {
-        "format": "standard",
-        "generated": generated_time,
-        "commits": [],
-        "tests": {
-            "command": None,
-            "status": "NOT_RUN",
-            "passed": None,
-            "total": None,
-        },
-        "models": None,
-        "reviewer": None,
-        "timestamp": None,
-        "followups": None,
-        "accepted_risks": None,
+    required_angles = {
+        str(item).strip()
+        for item in review_mode_config.get("required_angles", [])
+        if str(item).strip()
     }
-    return json.dumps(evidence)
+    force_patterns = [pattern for pattern in force_rereview if pattern.strip()]
+    coverage: dict[str, dict[str, set[str]]] = {
+        file_path: {role: set() for role in required_roles} for file_path in pending
+    }
+    reuse_rows: list[dict[str, object]] = []
+
+    for previous_run_dir in iter_previous_run_dirs(runs_root, current_release_id):
+        source_release_id = _source_release_id(previous_run_dir)
+        for artifact_path in sorted((previous_run_dir / "file_reviews").rglob("*.json")):
+            payload = json.loads(artifact_path.read_text())
+            if not isinstance(payload, dict):
+                continue
+            _record_reused_artifact_coverage(
+                pending=pending,
+                force_patterns=force_patterns,
+                required_roles=required_roles,
+                required_angles=required_angles,
+                coverage=coverage,
+                reuse_rows=reuse_rows,
+                source_release_id=source_release_id,
+                artifact_path=artifact_path,
+                payload=payload,
+            )
+
+    remaining, skipped = _partition_pending_files(
+        pending=pending,
+        force_patterns=force_patterns,
+        required_roles=required_roles,
+        required_angles=required_angles,
+        coverage=coverage,
+    )
+    return remaining, skipped, reuse_rows
 
 
-def generate_tracking_file(
+def filter_review_scope_files(changed_files: list[str]) -> list[str]:
+    scope_file = Path(".release_review/scope.yml")
+    if not scope_file.exists():
+        return sorted(changed_files)
+
+    data = yaml.safe_load(scope_file.read_text())
+    if not isinstance(data, dict):
+        return sorted(changed_files)
+
+    include = [str(x) for x in data.get("include", [])]
+    exclude = [str(x) for x in data.get("exclude", [])]
+    shared_files = [str(x) for x in data.get("shared_files", [])]
+
+    scoped: list[str] = []
+    for file_path in changed_files:
+        if _matches_any(file_path, exclude):
+            continue
+        if file_path in shared_files:
+            scoped.append(file_path)
+            continue
+        if include and not _matches_any(file_path, include):
+            continue
+        scoped.append(file_path)
+
+    return sorted(scoped)
+
+
+def archive_tracking_file(path: Path) -> str | None:
+    if not path.exists():
+        return None
+
+    archive_dir = path.parent / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    archived = archive_dir / f"PRE_RELEASE_REVIEW_TRACKING_{suffix}.md"
+    shutil.move(str(path), str(archived))
+    return str(archived)
+
+
+def validate_release_id(release_id: str) -> str:
+    if not RELEASE_ID_PATTERN.fullmatch(release_id):
+        raise ValueError(
+            "release_id must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ "
+            "(alphanumeric, dot, underscore, hyphen only)"
+        )
+    return release_id
+
+
+def resolve_run_dir(output_root: str, release_id: str) -> tuple[Path, Path]:
+    root = Path(output_root).resolve()
+    run_dir = (root / release_id).resolve()
+    try:
+        run_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("resolved run directory escapes output root") from exc
+    return root, run_dir
+
+
+def resolve_inventory_path(run_dir: Path, filename: str) -> Path:
+    inventories_dir = (run_dir / "inventories").resolve()
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ValueError("inventory filename must not include directory components")
+    target = (inventories_dir / candidate).resolve()
+    try:
+        target.relative_to(inventories_dir)
+    except ValueError as exc:
+        raise ValueError("resolved inventory path escapes inventories directory") from exc
+    return target
+
+
+def resolve_run_child_path(run_dir: Path, filename: str) -> Path:
+    run_dir_resolved = run_dir.resolve()
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ValueError("run child filename must not include directory components")
+    target = (run_dir_resolved / candidate).resolve()
+    try:
+        target.relative_to(run_dir_resolved)
+    except ValueError as exc:
+        raise ValueError("resolved run child path escapes run directory") from exc
+    return target
+
+
+def write_inventory_text(run_dir: Path, filename: str, content: str) -> Path:
+    target = resolve_inventory_path(run_dir, filename)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    return target
+
+
+def render_tracking_board(
+    release_id: str,
     version: str,
-    repo_root: Path,
-    output_path: Path | None = None,
+    baseline_sha: str,
+    captain: str,
+    owner: str,
+    review_mode: str,
 ) -> str:
-    """Generate a fresh tracking file."""
-    now = datetime.now(timezone.utc)
-    timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    date_str = now.strftime("%Y%m%d")
+    return f"""# Pre-Release Review Tracking (Slim Board v3)
 
-    git_sha, git_branch = get_git_info()
+**Protocol Version**: 3
+**Status Source of Truth**: this board + `.release_review/runs/{release_id}/gate_results/verdict.json`
 
-    traigent_path = repo_root / "traigent"
-    tests_path = repo_root / "tests"
+## Active Run
 
-    # Scan all modules
-    modules = {}
-    for module_dir in sorted(traigent_path.iterdir()):
-        if module_dir.is_dir() and not module_dir.name.startswith("_"):
-            module_name = module_dir.name
-            modules[module_name] = scan_module(module_dir)
-            modules[module_name]["tests"] = scan_tests(tests_path, module_name)
+- Release ID: `{release_id}`
+- Version: `{version}`
+- Baseline SHA: `{baseline_sha}`
+- Captain: `{captain}`
+- Release owner: `{owner}`
+- Review mode: `{review_mode}`
+- Run root: `.release_review/runs/{release_id}/`
 
-    # Also scan root-level files
-    root_files = list(traigent_path.glob("*.py"))
+## Gate Status
 
-    # Build the markdown content
-    lines = []
+| Check | Status | Evidence |
+|---|---|---|
+| release-gate/lint-type | Not started | |
+| release-gate/tests-unit | Not started | |
+| release-gate/tests-integration | Not started | |
+| release-gate/security | Not started | |
+| release-gate/dependency-review | Not started | |
+| release-gate/codeql | Not started | |
+| release-gate/release-review-consistency | Not started | |
+| release-verdict/peer-review-completeness | Not started | `.release_review/runs/{release_id}/gate_results/verdict.json` |
 
-    # Header
-    lines.append(f"# Pre-Release Review Tracking (Traigent SDK {version})")
-    lines.append("")
-    lines.append(f"**Generated**: {timestamp}")
-    lines.append(f"**Generator**: generate_tracking.py v1.0")
-    lines.append(f"**Baseline commit**: {git_sha} ({git_branch})")
-    lines.append(f"**Total modules**: {len(modules)}")
-    lines.append(f"**Total files**: {sum(m['file_count'] for m in modules.values()) + len(root_files)}")
-    lines.append("")
-    lines.append("---")
-    lines.append("")
+## Component Board
 
-    # Roles section
-    lines.append("## Roles")
-    lines.append("")
-    lines.append("- Release captain: Claude Code (Opus 4.5)")
-    lines.append("- Human release owner (final sign-off): TBD")
-    lines.append("- Target release date: TBD")
-    lines.append(f"- Branch/tag: `release-review/{version}` (baseline: `{version}-rc1` @ {git_sha})")
-    lines.append(f"- Tracking file: `PRE_RELEASE_REVIEW_TRACKING_{version}_{date_str}.md`")
-    lines.append("")
+| Component | Priority | Owner | Secondary | Tertiary | Status | Gate | Primary Evidence | Secondary Evidence | Tertiary Evidence | Reconciliation Evidence | Approved At |
+|---|---:|---|---|---|---|---|---|---|---|---|---|
+| Public API + Safety | P0 | - | - | - | Not started | Pending | | | | | |
+| Core Orchestration + Config | P0 | - | - | - | Not started | Pending | | | | | |
+| Integrations + Invokers | P1 | - | - | - | Not started | Pending | | | | | |
+| Optimizers + Evaluators | P1 | - | - | - | Not started | Pending | | | | | |
+| Packaging + CI | P1 | - | - | - | Not started | Pending | | | | | |
+| Docs + Release Ops | P2 | - | - | - | Not started | Pending | | | | | |
 
-    # File Manifest
-    lines.append("## File Manifest (traigent/)")
-    lines.append("")
-    lines.append("| Module | Files | Lines | Last Modified | Hash |")
-    lines.append("|--------|-------|-------|---------------|------|")
+## Decision Summary
 
-    for name, info in sorted(modules.items()):
-        lines.append(
-            f"| `traigent/{name}/` | {info['file_count']} | {info['line_count']:,} | "
-            f"{info['last_modified']} | `{info['combined_hash']}` |"
-        )
+- Verdict: `NOT_READY`
+- Unresolved P0: 0
+- Unresolved P1: 0
+- Failed required checks: 0
+- Failed required reviews: 0
+- Waivers: 0
 
-    lines.append("")
+## Review Notes Log
 
-    # Test Coverage Mapping
-    lines.append("## Test Coverage Mapping")
-    lines.append("")
-    lines.append("| Component | Test Files | Test Functions |")
-    lines.append("|-----------|------------|----------------|")
+- `{utc_now()}`: Run initialized.
+"""
 
-    for name, info in sorted(modules.items()):
-        test_info = info.get("tests", {})
-        test_file_count = len(test_info.get("test_files", []))
-        test_count = test_info.get("test_count", 0)
-        lines.append(f"| `traigent/{name}/` | {test_file_count} | {test_count} |")
 
-    lines.append("")
+def write_inventories(run_dir: Path, base_branch: str) -> list[str]:
+    inventories = run_dir / "inventories"
+    inventories.mkdir(parents=True, exist_ok=True)
 
-    # SDK Runtime Components
-    lines.append("## SDK Runtime Components")
-    lines.append("")
-    lines.append("| Component | Priority | L/S/C | Files | Scope | Status | Evidence |")
-    lines.append("|-----------|----------|-------|-------|-------|--------|----------|")
+    src_files: list[str] = []
+    for root in ("traigent", "traigent_validation"):
+        root_path = Path(root)
+        if root_path.exists():
+            src_files.extend(str(path) for path in root_path.rglob("*.py"))
 
-    # Sort by priority (descending)
-    sorted_modules = sorted(
-        modules.items(),
-        key=lambda x: compute_priority(*MODULE_SCORES.get(x[0], (2, 2, 2))),
-        reverse=True,
+    test_files = (
+        sorted(str(path) for path in Path("tests").rglob("*.py"))
+        if Path("tests").exists()
+        else []
     )
 
-    for name, info in sorted_modules:
-        l, s, c = MODULE_SCORES.get(name, (2, 2, 2))
-        priority = compute_priority(l, s, c)
-        evidence = generate_evidence_placeholder(timestamp)
-        lines.append(
-            f"| {name.capitalize()} | {priority} | {l}/{s}/{c} | {info['file_count']} | "
-            f"`traigent/{name}/` | **Not started** | {evidence} |"
-        )
+    src_files = sorted(src_files)
+    write_inventory_text(
+        run_dir,
+        "src_files.txt",
+        "\n".join(src_files) + ("\n" if src_files else ""),
+    )
+    write_inventory_text(
+        run_dir,
+        "tests_files.txt",
+        "\n".join(test_files) + ("\n" if test_files else ""),
+    )
 
-    lines.append("")
-
-    # Root-level files
-    if root_files:
-        lines.append("## Root-Level Files (traigent/*.py)")
-        lines.append("")
-        lines.append("| File | Lines | Hash |")
-        lines.append("|------|-------|------|")
-        for f in sorted(root_files):
-            lines.append(f"| `{f.name}` | {count_lines(f)} | `{get_file_hash(f)}` |")
-        lines.append("")
-
-    # Review Notes Log
-    lines.append("## Review Notes Log (append-only)")
-    lines.append("")
-    lines.append(f"### {version} Review - NOT STARTED")
-    lines.append("")
-    lines.append(f"- {timestamp}: **Tracking file generated** — Fresh tracking file created with file manifest.")
-    lines.append("")
-
-    content = "\n".join(lines)
-
-    # Write to file if output path provided
-    if output_path:
-        output_path.write_text(content, encoding="utf-8")
-        print(f"Generated: {output_path}")
-
-    return content
+    changed_files = git_changed_files(base_branch)
+    review_scope_files = filter_review_scope_files(changed_files)
+    write_inventory_text(
+        run_dir,
+        "changed_files.txt",
+        "\n".join(sorted(changed_files)) + ("\n" if changed_files else ""),
+    )
+    write_inventory_text(
+        run_dir,
+        "review_scope_files.txt",
+        "\n".join(review_scope_files) + ("\n" if review_scope_files else ""),
+    )
+    return review_scope_files
 
 
-def main():
+def write_run_manifest(
+    run_dir: Path,
+    release_id: str,
+    version: str,
+    base_branch: str,
+    baseline_sha: str,
+    captain: str,
+    owner: str,
+    review_mode: str,
+    force_rereview: list[str],
+) -> None:
+    payload = {
+        "release_id": release_id,
+        "version": version,
+        "base_branch": base_branch,
+        "baseline_sha": baseline_sha,
+        "captain": captain,
+        "release_owner": owner,
+        "review_mode": review_mode,
+        "force_rereview": force_rereview,
+        "protocol_version": 3,
+        "generated_at_utc": utc_now(),
+    }
+    resolve_run_child_path(run_dir, "run_manifest.json").write_text(
+        json.dumps(payload, indent=2) + "\n"
+    )
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate fresh pre-release review tracking file"
+        description="Generate release-review v3 tracking and workspace"
     )
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--release-id", required=True)
+    parser.add_argument("--base-branch", default="main")
+    parser.add_argument("--captain", default="Codex")
+    parser.add_argument("--owner", default="@release-owner")
+    parser.add_argument("--output-root", default=".release_review/runs")
+    parser.add_argument("--review-mode", choices=["strict", "quick"], default="strict")
     parser.add_argument(
-        "--version",
-        required=True,
-        help="Release version (e.g., v0.10.0)",
+        "--force-rereview",
+        action="append",
+        default=[],
+        help="Repeatable glob pattern; matching files are never skipped via artifact reuse.",
     )
-    parser.add_argument(
-        "--output",
-        help="Output file path (default: auto-generated with timestamp)",
-    )
-    parser.add_argument(
-        "--repo-root",
-        default=".",
-        help="Repository root directory",
-    )
-
+    parser.add_argument("--no-archive", action="store_true")
     args = parser.parse_args()
 
-    repo_root = Path(args.repo_root).resolve()
+    release_id = validate_release_id(args.release_id)
+    release_review_dir = Path(".release_review")
+    tracking_file = release_review_dir / "PRE_RELEASE_REVIEW_TRACKING.md"
 
-    # Generate output path if not specified
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        date_str = datetime.now().strftime("%Y%m%d")
-        output_path = (
-            repo_root / ".release_review" /
-            f"PRE_RELEASE_REVIEW_TRACKING_{args.version}_{date_str}.md"
+    if not args.no_archive:
+        archived = archive_tracking_file(tracking_file)
+        if archived:
+            print(f"Archived previous tracking file: {archived}")
+
+    _, run_dir = resolve_run_dir(args.output_root, release_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "gate_results").mkdir(parents=True, exist_ok=True)
+    (run_dir / "components").mkdir(parents=True, exist_ok=True)
+    (run_dir / "file_reviews").mkdir(parents=True, exist_ok=True)
+    (run_dir / "waivers").mkdir(parents=True, exist_ok=True)
+
+    baseline_sha = git_short_sha()
+    review_mode_config = resolve_review_mode_config(args.review_mode)
+
+    review_scope_files = write_inventories(run_dir, args.base_branch)
+    pending_files, skipped_files, reuse_rows = build_reuse_plan(
+        Path(args.output_root).resolve(),
+        release_id,
+        review_scope_files,
+        review_mode_config,
+        args.force_rereview,
+    )
+    write_inventory_text(
+        run_dir,
+        "review_pending_files.txt",
+        "\n".join(pending_files) + ("\n" if pending_files else ""),
+    )
+    write_inventory_text(
+        run_dir,
+        "review_skipped_files.txt",
+        "\n".join(skipped_files) + ("\n" if skipped_files else ""),
+    )
+    write_inventory_text(
+        run_dir,
+        "reused_file_review_artifacts.json",
+        json.dumps(reuse_rows, indent=2) + "\n",
+    )
+    write_run_manifest(
+        run_dir=run_dir,
+        release_id=release_id,
+        version=args.version,
+        base_branch=args.base_branch,
+        baseline_sha=baseline_sha,
+        captain=args.captain,
+        owner=args.owner,
+        review_mode=str(review_mode_config["name"]),
+        force_rereview=[normalize_repo_path(pattern) for pattern in args.force_rereview],
+    )
+
+    review_log_template = Path(".release_review/templates/REVIEW_LOG.md")
+    review_log_path = run_dir / "REVIEW_LOG.md"
+    if review_log_template.exists():
+        review_log_path.write_text(
+            review_log_template.read_text()
+            .replace("<release_id>", release_id)
+            .replace("<version>", args.version)
+            .replace("<sha>", baseline_sha)
+            .replace("<timestamp>", utc_now())
         )
 
-    generate_tracking_file(args.version, repo_root, output_path)
+    tracking_file.write_text(
+        render_tracking_board(
+            release_id=release_id,
+            version=args.version,
+            baseline_sha=baseline_sha,
+            captain=args.captain,
+            owner=args.owner,
+            review_mode=str(review_mode_config["name"]),
+        )
+    )
 
-    # Print summary
-    print(f"\nTo activate this tracking file:")
-    print(f"  cd {repo_root / '.release_review'}")
-    print(f"  ln -sf {output_path.name} PRE_RELEASE_REVIEW_TRACKING.md")
+    (release_review_dir / "CURRENT_RUN").write_text(f"{release_id}\n")
+
+    print(f"Tracking board created: {tracking_file}")
+    print(f"Run directory created: {run_dir}")
+    print(f"Review mode: {review_mode_config['name']}")
+    print(f"Pending review files: {len(pending_files)}")
+    print(f"Skipped via artifact reuse: {len(skipped_files)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

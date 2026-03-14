@@ -7,12 +7,14 @@ for optimization experiments.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
@@ -335,18 +337,29 @@ class TrialOperations:
         try:
             # Check if there's a running event loop
             try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running loop, use new one
-                loop = None
+                asyncio.get_running_loop()  # Raises RuntimeError if no loop running
+                # Loop is running (e.g., in Jupyter, async frameworks).
+                # CRITICAL: run_coroutine_threadsafe().result() DEADLOCKS if called
+                # from the same thread as the running loop — the loop cannot process
+                # the scheduled coroutine while blocked on .result().
+                #
+                # Solution: execute in a separate thread with its own event loop.
 
-            if loop:
-                # We're in an async context - schedule on existing loop
-                # Using run_coroutine_threadsafe prevents deadlocks
-                future = asyncio.run_coroutine_threadsafe(_register_async(), loop)
-                return future.result(timeout=60)
-            else:
-                # No async context, run directly
+                def _run_in_new_loop() -> bool:
+                    """Run the async function in a fresh event loop."""
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_register_async())
+                    finally:
+                        new_loop.close()
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result(timeout=60)
+
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run()
                 return asyncio.run(_register_async())
         except Exception:
             logger.exception(
@@ -358,7 +371,7 @@ class TrialOperations:
             return False
 
     def _extract_measures_from_metrics(
-        self, metrics: dict[str, float]
+        self, metrics: dict[str, Any]
     ) -> tuple[Any, Any, dict[str, Any]]:
         """Extract measures and summary_stats from metrics dict.
 
@@ -428,7 +441,8 @@ class TrialOperations:
                 measure_json = json.dumps(measures[0], indent=2)[:500]
                 logger.debug(f"  Full first measure: {measure_json}")
         else:
-            logger.warning(f"⚠️ No measures found for trial {trial_id}")
+            # measures are optional metadata; don't surface as a warning to users.
+            logger.debug("No measures provided for trial %s (optional)", trial_id)
 
     def _log_summary_stats_debug(self, trial_id: str, summary_stats: Any) -> None:
         """Log debug information for summary_stats."""
@@ -448,7 +462,8 @@ class TrialOperations:
                         else:
                             logger.debug(f"    - {cost_key}: MISSING")
         else:
-            logger.warning(f"⚠️ No summary_stats found for trial {trial_id}")
+            # summary_stats is optional metadata; don't surface as a warning to users.
+            logger.debug("No summary_stats provided for trial %s (optional)", trial_id)
 
     def _create_localhost_connector(self) -> Any:
         """Create connector for localhost connections."""
@@ -517,7 +532,7 @@ class TrialOperations:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-        metrics: dict[str, float],
+        metrics: dict[str, Any],
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
@@ -552,14 +567,27 @@ class TrialOperations:
             backend_status = self.client._map_to_backend_status(status)
             mode = self.client._normalize_execution_mode(execution_mode)
 
-            # Extract measures and summary_stats from metrics
+            # Extract transport-only fields before validating trial metrics.
             measures, summary_stats, clean_metrics = (
                 self._extract_measures_from_metrics(metrics)
             )
 
+            # Validate key naming and cardinality for numeric metrics while
+            # preserving backward compatibility with existing payload shapes.
+            validated_metrics: dict[str, Any] = clean_metrics
+            try:
+                validated_metrics = dict(MeasuresDict(clean_metrics))
+            except (TypeError, ValueError) as validation_error:
+                logger.warning(
+                    "Metrics validation warning for trial %s: %s. "
+                    "Submitting unvalidated numeric metrics for backward compatibility.",
+                    trial_id,
+                    validation_error,
+                )
+
             # Build result data
             result_data = self._build_trial_result_data(
-                trial_id, config, clean_metrics, backend_status, mode
+                trial_id, config, validated_metrics, backend_status, mode
             )
 
             # Add measures and summary_stats at the top level if present

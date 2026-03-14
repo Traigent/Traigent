@@ -17,8 +17,11 @@ from traigent.api.parameter_ranges import (
     LogRange,
     ParameterRange,
     Range,
+    is_float_range_config_dict,
     is_inline_param_definition,
+    is_int_range_config_dict,
     is_parameter_range,
+    is_parameter_range_config_dict,
     normalize_config_value,
     normalize_configuration_space,
     normalize_parameter_value,
@@ -131,6 +134,14 @@ class TestRange:
         with pytest.raises(AttributeError):
             r.low = 0.5  # type: ignore[misc]
 
+    def test_range_config_type_guard(self):
+        """Float range config values should narrow correctly at runtime."""
+        simple = Range(0.0, 1.0).to_config_value()
+        advanced = Range(0.0, 1.0, step=0.1).to_config_value()
+
+        assert not is_float_range_config_dict(simple)
+        assert is_float_range_config_dict(advanced)
+
 
 class TestIntRange:
     """Tests for IntRange class."""
@@ -167,6 +178,14 @@ class TestIntRange:
         config = r.to_config_value()
         assert isinstance(config, dict)
         assert config["log"] is True
+
+    def test_int_range_config_type_guard(self):
+        """Int range config values should narrow correctly at runtime."""
+        simple = IntRange(1, 10).to_config_value()
+        advanced = IntRange(1, 10, step=1).to_config_value()
+
+        assert not is_int_range_config_dict(simple)
+        assert is_int_range_config_dict(advanced)
 
     def test_int_range_type_validation_float_low(self):
         """Test validation: bounds must be integers."""
@@ -288,6 +307,11 @@ class TestChoices:
         """Test choices converts to list."""
         c = Choices(["a", "b", "c"])
         assert c.to_config_value() == ["a", "b", "c"]
+
+    def test_parameter_range_config_dict_guard_excludes_choices(self):
+        """Generic config guard should not classify choice lists as dict values."""
+        config = Choices(["a", "b", "c"]).to_config_value()
+        assert not is_parameter_range_config_dict(config)
 
     def test_choices_to_list(self):
         """Test to_list() method."""

@@ -15,9 +15,7 @@ from traigent.core.optimized_function import OptimizedFunction
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
 from traigent.optimizers.base import BaseOptimizer
-from traigent.storage.local_storage import (
-    LocalStorageManager,
-)
+from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.exceptions import OptimizationError
 
 
@@ -379,6 +377,35 @@ class TestDeduplication:
             assert len(filtered) == 3  # All configs allowed
             assert orchestrator.cache_policy_handler.configs_deduplicated == 0
 
+    def test_local_storage_respects_minimization_objective_for_best_score(self):
+        """Local session best score should respect minimize objective direction."""
+        storage = LocalStorageManager(tempfile.mkdtemp())
+        session_id = storage.create_session(
+            function_name="cost_fn",
+            optimization_config={"objectives": ["total_cost"]},
+        )
+
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "a"},
+            score=0.5,
+        )
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "b"},
+            score=0.8,
+        )
+        storage.add_trial_result(
+            session_id=session_id,
+            config={"model": "c"},
+            score=0.3,
+        )
+
+        session = storage.load_session(session_id)
+        assert session is not None
+        assert session.best_score == pytest.approx(0.3)
+        assert session.best_config == {"model": "c"}
+
 
 class TestSafeguardTelemetry:
     """Test safeguards telemetry in optimization results."""
@@ -441,7 +468,7 @@ class TestSafeguardTelemetry:
 class TestCIApproval:
     """Test CI/CD approval gates."""
 
-    def test_ci_detection(self):
+    def test_ci_detection(self, tmp_path: Path):
         """Test CI environment detection."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -450,7 +477,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Test various CI environment variables (10 providers)
@@ -476,7 +504,7 @@ class TestCIApproval:
 
                 assert "CI/CD Approval Required" in str(exc.value)
 
-    def test_environment_approval(self):
+    def test_environment_approval(self, tmp_path: Path):
         """Test approval via environment variables."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -485,7 +513,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Test with CI environment and approval
@@ -500,7 +529,7 @@ class TestCIApproval:
             result = func._check_ci_approval()  # Should not raise
             assert result is None  # Successful approval returns None
 
-    def test_mock_mode_skips_ci_approval(self):
+    def test_mock_mode_skips_ci_approval(self, tmp_path: Path):
         """Mock mode should bypass CI approval gate."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -509,7 +538,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         with patch.dict(
@@ -580,7 +610,7 @@ class TestCIApproval:
 
                 assert "CI/CD Approval Required" in str(exc.value)
 
-    def test_hmac_token_validation(self):
+    def test_hmac_token_validation(self, tmp_path: Path):
         """Test HMAC token signature validation."""
         import base64
         import hashlib
@@ -593,7 +623,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Create token with valid HMAC signature
@@ -615,18 +646,22 @@ class TestCIApproval:
             "signature": signature,
         }
 
-        token_file = Path("/tmp/approval.token")
+        token_file = tmp_path / "approval.token"
         with open(token_file, "w") as f:
             json.dump(token_data, f)
 
         # Test with CI environment and valid HMAC token
         with patch.dict(
-            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret"}
+            os.environ,
+            {
+                "CI": "true",
+                "TRAIGENT_APPROVAL_SECRET": "test_secret",  # pragma: allowlist secret
+            },
         ):
             result = func._check_ci_approval()  # Should not raise
             assert result is None  # HMAC approval returns None
 
-    def test_invalid_hmac_signature(self):
+    def test_invalid_hmac_signature(self, tmp_path: Path):
         """Test that invalid HMAC signatures are rejected."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -635,7 +670,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Create token with invalid signature
@@ -646,7 +682,7 @@ class TestCIApproval:
             "signature": "invalid_signature",
         }
 
-        token_file = Path("/tmp/approval.token")
+        token_file = tmp_path / "approval.token"
         with open(token_file, "w") as f:
             json.dump(token_data, f)
 
@@ -655,14 +691,14 @@ class TestCIApproval:
             os.environ,
             {
                 "CI": "true",
-                "TRAIGENT_APPROVAL_SECRET": "test_secret",
+                "TRAIGENT_APPROVAL_SECRET": "test_secret",  # pragma: allowlist secret
                 "TRAIGENT_MOCK_LLM": "false",
             },
         ):
             with pytest.raises(OptimizationError):
                 func._check_ci_approval()
 
-    def test_non_ci_environment_no_approval_needed(self):
+    def test_non_ci_environment_no_approval_needed(self, tmp_path: Path):
         """Test that non-CI environments don't need approval."""
         func = OptimizedFunction(
             func=lambda x: x,
@@ -671,7 +707,8 @@ class TestCIApproval:
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
-            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+            is_edge_analytics_mode=lambda: True,
+            get_local_storage_path=lambda: str(tmp_path),
         )
 
         # Test with no CI environment variables

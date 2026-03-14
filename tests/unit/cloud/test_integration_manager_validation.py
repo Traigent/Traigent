@@ -191,3 +191,30 @@ async def test_start_cloud_integration_raises_when_mcp_not_initialized(monkeypat
 
     with pytest.raises(RuntimeError, match="MCP client not initialized"):
         await manager._start_cloud_integration(mock_request, "test-integration-id")
+
+
+def test_get_integration_statistics_returns_snapshot():
+    """Returned stats should not expose the mutable internal dict."""
+    manager = IntegrationManager()
+    manager._integration_stats["total_integrations"] = 1
+
+    stats = manager.get_integration_statistics()
+    stats["total_integrations"] = 99
+
+    assert manager._integration_stats["total_integrations"] == 1
+
+
+def test_get_active_integrations_returns_copy():
+    """Returned active integration mapping should be detached from internal state."""
+    manager = IntegrationManager()
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "privacy",
+        }
+    }
+
+    snapshot = manager.get_active_integrations()
+    snapshot.clear()
+
+    assert "integration-1" in manager._active_integrations

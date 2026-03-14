@@ -9,6 +9,7 @@ and agent-based remote execution models.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -37,6 +38,33 @@ class TrialStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+@dataclass
+class SessionObjectiveDefinition:
+    """Typed objective definition for interactive cloud sessions."""
+
+    metric: str
+    direction: str | None = None
+    band: dict[str, Any] | None = None
+    test: str | None = None
+    alpha: float | None = None
+    weight: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate mutually exclusive objective modes."""
+        if self.band is not None and self.direction is not None:
+            raise ValueError(
+                "SessionObjectiveDefinition: 'band' and 'direction' are mutually exclusive."
+            )
+        if self.band is None and self.direction is None:
+            raise ValueError(
+                "SessionObjectiveDefinition: one of 'band' or 'direction' must be provided."
+            )
+        if (self.test is not None or self.alpha is not None) and self.band is None:
+            raise ValueError(
+                "SessionObjectiveDefinition: 'test' and 'alpha' require 'band' to be set."
+            )
 
 
 @dataclass
@@ -152,9 +180,15 @@ class SessionCreationRequest:
 
     function_name: str | None = None
     configuration_space: dict[str, Any] | None = None
-    objectives: list[str] | None = None
+    objectives: Sequence[str | SessionObjectiveDefinition | dict[str, Any]] | None = (
+        None
+    )
     dataset_metadata: dict[str, Any] | None = None  # Size, type, characteristics
     max_trials: int | None = 10  # Changed default to 10 and allow None
+    budget: dict[str, Any] | None = None
+    constraints: dict[str, Any] | None = None
+    default_config: dict[str, Any] | None = None
+    promotion_policy: dict[str, Any] | None = None
     optimization_strategy: dict[str, Any] | None = None
     user_id: str | None = None
     billing_tier: str = "standard"
@@ -205,6 +239,7 @@ class NextTrialResponse:
     suggestion: TrialSuggestion | None
     should_continue: bool
     reason: str | None = None
+    stop_reason: str | None = None
     session_status: OptimizationSessionStatus = OptimizationSessionStatus.ACTIVE
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -229,6 +264,7 @@ class OptimizationFinalizationResponse:
     successful_trials: int
     total_duration: float
     cost_savings: float
+    stop_reason: str | None = None
     convergence_history: list[dict[str, Any]] | None = None
     full_history: list[TrialResultSubmission] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

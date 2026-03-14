@@ -14,6 +14,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -26,6 +27,19 @@ logger = get_logger(__name__)
 
 # Storage file name constant
 _USAGE_STORAGE_FILENAME = "usage.json"
+
+
+def _read_json_file(path: Path) -> Any:
+    """Read JSON data from disk."""
+    with path.open() as file_obj:
+        return json.load(file_obj)
+
+
+def _write_json_file(path: Path, data: Any) -> None:
+    """Write JSON data to disk."""
+    with path.open("w") as file_obj:
+        json.dump(data, file_obj, indent=2)
+
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
 
@@ -481,8 +495,7 @@ class UsageTracker:
                 "usage_records": [record.to_dict() for record in self._usage_records],
                 "last_updated": datetime.now(UTC).isoformat(),
             }
-            with open(self.storage_path, "w") as f:
-                json.dump(data, f, indent=2)
+            await asyncio.to_thread(_write_json_file, self.storage_path, data)
         except Exception as e:
             logger.error(f"Failed to save usage data: {e}")
 
@@ -805,10 +818,11 @@ class CostTracker:
 
         def _on_task_done(fut: asyncio.Task[Any]) -> None:
             self._background_tasks.discard(fut)
+            if fut.cancelled():
+                logger.debug("Cost tracker background task cancelled")
+                return
             try:
                 fut.result()
-            except asyncio.CancelledError:  # pragma: no cover - cancellation path
-                logger.debug("Cost tracker background task cancelled")
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("❌ Cost tracker background task failed", exc_info=exc)
 
@@ -1095,10 +1109,8 @@ class CostTracker:
         """Stop automatic synchronization."""
         if self._sync_task and not self._sync_task.done():
             self._sync_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._sync_task
-            except asyncio.CancelledError:
-                pass
 
         logger.info("Cost tracking sync stopped")
 
@@ -1120,7 +1132,7 @@ class CostTracker:
                 await asyncio.sleep(self.config.sync_interval)
                 await self._sync_with_server()
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 logger.error(f"Sync loop error: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
@@ -1209,13 +1221,14 @@ class CostTracker:
 
         try:
             cache_path = Path(self.config.cost_cache_file)
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(
+                cache_path.parent.mkdir, parents=True, exist_ok=True
+            )
 
             # Load existing cache
             cached_items = []
-            if cache_path.exists():
-                with open(cache_path) as f:
-                    cached_items = json.load(f)
+            if await asyncio.to_thread(cache_path.exists):
+                cached_items = await asyncio.to_thread(_read_json_file, cache_path)
 
             # Add new item
             cached_items.append(
@@ -1235,8 +1248,7 @@ class CostTracker:
             )
 
             # Save cache
-            with open(cache_path, "w") as f:
-                json.dump(cached_items, f, indent=2)
+            await asyncio.to_thread(_write_json_file, cache_path, cached_items)
 
         except Exception as e:
             logger.warning(f"Failed to cache cost item: {e}")

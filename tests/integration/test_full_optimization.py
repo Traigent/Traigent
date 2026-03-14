@@ -134,7 +134,7 @@ class TestFullOptimizationWorkflow:
 
         # Patch evaluator
         async def patched_evaluate_single(
-            evaluator_self, func, config, example, example_index
+            evaluator_self, func, config, example, example_index, **kwargs
         ):
             nonlocal current_config
             old_config = current_config.copy()
@@ -142,7 +142,7 @@ class TestFullOptimizationWorkflow:
 
             try:
                 result = await original_method(
-                    evaluator_self, func, config, example, example_index
+                    evaluator_self, func, config, example, example_index, **kwargs
                 )
                 return result
             finally:
@@ -163,7 +163,14 @@ class TestFullOptimizationWorkflow:
 
             # Verify results
             assert len(result.trials) == 5
-            assert result.best_score >= 0
+            if result.best_score is None:
+                session_summary = result.metadata.get("session_summary", {})
+                assert (
+                    session_summary.get("reason_code") == "NO_RANKING_ELIGIBLE_TRIALS"
+                )
+                assert result.best_config == {}
+            else:
+                assert result.best_score >= 0
             assert result.algorithm == "RandomSearchOptimizer"
 
             # Should have tried different configurations
@@ -249,7 +256,9 @@ class TestFullOptimizationWorkflow:
         assert "algorithms" in info
         assert "features" in info
         assert "integrations" in info
-        assert info["version"] == "0.9.0"
+        from traigent._version import __version__
+
+        assert info["version"] == __version__
         assert "grid" in info["algorithms"]
         assert "random" in info["algorithms"]
 

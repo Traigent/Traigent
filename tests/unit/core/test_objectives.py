@@ -34,8 +34,13 @@ class TestObjectiveDefinition:
 
     def test_negative_weight_validation(self):
         """Test that negative weights are rejected."""
-        with pytest.raises(ValueError, match="Weight must be non-negative"):
+        with pytest.raises(ValueError, match="Weight must be positive"):
             ObjectiveDefinition(name="cost", orientation="minimize", weight=-0.5)
+
+    def test_zero_weight_validation(self):
+        """Test that zero weights are rejected."""
+        with pytest.raises(ValueError, match="Weight must be positive"):
+            ObjectiveDefinition(name="cost", orientation="minimize", weight=0.0)
 
     def test_invalid_orientation_validation(self):
         """Test that invalid orientations are rejected."""
@@ -166,16 +171,6 @@ class TestObjectiveSchema:
         ]
 
         with pytest.raises(ValueError, match="Duplicate objective names found"):
-            ObjectiveSchema.from_objectives(objectives)
-
-    def test_zero_weights_validation(self):
-        """Test that zero total weight is rejected."""
-        objectives = [
-            ObjectiveDefinition("accuracy", "maximize", 0.0),
-            ObjectiveDefinition("cost", "minimize", 0.0),
-        ]
-
-        with pytest.raises(ValueError, match="Sum of weights must be positive"):
             ObjectiveSchema.from_objectives(objectives)
 
     def test_weights_sum_validation(self):
@@ -356,6 +351,17 @@ class TestCreateDefaultObjectives:
         assert schema.get_normalized_weight("accuracy") == 0.5
         assert schema.get_normalized_weight("cost") == 0.3
         assert schema.get_normalized_weight("custom_metric") == 0.2
+
+    def test_percentage_style_weights_are_normalized(self):
+        """Test that percentage-style weights are normalized automatically."""
+        schema = create_default_objectives(
+            ["accuracy", "cost"],
+            weights={"accuracy": 70.0, "cost": 30.0},
+        )
+
+        assert schema.weights_sum == pytest.approx(100.0)
+        assert schema.get_normalized_weight("accuracy") == pytest.approx(0.7)
+        assert schema.get_normalized_weight("cost") == pytest.approx(0.3)
 
     def test_unknown_metric_defaults(self):
         """Test that unknown metrics default to maximize."""

@@ -39,6 +39,13 @@
         "max_payload_bytes": {
           "type": ["integer", "null"],
           "description": "Maximum request payload size (null = unlimited)"
+        },
+        "tunable_ids": {
+          "type": "array",
+          "description": "Optional list of capability IDs supported by this service",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
@@ -114,14 +121,14 @@
       "type": "object",
       "title": "ConfigSpaceResponse",
       "description": "Response from config-space discovery endpoint",
-      "required": ["schema_version", "capability_id", "tunables"],
+      "required": ["schema_version", "tunable_id", "tunables"],
       "properties": {
         "schema_version": {
           "type": "string",
           "description": "TVL schema version",
           "examples": ["0.9"]
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the capability"
         },
@@ -140,14 +147,281 @@
           }
         },
         "constraints": {
-          "type": "object",
-          "description": "Structural and behavioral constraints",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          "description": "Structural and behavioral constraints (legacy textual or typed TVL 0.9)",
+          "oneOf": [
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "$ref": "#/definitions/TypedConstraints"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
             }
+          ]
+        },
+        "objectives": {
+          "type": "array",
+          "description": "Optional objective definitions (TVL 0.9 compatible JSON)",
+          "items": {
+            "$ref": "#/definitions/ObjectiveDefinition"
           }
+        },
+        "exploration": {
+          "$ref": "#/definitions/ExplorationConfig"
+        },
+        "promotion_policy": {
+          "$ref": "#/definitions/PromotionPolicy"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Optional default configuration values",
+          "additionalProperties": true
+        },
+        "measures": {
+          "type": "array",
+          "description": "Optional list of metric names produced by the service",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObjectiveDefinition": {
+      "type": "object",
+      "title": "ObjectiveDefinition",
+      "description": "Objective definition compatible with TVL 0.9 objectives section",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Objective name",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "direction": {
+          "type": "string",
+          "description": "Objective orientation",
+          "enum": ["maximize", "minimize", "band"]
+        },
+        "weight": {
+          "type": "number",
+          "description": "Objective weight",
+          "default": 1.0
+        },
+        "unit": {
+          "type": "string",
+          "description": "Optional objective unit"
+        },
+        "band": {
+          "$ref": "#/definitions/BandTarget"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BandTarget": {
+      "type": "object",
+      "title": "BandTarget",
+      "description": "Banded objective target definition",
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "type": "array",
+          "description": "Lower/upper target band",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "test": {
+          "type": "string",
+          "description": "Statistical band test",
+          "enum": ["TOST"],
+          "default": "TOST"
+        },
+        "alpha": {
+          "type": "number",
+          "description": "Significance level for band test",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExplorationConfig": {
+      "type": "object",
+      "title": "ExplorationConfig",
+      "description": "Exploration strategy and budget controls (TVL 0.9 exploration section)",
+      "properties": {
+        "strategy": {
+          "description": "Exploration strategy",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "budgets": {
+          "$ref": "#/definitions/ExplorationBudgets"
+        },
+        "convergence": {
+          "$ref": "#/definitions/ConvergenceCriteria"
+        },
+        "parallelism": {
+          "type": "object",
+          "properties": {
+            "max_parallel_trials": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExplorationBudgets": {
+      "type": "object",
+      "title": "ExplorationBudgets",
+      "description": "Exploration budget limits",
+      "properties": {
+        "max_trials": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_spend_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_wallclock_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConvergenceCriteria": {
+      "type": "object",
+      "title": "ConvergenceCriteria",
+      "description": "Convergence stop criteria",
+      "required": ["metric", "window", "threshold"],
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TypedConstraints": {
+      "type": "object",
+      "title": "TypedConstraints",
+      "description": "Typed TVL 0.9 constraints section",
+      "properties": {
+        "structural": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "derived": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PromotionPolicy": {
+      "type": "object",
+      "title": "PromotionPolicy",
+      "description": "Promotion policy for epsilon-Pareto selection",
+      "properties": {
+        "dominance": {
+          "type": "string",
+          "enum": ["epsilon_pareto"],
+          "default": "epsilon_pareto"
+        },
+        "alpha": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        },
+        "min_effect": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "adjust": {
+          "type": "string",
+          "enum": ["none", "BH"],
+          "default": "none"
+        },
+        "chance_constraints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChanceConstraint"
+          }
+        },
+        "tie_breakers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["min_abs_deviation", "custom"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ChanceConstraint": {
+      "type": "object",
+      "title": "ChanceConstraint",
+      "required": ["name", "threshold", "confidence"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       },
       "additionalProperties": false
@@ -177,13 +451,13 @@
       },
       "additionalProperties": false
     },
-    "InputItem": {
+    "ExampleItem": {
       "type": "object",
-      "title": "InputItem",
-      "description": "Single input item for execution. For privacy-preserving mode, only input_id is required - the service retrieves data locally using the ID.",
-      "required": ["input_id"],
+      "title": "ExampleItem",
+      "description": "Single example item for execution. For privacy-preserving mode, only example_id is required - the service retrieves data locally using the ID.",
+      "required": ["example_id"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
           "description": "Unique identifier for this input. In privacy-preserving mode, the service uses this to retrieve locally-stored input data."
         },
@@ -198,15 +472,15 @@
     "ExecuteRequest": {
       "type": "object",
       "title": "ExecuteRequest",
-      "description": "Request to execute agent with configuration on inputs",
-      "required": ["capability_id", "config", "inputs"],
+      "description": "Request to execute agent with configuration on examples",
+      "required": ["tunable_id", "config", "examples"],
       "properties": {
         "request_id": {
           "type": "string",
           "format": "uuid",
-          "description": "Idempotency key for retry safety"
+          "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the agent capability to invoke"
         },
@@ -215,11 +489,11 @@
           "description": "Configuration parameters (tunable values)",
           "additionalProperties": true
         },
-        "inputs": {
+        "examples": {
           "type": "array",
-          "description": "List of input examples to process",
+          "description": "List of examples to process",
           "items": {
-            "$ref": "#/definitions/InputItem"
+            "$ref": "#/definitions/ExampleItem"
           },
           "minItems": 1
         },
@@ -243,11 +517,12 @@
       "type": "object",
       "title": "OutputItem",
       "description": "Output for a single input. For privacy-preserving mode, output_id can be returned instead of output content - the service stores output data locally.",
-      "required": ["input_id"],
+      "required": ["example_id"],
+      "additionalProperties": true,
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "output": {
           "type": "object",
@@ -265,9 +540,19 @@
         "latency_ms": {
           "type": "number",
           "description": "Latency for this input in milliseconds"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Optional per-input quality metrics (combined execute+evaluate mode)",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message for this input when execution partially fails"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "OperationalMetrics": {
       "type": "object",
@@ -308,7 +593,20 @@
           "description": "Number of retries"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": {
+        "description": "Custom operational metrics",
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
     },
     "ExecutionError": {
       "type": ["object", "null"],
@@ -323,9 +621,9 @@
           "type": "string",
           "description": "Error message"
         },
-        "failed_inputs": {
+        "failed_examples": {
           "type": "array",
-          "description": "List of failed input IDs",
+          "description": "List of failed example IDs",
           "items": {
             "type": "string"
           }
@@ -382,11 +680,11 @@
       "type": "object",
       "title": "EvaluationItem",
       "description": "Single evaluation item with output and target. For privacy-preserving mode, use output_id and target_id instead of content - the service retrieves data locally using session context.",
-      "required": ["input_id"],
+      "required": ["example_id"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "output": {
           "type": "object",
@@ -413,14 +711,14 @@
       "type": "object",
       "title": "EvaluateRequest",
       "description": "Request to evaluate outputs against targets",
-      "required": ["capability_id"],
+      "required": ["tunable_id"],
       "properties": {
         "request_id": {
           "type": "string",
           "format": "uuid",
-          "description": "Idempotency key for retry safety"
+          "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the evaluation capability"
         },
@@ -443,6 +741,11 @@
         "session_id": {
           "type": ["string", "null"],
           "description": "Session ID for stateful agents"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional request timeout in milliseconds (wrapper returns 408 on timeout)",
+          "minimum": 1000
         }
       },
       "additionalProperties": false
@@ -472,11 +775,11 @@
       "type": "object",
       "title": "EvaluationResult",
       "description": "Evaluation result for a single example",
-      "required": ["input_id", "metrics"],
+      "required": ["example_id", "metrics"],
       "properties": {
-        "input_id": {
+        "example_id": {
           "type": "string",
-          "description": "Matching input identifier"
+          "description": "Matching example identifier"
         },
         "metrics": {
           "type": "object",
@@ -484,6 +787,10 @@
           "additionalProperties": {
             "type": "number"
           }
+        },
+        "error": {
+          "type": "string",
+          "description": "Optional error message for this example when evaluation partially fails"
         }
       },
       "additionalProperties": false
@@ -516,6 +823,9 @@
           "additionalProperties": {
             "$ref": "#/definitions/AggregateMetricStats"
           }
+        },
+        "error": {
+          "$ref": "#/definitions/ExecutionError"
         }
       },
       "additionalProperties": false
@@ -543,6 +853,71 @@
           "type": "object",
           "description": "Additional health details",
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "KeepAliveRequest": {
+      "type": "object",
+      "title": "KeepAliveRequest",
+      "description": "Request body for session heartbeat",
+      "required": ["session_id"],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "KeepAliveResponse": {
+      "type": "object",
+      "title": "KeepAliveResponse",
+      "description": "Response body for successful session heartbeat",
+      "required": ["status", "session_id"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["alive"],
+          "description": "Session heartbeat status"
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ErrorDetails": {
+      "type": "object",
+      "title": "ErrorDetails",
+      "description": "Structured error details",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Error code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message"
+        },
+        "details": {
+          "type": "object",
+          "description": "Additional error details",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "title": "ErrorResponse",
+      "description": "Error response wrapper",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/ErrorDetails"
         }
       },
       "additionalProperties": false

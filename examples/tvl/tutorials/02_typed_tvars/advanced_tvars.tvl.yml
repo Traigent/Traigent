@@ -14,7 +14,7 @@ spec:
   version: "1.0"
 
 metadata:
-  owner: tutorials@traigent.ai
+  owner: team@example.com
   description: Demonstrates all TVAR types in TVL 0.9
   tags:
     - tutorial

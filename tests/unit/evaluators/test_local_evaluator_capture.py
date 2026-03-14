@@ -43,5 +43,8 @@ async def _run_eval(max_workers=2):
 def test_local_evaluator_parallel_raw_response_tokens():
     res = asyncio.run(_run_eval(max_workers=2))
     assert res.example_results
+    assert len(res.example_results) == 2  # Matches _make_dataset(2) count
     # Each ExampleResult has metrics populated; token extraction happened via raw_response
-    assert all(isinstance(er.metrics, dict) for er in res.example_results)
+    for er in res.example_results:
+        assert isinstance(er.metrics, dict)
+        assert len(er.metrics) > 0  # Must contain actual metric data

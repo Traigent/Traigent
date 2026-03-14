@@ -8,11 +8,13 @@ Can run with uvicorn or hypercorn.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from traigent.utils.logging import get_logger
+from traigent.wrapper.errors import HybridAPIError, RequestTimeoutError
 
 if TYPE_CHECKING:
     from traigent.wrapper.service import TraigentService
@@ -27,6 +29,132 @@ EXECUTE_PATH = "/traigent/v1/execute"
 EVALUATE_PATH = "/traigent/v1/evaluate"
 HEALTH_PATH = "/traigent/v1/health"
 KEEP_ALIVE_PATH = "/traigent/v1/keep-alive"
+
+
+def _make_error_response(
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build contract-compliant error payload."""
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    return {"error": error}
+
+
+def _extract_trace_headers(scope: dict[str, Any]) -> dict[str, str]:
+    """Extract W3C trace headers for optional trace propagation."""
+    headers: dict[str, str] = {}
+    for header_name, header_value in scope.get("headers", []):
+        name = header_name.decode("latin-1").lower()
+        if name in {"traceparent", "tracestate"}:
+            headers[name] = header_value.decode("latin-1")
+    return headers
+
+
+def _response_headers_with_request_id(
+    headers: dict[str, str],
+    request_id: Any | None,
+) -> dict[str, str]:
+    """Attach correlation header when request_id is available."""
+    merged = dict(headers)
+    if request_id is not None:
+        merged["x-traigent-request-id"] = str(request_id)
+    return merged
+
+
+def _get_timeout_ms(
+    request: dict[str, Any],
+    *,
+    default_ms: int | None,
+) -> int | None:
+    """Parse timeout_ms field with contract-compliant validation."""
+    if "timeout_ms" not in request:
+        return default_ms
+
+    timeout_ms = request.get("timeout_ms")
+    if timeout_ms is None:
+        return default_ms
+
+    if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int):
+        raise ValueError("timeout_ms must be an integer")
+
+    if timeout_ms < 1000:
+        raise ValueError("timeout_ms must be >= 1000")
+
+    return int(timeout_ms)
+
+
+async def _parse_request(receive: Callable) -> dict[str, Any]:
+    """Read and decode a JSON request body."""
+    body = await read_body(receive)
+    if not body:
+        return {}
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise ValueError("Request body must be a JSON object")
+    return parsed
+
+
+async def _run_with_timeout(
+    operation: Any,
+    timeout_ms: int | None,
+    endpoint: str,
+) -> dict[str, Any]:
+    """Await an operation with optional contract-compliant timeout handling."""
+    result: Any
+    if timeout_ms is None:
+        result = await operation
+    else:
+        try:
+            result = await asyncio.wait_for(operation, timeout=timeout_ms / 1000.0)
+        except TimeoutError as exc:
+            raise RequestTimeoutError(
+                f"Request timed out after {timeout_ms}ms",
+                details={"endpoint": endpoint, "timeout_ms": timeout_ms},
+            ) from exc
+
+    if not isinstance(result, dict):
+        raise ValueError("Wrapper service handler must return a JSON object")
+    return result
+
+
+async def _send_with_request_id(
+    send: Callable,
+    response: dict[str, Any],
+    trace_headers: dict[str, str],
+    request_id: Any | None,
+) -> None:
+    """Send a JSON response with request correlation headers when present."""
+    response_headers = _response_headers_with_request_id(trace_headers, request_id)
+    await send_json_response(send, 200, response, headers=response_headers)
+
+
+async def _handle_keep_alive(
+    service: TraigentService,
+    request: dict[str, Any],
+    send: Callable,
+    trace_headers: dict[str, str],
+) -> None:
+    """Handle keep-alive requests for wrapper sessions."""
+    session_id = request.get("session_id", "")
+    if service.handle_keep_alive(session_id):
+        await send_json_response(
+            send,
+            200,
+            {"status": "alive", "session_id": session_id},
+            headers=trace_headers,
+        )
+        return
+
+    await send_json_response(
+        send,
+        404,
+        _make_error_response("SESSION_NOT_FOUND", f"Session not found: {session_id}"),
+        headers=trace_headers,
+    )
 
 
 def create_app(service: TraigentService) -> Callable[..., Any]:
@@ -46,59 +174,114 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
 
         path = scope["path"]
         method = scope["method"]
+        trace_headers = _extract_trace_headers(scope)
+        request: dict[str, Any] | None = None
 
         # Route to handler
         try:
             if path == CAPABILITIES_PATH and method == "GET":
-                response = service.get_capabilities()
-                await send_json_response(send, 200, response)
+                await send_json_response(
+                    send, 200, service.get_capabilities(), headers=trace_headers
+                )
 
             elif path == CONFIG_SPACE_PATH and method == "GET":
-                response = service.get_config_space()
-                await send_json_response(send, 200, response)
+                await send_json_response(
+                    send, 200, service.get_config_space(), headers=trace_headers
+                )
 
             elif path == EXECUTE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                response = await service.handle_execute(request)
-                await send_json_response(send, 200, response)
+                request = await _parse_request(receive)
+                response = await _run_with_timeout(
+                    service.handle_execute(request),
+                    _get_timeout_ms(request, default_ms=30000),
+                    EXECUTE_PATH,
+                )
+                await _send_with_request_id(
+                    send, response, trace_headers, response.get("request_id")
+                )
 
             elif path == EVALUATE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                response = await service.handle_evaluate(request)
-                await send_json_response(send, 200, response)
+                request = await _parse_request(receive)
+                response = await _run_with_timeout(
+                    service.handle_evaluate(request),
+                    _get_timeout_ms(request, default_ms=None),
+                    EVALUATE_PATH,
+                )
+                await _send_with_request_id(
+                    send, response, trace_headers, response.get("request_id")
+                )
 
             elif path == HEALTH_PATH and method == "GET":
-                response = service.get_health()
-                await send_json_response(send, 200, response)
+                await send_json_response(
+                    send, 200, service.get_health(), headers=trace_headers
+                )
 
             elif path == KEEP_ALIVE_PATH and method == "POST":
-                body = await read_body(receive)
-                request = json.loads(body) if body else {}
-                session_id = request.get("session_id", "")
-                alive = service.handle_keep_alive(session_id)
-                if alive:
-                    await send_json_response(send, 200, {"alive": True})
-                else:
-                    await send_json_response(send, 404, {"alive": False})
+                request = await _parse_request(receive)
+                await _handle_keep_alive(service, request, send, trace_headers)
 
             else:
                 await send_json_response(
-                    send, 404, {"error": f"Not found: {method} {path}"}
+                    send,
+                    404,
+                    _make_error_response("NOT_FOUND", f"Not found: {method} {path}"),
+                    headers=trace_headers,
                 )
+
+        except HybridAPIError as e:
+            logger.warning(
+                "Hybrid API handler returned explicit error: status=%s code=%s message=%s",
+                e.status_code,
+                e.error_code,
+                str(e),
+            )
+            error_headers = _response_headers_with_request_id(
+                trace_headers,
+                request.get("request_id") if request else None,
+            )
+            if e.headers:
+                error_headers.update(e.headers)
+            await send_json_response(
+                send,
+                e.status_code,
+                _make_error_response(e.error_code, str(e), details=e.details),
+                headers=error_headers,
+            )
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in request: {e}")
-            await send_json_response(send, 400, {"error": f"Invalid JSON: {e}"})
+            await send_json_response(
+                send,
+                400,
+                _make_error_response("INVALID_JSON", f"Invalid JSON: {e}"),
+                headers=trace_headers,
+            )
 
         except ValueError as e:
             logger.error(f"Request error: {e}")
-            await send_json_response(send, 400, {"error": str(e)})
+            error_headers = _response_headers_with_request_id(
+                trace_headers,
+                request.get("request_id") if request else None,
+            )
+            await send_json_response(
+                send,
+                400,
+                _make_error_response("INVALID_REQUEST", str(e)),
+                headers=error_headers,
+            )
 
         except Exception as e:
             logger.error(f"Internal error: {e}")
-            await send_json_response(send, 500, {"error": str(e)})
+            error_headers = _response_headers_with_request_id(
+                trace_headers,
+                request.get("request_id") if request else None,
+            )
+            await send_json_response(
+                send,
+                500,
+                _make_error_response("INTERNAL_ERROR", str(e)),
+                headers=error_headers,
+            )
 
     return app
 
@@ -120,18 +303,25 @@ async def send_json_response(
     send: Callable,
     status: int,
     data: dict[str, Any],
+    headers: dict[str, str] | None = None,
 ) -> None:
     """Send JSON response via ASGI send."""
     body = json.dumps(data).encode("utf-8")
+    response_headers: list[list[bytes]] = [
+        [b"content-type", b"application/json"],
+        [b"content-length", str(len(body)).encode()],
+    ]
+    if headers:
+        for name, value in headers.items():
+            response_headers.append(
+                [name.encode("latin-1").lower(), str(value).encode("latin-1")]
+            )
 
     await send(
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [
-                [b"content-type", b"application/json"],
-                [b"content-length", str(len(body)).encode()],
-            ],
+            "headers": response_headers,
         }
     )
 

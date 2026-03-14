@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from traigent.hybrid.protocol import (
+    BenchmarksResponse,
     ConfigSpaceResponse,
     HealthCheckResponse,
     HybridEvaluateRequest,
@@ -46,8 +47,15 @@ class HybridTransport(Protocol):
         """
         ...
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions from external service.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
+                When provided, the server returns the config space for
+                that specific tunable. When omitted, the default is returned.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -91,6 +99,23 @@ class HybridTransport(Protocol):
         Raises:
             TransportError: If evaluation fails.
             NotImplementedError: If evaluate not supported.
+        """
+        ...
+
+    async def benchmarks(
+        self,
+        tunable_id: str | None = None,
+    ) -> BenchmarksResponse:
+        """Discover available benchmarks and their example IDs.
+
+        Args:
+            tunable_id: Optional filter — only return benchmarks linked to this tunable.
+
+        Returns:
+            BenchmarksResponse with benchmark entries and example IDs.
+
+        Raises:
+            TransportError: If discovery fails or tunable_id is unknown.
         """
         ...
 
@@ -197,6 +222,7 @@ def create_transport(
     auth_header: str | None = None,
     timeout: float = 300.0,
     max_connections: int = 10,
+    require_http2: bool = False,
     # MCP options
     mcp_client: ProductionMCPClient | None = None,
     mcp_config: MCPServerConfig | None = None,
@@ -213,6 +239,7 @@ def create_transport(
         auth_header: Optional Authorization header value for HTTP
         timeout: Request timeout in seconds (default 300)
         max_connections: Maximum concurrent HTTP connections (default 10)
+        require_http2: Enforce HTTPS + HTTP/2 responses for HTTP transport
 
         mcp_client: Existing ProductionMCPClient instance
         mcp_config: MCPServerConfig for creating new MCP client
@@ -246,6 +273,7 @@ def create_transport(
             auth_header=auth_header,
             timeout=timeout,
             max_connections=max_connections,
+            require_http2=require_http2,
         )
 
     elif transport_type == "mcp":

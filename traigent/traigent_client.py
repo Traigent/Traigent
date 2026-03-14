@@ -10,11 +10,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.adapters.execution_adapter import (
-    LocalExecutionAdapter,
-)
+from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.config.types import ExecutionMode, TraigentConfig, validate_execution_mode
 from traigent.optimizers import get_optimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -47,6 +45,13 @@ except (
         from traigent.cloud.optimizer_client import OptimizerDirectClient
 
 logger = get_logger(__name__)
+_SAAS_ACTIVE_STATUSES = frozenset(
+    {"PENDING", "RUNNING", "IN_PROGRESS", "QUEUED", "STARTED"}
+)
+_SAAS_TERMINAL_STATUSES = frozenset(
+    {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "TIMED_OUT", "STOPPED"}
+)
+_DEFAULT_CONFIG_VALUE_KEYS = ("value", "default", "initial", "low", "min")
 
 
 def _require_cloud() -> None:
@@ -183,7 +188,6 @@ class TraigentClient:
         else:
             # Edge Analytics mode
             return await self._optimize_local(
-                function,
                 dataset,
                 configuration_space,
                 objectives,
@@ -320,30 +324,25 @@ class TraigentClient:
         logger.info("Starting SaaS mode optimization")
         _ = config_defaults  # Unused but kept for signature symmetry
 
-        poll_interval = float((optimization_config or {}).get("poll_interval") or 1.0)
-        if poll_interval <= 0:
-            poll_interval = 0.1
+        settings = optimization_config or {}
+        poll_interval = self._coerce_positive_float(
+            settings.get("poll_interval"),
+            default=1.0,
+            fallback_for_non_positive=0.1,
+        )
+        max_poll_duration = self._coerce_positive_float(
+            settings.get("max_poll_duration"),
+            default=1800.0,
+        )
 
         async with self.backend_client:
-            # Upload dataset (using dynamic attribute access for optional methods)
-            upload_dataset = getattr(self.backend_client, "upload_dataset", None)
-            if upload_dataset is None:
-                raise OptimizationError(
-                    "Backend client does not support upload_dataset"
-                )
+            upload_dataset = self._require_backend_method("upload_dataset")
             dataset_response = await upload_dataset(
                 name=f"{function.__name__}_dataset", data=dataset
             )
             dataset_id = dataset_response["dataset_id"]
 
-            # Create optimization session
-            create_session = getattr(
-                self.backend_client, "create_optimization_session", None
-            )
-            if create_session is None:
-                raise OptimizationError(
-                    "Backend client does not support create_optimization_session"
-                )
+            create_session = self._require_backend_method("create_optimization_session")
             session_response = await create_session(
                 function_name=function.__name__,
                 dataset_id=dataset_id,
@@ -356,38 +355,94 @@ class TraigentClient:
             session_id = session_response["session_id"]
             logger.info(f"Created SaaS session: {session_id}")
 
-            # Wait for completion (with progress updates)
-            get_status = getattr(self.backend_client, "get_session_status", None)
-            if get_status is None:
-                raise OptimizationError(
-                    "Backend client does not support get_session_status"
-                )
-            while True:
-                status = await get_status(session_id)
+            get_status = self._require_backend_method("get_session_status")
+            await self._poll_saas_session(
+                session_id,
+                get_status,
+                max_trials=max_trials,
+                poll_interval=poll_interval,
+                max_poll_duration=max_poll_duration,
+            )
 
-                logger.info(
-                    f"Session progress: {status.get('completed_trials', 0)}/{max_trials} trials"
-                )
-
-                if status["status"] in ["COMPLETED", "FAILED"]:
-                    break
-
-                await asyncio.sleep(poll_interval)
-
-            # Get results
-            get_results = getattr(self.backend_client, "get_optimization_results", None)
-            if get_results is None:
-                raise OptimizationError(
-                    "Backend client does not support get_optimization_results"
-                )
+            get_results = self._require_backend_method("get_optimization_results")
             results = await get_results(session_id)
             results["execution_mode"] = "cloud"
 
             return cast(dict[str, Any], results)
 
+    @staticmethod
+    def _coerce_positive_float(
+        value: Any,
+        *,
+        default: float,
+        fallback_for_non_positive: float | None = None,
+    ) -> float:
+        """Parse a positive float, with separate fallbacks for invalid/non-positive."""
+        try:
+            parsed = float(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+        if parsed > 0:
+            return parsed
+        if fallback_for_non_positive is not None:
+            return fallback_for_non_positive
+        return default
+
+    def _require_backend_method(self, name: str) -> Callable[..., Any]:
+        """Return a required backend-client method or raise a consistent error."""
+        method = getattr(self.backend_client, name, None)
+        if method is None:
+            raise OptimizationError(f"Backend client does not support {name}")
+        return cast(Callable[..., Any], method)
+
+    async def _poll_saas_session(
+        self,
+        session_id: str,
+        get_status: Callable[..., Any],
+        *,
+        max_trials: int,
+        poll_interval: float,
+        max_poll_duration: float,
+    ) -> None:
+        """Poll a SaaS optimization session until it reaches a terminal state."""
+        poll_start = asyncio.get_running_loop().time()
+        while True:
+            elapsed = asyncio.get_running_loop().time() - poll_start
+            if elapsed > max_poll_duration:
+                raise OptimizationError(
+                    f"SaaS optimization polling timed out after {elapsed:.1f}s "
+                    f"(limit: {max_poll_duration:.1f}s)"
+                )
+
+            status = await get_status(session_id)
+            if self._is_saas_session_complete(status, session_id, max_trials):
+                return
+            await asyncio.sleep(poll_interval)
+
+    def _is_saas_session_complete(
+        self,
+        status: dict[str, Any],
+        session_id: str,
+        max_trials: int,
+    ) -> bool:
+        """Log and validate SaaS session status, returning True on terminal states."""
+        status_value = str(status.get("status") or "").upper()
+        logger.info(
+            "Session progress: %s/%s trials",
+            status.get("completed_trials", 0),
+            max_trials,
+        )
+        if status_value in _SAAS_TERMINAL_STATUSES:
+            return True
+        if status_value not in _SAAS_ACTIVE_STATUSES:
+            raise OptimizationError(
+                f"Unexpected SaaS session status '{status.get('status')}' "
+                f"for session {session_id}"
+            )
+        return False
+
     async def _optimize_local(
         self,
-        function: Callable[..., Any],
         dataset: dict[str, Any],
         configuration_space: dict[str, Any],
         objectives: list[str],
@@ -417,35 +472,11 @@ class TraigentClient:
                 "status": "no_trials",
             }
 
-        optimizer_config = optimization_config or {}
-        algorithm_name = str(optimizer_config.get("algorithm") or "grid")
-
-        optimizer_kwargs: dict[str, Any] = {}
-        opt_kwargs = optimizer_config.get("optimizer_kwargs")
-        if isinstance(opt_kwargs, dict):
-            optimizer_kwargs.update(opt_kwargs)
-        if "objective_weights" in optimizer_config:
-            optimizer_kwargs.setdefault(
-                "objective_weights", optimizer_config["objective_weights"]
-            )
-
-        optimizer_context = TraigentConfig.edge_analytics_mode(
-            minimal_logging=True,
-            auto_sync=False,
+        optimizer = self._create_local_optimizer(
+            configuration_space,
+            objectives,
+            optimization_config,
         )
-
-        try:
-            optimizer = get_optimizer(
-                algorithm_name,
-                configuration_space,
-                objectives,
-                context=optimizer_context,
-                **optimizer_kwargs,
-            )
-        except OptimizationError as exc:
-            raise ValueError(
-                f"Failed to initialize optimizer '{algorithm_name}': {exc}"
-            ) from exc
 
         effective_max_trials = max_trials if max_trials is not None else 50
         primary_objective = objectives[0] if objectives else None
@@ -471,62 +502,24 @@ class TraigentClient:
 
             config = self._apply_config_defaults(suggestion, config_defaults)
             trial_id = f"local_trial_{len(history)}"
-
-            try:
-                execution = await adapter.execute_configuration(
-                    agent_spec=config, dataset=dataset, trial_id=trial_id
-                )
-                metrics = execution.get("metrics", {}) or {}
-                duration = float(execution.get("execution_time", 0.0) or 0.0)
-                metadata = execution.get("metadata", {}) or {}
-                status = TrialStatus.COMPLETED
-                error_message = None
-            except Exception as exc:
-                logger.error("Local trial %s failed: %s", trial_id, exc, exc_info=True)
-                metrics = {}
-                duration = 0.0
-                metadata = {}
-                status = TrialStatus.FAILED
-                error_message = str(exc)
-
-            trial = TrialResult(
-                trial_id=trial_id,
+            trial = await self._execute_local_trial(
+                adapter,
+                dataset=dataset,
                 config=config,
-                metrics=metrics,
-                status=status,
-                duration=duration,
-                timestamp=datetime.now(UTC),
-                error_message=error_message,
-                metadata=metadata,
+                trial_id=trial_id,
             )
             history.append(trial)
             optimizer.update_best(trial)
 
-            if status == TrialStatus.COMPLETED:
-                record = {
-                    "configuration": config,
-                    "metrics": metrics,
-                    "execution_time": duration,
-                }
-                results.append(record)
+            record = self._build_local_result_record(trial)
+            if record is None:
+                continue
+            results.append(record)
 
-                score = None
-                if primary_objective:
-                    score = trial.get_metric(primary_objective)
-                if score is None:
-                    score = metrics.get("score")
-                if score is None and metrics:
-                    score = next(
-                        (
-                            value
-                            for value in metrics.values()
-                            if isinstance(value, (int, float))
-                        ),
-                        None,
-                    )
-                if score is not None and (best_score is None or score > best_score):
-                    best_score = score
-                    best_record = record
+            score = self._resolve_trial_score(trial, primary_objective)
+            if score is not None and (best_score is None or score > best_score):
+                best_score = score
+                best_record = record
 
         return {
             "execution_mode": ExecutionMode.EDGE_ANALYTICS.value,
@@ -536,6 +529,137 @@ class TraigentClient:
             "status": "completed",
         }
 
+    def _create_local_optimizer(
+        self,
+        configuration_space: dict[str, Any],
+        objectives: list[str],
+        optimization_config: dict[str, Any | None],
+    ) -> Any:
+        """Build the local edge-analytics optimizer from user config."""
+        optimizer_config = optimization_config or {}
+        algorithm_name = str(optimizer_config.get("algorithm") or "grid")
+        optimizer_kwargs = self._extract_optimizer_kwargs(optimizer_config)
+        optimizer_context = TraigentConfig.edge_analytics_mode(
+            minimal_logging=True,
+            auto_sync=False,
+        )
+        try:
+            return get_optimizer(
+                algorithm_name,
+                configuration_space,
+                objectives,
+                context=optimizer_context,
+                **optimizer_kwargs,
+            )
+        except OptimizationError as exc:
+            raise ValueError(
+                f"Failed to initialize optimizer '{algorithm_name}': {exc}"
+            ) from exc
+
+    @staticmethod
+    def _extract_optimizer_kwargs(
+        optimization_config: dict[str, Any | None],
+    ) -> dict[str, Any]:
+        """Collect supported optimizer kwargs from the local optimization config."""
+        optimizer_kwargs: dict[str, Any] = {}
+        opt_kwargs = optimization_config.get("optimizer_kwargs")
+        if isinstance(opt_kwargs, dict):
+            optimizer_kwargs.update(opt_kwargs)
+        if "objective_weights" in optimization_config:
+            optimizer_kwargs.setdefault(
+                "objective_weights", optimization_config["objective_weights"]
+            )
+        return optimizer_kwargs
+
+    async def _execute_local_trial(
+        self,
+        adapter: LocalExecutionAdapter,
+        *,
+        dataset: dict[str, Any],
+        config: dict[str, Any],
+        trial_id: str,
+    ) -> TrialResult:
+        """Execute one local trial and normalize it into a TrialResult."""
+        try:
+            execution = await adapter.execute_configuration(
+                agent_spec=config,
+                dataset=dataset,
+                trial_id=trial_id,
+            )
+        except Exception as exc:
+            logger.error("Local trial %s failed: %s", trial_id, exc, exc_info=True)
+            return self._build_local_trial_result(
+                trial_id=trial_id,
+                config=config,
+                metrics={},
+                duration=0.0,
+                metadata={},
+                status=TrialStatus.FAILED,
+                error_message=str(exc),
+            )
+
+        return self._build_local_trial_result(
+            trial_id=trial_id,
+            config=config,
+            metrics=cast(dict[str, Any], execution.get("metrics", {}) or {}),
+            duration=float(execution.get("execution_time", 0.0) or 0.0),
+            metadata=cast(dict[str, Any], execution.get("metadata", {}) or {}),
+            status=TrialStatus.COMPLETED,
+        )
+
+    @staticmethod
+    def _build_local_trial_result(
+        *,
+        trial_id: str,
+        config: dict[str, Any],
+        metrics: dict[str, Any],
+        duration: float,
+        metadata: dict[str, Any],
+        status: TrialStatus,
+        error_message: str | None = None,
+    ) -> TrialResult:
+        """Construct a TrialResult for a local optimization trial."""
+        return TrialResult(
+            trial_id=trial_id,
+            config=config,
+            metrics=metrics,
+            status=status,
+            duration=duration,
+            timestamp=datetime.now(UTC),
+            error_message=error_message,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _build_local_result_record(trial: TrialResult) -> dict[str, Any] | None:
+        """Build the public result record for a completed local trial."""
+        if trial.status != TrialStatus.COMPLETED:
+            return None
+        return {
+            "configuration": trial.config,
+            "metrics": trial.metrics,
+            "execution_time": trial.duration,
+        }
+
+    @staticmethod
+    def _resolve_trial_score(
+        trial: TrialResult,
+        primary_objective: str | None,
+    ) -> float | int | None:
+        """Pick the best comparable score from a completed trial result."""
+        if primary_objective:
+            score = trial.get_metric(primary_objective)
+            if score is not None:
+                return score
+        metrics = trial.metrics or {}
+        score = metrics.get("score")
+        if score is not None:
+            return cast(float | int, score)
+        return next(
+            (value for value in metrics.values() if isinstance(value, (int, float))),
+            None,
+        )
+
     def _determine_execution_mode(self, requested_mode: str) -> ExecutionMode:
         """Determine actual execution mode based on environment.
 
@@ -544,37 +668,15 @@ class TraigentClient:
 
         Returns:
             Actual execution mode to use
+
+        Raises:
+            ConfigurationError: If the requested mode is invalid or unsupported.
         """
         if requested_mode != "auto":
-            # Map string values to ExecutionMode enum
-            mode_map = {
-                "edge_analytics": ExecutionMode.EDGE_ANALYTICS,
-                "privacy": ExecutionMode.PRIVACY,
-                "standard": ExecutionMode.STANDARD,
-                "cloud": ExecutionMode.CLOUD,
-            }
-            if requested_mode in mode_map:
-                return mode_map[requested_mode]
-            # Try to construct directly if it's already an enum value
-            return ExecutionMode(requested_mode)
+            return validate_execution_mode(requested_mode)
 
-        # Auto-detection logic
-        if os.environ.get("TRAIGENT_FORCE_LOCAL"):
-            return ExecutionMode.EDGE_ANALYTICS
-        elif os.environ.get("TRAIGENT_FORCE_HYBRID"):
-            return ExecutionMode.STANDARD
-        elif os.environ.get("TRAIGENT_FORCE_CLOUD"):
-            return ExecutionMode.CLOUD
-        else:
-            # Default based on privacy requirements
-            if self._check_privacy_requirements():
-                return ExecutionMode.STANDARD
-            else:
-                # Check if we have API key for SaaS
-                if self._explicit_api_key:
-                    return ExecutionMode.CLOUD
-                else:
-                    return ExecutionMode.EDGE_ANALYTICS
+        # Auto-detection: only edge_analytics is currently supported
+        return ExecutionMode.EDGE_ANALYTICS
 
     def _check_privacy_requirements(self) -> bool:
         """Check if privacy requirements mandate standard mode.
@@ -644,18 +746,28 @@ class TraigentClient:
         if isinstance(value, list):
             return value[0] if value else None
         if isinstance(value, tuple):
-            if len(value) == 0:
-                return None
-            if len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
-                low, high = value
-                return (low + high) / 2
-            return value[0]
+            return TraigentClient._extract_tuple_default_value(value)
         if isinstance(value, dict):
-            for candidate in ("value", "default", "initial", "low", "min"):
-                if candidate in value and value[candidate] is not None:
-                    return value[candidate]
-            return None
+            return TraigentClient._extract_mapping_default_value(value)
         return value
+
+    @staticmethod
+    def _extract_tuple_default_value(value: tuple[Any, ...]) -> Any | None:
+        """Extract a representative default from a tuple configuration."""
+        if not value:
+            return None
+        if len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
+            low, high = value
+            return (low + high) / 2
+        return value[0]
+
+    @staticmethod
+    def _extract_mapping_default_value(value: dict[str, Any]) -> Any | None:
+        """Extract a representative default from a mapping configuration."""
+        for candidate in _DEFAULT_CONFIG_VALUE_KEYS:
+            if candidate in value and value[candidate] is not None:
+                return value[candidate]
+        return None
 
     @staticmethod
     def _apply_config_defaults(

@@ -69,9 +69,25 @@ class RemoteServiceRegistry:
         self._service_info: dict[str, ServiceInfo] = {}
         self._health_checks: dict[str, bool] = {}
         self._selection_strategies: dict[str, Callable[..., Any]] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
         # Register default selection strategies
         self._register_default_strategies()
+
+    def _register_background_task(self, task: asyncio.Task[Any]) -> None:
+        """Keep background tasks alive until completion and surface failures."""
+
+        def _on_done(fut: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(fut)
+            if fut.cancelled():
+                return
+            try:
+                fut.result()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error("Background service task failed", exc_info=exc)
+
+        self._background_tasks.add(task)
+        task.add_done_callback(_on_done)
 
     def register_service(
         self, service: RemoteOptimizationService, auto_connect: bool = True
@@ -96,7 +112,11 @@ class RemoteServiceRegistry:
             # Schedule connection in background if event loop is running
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(self._connect_service(service_name))
+                task = asyncio.create_task(
+                    self._connect_service(service_name),
+                    name=f"service_auto_connect_{service_name}",
+                )
+                self._register_background_task(task)
             except RuntimeError:
                 # No event loop running, connection will happen later
                 logger.debug(f"No event loop for auto-connect of {service_name}")
@@ -114,7 +134,11 @@ class RemoteServiceRegistry:
             # Disconnect if connected
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(self._disconnect_service(service_name))
+                task = asyncio.create_task(
+                    self._disconnect_service(service_name),
+                    name=f"service_auto_disconnect_{service_name}",
+                )
+                self._register_background_task(task)
             except RuntimeError:
                 # No event loop running, will cleanup synchronously
                 logger.debug(f"No event loop for auto-disconnect of {service_name}")

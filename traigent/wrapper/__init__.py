@@ -7,7 +7,10 @@ to define their configuration space, execution logic, and evaluation logic.
 Example:
     from traigent.wrapper import TraigentService
 
-    app = TraigentService(capability_id="my_agent")
+    app = TraigentService(
+        tunable_id="my_agent",
+        estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
+    )
 
     @app.tvars
     def config_space():
@@ -17,7 +20,7 @@ Example:
         }
 
     @app.execute
-    async def run_agent(input_id: str, data: dict, config: dict) -> dict:
+    async def run_agent(example_id: str, data: dict, config: dict) -> dict:
         # Your agent logic here
         return {"output": result, "cost_usd": 0.002, "latency_ms": 150}
 
@@ -39,10 +42,24 @@ The service automatically exposes endpoints at:
 
 # Traceability: HYBRID-MODE-OPTIMIZATION CLIENT-WRAPPER-SDK
 
+from traigent.wrapper.errors import (
+    BadRequestError,
+    HybridAPIError,
+    RateLimitError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 __all__ = [
     "TraigentService",
     "ServiceConfig",
     "Session",
+    "HybridAPIError",
+    "BadRequestError",
+    "UnauthorizedError",
+    "RequestTimeoutError",
+    "RateLimitError",
+    "ServiceUnavailableError",
 ]

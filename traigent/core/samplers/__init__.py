@@ -6,11 +6,10 @@ Example
 
 ::
 
-    from traigent.core.samplers import SamplerFactory
+    from traigent.core.samplers import create_sampler
 
-    sampler = SamplerFactory.create(
+    sampler = create_sampler(
         {
-            "type": "random",
             "params": {
                 "population": list(range(100)),
                 "sample_limit": 10,
@@ -30,8 +29,26 @@ Example
 
 # Traceability: CONC-Layer-Core CONC-Quality-Usability FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 SYNC-OptimizationFlow
 
-from .base import BaseSampler
-from .factory import SamplerFactory
+from collections.abc import Mapping
+from typing import Any
+
 from .random_sampler import RandomSampler, RandomSamplerPlan
 
-__all__ = ["BaseSampler", "RandomSampler", "RandomSamplerPlan", "SamplerFactory"]
+
+def create_sampler(config: Mapping[str, Any] | None = None) -> RandomSampler[Any]:
+    """Create a random sampler from a compact config payload.
+
+    The sampler module currently supports a single implementation (`RandomSampler`).
+    """
+    config = config or {}
+    sampler_type = str(config.get("type", "random")).lower()
+    if sampler_type != "random":
+        raise ValueError(
+            "Unsupported sampler type " f"{sampler_type!r}; only 'random' is available."
+        )
+
+    params = dict(config.get("params", {}))
+    return RandomSampler(**params)
+
+
+__all__ = ["RandomSampler", "RandomSamplerPlan", "create_sampler"]
