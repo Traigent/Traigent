@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import traceback as traceback_module
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -219,6 +220,84 @@ class Trial:
 
 
 @dataclass
+class TrialError:
+    """Structured diagnostic context for a failed trial."""
+
+    message: str
+    error_type: str
+    traceback: str
+    timestamp: datetime
+    config: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: Exception,
+        *,
+        config: Mapping[str, Any],
+        timestamp: datetime | None = None,
+    ) -> TrialError:
+        """Build a structured trial error from an exception."""
+        formatted_traceback = "".join(
+            traceback_module.format_exception(type(exc), exc, exc.__traceback__)
+        ).strip()
+        if not formatted_traceback:
+            formatted_traceback = "".join(
+                traceback_module.format_exception_only(type(exc), exc)
+            ).strip()
+
+        return cls(
+            message=str(exc),
+            error_type=type(exc).__name__,
+            traceback=formatted_traceback,
+            timestamp=timestamp or datetime.now(UTC),
+            config=dict(config),
+        )
+
+    def to_dict(
+        self,
+        *,
+        datetime_format: TrialDatetimeFormat = "iso",
+    ) -> dict[str, Any]:
+        """Convert structured error details to a JSON-ready dictionary."""
+        return {
+            "message": self.message,
+            "error_type": self.error_type,
+            "traceback": self.traceback,
+            "timestamp": _serialize_datetime(
+                self.timestamp, datetime_format=datetime_format
+            ),
+            "config": _json_safe_trial_value(
+                self.config, datetime_format=datetime_format
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
+        """Reconstruct a structured trial error from a dictionary."""
+        raw_timestamp = data.get("timestamp")
+        timestamp = datetime.now(UTC)
+        if isinstance(raw_timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp)
+            except ValueError:
+                pass
+        elif isinstance(raw_timestamp, (int, float)):
+            timestamp = datetime.fromtimestamp(raw_timestamp, UTC)
+
+        raw_config = data.get("config")
+        config = raw_config if isinstance(raw_config, dict) else {}
+
+        return cls(
+            message=str(data.get("message", "")),
+            error_type=str(data.get("error_type", "")),
+            traceback=str(data.get("traceback", "")),
+            timestamp=timestamp,
+            config=config,
+        )
+
+
+@dataclass
 class TrialResult:
     """Result of a single optimization trial."""
 
@@ -230,6 +309,7 @@ class TrialResult:
     timestamp: datetime
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    error: TrialError | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -239,6 +319,16 @@ class TrialResult:
     def get_metric(self, name: str, default: float | None = None) -> float | None:
         """Get a specific metric value."""
         return self.metrics.get(name, default)
+
+    @property
+    def error_type(self) -> str | None:
+        """Get the error type for a failed trial, when available."""
+        return self.error.error_type if self.error else None
+
+    @property
+    def error_traceback(self) -> str | None:
+        """Get the formatted traceback for a failed trial, when available."""
+        return self.error.traceback if self.error else None
 
     def to_dict(
         self,
@@ -264,6 +354,9 @@ class TrialResult:
                 self.timestamp, datetime_format=datetime_format
             ),
             "error_message": self.error_message,
+            "error": _json_safe_trial_value(
+                self.error, datetime_format=datetime_format
+            ),
         }
 
         if include_config:

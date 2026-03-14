@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from traigent import serialize_trials
-from traigent.api.types import ExampleResult, TrialResult, TrialStatus
+from traigent.api.types import ExampleResult, TrialError, TrialResult, TrialStatus
 
 
 class _NestedTimestampedPayload:
@@ -96,6 +96,32 @@ def test_trial_result_to_dict_supports_epoch_timestamps() -> None:
     assert serialized["metadata"]["started_at"] == pytest.approx(
         datetime(2026, 3, 13, 11, 59, tzinfo=UTC).timestamp()
     )
+
+
+def test_trial_result_to_dict_serializes_structured_error_context() -> None:
+    trial = _build_trial_result()
+    trial.status = TrialStatus.FAILED
+    trial.error_message = "Connection timeout"
+    trial.error = TrialError(
+        message="Connection timeout",
+        error_type="TimeoutError",
+        traceback="Traceback (most recent call last): ...",
+        timestamp=datetime(2026, 3, 13, 11, 56, tzinfo=UTC),
+        config={"model": "gpt-4o-mini", "temperature": 0.2},
+    )
+
+    serialized = trial.to_dict(datetime_format="epoch")
+
+    assert serialized["error_message"] == "Connection timeout"
+    assert serialized["error"]["message"] == "Connection timeout"
+    assert serialized["error"]["error_type"] == "TimeoutError"
+    assert serialized["error"]["timestamp"] == pytest.approx(
+        datetime(2026, 3, 13, 11, 56, tzinfo=UTC).timestamp()
+    )
+    assert serialized["error"]["config"] == {
+        "model": "gpt-4o-mini",
+        "temperature": 0.2,
+    }
 
 
 def test_trial_result_to_dict_serializes_nested_to_dict_datetimes() -> None:
