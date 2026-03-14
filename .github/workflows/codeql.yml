@@ -48,7 +48,7 @@ jobs:
           cat "$RUNNER_TEMP/code-scanning.json" >&2
           exit 1
       - if: steps.code-security.outputs.enabled == 'true'
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
       - if: steps.code-security.outputs.enabled == 'true'
@@ -61,7 +61,7 @@ jobs:
       - if: steps.code-security.outputs.enabled == 'true'
         run: npm run build
       - if: steps.code-security.outputs.enabled == 'true'
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
       - if: steps.code-security.outputs.enabled != 'true'
         name: Skip CodeQL upload
         run: echo "CodeQL upload skipped because Code Security is not enabled for this repository."
