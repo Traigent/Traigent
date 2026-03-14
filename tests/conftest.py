@@ -41,6 +41,24 @@ pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
 sys.setrecursionlimit(2000)
 
 
+def pytest_addoption(parser):
+    """Add shared test suite options."""
+    parser.addoption(
+        "--run-slow", action="store_true", default=False, help="run slow tests"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip slow tests unless they are explicitly requested."""
+    if config.getoption("--run-slow"):
+        return
+
+    skip_slow = pytest.mark.skip(reason="need --run-slow option to run")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)
+
+
 # Set JWT validation to development mode for all tests
 @pytest.fixture(autouse=True)
 def jwt_development_mode(monkeypatch):
@@ -640,8 +658,8 @@ def mock_environment():
     mock_vars = {
         "MOCK_MODE": "true",
         "TRAIGENT_MOCK_LLM": "true",
-        "OPENAI_API_KEY": "mock-key-for-testing",
-        "ANTHROPIC_API_KEY": "mock-key-for-testing",
+        "OPENAI_API_KEY": "mock-key-for-testing",  # pragma: allowlist secret
+        "ANTHROPIC_API_KEY": "mock-key-for-testing",  # pragma: allowlist secret
     }
 
     # Store original values

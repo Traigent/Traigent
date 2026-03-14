@@ -150,7 +150,7 @@ Key GitHub Actions workflows (`.github/workflows/`):
 - `tests.yml` - Unit & integration tests (runs on all PRs)
 - `quality.yml` - Linting, formatting, security checks
 - `examples-smoke.yml` - Smoke tests for examples
-- `auto-tune.yml` - Optimization benchmarks
+- `example-auto-tune.yml` - Optional demo workflow for auto-tuning examples
 - `architecture-analysis.yml` - Architecture drift detection
 
 ## 🔍 Code Review Checklist

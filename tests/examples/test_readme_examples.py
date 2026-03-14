@@ -308,9 +308,18 @@ if 'customer_support_agent' in locals():
 
         self._run_code_safely(test_code, "customer_support")
 
-    def test_imports_in_examples(self):
-        """Test that all imports in examples are valid."""
+    def _collect_example_imports(self) -> set[str]:
+        """Collect unique import lines from README Python examples."""
         import_pattern = r"^(import |from )\S+"
+        all_imports = set()
+        for example in self.examples:
+            for line in example.split("\n"):
+                if re.match(import_pattern, line):
+                    all_imports.add(line.strip())
+        return all_imports
+
+    def test_imports_in_examples(self):
+        """Smoke test required imports used by README examples."""
 
         # Optional dependencies that are allowed to fail
         optional_modules = {
@@ -330,16 +339,52 @@ if 'customer_support_agent' in locals():
             "litellm",  # LiteLLM for multi-provider support
         }
 
-        all_imports = set()
-        for example in self.examples:
-            lines = example.split("\n")
-            for line in lines:
-                if re.match(import_pattern, line):
-                    all_imports.add(line.strip())
+        required_imports = sorted(
+            import_line
+            for import_line in self._collect_example_imports()
+            if not any(module in import_line for module in optional_modules)
+        )
+
+        if not required_imports:
+            pytest.skip("No required README imports found")
+
+        test_code = "\n".join(
+            [
+                'import os',
+                'os.environ["TRAIGENT_MOCK_LLM"] = "true"',
+                'os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret',
+                *required_imports,
+                'print("✅ Required README imports successful")',
+            ]
+        )
+
+        self._run_code_safely(test_code, "required_import_smoke", timeout=30)
+
+    @pytest.mark.slow
+    @pytest.mark.timeout(120)
+    def test_imports_in_examples_exhaustive(self):
+        """Test every README import in an isolated subprocess."""
+        # Optional dependencies that are allowed to fail
+        optional_modules = {
+            "langchain_openai",
+            "langchain_chroma",
+            "langchain",
+            "openai",
+            "anthropic",
+            "mlflow",
+            "wandb",
+            "plotly",
+            "matplotlib",
+            "numpy",
+            "pandas",
+            "playground",  # Local playground module - optional for examples
+            "traigent_ui",  # UI plugin - optional for problem management
+            "litellm",  # LiteLLM for multi-provider support
+        }
 
         # Test each unique import
         failed_imports = []
-        for import_line in all_imports:
+        for import_line in sorted(self._collect_example_imports()):
             # Check if this is an optional dependency import
             is_optional = any(module in import_line for module in optional_modules)
 
