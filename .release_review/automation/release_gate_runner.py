@@ -77,6 +77,13 @@ def resolve_child_path(root: Path, filename: str) -> Path:
     return target
 
 
+def write_guarded_text(root: Path, filename: str, contents: str) -> Path:
+    """Write a file beneath a guarded root and return its resolved path."""
+    target = resolve_child_path(root, filename)
+    target.write_text(contents)
+    return target
+
+
 def resolve_run_dir(run_dir_arg: str | None, release_id: str) -> Path:
     runs_root = Path(".release_review") / "runs"
     runs_root_resolved = runs_root.resolve()
@@ -267,7 +274,7 @@ def run_check(check: GateCheck, logs_dir: Path, strict: bool) -> GateResult:
 
 
 def write_summary_markdown(
-    path: Path,
+    output_dir: Path,
     release_id: str,
     mode: str,
     strict: bool,
@@ -300,7 +307,7 @@ def write_summary_markdown(
     lines.append("- `gate_results/verdict.json`")
     lines.append("- `logs/*.stdout.log`, `logs/*.stderr.log`")
 
-    path.write_text("\n".join(lines) + "\n")
+    write_guarded_text(output_dir, "summary.md", "\n".join(lines) + "\n")
 
 
 def ensure_run_workspace(run_dir: Path, release_id: str, base_branch: str) -> None:
@@ -379,11 +386,15 @@ def main() -> int:
         "checks": [asdict(result) for result in results],
     }
 
-    checks_file = run_dir / "gate_results" / "check_results.json"
-    checks_file.write_text(json.dumps(checks_payload, indent=2) + "\n")
+    gate_results_dir = run_dir / "gate_results"
+    checks_file = write_guarded_text(
+        gate_results_dir,
+        "check_results.json",
+        json.dumps(checks_payload, indent=2) + "\n",
+    )
 
     write_summary_markdown(
-        path=run_dir / "gate_results" / "summary.md",
+        output_dir=gate_results_dir,
         release_id=release_id,
         mode=args.mode,
         strict=args.strict,
