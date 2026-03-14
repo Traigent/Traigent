@@ -70,6 +70,7 @@ class RemoteServiceRegistry:
         self._health_checks: dict[str, bool] = {}
         self._selection_strategies: dict[str, Callable[..., Any]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_task_monitors: set[asyncio.Task[Any]] = set()
 
         # Register default selection strategies
         self._register_default_strategies()
@@ -82,16 +83,21 @@ class RemoteServiceRegistry:
             try:
                 await asyncio.shield(task)
             except asyncio.CancelledError:
-                return
+                if task.done():
+                    self._background_tasks.discard(task)
+                raise
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error("Background service task failed", exc_info=exc)
             finally:
-                self._background_tasks.discard(task)
+                if task.done():
+                    self._background_tasks.discard(task)
 
-        asyncio.create_task(
+        monitor = asyncio.create_task(
             _monitor_background_task(),
             name=f"{task.get_name()}_monitor",
         )
+        self._background_task_monitors.add(monitor)
+        monitor.add_done_callback(self._background_task_monitors.discard)
 
     def register_service(
         self, service: RemoteOptimizationService, auto_connect: bool = True
