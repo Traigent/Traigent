@@ -28,12 +28,24 @@ def test_normalize_backend_url_strips_trailing_slash() -> None:
     assert module.normalize_backend_url("https://api.traigent.ai/") == "https://api.traigent.ai"
 
 
+def test_normalize_backend_url_allows_localhost_http() -> None:
+    module = _load_get_api_key_module()
+
+    assert module.normalize_backend_url("http://localhost:5000/") == "http://localhost:5000"
+
+
 @pytest.mark.parametrize(
     ("backend_url", "error"),
     [
         ("ftp://api.traigent.ai", "must start with http:// or https://"),
         ("https://api.traigent.ai?token=1", "must not include params, query strings, or fragments"),
         ("https://", "must include a hostname"),
+        ("http://api.traigent.ai", "Non-local backend URLs must use https"),
+        (
+            "https://user:pass@api.traigent.ai",  # pragma: allowlist secret
+            "must not include embedded credentials",
+        ),
+        ("https://192.168.1.10", "must not target private or loopback IPs"),
     ],
 )
 def test_normalize_backend_url_rejects_unsafe_values(
