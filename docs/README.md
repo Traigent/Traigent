@@ -15,28 +15,30 @@ content here is specific to the JS SDK project and this native-first checkout.
 - [SCHEMA_ALIGNMENT_AUDIT.md](./SCHEMA_ALIGNMENT_AUDIT.md) for JS SDK vs TraigentSchema entity alignment
 - [RELEASING.md](./RELEASING.md) for the Changesets-based release flow
 - [BRANCH_PROTECTION.md](./BRANCH_PROTECTION.md) for required `main` branch protection checks
+- [TYPED_SESSION_SMOKE.md](./TYPED_SESSION_SMOKE.md) for the shared JS/Python typed-session smoke environment
 - [SONAR_TRIAGE.md](./SONAR_TRIAGE.md) for current static-analysis triage and follow-up
 
 ## Current Branch Reality
 
-- Native high-level agent optimization is the primary supported path.
-- Hybrid spec authoring is supported through `toHybridConfigSpace()`.
-- Backend-guided `execution.mode = 'hybrid'` is not implemented in this checkout.
+- Native high-level agent optimization is supported.
+- Backend-guided local execution through the typed session surface is supported.
+- Hybrid session helpers are supported for:
+  - create
+  - list
+  - status
+  - finalize
+  - delete
 - `seamless` now covers:
   - framework interception for wrapped OpenAI, LangChain, and Vercel AI clients
   - codemod/build-time rewriting for hardcoded tuned variables
   - an experimental runtime rewrite fallback for self-contained plain Node functions when explicitly opted in
+- Python-style remote cloud execution remains out-of-scope for JS.
 
 ## Project-Wide Note
 
-The overall JS SDK project currently spans two active lines of work:
-
-- this native-first checkout, which is the source of truth for local/native optimization ergonomics
-- a separate hybrid-enabled worktree, which carries backend-guided session execution work that is not merged into this checkout yet
-
-When a parity document says "this checkout", it refers to the code currently in
-this repository root. When a document says "overall JS project", it includes the
-separate hybrid worktree status as well.
+The parity docs still distinguish native-first behavior from backend-guided
+hybrid behavior when the constraints or guarantees differ. In this repository
+root, both surfaces are now present and documented as one merged SDK.
 
 ## Reference Material
 

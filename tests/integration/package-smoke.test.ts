@@ -34,6 +34,31 @@ function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, encoding: 'utf-8', timeout: 60_000 }).trim();
 }
 
+function parsePackedTarballFilename(output: string): string {
+  const trimmed = output.trim();
+
+  try {
+    const jsonStart = trimmed.lastIndexOf('\n[');
+    const jsonText = jsonStart >= 0 ? trimmed.slice(jsonStart + 1) : trimmed;
+    const parsed = JSON.parse(jsonText) as Array<{ filename?: string }>;
+    const filename = parsed.at(-1)?.filename;
+    if (typeof filename === 'string' && filename.endsWith('.tgz')) {
+      return filename;
+    }
+  } catch {
+    // Fall through to line-based parsing for npm variants that mix extra output in stdout.
+  }
+
+  for (const line of trimmed.split(/\r?\n/).reverse()) {
+    const candidate = line.trim();
+    if (candidate.endsWith('.tgz')) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to determine packed tarball filename from output:\n${output}`);
+}
+
 /**
  * Run a node script and return { code, stderr }.
  * Does not throw on non-zero exit — lets the caller inspect the result.
@@ -74,7 +99,7 @@ beforeAll(() => {
   }
 
   // Pack the already-built SDK
-  const tarball = run('npm pack --pack-destination /tmp', ROOT);
+  const tarball = parsePackedTarballFilename(run('npm pack --json --pack-destination /tmp', ROOT));
   tarballPath = join('/tmp', tarball);
 
   // Create a temp consumer project

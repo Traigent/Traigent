@@ -117,5 +117,6 @@
   ],
   "openai": ["createTraigentOpenAI"],
   "langchain": ["LLMCallMetrics", "TraigentHandler", "TraigentHandlerMetrics", "withTraigentModel"],
-  "vercelAi": ["withTraigent"]
+  "vercelAi": ["withTraigent"],
+  "seamless": ["default", "formatSeamlessDiagnosticPreview"]
 }

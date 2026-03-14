@@ -22,13 +22,46 @@ jobs:
         language: [javascript-typescript]
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - id: code-security
+        name: Check Code Security availability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status="$(curl -sS -o "$RUNNER_TEMP/code-scanning.json" -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/code-scanning/default-setup")"
+
+          if [ "$status" = "200" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$status" = "403" ] || [ "$status" = "404" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Code Security is not enabled for this repository; skipping CodeQL analysis upload."
+            cat "$RUNNER_TEMP/code-scanning.json"
+            exit 0
+          fi
+
+          echo "Unexpected response while checking Code Security availability (HTTP $status)." >&2
+          cat "$RUNNER_TEMP/code-scanning.json" >&2
+          exit 1
+      - if: steps.code-security.outputs.enabled == 'true'
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-      - uses: actions/setup-node@v4
+      - if: steps.code-security.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: github/codeql-action/analyze@v3
+      - if: steps.code-security.outputs.enabled == 'true'
+        run: npm ci
+      - if: steps.code-security.outputs.enabled == 'true'
+        run: npm run build
+      - if: steps.code-security.outputs.enabled == 'true'
+        uses: github/codeql-action/analyze@v3
+      - if: steps.code-security.outputs.enabled != 'true'
+        name: Skip CodeQL upload
+        run: echo "CodeQL upload skipped because Code Security is not enabled for this repository."
