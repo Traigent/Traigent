@@ -1,5 +1,6 @@
 """Validation tests for BackendSynchronizer."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -76,3 +77,21 @@ async def test_process_sync_queue_skips_when_no_snapshot():
 
     assert sync._stats["total_sync_attempts"] == 0
     assert sync._sync_queue.qsize() == 0
+
+
+@pytest.mark.asyncio
+async def test_background_sync_loop_reraises_cancellation(monkeypatch):
+    sync = BackendSynchronizer(
+        max_concurrent_syncs=1,
+        batch_size=5,
+        sync_interval=0.1,
+        enable_auto_sync=True,
+    )
+
+    async def raise_cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", raise_cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await sync._background_sync_loop()

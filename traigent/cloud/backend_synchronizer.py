@@ -452,7 +452,7 @@ class BackendSynchronizer:
 
             except asyncio.CancelledError:
                 logger.info("Background sync cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Background sync error: {e}")
                 # Continue loop despite errors

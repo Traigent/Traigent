@@ -291,14 +291,7 @@ class Tenant:
         """Initialize tenant after creation."""
         # Set quotas based on tier if not explicitly provided
         if self.quotas is None:
-            # If no tier is explicitly set and we're defaulting, use default quotas
-            # rather than tier-based quotas (for backward compatibility)
-            if self.tier == TenantTier.FREE:
-                # But for FREE tier, always use the tier-specific (limited) quotas
-                self.quotas = TenantQuotas.from_tier(self.tier)
-            else:
-                # For other tiers, use tier-specific quotas
-                self.quotas = TenantQuotas.from_tier(self.tier)
+            self.quotas = TenantQuotas.from_tier(self.tier)
 
     def _ensure_quotas(self) -> TenantQuotas:
         """Return tenant quotas, lazily initialising if missing."""
