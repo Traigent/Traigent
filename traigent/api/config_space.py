@@ -69,8 +69,8 @@ class ConfigSpace:
     the TVL ecosystem.
 
     Attributes:
-        tvars: Dict mapping parameter names to their ParameterRange definitions
-        constraints: List of structural constraints on the configuration space
+        tvars: Read-only mapping of parameter names to ParameterRange definitions
+        constraints: Immutable tuple of structural constraints on the space
         description: Optional description of the configuration space
 
     Example:
