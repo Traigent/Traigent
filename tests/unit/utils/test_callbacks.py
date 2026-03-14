@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -2005,6 +2006,75 @@ class TestCallbackManagerTimeoutAndIsolation:
         manager.on_optimization_complete(result)
 
         assert manager._executor is None
+
+    def test_running_callback_is_skipped_while_previous_invocation_is_active(
+        self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test a callback method is not re-entered while its prior call runs."""
+        started = threading.Event()
+        release = threading.Event()
+        invocation_count = 0
+
+        def slow_callback(*args: Any, **kwargs: Any) -> None:
+            nonlocal invocation_count
+            invocation_count += 1
+            started.set()
+            release.wait(timeout=1.0)
+
+        mock_callback.on_trial_start.side_effect = slow_callback
+        caplog.set_level(logging.WARNING)
+
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=0.05,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            assert started.wait(timeout=0.2)
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert invocation_count == 1
+            assert len(manager.callback_failures) == 1
+            assert manager.callback_failures[0].error_type == "timeout"
+            assert any("still running" in record.message for record in caplog.records)
+
+            release.set()
+
+    def test_callback_can_run_again_after_previous_invocation_finishes(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test callback tracking is cleared once the running invocation finishes."""
+        release = threading.Event()
+        allow_completion = threading.Event()
+        invocation_count = 0
+
+        def slow_then_finish(*args: Any, **kwargs: Any) -> None:
+            nonlocal invocation_count
+            invocation_count += 1
+            release.set()
+            allow_completion.wait(timeout=1.0)
+
+        mock_callback.on_trial_start.side_effect = slow_then_finish
+
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=0.05,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            assert release.wait(timeout=0.2)
+
+            allow_completion.set()
+            time.sleep(0.05)
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert invocation_count == 2
 
     def test_multiple_callbacks_with_timeout_mixed_results(
         self, caplog: pytest.LogCaptureFixture
