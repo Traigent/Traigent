@@ -281,35 +281,35 @@ class JSBridge:
 
             self._shutdown_requested = True
             timeout = timeout or self._config.command_timeout_seconds
-
             shutdown_failed = False
 
             try:
-                await self.cancel_active_trial()
-                await self._send_request(
-                    action="shutdown",
-                    payload={},
-                    timeout=timeout,
-                )
-            except JSProcessError as e:
-                logger.info("JS process exited during shutdown: %s", e)
-            except Exception as e:
-                shutdown_failed = True
-                logger.warning("Shutdown command failed: %s", e)
+                try:
+                    await self.cancel_active_trial()
+                    await self._send_request(
+                        action="shutdown",
+                        payload={},
+                        timeout=timeout,
+                    )
+                except JSProcessError as e:
+                    logger.info("JS process exited during shutdown: %s", e)
+                except Exception as e:
+                    shutdown_failed = True
+                    logger.warning("Shutdown command failed: %s", e)
 
-            if self._process is not None and self._process.returncode is None:
-                if not await self._wait_for_process_exit(timeout):
-                    if shutdown_failed:
-                        logger.warning(
-                            "JS process did not exit after failed shutdown command; terminating"
-                        )
-                    else:
-                        logger.warning(
-                            "JS process did not exit after shutdown command; terminating"
-                        )
-                    await self._terminate_process()
-
-            await self._finalize_shutdown()
+                if self._process is not None and self._process.returncode is None:
+                    if not await self._wait_for_process_exit(timeout):
+                        if shutdown_failed:
+                            logger.warning(
+                                "JS process did not exit after failed shutdown command; terminating"
+                            )
+                        else:
+                            logger.warning(
+                                "JS process did not exit after shutdown command; terminating"
+                            )
+                        await self._terminate_process()
+            finally:
+                await self._finalize_shutdown()
 
     def _fail_pending_requests(self, error: Exception) -> None:
         """Fail all pending requests with the given error."""

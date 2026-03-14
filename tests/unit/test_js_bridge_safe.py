@@ -175,6 +175,22 @@ async def test_stop_terminates_after_failed_shutdown_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_finalizes_shutdown_even_when_wait_raises() -> None:
+    bridge = _make_bridge()
+    bridge._started = True
+    bridge._process = MagicMock(returncode=None)
+    bridge.cancel_active_trial = AsyncMock()
+    bridge._send_request = AsyncMock(return_value={"status": "success", "payload": {}})
+    bridge._wait_for_process_exit = AsyncMock(side_effect=RuntimeError("wait failed"))
+    bridge._finalize_shutdown = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="wait failed"):
+        await bridge.stop(timeout=3.0)
+
+    bridge._finalize_shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_stop_handles_process_exit_during_shutdown() -> None:
     bridge = _make_bridge()
     bridge._started = True
