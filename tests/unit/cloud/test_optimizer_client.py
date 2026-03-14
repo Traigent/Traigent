@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -65,3 +66,35 @@ async def test_submit_metrics_validates_identifiers(monkeypatch):
             {"score": 0.9},
             0.4,
         )
+
+
+@pytest.mark.asyncio
+async def test_context_exit_suppresses_cancelled_flush_task() -> None:
+    client = OptimizerDirectClient("https://api.example.com", "secret-token")
+    client.flush = AsyncMock()
+    client.session = MagicMock()
+    client.session.close = AsyncMock()
+
+    async def wait_forever() -> None:
+        await asyncio.sleep(3600)
+
+    client._flush_task = asyncio.create_task(wait_forever())
+
+    await client.__aexit__(None, None, None)
+
+    assert client._flush_task.cancelled()
+    client.flush.assert_awaited_once()
+    client.session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_periodic_flush_reraises_cancelled_error(monkeypatch) -> None:
+    client = OptimizerDirectClient("https://api.example.com", "secret-token")
+
+    async def raise_cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", raise_cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client._periodic_flush()

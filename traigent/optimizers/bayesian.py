@@ -333,7 +333,7 @@ class BayesianOptimizer(BaseOptimizer):
             imp = mu - y_best - self.xi
             Z = imp / sigma
             ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
-            ei[sigma == 0.0] = 0.0
+            ei[np.isclose(sigma, 0.0)] = 0.0
 
         return cast(np.ndarray[Any, Any], ei.flatten())
 

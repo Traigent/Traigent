@@ -9,6 +9,50 @@ and configuration run submissions according to Traigent schema specifications.
 import re
 from typing import Any
 
+_VALID_SUMMARY_STAT_KEYS = {
+    "count",
+    "mean",
+    "std",
+    "min",
+    "25%",
+    "50%",
+    "75%",
+    "max",
+}
+
+
+def _validate_summary_stat_value(
+    metric_key: str, stat_key: str, stat_value: Any
+) -> bool:
+    """Validate a single statistics entry within summary_stats.metrics."""
+    if not isinstance(stat_value, (int, float)) and stat_value is not None:
+        raise ValueError(
+            f"summary_stats.metrics['{metric_key}']['{stat_key}'] must be a number, got {type(stat_value)}"
+        )
+    return True
+
+
+def _validate_summary_metric_value(metric_key: str, value: Any) -> bool:
+    """Validate a summary_stats.metrics value."""
+    if value is None or isinstance(value, (int, float, str)):
+        return True
+
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"summary_stats.metrics['{metric_key}'] must be number, string, null, or statistics dict, got {type(value)}"
+        )
+
+    invalid_keys = set(value.keys()) - _VALID_SUMMARY_STAT_KEYS
+    if invalid_keys:
+        raise ValueError(
+            f"summary_stats.metrics['{metric_key}'] has invalid statistics keys: {invalid_keys}"
+        )
+
+    return all(
+        _validate_summary_stat_value(metric_key, stat_key, stat_value)
+        for stat_key, stat_value in value.items()
+    )
+
 
 def validate_comparability_metadata(comparability: Any) -> bool:
     """Validate comparability metadata payload when present."""
@@ -163,13 +207,16 @@ def validate_measures_array(measures: Any) -> bool:
     if not isinstance(measures, list):
         raise ValueError(f"measures must be an array or null, got {type(measures)}")
 
-    for i, measure in enumerate(measures):
+    def _validate_measure_at_index(index: int, measure: Any) -> bool:
         try:
-            validate_measure_results(measure)
+            return validate_measure_results(measure)
         except ValueError as e:
-            raise ValueError(f"Invalid measure at index {i}: {e}") from None
+            raise ValueError(f"Invalid measure at index {index}: {e}") from None
 
-    return True
+    return all(
+        _validate_measure_at_index(index, measure)
+        for index, measure in enumerate(measures)
+    )
 
 
 def validate_summary_stats(summary_stats: Any) -> bool:
@@ -196,6 +243,7 @@ def validate_summary_stats(summary_stats: Any) -> bool:
         raise ValueError(f"summary_stats has unexpected properties: {extra_props}")
 
     # Validate metrics if present
+    metrics_valid = True
     if "metrics" in summary_stats:
         metrics = summary_stats["metrics"]
         if not isinstance(metrics, dict):
@@ -203,45 +251,9 @@ def validate_summary_stats(summary_stats: Any) -> bool:
                 f"summary_stats.metrics must be an object, got {type(metrics)}"
             )
 
-        # Validate each metric value
-        # Values can be:
-        # 1. Simple value: number, string, or null (original format)
-        # 2. pandas.describe dict with statistics (enhanced format for privacy mode)
-        for key, value in metrics.items():
-            if value is None:
-                continue  # null is allowed
-            elif isinstance(value, (int, float, str)):
-                continue  # Simple values are allowed
-            elif isinstance(value, dict):
-                # Check if it's a valid pandas.describe-style statistics dict
-                valid_stat_keys = {
-                    "count",
-                    "mean",
-                    "std",
-                    "min",
-                    "25%",
-                    "50%",
-                    "75%",
-                    "max",
-                }
-                if not all(k in valid_stat_keys for k in value.keys()):
-                    invalid_keys = set(value.keys()) - valid_stat_keys
-                    raise ValueError(
-                        f"summary_stats.metrics['{key}'] has invalid statistics keys: {invalid_keys}"
-                    )
-                # Validate each statistic value
-                for stat_key, stat_value in value.items():
-                    if (
-                        not isinstance(stat_value, (int, float))
-                        and stat_value is not None
-                    ):
-                        raise ValueError(
-                            f"summary_stats.metrics['{key}']['{stat_key}'] must be a number, got {type(stat_value)}"
-                        )
-            else:
-                raise ValueError(
-                    f"summary_stats.metrics['{key}'] must be number, string, null, or statistics dict, got {type(value)}"
-                )
+        metrics_valid = all(
+            _validate_summary_metric_value(key, value) for key, value in metrics.items()
+        )
 
     # Validate execution_time if present
     if "execution_time" in summary_stats:
@@ -260,6 +272,7 @@ def validate_summary_stats(summary_stats: Any) -> bool:
             )
 
     # metadata can be any object, so no validation needed beyond type check
+    comparability_valid = True
     if "metadata" in summary_stats:
         metadata = summary_stats["metadata"]
         if not isinstance(metadata, dict):
@@ -268,9 +281,9 @@ def validate_summary_stats(summary_stats: Any) -> bool:
             )
         comparability = metadata.get("comparability")
         if comparability is not None:
-            validate_comparability_metadata(comparability)
+            comparability_valid = validate_comparability_metadata(comparability)
 
-    return True
+    return metrics_valid and comparability_valid
 
 
 def validate_configuration_run_submission(data: dict[str, Any]) -> bool:

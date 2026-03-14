@@ -395,6 +395,8 @@ class JSProcessPool:
 
         # Stop all workers with timeout
         if self._workers:
+            cancel_tasks = [worker.cancel_active_trial() for worker in self._workers]
+            await asyncio.gather(*cancel_tasks, return_exceptions=True)
             shutdown_tasks = [worker.stop() for worker in self._workers]
             try:
                 await asyncio.wait_for(
