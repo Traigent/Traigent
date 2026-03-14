@@ -300,8 +300,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 f"{origin}{path or BackendConfig.get_default_api_path()}"
             )
         else:
-            resolved_origin = BackendConfig.get_backend_url()
-            api_base_candidate = BackendConfig.get_backend_api_url()
+            resolved_origin = BackendConfig.get_cloud_backend_url()
+            api_base_candidate = BackendConfig.get_cloud_api_url()
 
         self.base_url = resolved_origin.rstrip("/")
         self.api_base_url = api_base_candidate.rstrip("/")

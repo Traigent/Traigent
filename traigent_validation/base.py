@@ -7,7 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from traigent.api.constraints import Constraint
     from traigent.api.parameter_ranges import ParameterRange
@@ -59,16 +59,16 @@ class ConstraintValidator(Protocol):
     def validate_config(
         self,
         config: dict[str, Any],
-        constraints: list[Constraint],
-        var_names: dict[int, str],
+        constraints: Sequence[Constraint],
+        var_names: Mapping[int, str],
     ) -> ValidationResult:
         """Validate one configuration against a set of constraints."""
         ...
 
     def check_satisfiability(
         self,
-        tvars: dict[str, ParameterRange],
-        constraints: list[Constraint],
+        tvars: Mapping[str, ParameterRange],
+        constraints: Sequence[Constraint],
     ) -> SatResult:
         """Check if any valid configuration can satisfy the constraints."""
         ...

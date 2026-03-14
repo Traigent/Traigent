@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -1679,6 +1680,23 @@ class TestCallbackManagerTimeoutAndIsolation:
         manager = CallbackManager()
         assert manager.timeout == 5.0
 
+    def test_default_max_callback_threads(self) -> None:
+        """Test CallbackManager has a bounded shared callback pool by default."""
+        manager = CallbackManager()
+        assert (
+            manager.max_callback_threads == CallbackManager.DEFAULT_MAX_CALLBACK_THREADS
+        )
+
+    def test_max_callback_threads_parameter_initialization(self) -> None:
+        """Test CallbackManager accepts max_callback_threads parameter."""
+        manager = CallbackManager(max_callback_threads=2)
+        assert manager.max_callback_threads == 2
+
+    def test_invalid_max_callback_threads_raises(self) -> None:
+        """Test CallbackManager rejects invalid callback worker limits."""
+        with pytest.raises(ValueError, match="max_callback_threads"):
+            CallbackManager(max_callback_threads=0)
+
     def test_timeout_disabled_with_zero(self) -> None:
         """Test timeout is disabled when set to 0."""
         manager = CallbackManager(timeout=0)
@@ -1943,6 +1961,120 @@ class TestCallbackManagerTimeoutAndIsolation:
         # No failures should be recorded
         assert len(manager.callback_failures) == 0
         mock_callback.on_optimization_start.assert_called_once()
+
+    def test_shared_executor_is_reused_across_timeout_calls(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test timeout-enabled callbacks reuse a single shared executor."""
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=5.0,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            first_executor = manager._executor
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert first_executor is not None
+            assert manager._executor is first_executor
+
+    def test_on_optimization_complete_closes_shared_executor(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test optimization completion releases the shared executor."""
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)
+
+        manager.on_trial_start(0, {"model": "gpt-4"})
+        assert manager._executor is not None
+
+        result = OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        manager.on_optimization_complete(result)
+
+        assert manager._executor is None
+
+    def test_running_callback_is_skipped_while_previous_invocation_is_active(
+        self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test a callback method is not re-entered while its prior call runs."""
+        started = threading.Event()
+        release = threading.Event()
+        invocation_count = 0
+
+        def slow_callback(*args: Any, **kwargs: Any) -> None:
+            nonlocal invocation_count
+            invocation_count += 1
+            started.set()
+            release.wait(timeout=1.0)
+
+        mock_callback.on_trial_start.side_effect = slow_callback
+        caplog.set_level(logging.WARNING)
+
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=0.05,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            assert started.wait(timeout=0.2)
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert invocation_count == 1
+            assert len(manager.callback_failures) == 1
+            assert manager.callback_failures[0].error_type == "timeout"
+            assert any("still running" in record.message for record in caplog.records)
+
+            release.set()
+
+    def test_callback_can_run_again_after_previous_invocation_finishes(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test callback tracking is cleared once the running invocation finishes."""
+        release = threading.Event()
+        allow_completion = threading.Event()
+        invocation_count = 0
+
+        def slow_then_finish(*args: Any, **kwargs: Any) -> None:
+            nonlocal invocation_count
+            invocation_count += 1
+            release.set()
+            allow_completion.wait(timeout=1.0)
+
+        mock_callback.on_trial_start.side_effect = slow_then_finish
+
+        with contextlib.closing(
+            CallbackManager(
+                callbacks=[mock_callback],
+                timeout=0.05,
+                max_callback_threads=2,
+            )
+        ) as manager:
+            manager.on_trial_start(0, {"model": "gpt-4"})
+            assert release.wait(timeout=0.2)
+
+            allow_completion.set()
+            time.sleep(0.05)
+
+            manager.on_trial_start(1, {"model": "gpt-4o"})
+
+            assert invocation_count == 2
 
     def test_multiple_callbacks_with_timeout_mixed_results(
         self, caplog: pytest.LogCaptureFixture

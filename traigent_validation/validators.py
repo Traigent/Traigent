@@ -13,7 +13,7 @@ from traigent_validation.base import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from traigent.api.constraints import Constraint
     from traigent.api.parameter_ranges import ParameterRange
@@ -32,20 +32,21 @@ class PythonConstraintValidator:
     def validate_config(
         self,
         config: dict[str, Any],
-        constraints: list[Constraint],
-        var_names: dict[int, str],
+        constraints: Sequence[Constraint],
+        var_names: Mapping[int, str],
     ) -> ValidationResult:
         violations: list[ConstraintViolation] = []
+        resolved_var_names = dict(var_names)
 
         for i, constraint in enumerate(constraints):
             try:
-                is_satisfied = constraint.evaluate(config, var_names)
+                is_satisfied = constraint.evaluate(config, resolved_var_names)
                 if not is_satisfied:
                     relevant_values = self._get_relevant_values(
-                        config, constraint, var_names
+                        config, constraint, resolved_var_names
                     )
                     message = self._build_violation_message(
-                        constraint, config, var_names
+                        constraint, config, resolved_var_names
                     )
                     violations.append(
                         ConstraintViolation(
@@ -75,8 +76,8 @@ class PythonConstraintValidator:
 
     def check_satisfiability(
         self,
-        tvars: dict[str, ParameterRange],
-        constraints: list[Constraint],
+        tvars: Mapping[str, ParameterRange],
+        constraints: Sequence[Constraint],
     ) -> SatResult:
         if not constraints:
             return SatResult(status=SatStatus.SAT, message="No constraints to satisfy")
@@ -218,15 +219,15 @@ class SATConstraintValidator:
     def validate_config(
         self,
         config: dict[str, Any],
-        constraints: list[Constraint],
-        var_names: dict[int, str],
+        constraints: Sequence[Constraint],
+        var_names: Mapping[int, str],
     ) -> ValidationResult:
         return self._delegate.validate_config(config, constraints, var_names)
 
     def check_satisfiability(
         self,
-        tvars: dict[str, ParameterRange],
-        constraints: list[Constraint],
+        tvars: Mapping[str, ParameterRange],
+        constraints: Sequence[Constraint],
     ) -> SatResult:
         return self._delegate.check_satisfiability(tvars, constraints)
 

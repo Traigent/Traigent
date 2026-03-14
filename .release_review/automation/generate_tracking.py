@@ -391,6 +391,19 @@ def resolve_inventory_path(run_dir: Path, filename: str) -> Path:
     return target
 
 
+def resolve_run_child_path(run_dir: Path, filename: str) -> Path:
+    run_dir_resolved = run_dir.resolve()
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ValueError("run child filename must not include directory components")
+    target = (run_dir_resolved / candidate).resolve()
+    try:
+        target.relative_to(run_dir_resolved)
+    except ValueError as exc:
+        raise ValueError("resolved run child path escapes run directory") from exc
+    return target
+
+
 def write_inventory_text(run_dir: Path, filename: str, content: str) -> Path:
     target = resolve_inventory_path(run_dir, filename)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -526,7 +539,9 @@ def write_run_manifest(
         "protocol_version": 3,
         "generated_at_utc": utc_now(),
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(payload, indent=2) + "\n")
+    resolve_run_child_path(run_dir, "run_manifest.json").write_text(
+        json.dumps(payload, indent=2) + "\n"
+    )
 
 
 def main() -> int:

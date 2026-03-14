@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import traceback as traceback_module
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -113,6 +114,99 @@ StopReason = Literal[
     "network_error",  # Connectivity failure
 ]
 
+TrialDatetimeFormat = Literal["iso", "epoch"]
+
+
+def _validate_trial_datetime_format(datetime_format: TrialDatetimeFormat) -> None:
+    """Validate supported datetime formats for public trial serialization."""
+    if datetime_format not in ("iso", "epoch"):
+        raise ValueError(
+            "datetime_format must be 'iso' or 'epoch', " f"got {datetime_format!r}"
+        )
+
+
+def _serialize_datetime(
+    value: datetime,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> str | float:
+    """Serialize datetime using the requested wire format."""
+    _validate_trial_datetime_format(datetime_format)
+
+    if datetime_format == "iso":
+        return value.isoformat()
+
+    return value.timestamp()
+
+
+def _json_safe_trial_value(
+    value: Any,
+    *,
+    datetime_format: TrialDatetimeFormat,
+) -> Any:
+    """Convert a value into a JSON-safe representation for trial export."""
+    if value is None:
+        return None
+
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        to_dict = value.to_dict
+        try:
+            return _json_safe_trial_value(
+                to_dict(datetime_format=datetime_format),
+                datetime_format=datetime_format,
+            )
+        except TypeError:
+            try:
+                return _json_safe_trial_value(
+                    to_dict(),
+                    datetime_format=datetime_format,
+                )
+            except TypeError:
+                # Some objects may expose a to_dict method with required arguments.
+                pass
+
+    if isinstance(value, datetime):
+        return _serialize_datetime(value, datetime_format=datetime_format)
+
+    if isinstance(value, dict):
+        return {
+            key: _json_safe_trial_value(item, datetime_format=datetime_format)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            _json_safe_trial_value(item, datetime_format=datetime_format)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
+        return [
+            _json_safe_trial_value(item, datetime_format=datetime_format)
+            for item in value
+        ]
+
+    if isinstance(value, set):
+        return [
+            _json_safe_trial_value(item, datetime_format=datetime_format)
+            for item in value
+        ]
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
+
 
 @dataclass
 class Trial:
@@ -123,6 +217,84 @@ class Trial:
     timestamp: datetime
     status: TrialStatus = TrialStatus.PENDING
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TrialError:
+    """Structured diagnostic context for a failed trial."""
+
+    message: str
+    error_type: str
+    traceback: str
+    timestamp: datetime
+    config: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: Exception,
+        *,
+        config: Mapping[str, Any],
+        timestamp: datetime | None = None,
+    ) -> TrialError:
+        """Build a structured trial error from an exception."""
+        formatted_traceback = "".join(
+            traceback_module.format_exception(type(exc), exc, exc.__traceback__)
+        ).strip()
+        if not formatted_traceback:
+            formatted_traceback = "".join(
+                traceback_module.format_exception_only(type(exc), exc)
+            ).strip()
+
+        return cls(
+            message=str(exc),
+            error_type=type(exc).__name__,
+            traceback=formatted_traceback,
+            timestamp=timestamp or datetime.now(UTC),
+            config=dict(config),
+        )
+
+    def to_dict(
+        self,
+        *,
+        datetime_format: TrialDatetimeFormat = "iso",
+    ) -> dict[str, Any]:
+        """Convert structured error details to a JSON-ready dictionary."""
+        return {
+            "message": self.message,
+            "error_type": self.error_type,
+            "traceback": self.traceback,
+            "timestamp": _serialize_datetime(
+                self.timestamp, datetime_format=datetime_format
+            ),
+            "config": _json_safe_trial_value(
+                self.config, datetime_format=datetime_format
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
+        """Reconstruct a structured trial error from a dictionary."""
+        raw_timestamp = data.get("timestamp")
+        timestamp = datetime.now(UTC)
+        if isinstance(raw_timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp)
+            except ValueError:
+                pass
+        elif isinstance(raw_timestamp, (int, float)):
+            timestamp = datetime.fromtimestamp(raw_timestamp, UTC)
+
+        raw_config = data.get("config")
+        config = raw_config if isinstance(raw_config, dict) else {}
+
+        return cls(
+            message=str(data.get("message", "")),
+            error_type=str(data.get("error_type", "")),
+            traceback=str(data.get("traceback", "")),
+            timestamp=timestamp,
+            config=config,
+        )
 
 
 @dataclass
@@ -137,6 +309,7 @@ class TrialResult:
     timestamp: datetime
     error_message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    error: TrialError | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -146,6 +319,90 @@ class TrialResult:
     def get_metric(self, name: str, default: float | None = None) -> float | None:
         """Get a specific metric value."""
         return self.metrics.get(name, default)
+
+    @property
+    def error_type(self) -> str | None:
+        """Get the error type for a failed trial, when available."""
+        return self.error.error_type if self.error else None
+
+    @property
+    def error_traceback(self) -> str | None:
+        """Get the formatted traceback for a failed trial, when available."""
+        return self.error.traceback if self.error else None
+
+    def to_dict(
+        self,
+        *,
+        include_config: bool = True,
+        include_metrics: bool = True,
+        include_metadata: bool = True,
+        datetime_format: TrialDatetimeFormat = "iso",
+    ) -> dict[str, Any]:
+        """Convert the trial result to a JSON-ready dictionary.
+
+        Args:
+            include_config: Include the trial configuration payload.
+            include_metrics: Include the trial metrics payload.
+            include_metadata: Include metadata captured during the trial.
+            datetime_format: Timestamp encoding, either ``"iso"`` or ``"epoch"``.
+        """
+        result: dict[str, Any] = {
+            "trial_id": self.trial_id,
+            "status": self.status.value,
+            "duration": float(self.duration),
+            "timestamp": _serialize_datetime(
+                self.timestamp, datetime_format=datetime_format
+            ),
+            "error_message": self.error_message,
+            "error": _json_safe_trial_value(
+                self.error, datetime_format=datetime_format
+            ),
+        }
+
+        if include_config:
+            result["config"] = _json_safe_trial_value(
+                self.config, datetime_format=datetime_format
+            )
+        if include_metrics:
+            result["metrics"] = _json_safe_trial_value(
+                self.metrics, datetime_format=datetime_format
+            )
+        if include_metadata:
+            result["metadata"] = _json_safe_trial_value(
+                self.metadata, datetime_format=datetime_format
+            )
+
+        return result
+
+
+def serialize_trials(
+    trials: Sequence[TrialResult],
+    *,
+    include_config: bool = True,
+    include_metrics: bool = True,
+    include_metadata: bool = True,
+    datetime_format: TrialDatetimeFormat = "iso",
+) -> list[dict[str, Any]]:
+    """Serialize trial results into JSON-ready dictionaries.
+
+    Args:
+        trials: Trial results to serialize.
+        include_config: Include each trial's configuration payload.
+        include_metrics: Include each trial's metrics payload.
+        include_metadata: Include each trial's metadata payload.
+        datetime_format: Timestamp encoding, either ``"iso"`` or ``"epoch"``.
+    """
+    _validate_trial_datetime_format(datetime_format)
+
+    return [
+        trial.to_dict(
+            include_config=include_config,
+            include_metrics=include_metrics,
+            include_metadata=include_metadata,
+            datetime_format=datetime_format,
+        )
+        for trial in trials
+    ]
 
 
 @dataclass

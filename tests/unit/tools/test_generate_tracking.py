@@ -30,6 +30,14 @@ def test_resolve_inventory_path_rejects_directory_components(tmp_path: Path) -> 
         module.resolve_inventory_path(run_dir, "../escape.txt")
 
 
+def test_resolve_run_child_path_rejects_directory_components(tmp_path: Path) -> None:
+    module = _load_generate_tracking_module()
+    run_dir = tmp_path / "run"
+
+    with pytest.raises(ValueError, match="run child filename"):
+        module.resolve_run_child_path(run_dir, "../escape.json")
+
+
 def test_write_inventories_uses_guarded_inventory_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -64,3 +72,25 @@ def test_write_inventories_uses_guarded_inventory_paths(
         assert path.exists()
         assert path.read_text() == content
         assert path.is_relative_to(inventories_dir)
+
+
+def test_write_run_manifest_uses_guarded_run_path(tmp_path: Path) -> None:
+    module = _load_generate_tracking_module()
+    run_dir = tmp_path / "runs" / "release-1"
+    run_dir.mkdir(parents=True)
+
+    module.write_run_manifest(
+        run_dir=run_dir,
+        release_id="release-1",
+        version="1.2.3",
+        base_branch="main",
+        baseline_sha="abc1234",
+        captain="Codex",
+        owner="@release-owner",
+        review_mode="strict",
+        force_rereview=[],
+    )
+
+    manifest = module.resolve_run_child_path(run_dir, "run_manifest.json")
+    assert manifest.exists()
+    assert manifest.is_relative_to(run_dir.resolve())

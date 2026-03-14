@@ -58,7 +58,9 @@ class TestOIDCAuthProviderInitialization:
         provider = OIDCAuthProvider(valid_settings)
 
         assert provider.client_id == "test-client-id"
-        assert provider.client_secret == "test-client-secret"  # pragma: allowlist secret
+        assert (
+            provider.client_secret == "test-client-secret"
+        )  # pragma: allowlist secret
         assert provider.issuer == "https://issuer.example.com"
         assert provider.jwks_uri == "https://issuer.example.com/.well-known/jwks.json"
         assert provider.allowed_algorithms == ["RS256"]

@@ -16,6 +16,7 @@ from pathlib import Path
 from build_release_verdict import main as build_verdict_main
 
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+CHECK_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,28 @@ def validate_release_id(release_id: str) -> str:
             "(alphanumeric, dot, underscore, hyphen only)"
         )
     return release_id
+
+
+def validate_check_key(check_key: str) -> str:
+    if not CHECK_KEY_PATTERN.fullmatch(check_key):
+        raise ValueError(
+            "check key must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ "
+            "(alphanumeric, dot, underscore, hyphen only)"
+        )
+    return check_key
+
+
+def resolve_child_path(root: Path, filename: str) -> Path:
+    root_resolved = root.resolve()
+    candidate = Path(filename)
+    if candidate.name != filename:
+        raise ValueError("child filename must not include directory components")
+    target = (root_resolved / candidate).resolve()
+    try:
+        target.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError("resolved child path escapes root directory") from exc
+    return target
 
 
 def resolve_run_dir(run_dir_arg: str | None, release_id: str) -> Path:
@@ -176,8 +199,9 @@ def get_default_checks(mode: str) -> list[GateCheck]:
 
 
 def run_check(check: GateCheck, logs_dir: Path, strict: bool) -> GateResult:
-    stdout_log = logs_dir / f"{check.key}.stdout.log"
-    stderr_log = logs_dir / f"{check.key}.stderr.log"
+    check_key = validate_check_key(check.key)
+    stdout_log = resolve_child_path(logs_dir, f"{check_key}.stdout.log")
+    stderr_log = resolve_child_path(logs_dir, f"{check_key}.stderr.log")
 
     if not command_exists(check.command):
         stdout_log.write_text("")
@@ -294,7 +318,7 @@ def ensure_run_workspace(run_dir: Path, release_id: str, base_branch: str) -> No
     waivers.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
 
-    manifest = run_dir / "run_manifest.json"
+    manifest = resolve_child_path(run_dir, "run_manifest.json")
     if not manifest.exists():
         manifest_payload = {
             "release_id": release_id,
@@ -317,8 +341,12 @@ def write_inventories(run_dir: Path) -> None:
     test_files = sorted(str(path) for path in Path("tests").rglob("*.py")) if Path("tests").exists() else []
 
     src_files = sorted(src_files)
-    (inventories / "src_files.txt").write_text("\n".join(src_files) + ("\n" if src_files else ""))
-    (inventories / "tests_files.txt").write_text("\n".join(test_files) + ("\n" if test_files else ""))
+    resolve_child_path(inventories, "src_files.txt").write_text(
+        "\n".join(src_files) + ("\n" if src_files else "")
+    )
+    resolve_child_path(inventories, "tests_files.txt").write_text(
+        "\n".join(test_files) + ("\n" if test_files else "")
+    )
 
 
 def main() -> int:

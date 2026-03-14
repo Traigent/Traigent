@@ -7,7 +7,10 @@ to define their configuration space, execution logic, and evaluation logic.
 Example:
     from traigent.wrapper import TraigentService
 
-    app = TraigentService(tunable_id="my_agent")
+    app = TraigentService(
+        tunable_id="my_agent",
+        estimated_tokens_per_example={"input_tokens": 100, "output_tokens": 50},
+    )
 
     @app.tvars
     def config_space():

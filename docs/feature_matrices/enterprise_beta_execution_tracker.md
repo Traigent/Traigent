@@ -23,8 +23,8 @@ This file is the working checklist for the remaining execution waves.
 - `[~]` Wave 3A core tenant/project enforcement completion
 - `[~]` Wave 3B project RBAC kernel
 - `[x]` Automated seeded release-validation harness
-- `[x]` Wave 3B basic project membership UI
-- `[x]` Wave 3B beta retention controls
+- `[~]` Wave 3B basic project membership UI
+- `[~]` Wave 3B beta retention controls
 
 ## Step 0: Secure the Current Baseline
 - `[x]` Commit and push all currently implemented but uncommitted work in `Traigent`
@@ -112,12 +112,12 @@ This file is the working checklist for the remaining execution waves.
 
 ## Wave 3B: Project RBAC / Governance
 - `[x]` Project role model: admin/editor/viewer
-- `[x]` Backend authorization kernel
-- `[x]` Membership APIs
-- `[x]` Membership UI
-- `[x]` Audit events for membership/role/export/admin actions
+- `[~]` Backend authorization kernel
+- `[~]` Membership APIs
+- `[~]` Membership UI
+- `[~]` Audit events for membership/role/export/admin actions
 - `[x]` Rate-limit policy product surface
-- `[x]` Retention controls for export/raw-content surfaces
+- `[~]` Retention controls for export/raw-content surfaces
 
 ### Wave 3B kernel progress
 - `[x]` Add project membership model and migration
@@ -125,15 +125,13 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Add project membership backend routes
 - `[x]` Add project membership integration tests
 - `[x]` Enforce viewer/editor roles on analytics and export routes
-- `[x]` Expand project-role enforcement beyond analytics/export to additional protected mutations
+- `[~]` Expand project-role enforcement beyond analytics/export to additional protected mutations
 - `[x]` Add audit events for project membership and role changes
 - `[x]` Enforce viewer/editor roles on prompt-management routes
 - `[x]` Enforce viewer/editor roles on evaluation routes
 - `[x]` Enforce viewer/editor roles on annotation queue routes
 - `[x]` Enforce viewer/editor roles on observability routes
-- `[x]` Enforce viewer/editor roles on core experiment/agent/benchmark routes
 - `[x]` Add focused integration coverage for the protected route surfaces above
-- `[x]` Add release-review guard for critical project-role-decorated routes
 - `[x]` Add project-membership frontend service
 - `[x]` Add basic project-membership management UI on the Projects page
 - `[x]` Add focused frontend tests for project-membership management
@@ -148,18 +146,17 @@ This file is the working checklist for the remaining execution waves.
 - `[x]` Add focused backend/SDK/frontend/schema tests for retention policy flows
 - `[x]` Add retention-aware artifact cleanup/expiry enforcement beyond metadata
 - `[x]` Add project export policy routes, DTOs, UI, and materialized-export gating
-- `[x]` Add enterprise-admin audit events for tenant, tenant-membership, and SSO mutations
 
 ## Release Validation / Security
 - `[x]` Early lightweight threat-model review after Wave 3A stabilization
 - `[x]` Threat-model review notes for Wave 3A/3B
-- `[x]` Cross-tenant/project monitoring and alerting
+- `[~]` Cross-tenant/project monitoring and alerting
 - `[x]` API reference for dashboards, roles, exports, retention/rate limits
 - `[x]` Migration/cutover notes for tenant/project enforcement
-- `[x]` Privacy-mode integration tests for all new beta surfaces
-- `[x]` Full CI and repo-wide validation rerun
-- `[x]` Changed-code coverage at or above 85%
-- `[!]` Claude review after each completed wave
+- `[~]` Privacy-mode integration tests for all new beta surfaces
+- `[ ]` Full CI and repo-wide validation rerun
+- `[ ]` Changed-code coverage at or above 85%
+- `[ ]` Claude review after each completed wave
 
 ## Notes
 - Browser/JS feedback SDK, prompt playground, scheduled exports, export webhooks, and self-serve dashboards remain intentionally out of beta scope.
@@ -168,16 +165,9 @@ This file is the working checklist for the remaining execution waves.
 - Admin API keys are tenant-scoped in beta; cross-tenant operations are reserved for platform-admin JWT/internal tooling.
 - The seeded validation fixture and Playwright suite now pass against the live local worktree stack using the reconciled backend migration flow; fresh-DB and legacy-global-`alembic_version` validation cases are still open.
 - The early lightweight threat-model review is captured in [../architecture/enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md); it found no new blockers but kept monitoring, privacy-mode integration coverage, and final audit-event completeness as explicit release-gate work.
-- Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts as part of the beta monitoring/alerting release gate.
-- Release-gate integration coverage now exercises the real scope-monitoring helpers end-to-end through `/api/v1/audit/alerts` and `/api/v1/audit/health`, proving that tenant/project violations and dual-run discrepancies surface as alert metrics and health warnings.
+- Scope-monitoring telemetry now emits structured `tenant_scope_violation`, `project_scope_violation`, and `scope_discrepancy` audit events, and the audit health/alerts endpoints surface those counts; remaining work is wiring this into the full beta monitoring/alerting release gate.
 - Export generation now records explicit `DATA_EXPORT` audit events for success, policy denial, generation failure, and artifact-storage failure; privacy-mode integration coverage now includes the beta analytics dashboards plus fine-tuning manifest export.
-- The backend export/enforcement checkpoint now measures at **88% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
-- Non-interactive Claude CLI review was attempted again at the end of the beta scope, but the CLI accepted the job and then timed out without returning findings under a hard timeout. This remains non-blocking unless the CLI workflow itself is repaired.
-- Repo-wide validation has been rerun successfully across the active repos:
-  - `TraigentSchema`: `185 passed`
-  - `TraigentBackend`: `3670 passed, 210 skipped, 10 xfailed`
-  - `Traigent` SDK: `12937 passed, 200 skipped, 4 xfailed`
-  - `TraigentFrontend`: type-check passed, build passed, `1654 passed, 10 skipped`
+- The backend export/enforcement checkpoint now measures at **86% changed-line coverage** from the Step 0 backend baseline (`bb55b11`) to the current release-hardening head using `coverage run` plus `diff-cover`; this satisfies the phase-level checkpoint even though the full branch diff against `origin/develop` remains much broader.
 - API and operations docs are now in place for the beta surfaces:
   - [../api-reference/enterprise-beta-api.md](../api-reference/enterprise-beta-api.md)
   - [../operations/tenant_project_cutover.md](../operations/tenant_project_cutover.md)
