@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = "http://localhost:5000/v1/local-usage"
+_BACKGROUND_ANALYTICS_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _register_background_task(task: asyncio.Task[Any]) -> None:
+    """Keep fire-and-forget analytics tasks alive and surface failures."""
+
+    def _on_done(fut: asyncio.Task[Any]) -> None:
+        _BACKGROUND_ANALYTICS_TASKS.discard(fut)
+        if fut.cancelled():
+            return
+        try:
+            fut.result()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug("Background analytics task failed: %s", exc)
+
+    _BACKGROUND_ANALYTICS_TASKS.add(task)
+    task.add_done_callback(_on_done)
 
 
 class LocalAnalytics:
@@ -507,8 +524,8 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
                     except Exception as e:
                         logger.debug(f"Analytics submission failed: {e}")
 
-            # Use ensure_future which properly schedules the coroutine
-            asyncio.ensure_future(_submit_wrapper())
+            task = asyncio.create_task(_submit_wrapper(), name="analytics_submit")
+            _register_background_task(task)
         except RuntimeError:
             # No running loop, we're in a sync context
             # Create a new event loop in a thread to avoid blocking

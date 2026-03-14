@@ -219,6 +219,19 @@ class TestBayesianOptimizer:
         assert ei.shape == (1,)
         assert ei[0] >= 0  # EI is always non-negative
 
+    def test_expected_improvement_treats_near_zero_sigma_as_zero(self):
+        """Numerically tiny sigma values should zero out expected improvement."""
+        optimizer = BayesianOptimizer({"x": (0.0, 1.0)}, ["accuracy"])
+        optimizer.gp.predict = lambda _X, return_std: (  # type: ignore[assignment]
+            np.array([[1.0]]),
+            np.array([1e-16]),
+        )
+
+        ei = optimizer._expected_improvement(np.array([[0.5]]), y_best=0.5)
+
+        assert ei.shape == (1,)
+        assert ei[0] == 0.0
+
     def test_upper_confidence_bound_acquisition(self):
         """Test Upper Confidence Bound acquisition function."""
         optimizer = BayesianOptimizer(
