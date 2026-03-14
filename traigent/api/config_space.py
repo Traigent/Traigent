@@ -32,7 +32,7 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -61,28 +61,31 @@ class _ImportedConstraintExpression(BoolExpr):
     """Opaque TVL expression imported from a serialized spec."""
 
     expression: str
+    _evaluator: Callable[[dict[str, Any], dict[str, Any] | None], bool] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
-    def to_expression(self, var_names: dict[int, str] | str) -> str:
+    def to_expression(self, _var_names: dict[int, str] | str) -> str:
         """Return the original expression unchanged."""
-        del var_names
         return self.expression
 
     def evaluate_config(
-        self, config: dict[str, Any], var_names: dict[int, str]
+        self, config: dict[str, Any], _var_names: dict[int, str]
     ) -> bool:
         """Evaluate the stored TVL expression against a config."""
-        del var_names
-        from traigent.tvl.spec_loader import compile_constraint_expression
+        evaluator = self._evaluator
+        if evaluator is None:
+            from traigent.tvl.spec_loader import compile_constraint_expression
 
-        evaluator = compile_constraint_expression(
-            self.expression,
-            label=f"imported_constraint:{self.expression}",
-        )
+            evaluator = compile_constraint_expression(
+                self.expression,
+                label=f"imported_constraint:{self.expression}",
+            )
+            object.__setattr__(self, "_evaluator", evaluator)
         return bool(evaluator(config, None))
 
-    def explain(self, var_names: dict[int, str] | None = None) -> str:
+    def explain(self, _var_names: dict[int, str] | None = None) -> str:
         """Surface the raw expression for human-readable diagnostics."""
-        del var_names
         return self.expression
 
 
@@ -315,12 +318,26 @@ class ConfigSpace:
             )
 
         if range_type == "IntRange":
+            low = cls._coerce_integral_spec_value(name, "low", spec_dict["low"])
+            high = cls._coerce_integral_spec_value(name, "high", spec_dict["high"])
+            if low is None or high is None:  # pragma: no cover - defensive guard
+                raise ValueError(f"TVAR '{name}' IntRange bounds are required")
             return IntRange(
-                low=int(spec_dict["low"]),
-                high=int(spec_dict["high"]),
-                step=spec_dict.get("step"),
+                low=low,
+                high=high,
+                step=cls._coerce_integral_spec_value(
+                    name,
+                    "step",
+                    spec_dict.get("step"),
+                    allow_none=True,
+                ),
                 log=bool(spec_dict.get("log", False)),
-                default=spec_dict.get("default"),
+                default=cls._coerce_integral_spec_value(
+                    name,
+                    "default",
+                    spec_dict.get("default"),
+                    allow_none=True,
+                ),
                 name=name,
                 unit=spec_dict.get("unit"),
                 agent=spec_dict.get("agent"),
@@ -339,6 +356,40 @@ class ConfigSpace:
             )
 
         return cls._dict_to_range(name, spec_dict)
+
+    @staticmethod
+    def _coerce_integral_spec_value(
+        name: str,
+        field_name: str,
+        value: Any,
+        *,
+        allow_none: bool = False,
+    ) -> int | None:
+        """Coerce an imported TVL field to int without silent truncation."""
+        if value is None:
+            if allow_none:
+                return None
+            raise ValueError(f"TVAR '{name}' field '{field_name}' is required")
+
+        if isinstance(value, bool):
+            raise ValueError(
+                f"TVAR '{name}' field '{field_name}' must be an integer, got bool"
+            )
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, float):
+            if value.is_integer():
+                return int(value)
+            raise ValueError(
+                f"TVAR '{name}' field '{field_name}' must be integral, got {value!r}"
+            )
+
+        raise ValueError(
+            f"TVAR '{name}' field '{field_name}' must be an integer, "
+            f"got {type(value).__name__}"
+        )
 
     @classmethod
     def _constraints_from_spec(cls, constraints_section: Any) -> tuple[Constraint, ...]:

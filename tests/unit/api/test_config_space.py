@@ -16,7 +16,7 @@ from types import MappingProxyType
 
 import pytest
 
-from traigent.api.config_space import ConfigSpace
+from traigent.api.config_space import ConfigSpace, _ImportedConstraintExpression
 from traigent.api.constraints import implies, require
 from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
 from traigent.api.validation_protocol import SatStatus
@@ -649,7 +649,54 @@ class TestTVLImport:
             imply.description,
             standalone.description,
         ]
+
+        imported_implication = restored.constraints[0]
+        assert isinstance(imported_implication.when, _ImportedConstraintExpression)
+        assert imported_implication.when._evaluator is None
+        assert restored.validate({"temperature": 0.5, "model": "gpt-4"}).is_valid
+        assert imported_implication.when._evaluator is not None
+        assert not restored.validate({"temperature": 0.9, "model": "gpt-4"}).is_valid
+
         assert restored.to_tvl_spec() == spec
+
+    def test_from_tvl_spec_without_sdk_extension_uses_fallback_inference(self) -> None:
+        """Plain TVL specs should still import without SDK-specific fields."""
+        restored = ConfigSpace.from_tvl_spec(
+            {
+                "tvars": [
+                    {
+                        "name": "temperature",
+                        "type": "float",
+                        "domain": {"kind": "range", "range": [0.01, 1.0], "log": True},
+                    },
+                    {
+                        "name": "model",
+                        "type": "enum[str]",
+                        "domain": {"kind": "enum", "values": ["gpt-4o", "gpt-4.1"]},
+                    },
+                ]
+            }
+        )
+
+        assert isinstance(restored.tvars["temperature"], LogRange)
+        assert isinstance(restored.tvars["model"], Choices)
+        assert tuple(restored.tvars["model"].values) == ("gpt-4o", "gpt-4.1")
+
+    def test_from_tvl_spec_rejects_non_integral_intrange_fields(self) -> None:
+        """IntRange import should fail on non-integral numeric fields."""
+        with pytest.raises(ValueError, match="must be integral"):
+            ConfigSpace.from_tvl_spec(
+                {
+                    "tvars": [
+                        {
+                            "name": "beam_width",
+                            "type": "int",
+                            "x_traigent_parameter_range": "IntRange",
+                            "domain": {"kind": "range", "range": [1, 8], "resolution": 1.5},
+                        }
+                    ]
+                }
+            )
 
 
 class TestInferTvarType:
