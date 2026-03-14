@@ -359,6 +359,21 @@ class TestRemoteServiceRegistryBasics:
         await asyncio.sleep(0)
         assert task not in registry._background_tasks
 
+    @pytest.mark.asyncio
+    async def test_register_background_task_logs_failures(self, registry):
+        """Failed background tasks should be logged and discarded."""
+
+        async def fail() -> None:
+            raise RuntimeError("boom")
+
+        with patch("traigent.optimizers.service_registry.logger.error") as mock_error:
+            task = asyncio.create_task(fail())
+            registry._register_background_task(task)
+            await asyncio.sleep(0)
+
+        assert task not in registry._background_tasks
+        mock_error.assert_called_once()
+
     def test_get_registered_services(
         self, registry, mock_service_basic, mock_service_advanced
     ):
@@ -396,6 +411,21 @@ class TestRemoteServiceRegistryBasics:
         # Try to unregister non-existent service
         success = registry.unregister_service("NonExistentService")
         assert success is False
+
+    @pytest.mark.asyncio
+    async def test_unregister_service_schedules_background_disconnect(
+        self, registry, mock_service_basic
+    ):
+        """Unregister should schedule disconnect when an event loop is running."""
+        registry.register_service(mock_service_basic, auto_connect=False)
+
+        with patch.object(
+            registry, "_disconnect_service", AsyncMock()
+        ) as mock_disconnect:
+            assert registry.unregister_service("BasicService") is True
+            await asyncio.sleep(0)
+
+        mock_disconnect.assert_awaited_once_with("BasicService")
 
 
 class TestServiceConnection:

@@ -422,6 +422,37 @@ class TestCostTrackerAsync:
         await asyncio.sleep(0)
         assert task not in tracker._background_tasks
 
+    @pytest.mark.asyncio
+    async def test_stop_sync_suppresses_cancelled_sync_task(self):
+        """Stopping sync should suppress the cancellation we initiated."""
+        tracker = CostTracker(
+            CostTrackingConfig(enable_server_sync=True, cache_costs_locally=False)
+        )
+
+        async def wait_forever() -> None:
+            await asyncio.sleep(3600)
+
+        tracker._sync_task = asyncio.create_task(wait_forever())
+
+        await tracker.stop_sync()
+
+        assert tracker._sync_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_sync_loop_reraises_cancelled_error(self):
+        """Cancelled sync loops should propagate cancellation."""
+        tracker = CostTracker(
+            CostTrackingConfig(
+                enable_server_sync=True,
+                cache_costs_locally=False,
+                sync_interval=1.0,
+            )
+        )
+
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
+                await tracker._sync_loop()
+
 
 class TestCostTrackerIntegration:
     """Integration tests for CostTracker."""
