@@ -7,6 +7,7 @@ for better maintainability and adherence to software engineering principles.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Security FUNC-CLOUD-HYBRID FUNC-AGENTS FUNC-SECURITY REQ-CLOUD-009 REQ-AGNT-013 REQ-SEC-010
 
 import asyncio
+import concurrent.futures
 import os
 import secrets
 import sys
@@ -670,6 +671,100 @@ class BackendIntegratedClient:
         """Get session to experiment mapping.
         Delegates to session_operations module."""
         return self._session_ops.get_session_mapping(session_id)
+
+    def _get_sync_auth_headers(self, target: str = "backend") -> dict[str, str]:
+        """Return auth headers for sync request paths.
+
+        Uses the async auth manager to preserve the canonical header-generation
+        path, including JWT refresh behavior when available.
+        """
+        default_headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK/1.0",
+        }
+        auth = getattr(self.auth_manager, "auth", None)
+        if auth is None or not hasattr(auth, "get_headers"):
+            return default_headers
+
+        async def _get_headers_async() -> dict[str, str]:
+            return cast(dict[str, str], await auth.get_headers(target=target))
+
+        def _run_in_new_loop() -> dict[str, str]:
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(_get_headers_async())
+            finally:
+                new_loop.close()
+
+        try:
+            try:
+                asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    headers = future.result(timeout=min(self.timeout, 30.0))
+            except RuntimeError:
+                headers = asyncio.run(_get_headers_async())
+        except Exception as exc:
+            logger.debug("Could not get auth headers for feature upload: %s", exc)
+            return default_headers
+
+        merged_headers = dict(headers or {})
+        merged_headers.setdefault("Content-Type", "application/json")
+        merged_headers.setdefault("User-Agent", "Traigent-SDK/1.0")
+        return merged_headers
+
+    def upload_example_features(
+        self,
+        experiment_run_id: str,
+        feature_kind: str,
+        features: list[dict[str, Any]] | dict[str, Any],
+    ) -> bool:
+        """Upload per-run example features for backend-side analytics."""
+        if not experiment_run_id or not feature_kind or not features:
+            return False
+
+        try:
+            import requests
+        except ImportError:  # pragma: no cover - requests is a required dependency
+            logger.debug(
+                "Skipping example feature upload because requests is unavailable"
+            )
+            return False
+
+        headers = self._get_sync_auth_headers(target="backend")
+
+        url = (
+            f"{self.api_base_url}/analytics/example-scoring/"
+            f"{experiment_run_id}/features"
+        )
+        payload = {"feature_kind": feature_kind, "features": features}
+
+        try:
+            response = requests.post(  # nosec B113 — timeout is provided
+                url,
+                json=payload,
+                headers=headers,
+                timeout=min(self.timeout, 30.0),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Example feature upload failed for run %s: %s",
+                experiment_run_id,
+                exc,
+            )
+            return False
+
+        if response.status_code >= 400:
+            logger.debug(
+                "Example feature upload rejected for run %s: HTTP %s %s",
+                experiment_run_id,
+                response.status_code,
+                response.text[:200],
+            )
+            return False
+
+        return True
 
     # Trial Operations
     async def register_trial_start(
