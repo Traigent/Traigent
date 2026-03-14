@@ -230,12 +230,6 @@ Metrics tracked:
 - Quality (completeness scores)
 - Consistency (format adherence)
 
-### 5.2 Documentation Validation
-
-```bash
-python scripts/validation/validate_docs.py
-```
-
 ---
 
 ## 6. Project Cleanup
@@ -414,9 +408,7 @@ make test-coverage
 
 | File | Purpose |
 |------|---------|
-| `pyproject.toml` | Package metadata, dependencies, tool configs |
-| `mypy.ini` | MyPy type checker configuration |
-| `pytest.ini` | Pytest configuration |
+| `pyproject.toml` | Package metadata, dependencies, tool configs (mypy, pytest, coverage, ruff, black, isort) |
 | `.pre-commit-config.yaml` | Pre-commit hooks |
 | `scripts/config/mkdocs.yml` | Documentation site config |
 | `scripts/config/tox.ini` | Tox automation config |

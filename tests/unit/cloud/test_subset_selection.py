@@ -1,5 +1,6 @@
 """Tests for smart dataset subset selection algorithms."""
 
+import random
 from unittest.mock import patch
 
 import pytest
@@ -97,7 +98,10 @@ class TestDiverseSampling:
         assert result.reduction_ratio == 0.5
         assert result.selection_strategy == "diverse_sampling"
         assert 0.0 <= result.diversity_score <= 1.0
-        assert result.confidence_score == 0.8
+        assert 0.0 <= result.confidence_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_larger_target(self, sample_dataset):
@@ -192,8 +196,11 @@ class TestRepresentativeSampling:
 
         assert result.selected_size == 4
         assert result.selection_strategy == "representative_sampling"
-        assert result.confidence_score == 0.9
-        assert result.diversity_score == 0.7
+        assert 0.0 <= result.confidence_score <= 1.0
+        assert 0.0 <= result.diversity_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_unbalanced(self, sample_dataset):
@@ -241,6 +248,20 @@ class TestRepresentativeSampling:
         for count in output_counts.values():
             assert 3 <= count <= 7  # Allow some variance
 
+    @pytest.mark.asyncio
+    async def test_representative_sampling_does_not_mutate_global_rng(
+        self, sample_dataset
+    ):
+        """Representative sampling should use its own RNG, not the module global."""
+        random.seed(123)
+        expected_next = random.random()
+
+        random.seed(123)
+        sampler = RepresentativeSampling(random_seed=456)
+        await sampler.select_subset(sample_dataset, target_size=4, balance_outputs=True)
+
+        assert random.random() == expected_next
+
 
 class TestHighConfidenceSampling:
     """Test cases for high confidence sampling strategy."""
@@ -260,8 +281,11 @@ class TestHighConfidenceSampling:
 
         assert result.selected_size == 4
         assert result.selection_strategy == "high_confidence_sampling"
-        assert result.confidence_score == 0.95
-        assert result.diversity_score == 0.6
+        assert 0.0 <= result.confidence_score <= 1.0
+        assert 0.0 <= result.diversity_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_prioritize_easy(self, sample_dataset):

@@ -9,6 +9,7 @@ original methods and constructors.
 
 from __future__ import annotations
 
+import contextvars
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -18,23 +19,43 @@ from ..utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+class _ContextLocalFlag:
+    """Bool flag with task-local and thread-local isolation."""
+
+    def __init__(self) -> None:
+        self._enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(
+            "traigent_override_active",
+            default=False,
+        )
+
+    @property
+    def enabled(self) -> bool:
+        """Return the active state for the current execution context."""
+        return self._enabled.get()
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        """Set the active state for the current execution context."""
+        self._enabled.set(bool(value))
+
+
 class ActivationState:
     """Thread-safe state container for framework override activation.
 
     Manages enabling/disabling of framework overrides with proper synchronization.
-    Uses threading.local() for the active flag (thread-isolated) and RLock for
-    protecting shared state (original methods, active overrides).
+    Uses a context-local flag for the active state and an RLock for protecting
+    shared state (original methods, active overrides).
 
     Thread Safety:
-        - _override_active: threading.local() for thread-isolated active state
+        - _override_active: task-local and thread-local active state
         - _original_methods, _active_overrides: Protected by RLock
         - All access to shared state goes through lock-protected methods
     """
 
     def __init__(self) -> None:
         """Initialize the activation state manager."""
-        # Thread-local active flag - each thread has its own state
-        self._override_active = threading.local()
+        # Context-local active flag - isolated per thread and asyncio task.
+        self._override_active = _ContextLocalFlag()
 
         # Shared state protected by lock
         self._original_methods: dict[str, tuple[Any, str | None, Any]] = {}
@@ -45,19 +66,19 @@ class ActivationState:
         self._lock = threading.RLock()
 
     def is_active(self) -> bool:
-        """Check if override is currently active for this thread.
+        """Check if override is currently active for this execution context.
 
-        Thread-safe: Uses thread-local storage.
+        Thread-safe: Uses context-local storage.
 
         Returns:
-            True if overrides are active in the current thread.
+            True if overrides are active in the current thread/task.
         """
-        return getattr(self._override_active, "enabled", False)
+        return self._override_active.enabled
 
     def set_active(self, active: bool) -> None:
-        """Set override active state for this thread.
+        """Set override active state for this execution context.
 
-        Thread-safe: Uses thread-local storage.
+        Thread-safe: Uses context-local storage.
 
         Args:
             active: Whether overrides should be active.

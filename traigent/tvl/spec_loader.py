@@ -255,6 +255,27 @@ _SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
 }
 
 
+def _check_section_types(data: dict[str, Any]) -> list[str]:
+    """Check that known sections have the expected types."""
+    issues: list[str] = []
+    for section, expected_type in _SECTION_TYPES.items():
+        if section not in data:
+            continue
+        value = data[section]
+        if isinstance(value, expected_type):
+            continue
+        type_names = (
+            expected_type.__name__
+            if isinstance(expected_type, type)
+            else " or ".join(t.__name__ for t in expected_type)
+        )
+        issues.append(
+            f"Section '{section}' should be {type_names}, "
+            f"got {type(value).__name__}"
+        )
+    return issues
+
+
 def validate_tvl_schema(
     data: dict[str, Any],
     *,
@@ -294,20 +315,7 @@ def validate_tvl_schema(
             f"Valid sections: {sorted(_KNOWN_TVL_SECTIONS)}"
         )
 
-    # Check types of known sections
-    for section, expected_type in _SECTION_TYPES.items():
-        if section in data:
-            value = data[section]
-            if not isinstance(value, expected_type):
-                type_names = (
-                    expected_type.__name__
-                    if isinstance(expected_type, type)
-                    else " or ".join(t.__name__ for t in expected_type)
-                )
-                issues.append(
-                    f"Section '{section}' should be {type_names}, "
-                    f"got {type(value).__name__}"
-                )
+    issues.extend(_check_section_types(data))
 
     # Validate tvars structure if present
     if "tvars" in data:
@@ -319,19 +327,15 @@ def validate_tvl_schema(
 
     # Validate objectives structure if present
     if "objectives" in data:
-        objectives = data["objectives"]
-        issues.extend(_validate_objectives_structure(objectives))
+        issues.extend(_validate_objectives_structure(data["objectives"]))
 
     # Validate constraints structure if present
     if "constraints" in data:
-        constraints = data["constraints"]
-        issues.extend(_validate_constraints_structure(constraints))
+        issues.extend(_validate_constraints_structure(data["constraints"]))
 
     # Validate exploration section if present
-    if "exploration" in data:
-        exploration = data["exploration"]
-        if isinstance(exploration, dict):
-            issues.extend(_validate_exploration_structure(exploration))
+    if "exploration" in data and isinstance(data["exploration"], dict):
+        issues.extend(_validate_exploration_structure(data["exploration"]))
 
     if strict and issues:
         raise TVLValidationError(
@@ -339,6 +343,26 @@ def validate_tvl_schema(
         )
 
     return issues
+
+
+def _validate_domain_structure(name: str, domain: Any) -> list[str]:
+    """Validate a domain spec structure for schema validation."""
+    if domain is None:
+        return []
+    if isinstance(domain, (list, tuple)):
+        return []
+    if isinstance(domain, dict):
+        valid_types = {"range", "choices", "registry"}
+        if "type" in domain and domain["type"] not in valid_types:
+            return [
+                f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
+                f"Valid: {valid_types}"
+            ]
+        return []
+    return [
+        f"TVAR '{name}' domain should be dict, list, or tuple, "
+        f"got {type(domain).__name__}"
+    ]
 
 
 def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
@@ -354,28 +378,30 @@ def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
             issues.append(f"TVAR '{name}' definition must be a dict")
             continue
 
-        # Check for required fields
         if "domain" not in tvar_def:
             issues.append(f"TVAR '{name}' missing required 'domain' field")
 
-        # Validate domain structure
-        domain = tvar_def.get("domain")
-        if domain is not None:
-            if isinstance(domain, dict):
-                if "type" in domain:
-                    valid_types = {"range", "choices", "registry"}
-                    if domain["type"] not in valid_types:
-                        issues.append(
-                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
-                            f"Valid: {valid_types}"
-                        )
-            elif not isinstance(domain, (list, tuple)):
-                issues.append(
-                    f"TVAR '{name}' domain should be dict, list, or tuple, "
-                    f"got {type(domain).__name__}"
-                )
+        issues.extend(_validate_domain_structure(name, tvar_def.get("domain")))
 
     return issues
+
+
+def _validate_tvar_type_field(name: str, tvar_def: dict[str, Any]) -> list[str]:
+    """Validate the 'type' field of a TVAR definition."""
+    tvar_type = tvar_def.get("type")
+    if not isinstance(tvar_type, str):
+        return [f"TVAR '{name}' missing required 'type' string"]
+    normalized_type = normalize_tvar_type(tvar_type)
+    valid_types = {"float", "int", "str", "bool", "categorical", "registry"}
+    extended_normalized = {"enum", "tuple", "callable"}
+    if (
+        tvar_type.lower() not in valid_types
+        and normalized_type not in extended_normalized
+    ):
+        return [
+            f"TVAR '{name}' has invalid type '{tvar_type}'. " f"Valid: {valid_types}"
+        ]
+    return []
 
 
 def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
@@ -389,108 +415,95 @@ def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
             )
             continue
 
-        # Check for required 'name' field
         name = tvar_def.get("name")
         if not isinstance(name, str) or not name:
             issues.append(f"TVAR at index {idx} missing required 'name' string")
-            name = f"<index {idx}>"  # Use placeholder for further validation
+            name = f"<index {idx}>"
 
-        # Check for required 'type' field
-        tvar_type = tvar_def.get("type")
-        if not isinstance(tvar_type, str):
-            issues.append(f"TVAR '{name}' missing required 'type' string")
-        else:
-            valid_types = {"float", "int", "str", "bool", "categorical", "registry"}
-            if tvar_type.lower() not in valid_types:
-                issues.append(
-                    f"TVAR '{name}' has invalid type '{tvar_type}'. "
-                    f"Valid: {valid_types}"
-                )
-
-        # Validate domain structure if present
-        domain = tvar_def.get("domain")
-        if domain is not None:
-            if isinstance(domain, dict):
-                if "type" in domain:
-                    valid_domain_types = {"range", "choices", "registry"}
-                    if domain["type"] not in valid_domain_types:
-                        issues.append(
-                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
-                            f"Valid: {valid_domain_types}"
-                        )
-            elif not isinstance(domain, (list, tuple)):
-                issues.append(
-                    f"TVAR '{name}' domain should be dict, list, or tuple, "
-                    f"got {type(domain).__name__}"
-                )
+        issues.extend(_validate_tvar_type_field(name, tvar_def))
+        issues.extend(_validate_domain_structure(name, tvar_def.get("domain")))
 
     return issues
 
 
+_VALID_DIRECTIONS = frozenset({"maximize", "minimize"})
+
+
+def _validate_objective_list_entry(i: int, obj: Any) -> list[str]:
+    """Validate a single objective entry in list format."""
+    if isinstance(obj, str):
+        return []
+    if not isinstance(obj, dict):
+        return [f"Objective {i} should be string or dict, got {type(obj).__name__}"]
+    issues: list[str] = []
+    if "name" not in obj:
+        issues.append(f"Objective {i} missing 'name' field")
+    if "direction" in obj and obj["direction"] not in _VALID_DIRECTIONS:
+        issues.append(f"Objective {i} has invalid direction '{obj['direction']}'")
+    return issues
+
+
+def _validate_objective_dict_entry(name: str, obj_def: Any) -> list[str]:
+    """Validate a single objective entry in dict format."""
+    if not isinstance(obj_def, dict) or "direction" not in obj_def:
+        return []
+    if obj_def["direction"] not in _VALID_DIRECTIONS:
+        return [f"Objective '{name}' has invalid direction '{obj_def['direction']}'"]
+    return []
+
+
 def _validate_objectives_structure(objectives: Any) -> list[str]:
     """Validate structure of objectives section."""
-    issues: list[str] = []
-
     if isinstance(objectives, list):
+        issues: list[str] = []
         for i, obj in enumerate(objectives):
-            if isinstance(obj, dict):
-                if "name" not in obj:
-                    issues.append(f"Objective {i} missing 'name' field")
-                if "direction" in obj and obj["direction"] not in {
-                    "maximize",
-                    "minimize",
-                }:
-                    issues.append(
-                        f"Objective {i} has invalid direction '{obj['direction']}'"
-                    )
-            elif not isinstance(obj, str):
-                issues.append(
-                    f"Objective {i} should be string or dict, got {type(obj).__name__}"
-                )
-    elif isinstance(objectives, dict):
+            issues.extend(_validate_objective_list_entry(i, obj))
+        return issues
+    if isinstance(objectives, dict):
+        issues = []
         for name, obj_def in objectives.items():
-            if isinstance(obj_def, dict) and "direction" in obj_def:
-                if obj_def["direction"] not in {"maximize", "minimize"}:
-                    issues.append(
-                        f"Objective '{name}' has invalid direction '{obj_def['direction']}'"
-                    )
+            issues.extend(_validate_objective_dict_entry(name, obj_def))
+        return issues
+    return []
 
+
+_VALID_CONSTRAINT_TYPES = frozenset({"structural", "derived"})
+
+
+def _validate_constraint_list_entry(i: int, constraint: Any) -> list[str]:
+    """Validate a single constraint entry in list format."""
+    if not isinstance(constraint, dict):
+        if isinstance(constraint, str):
+            return []
+        return [
+            f"Constraint {i} should be string or dict, got {type(constraint).__name__}"
+        ]
+    issues: list[str] = []
+    if "type" in constraint and constraint["type"] not in _VALID_CONSTRAINT_TYPES:
+        issues.append(f"Constraint {i} has invalid type '{constraint['type']}'")
+    ctype = constraint.get("type")
+    if ctype in ("structural", "derived") and "require" not in constraint:
+        issues.append(f"{ctype.title()} constraint {i} missing 'require' field")
     return issues
 
 
 def _validate_constraints_structure(constraints: Any) -> list[str]:
     """Validate structure of constraints section."""
-    issues: list[str] = []
-
     if isinstance(constraints, list):
+        issues: list[str] = []
         for i, constraint in enumerate(constraints):
-            if isinstance(constraint, dict):
-                if "type" in constraint:
-                    valid_types = {"structural", "derived"}
-                    if constraint["type"] not in valid_types:
-                        issues.append(
-                            f"Constraint {i} has invalid type '{constraint['type']}'"
-                        )
-                if (
-                    constraint.get("type") == "structural"
-                    and "require" not in constraint
-                ):
-                    issues.append(f"Structural constraint {i} missing 'require' field")
-                if constraint.get("type") == "derived" and "require" not in constraint:
-                    issues.append(f"Derived constraint {i} missing 'require' field")
-            elif not isinstance(constraint, str):
-                issues.append(
-                    f"Constraint {i} should be string or dict, got {type(constraint).__name__}"
-                )
-    elif isinstance(constraints, dict):
+            issues.extend(_validate_constraint_list_entry(i, constraint))
+        return issues
+    if isinstance(constraints, dict):
+        issues = []
         if "structural" in constraints and not isinstance(
             constraints["structural"], list
         ):
             issues.append("constraints.structural should be a list")
         if "derived" in constraints and not isinstance(constraints["derived"], list):
             issues.append("constraints.derived should be a list")
-
-    return issues
+        return issues
+    return []
 
 
 def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
@@ -523,11 +536,12 @@ def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
     # Validate convergence if present
     if "convergence" in exploration:
         convergence = exploration["convergence"]
-        if isinstance(convergence, dict):
-            if "threshold" in convergence and not isinstance(
-                convergence["threshold"], (int, float)
-            ):
-                issues.append("exploration.convergence.threshold should be numeric")
+        if (
+            isinstance(convergence, dict)
+            and "threshold" in convergence
+            and not isinstance(convergence["threshold"], (int, float))
+        ):
+            issues.append("exploration.convergence.threshold should be numeric")
 
     return issues
 
@@ -607,6 +621,7 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    validator: str = "python",
     validate_schema: bool = True,
     registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
@@ -619,6 +634,7 @@ def load_tvl_spec(
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
         validate_constraints: Whether to compile and validate structural constraints.
+        validator: Constraint validator plugin name (``traigent.validators`` entry point).
         validate_schema: Whether to perform early schema validation (T-5).
             When True, validates the TVL spec structure before detailed parsing
             to catch errors early with clearer error messages.
@@ -670,9 +686,16 @@ def load_tvl_spec(
             stacklevel=2,
         )
 
+    _validate_structural_constraints_if_enabled(
+        constraints_section=constraints_section,
+        configuration_space=config_space,
+        validate_constraints=validate_constraints,
+        validator_name=validator,
+    )
+
     # Parse constraints - support both legacy and TVL 0.9 format
     compiled_constraints, derived_constraints = _compile_constraints_unified(
-        resolved.get("constraints", []) or [], validate_constraints, path
+        resolved.get("constraints", []) or [], path
     )
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
@@ -1175,9 +1198,117 @@ def _parse_exploration_parallelism(exploration_data: Any) -> int | None:
     return None
 
 
+def _normalize_constraint_entry_for_validation(
+    entry: dict[str, Any], index: int
+) -> StructuralConstraint | None:
+    """Attempt to normalize a single constraint entry into a StructuralConstraint."""
+    # TVL 0.9 structural format
+    if any(key in entry for key in ("expr", "when", "then")):
+        try:
+            return StructuralConstraint.from_dict(entry, index)
+        except ValueError:
+            return None
+
+    # Legacy list format
+    constraint_type = (entry.get("type") or "expression").lower()
+    if constraint_type == "conditional":
+        when_expr = entry.get("when")
+        then_expr = entry.get("then")
+        if isinstance(when_expr, str) and isinstance(then_expr, str):
+            return StructuralConstraint(when=when_expr, then=then_expr, index=index)
+        return None
+
+    rule_expr = entry.get("rule")
+    if isinstance(rule_expr, str):
+        return StructuralConstraint(expr=rule_expr, index=index)
+    return None
+
+
+def _extract_structural_constraints_for_validation(
+    constraints_section: Any,
+) -> list[StructuralConstraint]:
+    """Normalize constraints into StructuralConstraint objects for plugin validation."""
+    if isinstance(constraints_section, dict):
+        entries = constraints_section.get("structural", [])
+    elif isinstance(constraints_section, list):
+        entries = constraints_section
+    else:
+        return []
+
+    if not isinstance(entries, list):
+        return []
+
+    normalized: list[StructuralConstraint] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        result = _normalize_constraint_entry_for_validation(entry, index)
+        if result is not None:
+            normalized.append(result)
+
+    return normalized
+
+
+def _validate_structural_constraints_if_enabled(
+    *,
+    constraints_section: Any,
+    configuration_space: dict[str, Any],
+    validate_constraints: bool,
+    validator_name: str,
+) -> None:
+    """Validate structural constraints through optional validator plugins."""
+    if not validate_constraints:
+        return
+
+    structural_constraints = _extract_structural_constraints_for_validation(
+        constraints_section
+    )
+    if not structural_constraints:
+        return
+
+    try:
+        from traigent_validation.plugins import get_validator
+    except ImportError:
+        logger.warning(
+            "Constraint validation package is unavailable; skipping structural validation."
+        )
+        return
+
+    validator = get_validator(validator_name)
+    if validator is None:
+        logger.warning(
+            "No constraint validator named '%s' is registered; skipping structural validation.",
+            validator_name,
+        )
+        return
+
+    validate_fn = getattr(validator, "validate_structural_constraints", None)
+    if not callable(validate_fn):
+        logger.warning(
+            "Validator '%s' does not implement validate_structural_constraints(); skipping.",
+            validator_name,
+        )
+        return
+
+    available_parameters = set(configuration_space.keys())
+    try:
+        issues = validate_fn(structural_constraints, available_parameters)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        raise TVLValidationError(
+            f"Constraint validator '{validator_name}' failed: {exc}"
+        ) from exc
+
+    if issues:
+        rendered = "\n".join(f"- {issue}" for issue in issues)
+        raise TVLValidationError(
+            "Structural constraint validation failed:\n"
+            f"{rendered}\n"
+            f"Available parameters: {sorted(available_parameters)}"
+        )
+
+
 def _compile_constraints_unified(
     entries: list[Any] | dict[str, Any],
-    validate_constraints: bool,
     path: Path,
 ) -> tuple[list[CompiledConstraint], list[DerivedConstraint] | None]:
     """Compile constraints supporting both legacy and TVL 0.9 formats.
@@ -1199,7 +1330,7 @@ def _compile_constraints_unified(
 
     # Handle legacy format (list)
     if isinstance(entries, list):
-        return _compile_constraints(entries, validate_constraints, path), None
+        return _compile_constraints(entries, path), None
 
     return [], None
 
@@ -1475,7 +1606,6 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
 
 def _compile_constraints(
     entries: list[Any],
-    _validate_constraints: bool,  # Reserved for future validation logic
     path: Path,
 ) -> list[CompiledConstraint]:
     compiled: list[CompiledConstraint] = []
@@ -1770,25 +1900,42 @@ def _resolve_spec_extends(
     merged = _deep_merge_lists(resolved_base, current_data, list_concat_keys)
 
     # Special handling for constraints: if both are lists, concatenate
-    base_constraints = resolved_base.get("constraints")
-    current_constraints = current_data.get("constraints")
-    if isinstance(base_constraints, list) and isinstance(current_constraints, list):
-        merged["constraints"] = base_constraints + current_constraints
-    elif isinstance(base_constraints, dict) and isinstance(current_constraints, dict):
-        # Merge structural and derived separately
-        merged_constraints: dict[str, Any] = {}
-        for section in ("structural", "derived"):
-            base_list = base_constraints.get(section, [])
-            current_list = current_constraints.get(section, [])
-            if isinstance(base_list, list) and isinstance(current_list, list):
-                merged_constraints[section] = base_list + current_list
-            elif current_list:
-                merged_constraints[section] = current_list
-            elif base_list:
-                merged_constraints[section] = base_list
-        merged["constraints"] = merged_constraints
+    inherited = _merge_inherited_constraints(
+        resolved_base.get("constraints"),
+        current_data.get("constraints"),
+    )
+    if inherited is not None:
+        merged["constraints"] = inherited
 
     logger.debug("Resolved spec extends: %s -> %s", spec_path.name, base_path.name)
+    return merged
+
+
+def _merge_inherited_constraints(
+    base_constraints: Any, current_constraints: Any
+) -> Any | None:
+    """Merge constraints from base and child specs during inheritance.
+
+    Returns merged constraints, or None if no special merging needed.
+    """
+    if isinstance(base_constraints, list) and isinstance(current_constraints, list):
+        return base_constraints + current_constraints
+
+    if not isinstance(base_constraints, dict) or not isinstance(
+        current_constraints, dict
+    ):
+        return None
+
+    merged: dict[str, Any] = {}
+    for section in ("structural", "derived"):
+        base_list = base_constraints.get(section, [])
+        current_list = current_constraints.get(section, [])
+        if isinstance(base_list, list) and isinstance(current_list, list):
+            merged[section] = base_list + current_list
+        elif current_list:
+            merged[section] = current_list
+        elif base_list:
+            merged[section] = base_list
     return merged
 
 
@@ -1842,12 +1989,92 @@ _ALLOWED_AST_NODES = (
     ast.USub,
 )
 
+_SAFE_CONSTRAINT_CALLS = frozenset({"len", "min", "max", "sum", "abs", "any", "all"})
+_SAFE_MATH_CALLS = frozenset(
+    {
+        "sqrt",
+        "log",
+        "log2",
+        "log10",
+        "exp",
+        "expm1",
+        "pow",
+        "floor",
+        "ceil",
+        "trunc",
+        "fabs",
+        "factorial",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "sinh",
+        "cosh",
+        "tanh",
+        "asinh",
+        "acosh",
+        "atanh",
+        "degrees",
+        "radians",
+        "hypot",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "prod",
+        "fsum",
+        "gcd",
+        "lcm",
+        "comb",
+        "perm",
+        "copysign",
+        "fmod",
+        "remainder",
+        "dist",
+        "erf",
+        "erfc",
+        "gamma",
+        "lgamma",
+        "cbrt",
+    }
+)
+
+
+def _is_allowed_constraint_call(func_node: ast.AST) -> bool:
+    """Return True when a call target is explicitly permitted in constraints."""
+    if isinstance(func_node, ast.Name):
+        return func_node.id in _SAFE_CONSTRAINT_CALLS
+
+    if isinstance(func_node, ast.Attribute):
+        # Allow explicit math.<fn> subset only (e.g., math.sqrt, math.log)
+        if (
+            isinstance(func_node.value, ast.Name)
+            and func_node.value.id == "math"
+            and func_node.attr in _SAFE_MATH_CALLS
+        ):
+            return True
+
+    return False
+
 
 def _validate_expression_ast(node: ast.AST, source: str) -> None:
     for child in ast.walk(node):
         if not isinstance(child, _ALLOWED_AST_NODES):
             raise TVLValidationError(
                 f"Unsupported expression construct '{type(child).__name__}' in '{source}'"
+            )
+        if isinstance(child, ast.Attribute) and child.attr.startswith("__"):
+            raise TVLValidationError(
+                f"Unsafe attribute access '{child.attr}' in '{source}'"
+            )
+        if isinstance(child, ast.Name) and child.id.startswith("__"):
+            raise TVLValidationError(f"Unsafe identifier '{child.id}' in '{source}'")
+        if isinstance(child, ast.Call) and not _is_allowed_constraint_call(child.func):
+            raise TVLValidationError(
+                f"Unsupported function call in '{source}'; "
+                "only len/min/max/sum/abs/any/all and math.<fn> are allowed"
             )
 
 

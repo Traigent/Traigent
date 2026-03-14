@@ -6,20 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.hybrid.mcp_transport import (
-    CONFIG_SPACE_URI,
-    HEALTH_URI,
-    MCPTransport,
-)
+from traigent.hybrid.mcp_transport import CONFIG_SPACE_URI, HEALTH_URI, MCPTransport
 from traigent.hybrid.protocol import (
     HybridEvaluateRequest,
     HybridExecuteRequest,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import (
-    TransportConnectionError,
-    TransportError,
-)
+from traigent.hybrid.transport import TransportConnectionError, TransportError
 
 
 @dataclass
@@ -367,7 +360,7 @@ class TestMCPTransportDiscoverConfigSpace:
         """Test config space discovery."""
         config_space = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {"name": "model", "type": "enum", "domain": {"values": ["a", "b"]}},
             ],
@@ -380,9 +373,26 @@ class TestMCPTransportDiscoverConfigSpace:
 
         result = await transport.discover_config_space()
 
-        assert result.capability_id == "test_agent"
+        assert result.tunable_id == "test_agent"
         assert len(result.tvars) == 1
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
+
+
+class TestMCPTransportBenchmarks:
+    """Tests for benchmarks method (not yet supported over MCP)."""
+
+    @pytest.fixture
+    def transport(self) -> MCPTransport:
+        mock_client = MagicMock()
+        return MCPTransport(mcp_client=mock_client)
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_raises_not_implemented(
+        self, transport: MCPTransport
+    ) -> None:
+        """MCP transport raises NotImplementedError for benchmarks()."""
+        with pytest.raises(NotImplementedError, match="not yet supported over MCP"):
+            await transport.benchmarks("some-tunable")
 
 
 class TestMCPTransportExecute:
@@ -401,7 +411,7 @@ class TestMCPTransportExecute:
             "request_id": "req-123",
             "execution_id": "exec-456",
             "status": "completed",
-            "outputs": [{"input_id": "1", "output": {"result": "test"}}],
+            "outputs": [{"example_id": "1", "output": {"result": "test"}}],
             "operational_metrics": {"total_cost_usd": 0.001},
         }
         mock_response = MockMCPResponse(
@@ -411,9 +421,10 @@ class TestMCPTransportExecute:
         transport._client.call_tool = AsyncMock(return_value=mock_response)
 
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
+            benchmark_id="bench_001",
             config={"model": "fast"},
-            inputs=[{"input_id": "1", "data": {}}],
+            examples=[{"example_id": "1", "data": {}}],
         )
         response = await transport.execute(request)
 
@@ -446,7 +457,7 @@ class TestMCPTransportEvaluate:
         evaluate_response = {
             "request_id": "req-123",
             "status": "completed",
-            "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
+            "results": [{"example_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95}},
         }
         eval_response = MockMCPResponse(
@@ -458,8 +469,9 @@ class TestMCPTransportEvaluate:
         transport._client.call_tool = AsyncMock(return_value=eval_response)
 
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
-            evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+            tunable_id="test_agent",
+            benchmark_id="bench_001",
+            evaluations=[{"example_id": "1", "output": {}, "target": {}}],
         )
         response = await transport.evaluate(request)
 
@@ -477,7 +489,8 @@ class TestMCPTransportEvaluate:
         transport._client.read_resource = AsyncMock(return_value=mock_response)
 
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
+            benchmark_id="bench_001",
             evaluations=[],
         )
 
@@ -596,6 +609,27 @@ class TestMCPTransportKeepAlive:
         alive = await transport.keep_alive("session-123")
 
         assert alive is False
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_with_status_alive(self, transport: MCPTransport) -> None:
+        """Keep-alive with status='alive' returns True (not backward-compat path)."""
+        caps_data = {"version": "1.0", "supports_keep_alive": True}
+        caps_response = MockMCPResponse(
+            success=True,
+            data={"content": json.dumps(caps_data)},
+        )
+
+        keep_alive_response = MockMCPResponse(
+            success=True,
+            data={"status": "alive", "session_id": "session-123"},
+        )
+
+        transport._client.read_resource = AsyncMock(return_value=caps_response)
+        transport._client.call_tool = AsyncMock(return_value=keep_alive_response)
+
+        alive = await transport.keep_alive("session-123")
+
+        assert alive is True
 
 
 class TestMCPTransportClose:

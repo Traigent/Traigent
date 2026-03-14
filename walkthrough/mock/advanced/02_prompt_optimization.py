@@ -7,7 +7,7 @@ Demonstrates:
 - Using factory methods with prompt tuning
 
 This mock version uses hardcoded responses - no API keys needed.
-Run with: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python 02_prompt_optimization.py
+Run with: TRAIGENT_MOCK_LLM=true python 02_prompt_optimization.py
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from traigent.api.parameter_ranges import Choices, Range
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / "simple_questions.jsonl").resolve())
+DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
 
 # Initialize Traigent in mock mode
 traigent.initialize(execution_mode="edge_analytics")

@@ -9,6 +9,7 @@ import pytest_asyncio
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     OptimizationSessionStatus,
+    SessionObjectiveDefinition,
     TrialResultSubmission,
     TrialStatus,
 )
@@ -59,7 +60,7 @@ async def cloud_client(mock_session):
                         "created_by": "user-123",
                         "owner_scope": ["optimize"],
                         "credential_source": "test-suite",
-                        "owner_api_key_preview": "tg_test_preview",
+                        "owner_api_key_preview": "tg_test_preview",  # pragma: allowlist secret
                     }
                 )
                 mock_auth_mgr.return_value = mock_auth_instance
@@ -120,6 +121,155 @@ class TestSessionCreation:
         assert submitted_payload["metadata"]["owner_user_id"] == "user-123"
         assert submitted_payload["metadata"]["owner_api_key_id"] == "key-789"
         assert submitted_payload["metadata"]["created_by"] == "user-123"
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_serializes_typed_objectives_and_conditionals(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-123",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "model": {"type": "categorical", "choices": ["cheap", "accurate"]},
+                "max_tokens": {
+                    "type": "int",
+                    "low": 64,
+                    "high": 256,
+                    "conditions": {"model": "accurate"},
+                    "default": 64,
+                },
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="accuracy",
+                    direction="maximize",
+                    weight=2.0,
+                ),
+                {"metric": "latency", "direction": "minimize", "weight": 1.0},
+            ],
+            dataset_metadata={"size": 100},
+            max_trials=12,
+            budget={"max_cost_usd": 2.0},
+            constraints={
+                "derived": [{"require": "metrics.accuracy >= 0.8"}],
+            },
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["objectives"] == [
+            {"metric": "accuracy", "direction": "maximize", "weight": 2.0},
+            {"metric": "latency", "direction": "minimize", "weight": 1.0},
+        ]
+        assert submitted_payload["budget"] == {"max_cost_usd": 2.0}
+        assert submitted_payload["constraints"] == {
+            "derived": [{"require": "metrics.accuracy >= 0.8"}]
+        }
+        assert submitted_payload["configuration_space"]["max_tokens"] == {
+            "type": "int",
+            "low": 64,
+            "high": 256,
+            "conditions": {"model": "accurate"},
+            "default": 64,
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_serializes_banded_objectives_and_policy(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-456",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "retrieval_pair": {
+                    "type": "categorical",
+                    "choices": ["choice_0", "choice_1"],
+                    "value_map": {
+                        "choice_0": ["dense", "rerank"],
+                        "choice_1": ["bm25", "none"],
+                    },
+                },
+            },
+            objectives=[
+                SessionObjectiveDefinition(
+                    metric="response_length",
+                    band={"low": 120, "high": 180},
+                    test="TOST",
+                    alpha=0.05,
+                    weight=2.0,
+                ),
+            ],
+            dataset_metadata={"size": 100},
+            max_trials=4,
+            default_config={"temperature": 0.7},
+            promotion_policy={"dominance": "epsilon_pareto", "alpha": 0.05},
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert submitted_payload["objectives"] == [
+            {
+                "metric": "response_length",
+                "band": {"low": 120, "high": 180},
+                "test": "TOST",
+                "alpha": 0.05,
+                "weight": 2.0,
+            }
+        ]
+        assert submitted_payload["default_config"] == {"temperature": 0.7}
+        assert submitted_payload["promotion_policy"] == {
+            "dominance": "epsilon_pareto",
+            "alpha": 0.05,
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_session_omits_optional_session_fields_when_absent(
+        self, cloud_client, mock_session
+    ):
+        mock_response = Mock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session-typed-789",
+                "status": "active",
+                "optimization_strategy": {"algorithm": "optuna"},
+            }
+        )
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        await cloud_client.create_optimization_session(
+            request_or_function_name="test_function",
+            configuration_space={
+                "temperature": {"type": "float", "low": 0.0, "high": 1.0}
+            },
+            objectives=["accuracy"],
+            dataset_metadata={"size": 100},
+            max_trials=3,
+        )
+
+        submitted_payload = mock_session.post.call_args.kwargs["json"]
+        assert "budget" not in submitted_payload
+        assert "constraints" not in submitted_payload
+        assert "default_config" not in submitted_payload
+        assert "promotion_policy" not in submitted_payload
 
     @pytest.mark.asyncio
     async def test_create_session_no_client_session(self, cloud_client):
@@ -433,6 +583,7 @@ class TestSerialization:
                 "metadata": {"test": True},
             },
             "should_continue": True,
+            "stop_reason": None,
             "session_status": "active",
         }
 
@@ -443,6 +594,48 @@ class TestSerialization:
         assert len(response.suggestion.dataset_subset.indices) == 3
         assert response.suggestion.priority == 2
         assert response.should_continue is True
+        assert response.stop_reason is None
+
+    def test_deserialize_finalization_response_prefers_top_level_stop_reason(
+        self, cloud_client
+    ):
+        """Test deserializing finalization response with explicit stop_reason."""
+        data = {
+            "session_id": "session-123",
+            "best_config": {"temperature": 0.7},
+            "best_metrics": {"accuracy": 0.91},
+            "total_trials": 3,
+            "successful_trials": 3,
+            "total_duration": 1.2,
+            "cost_savings": 0.0,
+            "stop_reason": "max_trials_reached",
+            "metadata": {"stop_reason": "finalized"},
+        }
+
+        response = cloud_client._deserialize_finalization_response(data)
+
+        assert response.session_id == "session-123"
+        assert response.stop_reason == "max_trials_reached"
+
+    def test_deserialize_finalization_response_falls_back_to_metadata_stop_reason(
+        self, cloud_client
+    ):
+        """Test deserializing finalization response with legacy metadata stop_reason."""
+        data = {
+            "session_id": "session-123",
+            "best_config": {"temperature": 0.7},
+            "best_metrics": {"accuracy": 0.91},
+            "total_trials": 3,
+            "successful_trials": 3,
+            "total_duration": 1.2,
+            "cost_savings": 0.0,
+            "metadata": {"stop_reason": "search_complete"},
+        }
+
+        response = cloud_client._deserialize_finalization_response(data)
+
+        assert response.session_id == "session-123"
+        assert response.stop_reason == "search_complete"
 
 
 class TestErrorHandling:
@@ -489,7 +682,7 @@ class TestErrorHandling:
 
         cloud_client._session_owners["session-123"] = {
             "owner_user_id": "owner-007",
-            "owner_api_key_preview": "tg_owner_preview",
+            "owner_api_key_preview": "tg_owner_preview",  # pragma: allowlist secret
         }
 
         mock_response = Mock()
@@ -513,7 +706,7 @@ class TestErrorHandling:
 
         cloud_client._session_owners["session-123"] = {
             "owner_user_id": "owner-007",
-            "owner_api_key_preview": "tg_owner_preview",
+            "owner_api_key_preview": "tg_owner_preview",  # pragma: allowlist secret
         }
 
         mock_response = Mock()

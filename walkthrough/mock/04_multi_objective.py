@@ -9,9 +9,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import traigent
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-
 from utils.helpers import print_optimization_config, print_results_table
 from utils.mock_answers import (
     CLASSIFICATION_LABELS,
@@ -23,10 +20,12 @@ from utils.mock_answers import (
     normalize_text,
     set_mock_model,
 )
+
+import traigent
 from traigent import TraigentConfig
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
 
@@ -81,7 +80,7 @@ def mock_accuracy_score(output: str, expected: str, config: dict | None = None, 
     execution_mode="edge_analytics",
     mock_mode_config=MOCK_MODE_CONFIG,
 )
-def classify_text(text: str) -> str:
+def ai_agent_classify_text_sentiment(text: str) -> str:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
@@ -106,7 +105,7 @@ async def main() -> None:
     print("Balancing accuracy (50%), cost (30%), latency (20%).")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
-    results = await classify_text.optimize(
+    results = await ai_agent_classify_text_sentiment.optimize(
         algorithm="random", max_trials=8, random_seed=42
     )
 

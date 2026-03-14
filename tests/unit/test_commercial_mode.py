@@ -128,6 +128,7 @@ class TestOptimizedFunctionCloudMode:
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="cloud",
+                cloud_fallback_policy="auto",
             )
 
             # Mock the cloud optimization
@@ -168,6 +169,7 @@ class TestOptimizedFunctionCloudMode:
                 objectives=["accuracy"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="cloud",
+                cloud_fallback_policy="auto",
             )
 
             # Mock cloud optimization failure

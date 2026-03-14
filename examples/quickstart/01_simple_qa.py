@@ -42,8 +42,8 @@ DATASET_PATH = (
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # Adaptive Variable #1
-        "temperature": [0.1, 0.5, 0.9],  # Adaptive Variable #2
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # Tuned Variable #1
+        "temperature": [0.1, 0.5, 0.9],  # Tuned Variable #2
     },
     objectives=["accuracy", "cost"],  # What to optimize for
     evaluation=EvaluationOptions(eval_dataset=str(DATASET_PATH)),

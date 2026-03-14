@@ -40,6 +40,8 @@ def disable_mock_mode() -> None:
     # Also clear strict mode by default
     if "TRAIGENT_REQUIRE_COST_TRACKING" in os.environ:
         del os.environ["TRAIGENT_REQUIRE_COST_TRACKING"]
+    if "TRAIGENT_STRICT_COST_ACCOUNTING" in os.environ:
+        del os.environ["TRAIGENT_STRICT_COST_ACCOUNTING"]
 
 
 class TestSequentialCostEnforcement:
@@ -168,11 +170,17 @@ class TestSequentialCostEnforcement:
         assert cost_enforcer._trial_count == 1
         assert abs(cost_enforcer._accumulated_cost) < FLOAT_TOLERANCE  # No cost tracked
 
-    def test_require_cost_tracking_raises(self, cost_enforcer: CostEnforcer) -> None:
+    def test_require_cost_tracking_raises(self) -> None:
         """Verify TRAIGENT_REQUIRE_COST_TRACKING=true raises on None cost."""
         os.environ["TRAIGENT_REQUIRE_COST_TRACKING"] = "true"
 
         try:
+            cost_enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=0.50,
+                    estimated_cost_per_trial=0.10,
+                )
+            )
             permit = cost_enforcer.acquire_permit()
             assert permit.is_granted
 

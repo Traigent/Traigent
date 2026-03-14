@@ -8,8 +8,9 @@ import asyncio
 import inspect
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -18,11 +19,7 @@ from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
-from traigent.utils.retry import (
-    NetworkError,
-    RateLimitError,
-    retry_http_request,
-)
+from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .auth import AuthenticationError, AuthManager
@@ -41,6 +38,7 @@ from .models import (
     OptimizationSessionStatus,
     SessionCreationRequest,
     SessionCreationResponse,
+    SessionObjectiveDefinition,
     TrialResultSubmission,
     TrialSuggestion,
 )
@@ -302,8 +300,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 f"{origin}{path or BackendConfig.get_default_api_path()}"
             )
         else:
-            resolved_origin = BackendConfig.get_backend_url()
-            api_base_candidate = BackendConfig.get_backend_api_url()
+            resolved_origin = BackendConfig.get_cloud_backend_url()
+            api_base_candidate = BackendConfig.get_cloud_api_url()
 
         self.base_url = resolved_origin.rstrip("/")
         self.api_base_url = api_base_candidate.rstrip("/")
@@ -350,10 +348,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
-        if self._aio_session:
-            await self._aio_session.close()
-            self._aio_session = None
+        await self.close(_reason="context-exit")
         return False
+
+    async def close(self, *, _reason: str = "shutdown") -> None:
+        """Close and discard the shared HTTP session."""
+        await self._close_http_session(reason=_reason)
 
     async def _ensure_session(self):
         """Ensure session exists with current auth headers.
@@ -402,20 +402,40 @@ class TraigentCloudClient(BaseTraigentClient):
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session after failures."""
+        await self._close_http_session(reason=reason)
 
+    async def _close_http_session(self, reason: str | None = None) -> None:
+        """Best-effort close for the shared HTTP session."""
         if not self._aio_session:
             return
 
         session = self._aio_session
         if session is None:
             return
-        if session.__class__.__module__.startswith("unittest.mock"):
-            return
         self._aio_session = None
+
+        close_method = getattr(session, "close", None)
+        if not callable(close_method):
+            return
+
         try:
-            if _session_is_closed(session):
+            if not session.__class__.__module__.startswith(
+                "unittest.mock"
+            ) and _session_is_closed(session):
                 return
-            await session.close()
+
+            close_result = close_method()
+            if inspect.isawaitable(close_result):
+                await close_result
+            # On shutdown/context-exit paths, give the event loop time to run
+            # the connector's cleanup callbacks (especially for HTTPS/SSL).
+            # Without this, asyncio.run() may tear down the loop before the
+            # underlying TCP transport is fully closed, producing the
+            # "Unclosed client session" ResourceWarning.
+            # Skip the delay on retry/error paths to avoid adding 250ms
+            # on every transient reset.
+            if reason in ("shutdown", "context-exit"):
+                await asyncio.sleep(0.25)
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.debug(
                 "Error closing cloud session%s: %s",
@@ -594,6 +614,8 @@ class TraigentCloudClient(BaseTraigentClient):
         objectives: list[str],
         max_trials: int = 50,
         target_cost_reduction: float = 0.65,
+        *,
+        local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
         """Run optimization using Traigent Cloud Service.
 
@@ -604,6 +626,7 @@ class TraigentCloudClient(BaseTraigentClient):
             objectives: Optimization objectives
             max_trials: Maximum optimization trials
             target_cost_reduction: Target cost reduction (0.0-1.0)
+            local_function: Callable to use for local fallback optimization.
 
         Returns:
             CloudOptimizationResult with optimization results
@@ -680,7 +703,12 @@ class TraigentCloudClient(BaseTraigentClient):
             if self.enable_fallback:
                 logger.info("Falling back to local optimization")
                 return await self._fallback_optimization(
-                    function_name, dataset, configuration_space, objectives, max_trials
+                    function_name,
+                    dataset,
+                    configuration_space,
+                    objectives,
+                    max_trials,
+                    local_function=local_function,
                 )
             else:
                 raise CloudServiceError(f"Cloud optimization failed: {e}") from None
@@ -747,35 +775,99 @@ class TraigentCloudClient(BaseTraigentClient):
         configuration_space: dict[str, Any],
         objectives: list[str],
         max_trials: int,
+        *,
+        local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
         """Fallback to local optimization when cloud service unavailable."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
         from traigent.evaluators.local import LocalEvaluator
         from traigent.optimizers.registry import get_optimizer
 
-        # Use random optimizer for fallback (faster than grid)
-        fallback_max_trials = min(max_trials, 20)
+        def _as_dict(value: Any) -> dict[str, Any]:
+            if isinstance(value, Mapping):
+                return {str(k): v for k, v in value.items()}
+            return {}
+
+        def _as_metrics(value: Any) -> dict[str, float]:
+            if not isinstance(value, Mapping):
+                return {}
+            metrics: dict[str, float] = {}
+            for key, raw in value.items():
+                try:
+                    metrics[str(key)] = float(raw)
+                except (TypeError, ValueError):
+                    continue
+            return metrics
+
+        def _resolve_local_function() -> Callable[..., Any]:
+            if callable(local_function):
+                return local_function
+
+            module_name, separator, attr_path = function_name.rpartition(".")
+            if not separator:
+                raise CloudServiceError(
+                    "Local fallback requires local_function when function_name "
+                    "is not an importable dotted path"
+                )
+
+            try:
+                resolved: Any = import_module(module_name)
+                for attr in attr_path.split("."):
+                    resolved = getattr(resolved, attr)
+            except (ImportError, AttributeError) as exc:
+                raise CloudServiceError(
+                    f"Unable to resolve local fallback function '{function_name}'"
+                ) from exc
+
+            if not callable(resolved):
+                raise CloudServiceError(
+                    f"Resolved fallback target '{function_name}' is not callable"
+                )
+
+            return cast(Callable[..., Any], resolved)
+
+        # Use random optimizer for fallback (faster than grid).
+        fallback_max_trials = max(1, min(max_trials, 20))
+        fallback_function = _resolve_local_function()
         optimizer = get_optimizer(
             "random",
             configuration_space,
             objectives,
             max_trials=fallback_max_trials,
         )
-        evaluator = LocalEvaluator()
+        evaluator = LocalEvaluator(metrics=objectives)
 
         # Run local optimization
         start_time = time.time()
-        optimization_result = await optimizer.optimize(  # type: ignore[attr-defined]
-            configuration_space=configuration_space,
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
             evaluator=evaluator,
-            dataset=dataset,
+            max_trials=fallback_max_trials,
             objectives=objectives,
-            max_trials=fallback_max_trials,  # Limit trials for fallback
         )
+        optimization_result = await orchestrator.optimize(
+            func=fallback_function,
+            dataset=dataset,
+            function_name=function_name,
+        )
+        best_config = _as_dict(getattr(optimization_result, "best_config", {}))
+        best_metrics = _as_metrics(getattr(optimization_result, "best_metrics", {}))
+        if not best_metrics and objectives:
+            best_score_raw = getattr(optimization_result, "best_score", None)
+            if best_score_raw is None:
+                best_metrics = {}
+            else:
+                try:
+                    best_metrics = {objectives[0]: float(best_score_raw)}
+                except (TypeError, ValueError):
+                    best_metrics = {}
+        trials = getattr(optimization_result, "trials", [])
+        trials_count = len(trials) if isinstance(trials, list) else 0
 
         return CloudOptimizationResult(
-            best_config=optimization_result.best_config,
-            best_metrics=optimization_result.best_metrics,
-            trials_count=len(optimization_result.trials),
+            best_config=best_config,
+            best_metrics=best_metrics,
+            trials_count=trials_count,
             cost_reduction=0.0,  # No cost reduction in Edge Analytics mode
             optimization_time=time.time() - start_time,
             subset_used=False,
@@ -961,9 +1053,15 @@ class TraigentCloudClient(BaseTraigentClient):
         self,
         request_or_function_name,
         configuration_space: dict[str, Any] | None = None,
-        objectives: list[str] | None = None,
+        objectives: (
+            Sequence[str | SessionObjectiveDefinition | dict[str, Any]] | None
+        ) = None,
         dataset_metadata: dict[str, Any] | None = None,
         max_trials: int = 50,
+        budget: dict[str, Any] | None = None,
+        constraints: dict[str, Any] | None = None,
+        default_config: dict[str, Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         user_id: str | None = None,
         billing_tier: str = "standard",
@@ -989,9 +1087,7 @@ class TraigentCloudClient(BaseTraigentClient):
         await self._ensure_session()
 
         # Handle both calling patterns: with SessionCreationRequest object or separate params
-        if hasattr(request_or_function_name, "function_name") and not isinstance(
-            request_or_function_name, str
-        ):
+        if isinstance(request_or_function_name, SessionCreationRequest):
             # It's a SessionCreationRequest object
             request = request_or_function_name
         else:
@@ -1002,6 +1098,10 @@ class TraigentCloudClient(BaseTraigentClient):
                 objectives=objectives,
                 dataset_metadata=dataset_metadata,
                 max_trials=max_trials,
+                budget=budget,
+                constraints=constraints,
+                default_config=default_config,
+                promotion_policy=promotion_policy,
                 optimization_strategy=optimization_strategy,
                 user_id=user_id,
                 billing_tier=billing_tier,
@@ -1224,10 +1324,13 @@ class TraigentCloudClient(BaseTraigentClient):
         """Serialize session creation request."""
         metadata = self._ensure_owner_metadata(request.metadata)
         request.metadata = metadata
-        return {
+        payload: dict[str, Any] = {
             "function_name": request.function_name,
             "configuration_space": request.configuration_space,
-            "objectives": request.objectives,
+            "objectives": [
+                self._serialize_session_objective(objective)
+                for objective in (request.objectives or [])
+            ],
             "dataset_metadata": request.dataset_metadata,
             "max_trials": request.max_trials,
             "optimization_strategy": request.optimization_strategy,
@@ -1235,6 +1338,43 @@ class TraigentCloudClient(BaseTraigentClient):
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        if request.budget is not None:
+            payload["budget"] = request.budget
+        if request.constraints is not None:
+            payload["constraints"] = request.constraints
+        if request.default_config is not None:
+            payload["default_config"] = request.default_config
+        if request.promotion_policy is not None:
+            payload["promotion_policy"] = request.promotion_policy
+        return payload
+
+    @staticmethod
+    def _serialize_session_objective(
+        objective: str | SessionObjectiveDefinition | dict[str, Any],
+    ) -> str | dict[str, Any]:
+        """Serialize a typed objective while preserving string shorthand."""
+        if isinstance(objective, str):
+            return objective
+        if isinstance(objective, SessionObjectiveDefinition):
+            payload: dict[str, Any] = {
+                "metric": objective.metric,
+            }
+            if objective.band is not None:
+                payload["band"] = dict(objective.band)
+                if objective.test is not None:
+                    payload["test"] = objective.test
+                if objective.alpha is not None:
+                    payload["alpha"] = objective.alpha
+            elif objective.direction is not None:
+                payload["direction"] = objective.direction
+            if objective.weight is not None:
+                payload["weight"] = objective.weight
+            return payload
+        if isinstance(objective, dict):
+            return dict(objective)
+        raise TypeError(
+            "Session objectives must be strings, dicts, or SessionObjectiveDefinition objects"
+        )
 
     def _deserialize_session_response(
         self, data: dict[str, Any]
@@ -1297,6 +1437,7 @@ class TraigentCloudClient(BaseTraigentClient):
             suggestion=suggestion,
             should_continue=data["should_continue"],
             reason=data.get("reason"),
+            stop_reason=data.get("stop_reason"),
             session_status=OptimizationSessionStatus(
                 data.get("session_status", "active")
             ),
@@ -1338,6 +1479,8 @@ class TraigentCloudClient(BaseTraigentClient):
             successful_trials=data["successful_trials"],
             total_duration=data["total_duration"],
             cost_savings=data["cost_savings"],
+            stop_reason=data.get("stop_reason")
+            or (data.get("metadata", {}) or {}).get("stop_reason"),
             convergence_history=data.get("convergence_history"),
             full_history=(
                 [
@@ -1463,12 +1606,19 @@ class TraigentCloudClient(BaseTraigentClient):
                 if response.status == 200:
                     data = await response.json()
                     return self._deserialize_agent_optimization_response(data)
+                elif response.status in {401, 403}:
+                    raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
                         f"Failed to start agent optimization: HTTP {response.status}: {error_text}"
                     )
 
+        except AuthenticationError:
+            await self._reset_http_session("agent_optimize auth failure")
+            raise
+        except CloudServiceError:
+            raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_optimize network error")
             raise CloudServiceError(
@@ -1540,6 +1690,8 @@ class TraigentCloudClient(BaseTraigentClient):
                         f"Failed to execute agent: HTTP {response.status}: {error_text}"
                     )
 
+        except CloudServiceError:
+            raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_execute network error")
             raise CloudServiceError(f"Network error executing agent: {e}") from None

@@ -18,17 +18,14 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.api.types import (
-    OptimizationStatus,
-    TrialResult,
-    TrialStatus,
-)
+from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -176,6 +173,14 @@ class MockEvaluator(BaseEvaluator):
 
 class TestOptimizationOrchestrator:
     """Comprehensive tests for OptimizationOrchestrator."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_optimization_logs(self, monkeypatch, tmp_path):
+        """Keep orchestrator logging isolated from developer-local log history."""
+        monkeypatch.setenv(
+            "TRAIGENT_OPTIMIZATION_LOG_DIR",
+            str(tmp_path / "optimization_logs"),
+        )
 
     @pytest.fixture
     def config_space(self):
@@ -611,7 +616,7 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) == 0
         assert result.best_config == {}
         assert result.best_metrics == {}
-        assert result.best_score == 0.0
+        assert result.best_score is None
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
@@ -685,6 +690,56 @@ class TestOptimizationOrchestrator:
         assert len(failed_trials) == 2
         assert result.best_config is not None  # Should find best from successful trials
 
+    def test_create_optimization_result_ranking_summary_counts_failed_trials(
+        self, orchestrator
+    ):
+        """Ranking summary should reflect all recorded trials, not successes only."""
+        successful_trial = TrialResult(
+            trial_id="trial_success",
+            config={"param1": 1},
+            metrics={"accuracy": 0.9},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "comparability": {
+                    "schema_version": "1.0",
+                    "primary_objective": "accuracy",
+                    "evaluation_mode": "evaluated",
+                    "total_examples": 2,
+                    "examples_with_primary_metric": 2,
+                    "coverage_ratio": 1.0,
+                    "derivation_path": "explicit",
+                    "ranking_eligible": True,
+                    "warning_codes": [],
+                    "per_metric_coverage": {
+                        "accuracy": {"present": 2, "total": 2, "ratio": 1.0}
+                    },
+                    "missing_example_ids": [],
+                }
+            },
+        )
+        failed_trial = TrialResult(
+            trial_id="trial_failed",
+            config={"param1": 2},
+            metrics={},
+            status=TrialStatus.FAILED,
+            duration=0.1,
+            timestamp=datetime.now(UTC),
+            error_message="boom",
+            metadata={},
+        )
+        orchestrator._trials = [successful_trial, failed_trial]
+        orchestrator._status = OptimizationStatus.COMPLETED
+
+        result = orchestrator._create_optimization_result()
+
+        ranking = result.metadata["session_summary"]["ranking"]
+        assert ranking["total_input_trials"] == 2
+        assert ranking["total_successful_trials"] == 1
+        assert ranking["non_successful_count"] == 1
+        assert ranking["eligible_count"] == 1
+
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
     async def test_optimize_optimizer_exception(
@@ -757,6 +812,11 @@ class TestOptimizationOrchestrator:
         """Test progress calculation edge cases."""
         from datetime import datetime
 
+        # No max trials set and no trials executed
+        orchestrator.max_trials = None
+        orchestrator._trials = []
+        assert orchestrator.progress == 0.0
+
         # Create some dummy trials
         for i in range(5):
             trial = TrialResult(
@@ -769,7 +829,7 @@ class TestOptimizationOrchestrator:
             )
             orchestrator._trials.append(trial)
 
-        # No max trials set
+        # No max trials set after trials executed (indeterminate progress)
         orchestrator.max_trials = None
         assert orchestrator.progress == 0.0
 
@@ -844,6 +904,43 @@ class TestOptimizationOrchestrator:
         # Best result should have highest accuracy (0.3)
         assert abs(result.best_metrics["accuracy"] - 0.3) < 1e-9
         assert abs(orchestrator.best_result.metrics["accuracy"] - 0.3) < 1e-9
+
+    def test_best_result_tracking_minimization_objective(self, orchestrator):
+        """Best result should use minimum for minimize-oriented objectives."""
+        orchestrator.optimizer.objectives = ["latency"]
+        orchestrator._best_trial_cached = None
+
+        orchestrator._trials = [
+            TrialResult(
+                trial_id="t1",
+                config={"param1": 1},
+                metrics={"latency": 120.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+            TrialResult(
+                trial_id="t2",
+                config={"param1": 2},
+                metrics={"latency": 80.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+            TrialResult(
+                trial_id="t3",
+                config={"param1": 3},
+                metrics={"latency": 95.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+            ),
+        ]
+
+        best = orchestrator.best_result
+        assert best is not None
+        assert best.trial_id == "t2"
+        assert best.metrics["latency"] == 80.0
 
     # Timeout Handling Tests
 
@@ -1655,7 +1752,6 @@ class TestOptimizationOrchestrator:
             trial_result=trial_result,
             session_id="session-123",
             dataset_name="dataset",  # default value from orchestrator
-            content_scores=None,  # default value from orchestrator
         )
 
 
@@ -1759,6 +1855,35 @@ class TestStopReasonInResult:
         assert len(result.trials) == 0
 
 
+class TestUsageAnalyticsSubmission:
+    """Tests for optimization-completion analytics submission."""
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_analytics_skips_when_backend_offline(self):
+        """Backend-offline mode should short-circuit before analytics submission."""
+        optimizer = MockOptimizer({"param1": (0, 1)}, ["accuracy"])
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        config = TraigentConfig.edge_analytics_mode()
+        config.enable_usage_analytics = True
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=1,
+            config=config,
+        )
+
+        with (
+            patch("traigent.core.orchestrator.is_backend_offline", return_value=True),
+            patch(
+                "traigent.utils.local_analytics.LocalAnalytics", new_callable=MagicMock
+            ) as mock_analytics,
+        ):
+            await orchestrator._submit_usage_analytics()
+
+        mock_analytics.assert_not_called()
+
+
 class TestOrchestratorCodeQuality:
     """Test code quality aspects of orchestrator.py."""
 
@@ -1840,19 +1965,19 @@ class TestCostEstimation:
 
         # Estimate should use the full budget (1000), not clip to dataset size (10)
         estimate = orchestrator._estimate_optimization_cost(small_dataset)
+        base_cost_per_example, _pricing_source = (
+            orchestrator._cost_estimator._estimate_base_cost_per_example()
+        )
 
-        # With base_cost_per_example = 0.01, retry_factor = 1.2:
-        # estimate = 1000 * 0.01 * 1.2 = 12.0
-        # If it was clipped to dataset (10), it would be: 10 * 0.01 * 1.2 = 0.12
-        # The estimate should be much higher than 0.12
-        assert estimate > 1.0, (
-            f"Expected estimate > 1.0 (using full budget), got {estimate}. "
+        expected_full_budget = 1000 * base_cost_per_example * 1.2
+        clipped_to_dataset = 10 * base_cost_per_example * 1.2
+        assert estimate > clipped_to_dataset, (
+            f"Expected estimate > {clipped_to_dataset} (using full budget), got {estimate}. "
             "Cost estimate may be incorrectly clipping to dataset size."
         )
-        # More specific check: should be approximately 12.0 (1000 * 0.01 * 1.2)
         assert estimate == pytest.approx(
-            12.0, rel=0.1
-        ), f"Expected estimate ~12.0, got {estimate}"
+            expected_full_budget, rel=0.1
+        ), f"Expected estimate ~{expected_full_budget}, got {estimate}"
 
     def test_cost_estimate_without_budget_uses_dataset_size(
         self,
@@ -1869,10 +1994,150 @@ class TestCostEstimation:
         )
 
         estimate = orchestrator._estimate_optimization_cost(small_dataset)
+        base_cost_per_example, _pricing_source = (
+            orchestrator._cost_estimator._estimate_base_cost_per_example()
+        )
 
-        # Without budget, uses samples_per_trial (dataset_size) * max_trials
-        # = 10 * 5 * 0.01 * 1.2 = 0.60
-        # But may use samples_per_trial estimate
-        assert estimate > 0, "Estimate should be positive"
-        # Should be reasonable for 5 trials of 10 examples each
-        assert estimate < 10.0, f"Estimate {estimate} seems too high"
+        expected = 10 * 5 * base_cost_per_example * 1.2
+        assert estimate == pytest.approx(expected, rel=0.1)
+
+    def test_cost_estimator_uses_optimizer_model_candidates(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Hybrid-style model candidates should reach the shared estimator."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.01)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_cost_estimator_uses_hybrid_token_estimate_metadata(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Hybrid discovery metadata should replace generic token defaults."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        mock_evaluator.optimization_spec = {
+            "estimated_tokens_per_example": {"input_tokens": 100, "output_tokens": 50}
+        }
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.00075)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_cost_estimator_ignores_zero_hybrid_token_estimate_metadata(
+        self,
+        mock_evaluator: MockEvaluator,
+    ) -> None:
+        """Zero token estimates must not bypass pre-approval via a $0 base cost."""
+        optimizer = MockOptimizer(
+            config_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            objectives=["accuracy"],
+        )
+        mock_evaluator.optimization_spec = {
+            "estimated_tokens_per_example": {"input_tokens": 0, "output_tokens": 0}
+        }
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=[
+                (0.15e-6, 0.6e-6, "litellm"),
+                (2.5e-6, 10.0e-6, "litellm"),
+            ],
+        ):
+            base_cost, pricing_source = (
+                orchestrator._cost_estimator._estimate_base_cost_per_example()
+            )
+
+        assert base_cost == pytest.approx(0.01)
+        assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    def test_extract_estimated_tokens_per_example_ignores_invalid_values(self) -> None:
+        """Only strictly positive integer estimates should be propagated."""
+        result = OptimizationOrchestrator._extract_estimated_tokens_per_example(
+            {
+                "estimated_tokens_per_example": {
+                    "input_tokens": False,
+                    "output_tokens": "50",
+                }
+            }
+        )
+
+        assert result == (None, None)
+
+    def test_extract_raw_model_candidates_accepts_supported_shapes(self) -> None:
+        """Candidate extraction helper should support string, list, and dict values."""
+        assert OptimizationOrchestrator._extract_raw_model_candidates("gpt-4o") == (
+            "gpt-4o",
+        )
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            ["gpt-4o", "gpt-4o-mini"]
+        ) == ["gpt-4o", "gpt-4o-mini"]
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            {"values": "gpt-4o"}
+        ) == ("gpt-4o",)
+        assert OptimizationOrchestrator._extract_raw_model_candidates(
+            {"values": ["gpt-4o", "gpt-4o-mini"]}
+        ) == ["gpt-4o", "gpt-4o-mini"]
+
+    def test_extract_raw_model_candidates_rejects_unsupported_shapes(self) -> None:
+        """Unsupported candidate shapes should be ignored safely."""
+        assert OptimizationOrchestrator._extract_raw_model_candidates(object()) is None
+        assert (
+            OptimizationOrchestrator._extract_raw_model_candidates({"values": 123})
+            is None
+        )
+        assert OptimizationOrchestrator._extract_raw_model_candidates(b"gpt-4o") is None
+
+    def test_extract_model_candidates_from_config_space_uses_fallback_key(self) -> None:
+        """Invalid model entries should fall through to model_name definitions."""
+        result = OptimizationOrchestrator._extract_model_candidates_from_config_space(
+            {
+                "model": object(),
+                "model_name": {"values": [" gpt-4o-mini ", "gpt-4o-mini", "", 1]},
+            }
+        )
+
+        assert result == ("gpt-4o-mini",)

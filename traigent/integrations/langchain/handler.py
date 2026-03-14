@@ -219,7 +219,7 @@ class TraigentHandlerMetrics:
 
             # Sanitize node names for MeasuresDict
             def sanitize(name: str) -> str:
-                return re.sub(r"[^a-zA-Z0-9_]", "_", name)
+                return re.sub(r"\W", "_", name, flags=re.ASCII)
 
             for node, cost in node_costs.items():
                 safe_node = sanitize(node)
@@ -272,11 +272,15 @@ class TraigentHandler(BaseCallbackHandler):
             )
 
         super().__init__()
+        from traigent.utils.env_config import is_strict_cost_accounting
+
         self._trace_id = trace_id or (
             trace_id_generator() if trace_id_generator else str(uuid4())
         )
         self._metric_prefix = metric_prefix
         self._include_per_node = include_per_node
+        # Latch strict mode at handler creation for consistent per-run behavior.
+        self._strict_cost_accounting = is_strict_cost_accounting()
 
         # Thread-safe state
         self._lock = threading.Lock()
@@ -652,61 +656,55 @@ class TraigentHandler(BaseCallbackHandler):
     def _estimate_cost(
         self, model: str, input_tokens: int, output_tokens: int
     ) -> float:
-        """Estimate cost for LLM call.
+        """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        Uses litellm library via cost_calculator, with hardcoded fallback
-        estimates when litellm is unavailable or model is unknown.
+        In default mode, unknown models return 0.0 with a warning.
+        When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
+        strict_cost_accounting = self._strict_cost_accounting
+        total_tokens = input_tokens + output_tokens
         try:
             from traigent.utils.cost_calculator import (
-                LITELLM_AVAILABLE,
-                calculate_llm_cost,
+                _estimation_cost_from_tokens,
+                cost_from_tokens,
             )
 
-            # Try litellm-based calculation first
-            if LITELLM_AVAILABLE:
-                result = calculate_llm_cost(
-                    model_name=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+            input_cost, output_cost = cost_from_tokens(
+                input_tokens,
+                output_tokens,
+                model,
+                strict=strict_cost_accounting,
+            )
+            total_cost = float(input_cost + output_cost)
+
+            # Non-strict mode may return zero for unknown/unmapped aliases.
+            # Preserve backward-compatible estimator behavior by attempting
+            # the local estimation table before returning zero.
+            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
+                est_input_cost, est_output_cost = _estimation_cost_from_tokens(
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    _quiet=True,
                 )
-                if result.total_cost > 0:
-                    return result.total_cost
-                # litellm returned 0 (unknown model) - fall through to estimates
+                est_total = float(est_input_cost + est_output_cost)
+                if est_total > 0.0:
+                    logger.debug(
+                        "Using estimation pricing fallback for model %r in TraigentHandler",
+                        model,
+                    )
+                    return est_total
 
-            # Fallback estimates (per 1M tokens) when litellm unavailable or model unknown
-            return self._fallback_cost_estimate(model, input_tokens, output_tokens)
+            return total_cost
         except Exception:
-            return self._fallback_cost_estimate(model, input_tokens, output_tokens)
-
-    def _fallback_cost_estimate(
-        self, model: str, input_tokens: int, output_tokens: int
-    ) -> float:
-        """Hardcoded fallback cost estimates when litellm is unavailable."""
-        # Costs per 1M tokens (input, output)
-        cost_per_1m = {
-            "gpt-4o": (2.50, 10.00),
-            "gpt-4o-mini": (0.15, 0.60),
-            "gpt-4-turbo": (10.00, 30.00),
-            "gpt-4": (30.00, 60.00),
-            "gpt-3.5-turbo": (0.50, 1.50),
-            "claude-3-opus": (15.00, 75.00),
-            "claude-3-sonnet": (3.00, 15.00),
-            "claude-3-haiku": (0.25, 1.25),
-            "claude-3-5-sonnet": (3.00, 15.00),
-            "claude-3-5-haiku": (0.80, 4.00),
-        }
-
-        # Find matching model by prefix
-        model_lower = model.lower()
-        for model_prefix, (input_cost, output_cost) in cost_per_1m.items():
-            if model_prefix in model_lower:
-                return (
-                    input_tokens * input_cost + output_tokens * output_cost
-                ) / 1_000_000
-
-        # Default fallback for unknown models
-        return (input_tokens * 1.0 + output_tokens * 3.0) / 1_000_000
+            if strict_cost_accounting:
+                raise
+            logger.warning(
+                "Cost calculation failed for model %r with %d tokens",
+                model,
+                total_tokens,
+            )
+            return 0.0
 
     def get_metrics(self) -> TraigentHandlerMetrics:
         """Get aggregated metrics from this handler session.

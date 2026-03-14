@@ -47,7 +47,7 @@ class ObjectiveDefinition:
         name: Name of the objective (e.g., "accuracy", "cost")
         orientation: Whether to maximize or minimize this objective.
             For banded objectives, this is set to "band".
-        weight: Non-negative weight for this objective
+        weight: Positive weight for this objective
         normalization: Normalization strategy (default: "min_max")
         bounds: Optional bounds for the objective values
         unit: Optional unit of measurement (e.g., "USD", "percentage")
@@ -71,9 +71,9 @@ class ObjectiveDefinition:
     def __post_init__(self) -> None:
         """Validate objective definition after initialization."""
         # Validate weight
-        if self.weight < 0:
+        if self.weight <= 0:
             raise ValueError(
-                f"Weight must be non-negative, got {self.weight} for objective '{self.name}'"
+                f"Weight must be positive, got {self.weight} for objective '{self.name}'"
             )
 
         # Validate orientation

@@ -8,6 +8,7 @@ import pytest
 from traigent.api.functions import (
     _GLOBAL_CONFIG,
     configure,
+    configure_for_budget,
     get_available_strategies,
     get_config,
     get_current_config,
@@ -114,7 +115,7 @@ class TestConfigure:
     def test_configure_invalid_api_keys(self):
         """Test configuring with invalid API keys."""
         with pytest.raises(ValueError, match="Expected dict"):
-            configure(api_keys="not_a_dict")
+            configure(api_keys="not_a_dict")  # pragma: allowlist secret
 
     @patch("traigent.api.functions.logger")
     def test_configure_logging(self, mock_logger):
@@ -256,10 +257,10 @@ class TestOverrideConfig:
 
     def test_override_config_invalid_max_trials(self):
         """Test invalid max trials."""
-        with pytest.raises(ValueError, match="max_trials must be >= 1"):
-            override_config(max_trials=0)
+        result = override_config(max_trials=0)
+        assert result == {"max_trials": 0}
 
-        with pytest.raises(ValueError, match="max_trials must be >= 1"):
+        with pytest.raises(ValueError, match="max_trials must be non-negative"):
             override_config(max_trials=-10)
 
     def test_override_config_timeout(self):
@@ -306,6 +307,75 @@ class TestOverrideConfig:
         """Test override with no arguments."""
         result = override_config()
         assert result == {}
+
+
+class TestConfigureForBudget:
+    """Tests for budget-aware configuration helper."""
+
+    def test_filters_models_and_derives_limits(self):
+        """Affordable models should be selected and optimize-safe overrides returned."""
+        recommendation = configure_for_budget(
+            budget_usd=10.0,
+            model_pricing={
+                "cheap-model": 0.5,
+                "mid-model": 1.0,
+                "expensive-model": 3.0,
+            },
+            min_instances=5,
+            reserve_ratio=0.0,
+            max_parallel_workers=3,
+        )
+
+        assert recommendation["configuration_space"]["model"] == [
+            "cheap-model",
+            "mid-model",
+        ]
+        assert recommendation["max_trials"] == 20
+        assert recommendation["cost_limit"] == 10.0
+        assert "parallel_config" in recommendation
+        assert "max_instances" not in recommendation
+        assert "parallel_workers" not in recommendation
+
+    def test_raises_when_no_affordable_model(self):
+        """No affordable model should fail with clear message."""
+        with pytest.raises(ValueError, match="No models can satisfy"):
+            configure_for_budget(
+                budget_usd=2.0,
+                model_pricing={"model-a": 1.0},
+                min_instances=5,
+            )
+
+    def test_validates_inputs(self):
+        """Invalid helper inputs should raise ValueError."""
+        with pytest.raises(ValueError, match="budget_usd must be > 0"):
+            configure_for_budget(budget_usd=0.0, model_pricing={"m": 1.0})
+        with pytest.raises(ValueError, match="model_pricing must not be empty"):
+            configure_for_budget(budget_usd=10.0, model_pricing={})
+        with pytest.raises(ValueError, match="reserve_ratio must be in"):
+            configure_for_budget(
+                budget_usd=10.0, model_pricing={"m": 1.0}, reserve_ratio=1.0
+            )
+
+    def test_returns_diagnostics_when_requested(self):
+        """Diagnostics should be returned separately when requested."""
+        overrides, diagnostics = configure_for_budget(
+            budget_usd=10.0,
+            model_pricing={"cheap-model": 0.5, "mid-model": 1.0},
+            min_instances=2,
+            max_parallel_workers=4,
+            return_diagnostics=True,
+        )
+
+        assert set(overrides.keys()) == {
+            "configuration_space",
+            "max_trials",
+            "parallel_config",
+            "cost_limit",
+        }
+        assert diagnostics["max_instances"] == 18
+        assert diagnostics["parallel_workers"] == 4
+        assert diagnostics["budget_usd"] == 10.0
+        assert diagnostics["effective_budget_usd"] == 9.0
 
 
 class TestGetAvailableStrategies:

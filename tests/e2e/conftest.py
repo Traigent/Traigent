@@ -28,25 +28,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "benchmark: mark test as a performance benchmark"
     )
-    config.addinivalue_line("markers", "integration: mark test as an integration test")
-    config.addinivalue_line("markers", "slow: mark test as slow running")
-
-
-# Skip slow tests by default
-def pytest_collection_modifyitems(config, items):
-    """Modify test collection to handle markers."""
-    if not config.getoption("--run-slow"):
-        skip_slow = pytest.mark.skip(reason="need --run-slow option to run")
-        for item in items:
-            if "slow" in item.keywords:
-                item.add_marker(skip_slow)
 
 
 def pytest_addoption(parser):
     """Add custom command line options."""
-    parser.addoption(
-        "--run-slow", action="store_true", default=False, help="run slow tests"
-    )
     parser.addoption(
         "--run-benchmarks",
         action="store_true",

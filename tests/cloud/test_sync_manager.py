@@ -15,10 +15,7 @@ import requests
 from traigent.cloud.sync_manager import SyncManager
 from traigent.config.backend_config import BackendConfig
 from traigent.config.types import TraigentConfig
-from traigent.storage.local_storage import (
-    LocalStorageManager,
-    TrialResult,
-)
+from traigent.storage.local_storage import LocalStorageManager, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
 
 
@@ -37,7 +34,7 @@ class TestSyncManager:
             minimal_logging=True,
         )
 
-        self.api_key = "test_api_key_123"
+        self.api_key = "test_api_key_123"  # pragma: allowlist secret
         self.sync_manager = SyncManager(self.config, self.api_key)
 
         # Don't create test session by default - tests will create as needed
@@ -88,7 +85,7 @@ class TestSyncManager:
         """Test sync manager initialization with API key."""
         assert self.sync_manager.config == self.config
         assert self.sync_manager.api_key == self.api_key
-        expected_base_url = BackendConfig.get_backend_api_url().rstrip("/")
+        expected_base_url = BackendConfig.get_cloud_api_url().rstrip("/")
         assert self.sync_manager.base_url == expected_base_url
         assert self.sync_manager.storage is not None
         # API key may be in X-API-Key or Authorization header
@@ -417,7 +414,7 @@ class TestSyncManager:
             assert result["success"] is True
             assert result["agent_id"] == "test_agent"
             expected_endpoint = (
-                f"{BackendConfig.get_backend_api_url().rstrip('/')}/agents"
+                f"{BackendConfig.get_cloud_api_url().rstrip('/')}/agents"
             )
             mock_post.assert_called_with(
                 expected_endpoint,

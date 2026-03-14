@@ -3,7 +3,7 @@
 Provides unified access to authentication credentials from multiple sources:
 1. Environment variables (highest priority)
 2. CLI stored credentials (secure storage)
-3. Default/test credentials (development only)
+3. Explicit dev-mode credentials (development only)
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-CLOUD-009 REQ-SEC-010 SYNC-CloudHybrid
@@ -43,9 +43,9 @@ class CredentialManager:
         """Get API key from available sources.
 
         Priority order:
-        1. TRAIGENT_API_KEY / OPTIGEN_API_KEY environment variables
+        1. TRAIGENT_API_KEY environment variable
         2. Stored credentials from CLI auth
-        3. Default test credentials (dev only)
+        3. Explicit dev-mode credentials
 
         Returns:
             API key or None if not found
@@ -67,7 +67,7 @@ class CredentialManager:
                 logger.debug("Using JWT token from CLI credentials")
                 return cast(str, stored_creds["jwt_token"])
 
-        # Development/test fallback
+        # Development fallback
         if cls._is_development_environment():
             logger.debug("Using default test credentials (development only)")
             return "test_api_key_for_development"
@@ -100,7 +100,7 @@ class CredentialManager:
         # Development fallback
         if cls._is_development_environment():
             return {
-                "api_key": "test_api_key_for_development",
+                "api_key": "test_api_key_for_development",  # pragma: allowlist secret
                 "backend_url": BackendConfig.get_backend_url(),
                 "source": "development",
             }
@@ -134,19 +134,39 @@ class CredentialManager:
         return None
 
     @classmethod
+    def get_stored_api_key_only(cls) -> str | None:
+        """Return the stored API key from CLI credentials, or None.
+
+        Unlike :meth:`get_api_key`, this does **not** fall back to JWT tokens
+        or development credentials.  It is safe to call from code paths that
+        must not mix credential types (e.g. ``BackendConfig.get_api_key``).
+        """
+        stored_creds = cls._load_cli_credentials()
+        if stored_creds and stored_creds.get("api_key"):
+            return cast(str, stored_creds["api_key"])
+        return None
+
+    @classmethod
+    def get_stored_backend_url(cls) -> str | None:
+        """Return the stored backend URL from CLI credentials, or None."""
+        stored_creds = cls._load_cli_credentials()
+        if stored_creds and stored_creds.get("backend_url"):
+            return cast(str, stored_creds["backend_url"])
+        return None
+
+    @classmethod
     def _is_development_environment(cls) -> bool:
         """Check if running in development environment.
 
         Returns:
             True if in development mode
         """
-        # Check various indicators of development mode
+        # Only explicit development toggles may enable the fallback credential.
         return any(
             [
                 os.environ.get("TRAIGENT_DEV_MODE", "").lower() in ("true", "1", "yes"),
                 os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
                 in ("true", "1", "yes"),
-                os.environ.get("TESTING", "").lower() in ("true", "1", "yes"),
             ]
         )
 
@@ -182,11 +202,7 @@ class CredentialManager:
     def _get_env_api_key() -> str | None:
         """Return API key from supported environment variables."""
 
-        for env_var in ("TRAIGENT_API_KEY", "OPTIGEN_API_KEY"):
-            api_key = os.environ.get(env_var)
-            if api_key:
-                return api_key
-        return None
+        return os.environ.get("TRAIGENT_API_KEY")
 
     @classmethod
     def clear_credentials(cls) -> bool:

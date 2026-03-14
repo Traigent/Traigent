@@ -32,6 +32,7 @@ For OpenTelemetry integration, use OptiGenSpanExporter:
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -354,72 +355,9 @@ def extract_nodes_from_langgraph(graph: Any) -> list[WorkflowNode]:
     nodes: list[WorkflowNode] = []
 
     try:
-        # Handle CompiledStateGraph
-        if hasattr(graph, "nodes"):
-            node_dict = graph.nodes
-            if isinstance(node_dict, dict):
-                for node_id, node_func in node_dict.items():
-                    # Determine node type from function or class
-                    node_type = _infer_node_type(node_func)
-                    display_name = _get_display_name(node_id, node_func)
-                    tunable_params = _extract_tunable_params(node_func)
-
-                    nodes.append(
-                        WorkflowNode(
-                            id=str(node_id),
-                            type=node_type,
-                            display_name=display_name,
-                            tunable_params=tunable_params,
-                            metadata={
-                                "function_name": getattr(
-                                    node_func, "__name__", str(node_func)
-                                )
-                            },
-                        )
-                    )
-
-        # Handle StateGraph (uncompiled)
-        elif hasattr(graph, "_nodes"):
-            node_dict = graph._nodes
-            if isinstance(node_dict, dict):
-                for node_id, node_func in node_dict.items():
-                    node_type = _infer_node_type(node_func)
-                    display_name = _get_display_name(node_id, node_func)
-                    tunable_params = _extract_tunable_params(node_func)
-
-                    nodes.append(
-                        WorkflowNode(
-                            id=str(node_id),
-                            type=node_type,
-                            display_name=display_name,
-                            tunable_params=tunable_params,
-                        )
-                    )
-
-        # Add special entry and end nodes if present
-        if hasattr(graph, "entry_point") and graph.entry_point:
-            nodes.insert(
-                0,
-                WorkflowNode(
-                    id="__start__",
-                    type="entry",
-                    display_name="Start",
-                ),
-            )
-
-        # Check if END is used
-        if hasattr(graph, "_edges"):
-            for _, to_node in graph._edges.items():
-                if to_node == "__end__" or str(to_node) == "END":
-                    if not any(n.id == "__end__" for n in nodes):
-                        nodes.append(
-                            WorkflowNode(
-                                id="__end__",
-                                type="exit",
-                                display_name="End",
-                            )
-                        )
-                    break
+        nodes.extend(_extract_graph_nodes(graph))
+        _insert_entry_node(nodes, graph)
+        _append_end_node_if_used(nodes, graph)
 
     except Exception as e:
         logger.warning(f"Failed to extract nodes from LangGraph: {e}")
@@ -439,79 +377,9 @@ def extract_edges_from_langgraph(graph: Any) -> list[WorkflowEdge]:
     edges: list[WorkflowEdge] = []
 
     try:
-        # Handle compiled graph edges
-        if hasattr(graph, "edges"):
-            edge_data = graph.edges
-            if isinstance(edge_data, dict):
-                for from_node, to_nodes in edge_data.items():
-                    if isinstance(to_nodes, dict):
-                        # Conditional edges
-                        for condition, to_node in to_nodes.items():
-                            edges.append(
-                                WorkflowEdge(
-                                    from_node=str(from_node),
-                                    to_node=str(to_node),
-                                    edge_type="conditional",
-                                    condition=str(condition),
-                                )
-                            )
-                    elif isinstance(to_nodes, (list, tuple)):
-                        for to_node in to_nodes:
-                            edges.append(
-                                WorkflowEdge(
-                                    from_node=str(from_node),
-                                    to_node=str(to_node),
-                                    edge_type="default",
-                                )
-                            )
-                    else:
-                        edges.append(
-                            WorkflowEdge(
-                                from_node=str(from_node),
-                                to_node=str(to_nodes),
-                                edge_type="default",
-                            )
-                        )
-
-        # Handle uncompiled graph edges
-        elif hasattr(graph, "_edges"):
-            edge_data = graph._edges
-            if isinstance(edge_data, dict):
-                for from_node, to_node in edge_data.items():
-                    edges.append(
-                        WorkflowEdge(
-                            from_node=str(from_node),
-                            to_node=str(to_node),
-                            edge_type="default",
-                        )
-                    )
-
-        # Handle conditional edges
-        if hasattr(graph, "_conditional_edges"):
-            for from_node, conditionals in graph._conditional_edges.items():
-                if isinstance(conditionals, dict):
-                    for _condition_func, mappings in conditionals.items():
-                        if isinstance(mappings, dict):
-                            for condition_value, to_node in mappings.items():
-                                edges.append(
-                                    WorkflowEdge(
-                                        from_node=str(from_node),
-                                        to_node=str(to_node),
-                                        edge_type="conditional",
-                                        condition=str(condition_value),
-                                    )
-                                )
-
-        # Add entry edge if entry_point is set
-        if hasattr(graph, "entry_point") and graph.entry_point:
-            edges.insert(
-                0,
-                WorkflowEdge(
-                    from_node="__start__",
-                    to_node=str(graph.entry_point),
-                    edge_type="entry",
-                ),
-            )
+        _extend_primary_graph_edges(edges, graph)
+        _extend_conditional_graph_edges(edges, graph)
+        _insert_entry_edge(edges, graph)
 
     except Exception as e:
         logger.warning(f"Failed to extract edges from LangGraph: {e}")
@@ -531,73 +399,269 @@ def detect_loops_in_graph(graph: Any) -> list[WorkflowLoop]:
     loops: list[WorkflowLoop] = []
 
     try:
-        # Build adjacency list
-        adjacency: dict[str, set[str]] = {}
-
-        if hasattr(graph, "_edges"):
-            for from_node, to_node in graph._edges.items():
-                from_str = str(from_node)
-                to_str = str(to_node)
-                if from_str not in adjacency:
-                    adjacency[from_str] = set()
-                adjacency[from_str].add(to_str)
-
-        if hasattr(graph, "_conditional_edges"):
-            for from_node, conditionals in graph._conditional_edges.items():
-                from_str = str(from_node)
-                if from_str not in adjacency:
-                    adjacency[from_str] = set()
-
-                if isinstance(conditionals, dict):
-                    for _, mappings in conditionals.items():
-                        if isinstance(mappings, dict):
-                            for _, to_node in mappings.items():
-                                adjacency[from_str].add(str(to_node))
-
-        # Detect back edges (simple cycle detection)
+        adjacency = _build_langgraph_adjacency(graph)
         visited: set[str] = set()
         rec_stack: set[str] = set()
-
-        def find_cycles(node: str, path: list[str]) -> None:
-            if node in rec_stack:
-                # Found a cycle
-                cycle_start = path.index(node)
-                cycle_nodes = path[cycle_start:]
-                if len(cycle_nodes) >= 2:
-                    loop_id = f"loop_{'_'.join(cycle_nodes[:3])}"
-                    entry_node = cycle_nodes[0]
-                    loops.append(
-                        WorkflowLoop(
-                            loop_id=loop_id,
-                            entry_node=entry_node,
-                            exit_condition="cycle_complete",
-                            metadata={"cycle_nodes": cycle_nodes},
-                        )
-                    )
-                return
-
-            if node in visited:
-                return
-
-            visited.add(node)
-            rec_stack.add(node)
-            path.append(node)
-
-            for neighbor in adjacency.get(node, []):
-                if neighbor not in ["__end__", "END"]:
-                    find_cycles(neighbor, path.copy())
-
-            rec_stack.discard(node)
 
         # Start DFS from all nodes
         for start_node in adjacency:
             if start_node not in visited:
-                find_cycles(start_node, [])
+                _find_cycles_in_langgraph(
+                    start_node, adjacency, visited, rec_stack, loops, []
+                )
 
     except Exception as e:
         logger.warning(f"Failed to detect loops in LangGraph: {e}")
 
     return loops
+
+
+def _get_graph_nodes(graph: Any) -> tuple[dict[Any, Any], bool]:
+    """Return graph nodes and whether compiled-node metadata should be emitted."""
+    node_dict = getattr(graph, "nodes", None)
+    if isinstance(node_dict, dict):
+        return node_dict, True
+
+    node_dict = getattr(graph, "_nodes", None)
+    if isinstance(node_dict, dict):
+        return node_dict, False
+
+    return {}, False
+
+
+def _build_workflow_node(
+    node_id: Any, node_func: Any, *, include_metadata: bool
+) -> WorkflowNode:
+    """Build a workflow node record from a graph node entry."""
+    metadata: dict[str, Any] = {}
+    if include_metadata:
+        metadata["function_name"] = getattr(node_func, "__name__", str(node_func))
+
+    return WorkflowNode(
+        id=str(node_id),
+        type=_infer_node_type(node_func),
+        display_name=_get_display_name(node_id, node_func),
+        tunable_params=_extract_tunable_params(node_func),
+        metadata=metadata,
+    )
+
+
+def _extract_graph_nodes(graph: Any) -> list[WorkflowNode]:
+    """Extract normal graph nodes, excluding synthetic entry/exit nodes."""
+    node_dict, include_metadata = _get_graph_nodes(graph)
+    return [
+        _build_workflow_node(node_id, node_func, include_metadata=include_metadata)
+        for node_id, node_func in node_dict.items()
+    ]
+
+
+def _insert_entry_node(nodes: list[WorkflowNode], graph: Any) -> None:
+    """Insert synthetic start node when the graph defines an entry point."""
+    entry_point = getattr(graph, "entry_point", None)
+    if not entry_point:
+        return
+    nodes.insert(0, WorkflowNode(id="__start__", type="entry", display_name="Start"))
+
+
+def _graph_uses_end_node(graph: Any) -> bool:
+    """Return True when the graph contains an explicit end edge."""
+    edge_data = getattr(graph, "_edges", None)
+    if not isinstance(edge_data, dict):
+        return False
+    return any(
+        to_node == "__end__" or str(to_node) == "END" for to_node in edge_data.values()
+    )
+
+
+def _append_end_node_if_used(nodes: list[WorkflowNode], graph: Any) -> None:
+    """Append synthetic end node when the graph routes to END."""
+    if not _graph_uses_end_node(graph):
+        return
+    if any(node.id == "__end__" for node in nodes):
+        return
+    nodes.append(WorkflowNode(id="__end__", type="exit", display_name="End"))
+
+
+def _append_edge(
+    edges: list[WorkflowEdge],
+    from_node: Any,
+    to_node: Any,
+    *,
+    edge_type: str,
+    condition: Any | None = None,
+) -> None:
+    """Append a single normalized workflow edge."""
+    edges.append(
+        WorkflowEdge(
+            from_node=str(from_node),
+            to_node=str(to_node),
+            edge_type=edge_type,
+            condition=str(condition) if condition is not None else None,
+        )
+    )
+
+
+def _extend_compiled_graph_edges(
+    edges: list[WorkflowEdge], edge_data: dict[Any, Any]
+) -> None:
+    """Extend edges from compiled graph edge data."""
+    for from_node, to_nodes in edge_data.items():
+        if isinstance(to_nodes, dict):
+            for condition, to_node in to_nodes.items():
+                _append_edge(
+                    edges,
+                    from_node,
+                    to_node,
+                    edge_type="conditional",
+                    condition=condition,
+                )
+            continue
+        if isinstance(to_nodes, (list, tuple)):
+            for to_node in to_nodes:
+                _append_edge(edges, from_node, to_node, edge_type="default")
+            continue
+        _append_edge(edges, from_node, to_nodes, edge_type="default")
+
+
+def _extend_uncompiled_graph_edges(
+    edges: list[WorkflowEdge], edge_data: dict[Any, Any]
+) -> None:
+    """Extend edges from uncompiled graph edge data."""
+    for from_node, to_node in edge_data.items():
+        _append_edge(edges, from_node, to_node, edge_type="default")
+
+
+def _extend_primary_graph_edges(edges: list[WorkflowEdge], graph: Any) -> None:
+    """Extend edges from the graph's primary edge mapping."""
+    edge_data = getattr(graph, "edges", None)
+    if isinstance(edge_data, dict):
+        _extend_compiled_graph_edges(edges, edge_data)
+        return
+
+    edge_data = getattr(graph, "_edges", None)
+    if isinstance(edge_data, dict):
+        _extend_uncompiled_graph_edges(edges, edge_data)
+
+
+def _extend_conditional_graph_edges(edges: list[WorkflowEdge], graph: Any) -> None:
+    """Extend edges from LangGraph conditional edge mappings."""
+    conditional_edges = getattr(graph, "_conditional_edges", None)
+    if not isinstance(conditional_edges, dict):
+        return
+
+    for from_node, conditionals in conditional_edges.items():
+        if not isinstance(conditionals, dict):
+            continue
+        for mappings in conditionals.values():
+            if not isinstance(mappings, dict):
+                continue
+            for condition_value, to_node in mappings.items():
+                _append_edge(
+                    edges,
+                    from_node,
+                    to_node,
+                    edge_type="conditional",
+                    condition=condition_value,
+                )
+
+
+def _insert_entry_edge(edges: list[WorkflowEdge], graph: Any) -> None:
+    """Insert synthetic entry edge when the graph defines an entry point."""
+    entry_point = getattr(graph, "entry_point", None)
+    if not entry_point:
+        return
+    edges.insert(
+        0,
+        WorkflowEdge(
+            from_node="__start__",
+            to_node=str(entry_point),
+            edge_type="entry",
+        ),
+    )
+
+
+def _add_adjacency_edge(
+    adjacency: dict[str, set[str]], from_node: Any, to_node: Any
+) -> None:
+    """Add a normalized edge to the adjacency map."""
+    adjacency.setdefault(str(from_node), set()).add(str(to_node))
+
+
+def _build_langgraph_adjacency(graph: Any) -> dict[str, set[str]]:
+    """Build a normalized adjacency list for loop detection."""
+    adjacency: dict[str, set[str]] = {}
+
+    edge_data = getattr(graph, "_edges", None)
+    if isinstance(edge_data, dict):
+        for from_node, to_node in edge_data.items():
+            _add_adjacency_edge(adjacency, from_node, to_node)
+
+    conditional_edges = getattr(graph, "_conditional_edges", None)
+    if not isinstance(conditional_edges, dict):
+        return adjacency
+
+    for from_node, conditionals in conditional_edges.items():
+        adjacency.setdefault(str(from_node), set())
+        if not isinstance(conditionals, dict):
+            continue
+        for mappings in conditionals.values():
+            if not isinstance(mappings, dict):
+                continue
+            for to_node in mappings.values():
+                _add_adjacency_edge(adjacency, from_node, to_node)
+
+    return adjacency
+
+
+def _append_cycle_if_valid(
+    loops: list[WorkflowLoop], node: str, path: list[str]
+) -> bool:
+    """Append a loop entry when the current DFS path closes a cycle."""
+    if node not in path:
+        return False
+
+    cycle_start = path.index(node)
+    cycle_nodes = path[cycle_start:]
+    if len(cycle_nodes) < 2:
+        return True
+
+    loops.append(
+        WorkflowLoop(
+            loop_id=f"loop_{'_'.join(cycle_nodes[:3])}",
+            entry_node=cycle_nodes[0],
+            exit_condition="cycle_complete",
+            metadata={"cycle_nodes": cycle_nodes},
+        )
+    )
+    return True
+
+
+def _find_cycles_in_langgraph(
+    node: str,
+    adjacency: dict[str, set[str]],
+    visited: set[str],
+    rec_stack: set[str],
+    loops: list[WorkflowLoop],
+    path: list[str],
+) -> None:
+    """Depth-first search helper for LangGraph cycle detection."""
+    if node in rec_stack:
+        _append_cycle_if_valid(loops, node, path)
+        return
+    if node in visited:
+        return
+
+    visited.add(node)
+    rec_stack.add(node)
+    path.append(node)
+
+    for neighbor in adjacency.get(node, []):
+        if neighbor not in {"__end__", "END"}:
+            _find_cycles_in_langgraph(
+                neighbor, adjacency, visited, rec_stack, loops, path.copy()
+            )
+
+    rec_stack.discard(node)
 
 
 def _infer_node_type(node_func: Any) -> str:
@@ -1073,30 +1137,46 @@ class WorkflowTracesTracker:
         self.auto_send = auto_send
         self.batch_size = batch_size
 
-        self.client = WorkflowTracesClient(self.backend_url, self.auth_token)
+        self.client = WorkflowTracesClient(
+            self.backend_url, self.auth_token  # type: ignore[arg-type]
+        )
 
-        # Thread-local storage for trial context
-        self._local = threading.local()
+        # ContextVar-based storage for trial context.
+        # contextvars.ContextVar is safe for concurrent async coroutines on the
+        # same event-loop thread: each asyncio Task gets its own context copy so
+        # coroutines running concurrently (e.g. via asyncio.gather) cannot
+        # overwrite each other's trace state.  threading.local() is NOT safe
+        # here because all coroutines on a single OS thread share one slot.
+        self._cv_spans: contextvars.ContextVar[list[SpanPayload] | None] = (
+            contextvars.ContextVar("workflow_spans", default=None)
+        )
+        self._cv_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "workflow_trace_id", default=None
+        )
+        self._cv_config_run_id: contextvars.ContextVar[str | None] = (
+            contextvars.ContextVar("workflow_config_run_id", default=None)
+        )
         self._graph_id: str | None = None
         self._lock = threading.Lock()
 
     @property
     def _spans(self) -> list[SpanPayload]:
-        """Get thread-local span buffer."""
-        if not hasattr(self._local, "spans"):
-            self._local.spans = []  # type: ignore[attr-defined]
-        spans: list[SpanPayload] = self._local.spans  # type: ignore[attr-defined]
+        """Get context-local span buffer."""
+        spans = self._cv_spans.get(None)  # type: ignore[arg-type]
+        if spans is None:
+            spans = []
+            self._cv_spans.set(spans)
         return spans
 
     @property
     def _current_trace_id(self) -> str | None:
-        """Get thread-local current trace ID."""
-        return getattr(self._local, "trace_id", None)
+        """Get context-local current trace ID."""
+        return self._cv_trace_id.get(None)
 
     @property
     def _current_config_run_id(self) -> str | None:
-        """Get thread-local current configuration run ID."""
-        return getattr(self._local, "config_run_id", None)
+        """Get context-local current configuration run ID."""
+        return self._cv_config_run_id.get(None)
 
     def send_workflow_graph(
         self,
@@ -1235,10 +1315,11 @@ class WorkflowTracesTracker:
         # Generate trace ID if not provided
         _trace_id = trace_id or str(uuid.uuid4()).replace("-", "")
 
-        # Set thread-local context
-        self._local.trace_id = _trace_id
-        self._local.config_run_id = configuration_run_id
-        self._local.spans = []
+        # Set context-local state via ContextVar tokens so that each
+        # concurrent coroutine (asyncio Task) has its own isolated copy.
+        token_trace = self._cv_trace_id.set(_trace_id)
+        token_config = self._cv_config_run_id.set(configuration_run_id)
+        token_spans = self._cv_spans.set([])
 
         context = {
             "trace_id": _trace_id,
@@ -1253,10 +1334,10 @@ class WorkflowTracesTracker:
             if self.auto_send and self._spans:
                 self._flush_spans()
 
-            # Clear thread-local context
-            self._local.trace_id = None
-            self._local.config_run_id = None
-            self._local.spans = []
+            # Restore previous context-local state using tokens
+            self._cv_trace_id.reset(token_trace)
+            self._cv_config_run_id.reset(token_config)
+            self._cv_spans.reset(token_spans)
 
     def add_span(
         self,
@@ -1348,7 +1429,7 @@ class WorkflowTracesTracker:
             return
 
         spans_to_send = self._spans.copy()
-        self._local.spans = []
+        self._cv_spans.set([])
 
         response = self.client.ingest_traces(
             spans=spans_to_send,
@@ -1444,7 +1525,7 @@ def setup_workflow_tracing(
         "TRAIGENT_BACKEND_URL", "http://localhost:5000"
     )
     exporter = OptiGenSpanExporter(
-        backend_url=resolved_url,
+        backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
     )
 

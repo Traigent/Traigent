@@ -176,7 +176,7 @@ class OIDCAuthProvider:
             claims = jwt.decode(
                 access_token,
                 signing_key.key,
-                algorithms=["RS256", "HS256"],
+                algorithms=self.allowed_algorithms,
                 audience=self.client_id,
                 options={"verify_exp": True},
             )

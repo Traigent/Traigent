@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -35,7 +36,7 @@ class SessionInfo:
     """
 
     session_id: str
-    created_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
+    created_at: float = field(default_factory=time.monotonic)
     last_heartbeat: float = 0.0
     heartbeat_count: int = 0
     is_alive: bool = True
@@ -108,7 +109,7 @@ class AgentLifecycleManager:
         logger.debug(f"Created new session ID: {session_id}")
         return session_id
 
-    async def register(self, session_id: str) -> None:
+    async def register(self, session_id: str) -> None:  # NOSONAR(S7503)
         """Register a session for keep-alive management.
 
         Starts the background heartbeat task if not already running.
@@ -125,7 +126,7 @@ class AgentLifecycleManager:
         logger.info(f"Registered session for keep-alive: {session_id}")
 
         # Start heartbeat task if needed
-        await self._ensure_heartbeat_running()
+        self._ensure_heartbeat_running()
 
     async def unregister(self, session_id: str) -> None:
         """Unregister a session from keep-alive management.
@@ -144,7 +145,7 @@ class AgentLifecycleManager:
         if not self._sessions and self._heartbeat_task:
             await self._stop_heartbeat_task()
 
-    async def _ensure_heartbeat_running(self) -> None:
+    def _ensure_heartbeat_running(self) -> None:
         """Ensure heartbeat background task is running."""
         if self._heartbeat_task is None or self._heartbeat_task.done():
             self._shutdown_event.clear()
@@ -230,9 +231,7 @@ class AgentLifecycleManager:
                         f"(count={info.heartbeat_count})"
                     )
                 else:
-                    await self._handle_heartbeat_failure(
-                        session_id, info, "session expired"
-                    )
+                    self._handle_heartbeat_failure(session_id, info, "session expired")
 
             except NotImplementedError:
                 # Keep-alive not supported by external service
@@ -245,9 +244,9 @@ class AgentLifecycleManager:
                 return  # No point continuing
 
             except Exception as e:
-                await self._handle_heartbeat_failure(session_id, info, str(e))
+                self._handle_heartbeat_failure(session_id, info, str(e))
 
-    async def _handle_heartbeat_failure(
+    def _handle_heartbeat_failure(
         self,
         session_id: str,
         info: SessionInfo,

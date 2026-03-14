@@ -6,9 +6,12 @@ Tests thread safety and state management in ActivationState class.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pytest
 
 from traigent.integrations.activation import ActivationState, create_activation_state
 
@@ -230,6 +233,29 @@ class TestActivationStateThreadSafety:
                 future.result()
 
         assert len(state.get_active_overrides()) == num_threads * overrides_per_thread
+
+    @pytest.mark.asyncio
+    async def test_active_state_isolated_between_coroutines(self):
+        """Test active state is isolated across concurrent async tasks."""
+        state = ActivationState()
+        results: dict[str, tuple[bool, bool]] = {}
+
+        async def worker(name: str, active: bool, delay: float) -> None:
+            state._override_active.enabled = active
+            before = state.is_active()
+            await asyncio.sleep(delay)
+            after = state.is_active()
+            results[name] = (before, after)
+            state._override_active.enabled = False
+
+        await asyncio.gather(
+            worker("a", True, 0.01),
+            worker("b", False, 0.0),
+        )
+
+        assert results["a"] == (True, True)
+        assert results["b"] == (False, False)
+        assert state.is_active() is False
 
 
 class TestActivationStatePropertyCopies:

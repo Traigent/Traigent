@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Any, cast
 
 import backoff
@@ -63,10 +64,8 @@ class OptimizerDirectClient:
         # Cancel flush task
         if self._flush_task:
             self._flush_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._flush_task
-            except asyncio.CancelledError:
-                pass
 
         # Flush remaining metrics
         await self.flush()
@@ -378,7 +377,7 @@ class OptimizerDirectClient:
                 await self.flush()
 
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 logger.error(f"Periodic flush failed: {str(e)}")
                 # Continue running even if flush fails

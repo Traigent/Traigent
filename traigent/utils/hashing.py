@@ -99,10 +99,9 @@ def generate_experiment_hash(
 ) -> str:
     """Generate deterministic experiment ID from optimization setup.
 
-    Creates a unique, reproducible experiment ID based on the function name,
-    configuration space, objectives, and dataset characteristics. This ensures
-    that the same optimization setup always produces the same experiment ID,
-    allowing proper grouping of related experiment runs.
+    Creates a deterministic experiment ID based on the function name,
+    configuration space, objectives, and optional dataset characteristics.
+    The same optimization setup will produce the same experiment ID.
 
     Args:
         function_name: Name of the function being optimized
@@ -125,7 +124,7 @@ def generate_experiment_hash(
     if dataset_characteristics:
         components["dataset"] = dataset_characteristics
 
-    # Create deterministic JSON string (sorted keys ensure consistency)
+    # Create deterministic JSON string with sorted keys
     hash_input = json.dumps(_sanitize_json_value(components), sort_keys=True)
 
     # Generate SHA256 hash and take first 16 characters for readability

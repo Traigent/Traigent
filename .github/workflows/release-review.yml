@@ -1,0 +1,471 @@
+name: release-gate
+
+on:
+  push:
+    branches:
+      - "develop"
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Optional release id override"
+        required: false
+      version:
+        description: "Version label (default: tag or manual)"
+        required: false
+      emergency_override:
+        description: "Trigger break-glass waiver path"
+        required: false
+        default: false
+        type: boolean
+      incident_id:
+        description: "Required for emergency override"
+        required: false
+      reason:
+        description: "Required for emergency override"
+        required: false
+      expires_at:
+        description: "Required for emergency override (UTC: YYYY-MM-DDTHH:MM:SSZ)"
+        required: false
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  TRAIGENT_MOCK_LLM: "true"
+  TRAIGENT_OFFLINE_MODE: "true"
+
+jobs:
+  lint_type:
+    name: lint-type
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.lint_type_status.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install lint and type tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Black + isort + Ruff + MyPy
+        id: lint_type_run
+        continue-on-error: true
+        run: |
+          black --check --diff traigent/ traigent_validation/
+          isort --check-only --diff traigent/ traigent_validation/
+          ruff check traigent/ traigent_validation/ --output-format=github
+          mypy traigent/ traigent_validation/ --install-types --non-interactive
+      - name: Capture lint/type status
+        id: lint_type_status
+        if: always()
+        run: |
+          if [ "${{ steps.lint_type_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce lint/type on release tags
+        if: github.ref_type == 'tag' && steps.lint_type_status.outputs.status == 'fail'
+        run: exit 1
+
+  tests_unit:
+    name: tests-unit
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.tests_unit_status.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all,dev]"
+      - name: Run unit tests
+        id: tests_unit_run
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: pytest tests/unit -q --tb=short
+      - name: Capture unit-test status
+        id: tests_unit_status
+        if: always()
+        run: |
+          if [ "${{ steps.tests_unit_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce unit tests on release tags
+        if: github.ref_type == 'tag' && steps.tests_unit_status.outputs.status == 'fail'
+        run: exit 1
+
+  tests_integration:
+    name: tests-integration
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.tests_integration_status.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all,dev]"
+      - name: Run integration tests
+        id: tests_integration_run
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: pytest tests/integration -q --tb=short
+      - name: Capture integration-test status
+        id: tests_integration_status
+        if: always()
+        run: |
+          if [ "${{ steps.tests_integration_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce integration tests on release tags
+        if: github.ref_type == 'tag' && steps.tests_integration_status.outputs.status == 'fail'
+        run: exit 1
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.security_status.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install security tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install bandit pip-audit
+      - name: Security checks
+        id: security_run
+        continue-on-error: true
+        run: make security-check
+      - name: Capture security status
+        id: security_status
+        if: always()
+        run: |
+          if [ "${{ steps.security_run.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce security checks on release tags
+        if: github.ref_type == 'tag' && steps.security_status.outputs.status == 'fail'
+        run: exit 1
+
+  dependency_review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.dependency_review_status.outputs.status }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: PR dependency review
+        id: dependency_review_pr
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/dependency-review-action@v4
+      - uses: actions/setup-python@v5
+        if: github.event_name != 'pull_request'
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Tag/manual dependency review
+        id: dependency_review_cli
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          pip-audit --progress-spinner off --desc -r requirements/requirements.txt
+      - name: Capture dependency-review status
+        id: dependency_review_status
+        if: always()
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            outcome="${{ steps.dependency_review_pr.outcome }}"
+          else
+            outcome="${{ steps.dependency_review_cli.outcome }}"
+          fi
+          if [ "$outcome" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce dependency review on release tags
+        if: github.ref_type == 'tag' && steps.dependency_review_status.outputs.status == 'fail'
+        run: exit 1
+
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.codeql_status.outputs.status }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        id: codeql_init
+        continue-on-error: true
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - name: Perform CodeQL analysis
+        id: codeql_analyze
+        continue-on-error: true
+        uses: github/codeql-action/analyze@v3
+      - name: Capture CodeQL status
+        id: codeql_status
+        if: always()
+        run: |
+          if [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Enforce CodeQL on release tags
+        if: github.ref_type == 'tag' && steps.codeql_status.outputs.status == 'fail'
+        run: exit 1
+
+  release_review_consistency:
+    name: release-review-consistency
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - lint_type
+      - tests_unit
+      - tests_integration
+      - security
+      - dependency_review
+      - codeql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install release-review tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PyYAML
+      - name: Build release id
+        id: release_id
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_RELEASE_ID" ]; then
+            release_id="$INPUT_RELEASE_ID"
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            release_id="pr-$PULL_REQUEST_NUMBER-$GITHUB_RUN_ID"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            release_id="$GITHUB_REF_NAME-$GITHUB_RUN_ID"
+          else
+            release_id="manual-$GITHUB_RUN_ID"
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release-review consistency
+        run: python3 .release_review/automation/validate_release_review_consistency.py
+
+      - name: Initialize run workspace
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          RELEASE_ID: ${{ steps.release_id.outputs.release_id }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="manual"
+          fi
+
+          python3 .release_review/automation/generate_tracking.py \
+            --version "$version" \
+            --release-id "$RELEASE_ID" \
+            --base-branch main \
+            --captain "github-actions" \
+            --owner "@release-owner" \
+            --no-archive
+
+      - name: Build check_results.json from upstream job outcomes
+        run: |
+          run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
+          mkdir -p "$run_dir/gate_results"
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            required=true
+          else
+            required=false
+          fi
+
+          cat > "$run_dir/gate_results/check_results.json" <<JSON
+          {
+            "release_id": "${{ steps.release_id.outputs.release_id }}",
+            "checks": [
+              {"key": "lint-type", "status": "${{ needs.lint_type.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "tests-unit", "status": "${{ needs.tests_unit.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "tests-integration", "status": "${{ needs.tests_integration.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "security", "status": "${{ needs.security.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "dependency-review", "status": "${{ needs.dependency_review.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "codeql", "status": "${{ needs.codeql.outputs.gate_status || 'fail' }}", "required": $required},
+              {"key": "release-review-consistency", "status": "pass", "required": $required}
+            ]
+          }
+          JSON
+
+      - name: Build canonical verdict
+        run: |
+          run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            set +e
+            python3 .release_review/automation/build_release_verdict.py \
+              --release-id "${{ steps.release_id.outputs.release_id }}" \
+              --run-dir "$run_dir" \
+              --checks-file "$run_dir/gate_results/check_results.json"
+            verdict_exit="$?"
+            if [ "$verdict_exit" -ne 0 ]; then
+              echo "Dry-run verdict is NOT_READY; recording artifact without failing required check."
+            fi
+            exit 0
+          else
+            python3 .release_review/automation/build_release_verdict.py \
+              --release-id "${{ steps.release_id.outputs.release_id }}" \
+              --run-dir "$run_dir" \
+              --checks-file "$run_dir/gate_results/check_results.json" \
+              --required-check lint-type \
+              --required-check tests-unit \
+              --required-check tests-integration \
+              --required-check security \
+              --required-check dependency-review \
+              --required-check codeql \
+              --required-check release-review-consistency
+          fi
+
+      - name: Upload release-review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-review-${{ steps.release_id.outputs.release_id }}
+          path: .release_review/runs/${{ steps.release_id.outputs.release_id }}
+          retention-days: 90
+
+  emergency-override:
+    name: emergency-override
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.emergency_override
+    environment: release-break-glass
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Validate required emergency fields
+        env:
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          REASON: ${{ inputs.reason }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+        run: |
+          if [ -z "$INCIDENT_ID" ] || [ -z "$REASON" ] || [ -z "$EXPIRES_AT" ]; then
+            echo "incident_id, reason, and expires_at are required for emergency override"
+            exit 1
+          fi
+      - name: Create emergency waiver artifact
+        env:
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          REASON: ${{ inputs.reason }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+        run: |
+          if [ -n "$INPUT_RELEASE_ID" ]; then
+            release_id="$INPUT_RELEASE_ID"
+          else
+            release_id="manual-$GITHUB_RUN_ID"
+          fi
+          waiver_dir=".release_review/runs/${release_id}/waivers"
+          mkdir -p "$waiver_dir"
+          export RELEASE_ID="$release_id"
+          export WAIVER_DIR="$waiver_dir"
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          run_id = os.environ["GITHUB_RUN_ID"]
+          payload = {
+              "waiver_id": f"emergency-{run_id}",
+              "release_id": os.environ["RELEASE_ID"],
+              "finding_id": "EMERGENCY_OVERRIDE",
+              "severity": "P1",
+              "reason": os.environ["REASON"],
+              "approved_by": ["environment:release-break-glass", "workflow_dispatch"],
+              "expires_at": os.environ["EXPIRES_AT"],
+              "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "remediation_issue": "to-be-created",
+              "incident_id": os.environ["INCIDENT_ID"],
+          }
+          target = Path(os.environ["WAIVER_DIR"]) / f"emergency-{run_id}.json"
+          target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Create remediation issue
+        env:
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          REASON: ${{ inputs.reason }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Emergency override remediation: ${context.runId}`;
+            const body = [
+              `Incident ID: ${process.env.INCIDENT_ID}`,
+              `Reason: ${process.env.REASON}`,
+              `Expiry: ${process.env.EXPIRES_AT}`,
+              `SLA: 48h`
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['release', 'security', 'override-remediation']
+            });

@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -965,6 +966,56 @@ class TestSmartScheduler:
         # Critical and normal jobs both have scheduled times assigned
         assert scheduled["job-critical"].scheduled_time is not None
         assert scheduled["job-normal"].scheduled_time is not None
+
+    def test_complete_job_allows_queued_jobs(self):
+        """Completion should support jobs that were tracked but not explicitly started."""
+        job = ScheduledJob(
+            job_id="queued-job",
+            job_type="analysis",
+            priority=JobPriority.NORMAL,
+            estimated_duration=timedelta(hours=1),
+            estimated_cost=10.0,
+            resource_requirements={},
+        )
+        self.scheduler.add_job(job)
+
+        assert self.scheduler.complete_job(job.job_id, actual_cost=9.0) is True
+        assert len(self.scheduler.completed_jobs) == 1
+        assert self.scheduler.completed_jobs[0].job_id == job.job_id
+
+    def test_complete_job_is_atomic_under_concurrency(self):
+        """Concurrent completion attempts should not raise or double-complete."""
+        job = ScheduledJob(
+            job_id="job-concurrent",
+            job_type="analysis",
+            priority=JobPriority.NORMAL,
+            estimated_duration=timedelta(hours=1),
+            estimated_cost=10.0,
+            resource_requirements={},
+        )
+        self.scheduler.add_job(job)
+        assert self.scheduler.execute_job(job.job_id) is True
+
+        barrier = threading.Barrier(2)
+        results: list[bool] = []
+        errors: list[Exception] = []
+
+        def _complete_job() -> None:
+            try:
+                barrier.wait()
+                results.append(self.scheduler.complete_job(job.job_id, actual_cost=9.0))
+            except Exception as exc:  # pragma: no cover - regression guard
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_complete_job) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        assert sorted(results) == [False, True]
+        assert len(self.scheduler.completed_jobs) == 1
 
 
 if __name__ == "__main__":

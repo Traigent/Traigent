@@ -191,6 +191,9 @@ cython_debug/
 
 # Internal design docs (IP/private during implementation)
 resampling_configs.md
+Traigent_vs_Langfuse_Gap_Analysis.xlsx
+docs/feature_matrices/enterprise_beta_execution_plan.md
+docs/feature_matrices/enterprise_beta_execution_tracker.md
 
 # Traigent specific
 *.jsonl
@@ -212,6 +215,7 @@ temp/
 .traigent/
 # Cost approval tokens (user-specific, should never be committed)
 **/cost_approval.token
+.playwright-cli/
 
 # Mutation testing artifacts (mutmut)
 mutants/
@@ -277,6 +281,8 @@ htmlcov/
 code_reviews/
 tmp/code-review/
 CLAUDE.local.md
+review_*.md
+linkedin_profile_paste_ready.md
 
 # Cleanup/fix scripts (temporary)
 fix_*.py
@@ -294,10 +300,19 @@ validate_*.py
 # Keep core protocol/tracking files versioned for team sharing
 !.release_review/
 !.release_review/*.md
+# Keep run contract docs versioned, ignore generated run payloads
+.release_review/runs/*
+!.release_review/runs/
+!.release_review/runs/README.md
+.release_review/CURRENT_RUN
 # Ignore agent artifacts (scratch outputs, notes)
 .release_review/**/artifacts/
 .release_review/**/.mypy_cache/
 .release_review/walkthrough_review/
+
+# Client-specific example runs (keep only README)
+examples/bazak/*
+!examples/bazak/README.md
 
 # Post-release fixes workspace
 # Keep core protocol/tracking files versioned for team sharing
@@ -396,15 +411,17 @@ tests/optimizer_validation/viewer/ontology/*.ttl
 # Large test reports
 report.json
 
-# MLflow database (local development)
+# MLflow artifacts and database (local development)
+mlruns/
 mlflow.db
+.secrets.*
+!.secrets.baseline
 
 # Trial output files (local development)
 trial_*.json
 
 # Agent instruction files (development only)
 AGENTS.md
-MAINTENANCE.md
 tests/optimizer_validation/AGENT_*.md
 tests/optimizer_validation/GIST_*.md
 tests/optimizer_validation/GPT_*.md
@@ -419,6 +436,7 @@ coverage.json
 tests/manual/
 tmp/
 walkthrough/myfiles.md
+scripts/smoke/run_local_real_openrouter_quick_smoke.sh
 
 # Presentations (internal/sensitive)
 presentations/
@@ -433,3 +451,18 @@ tests/optimizer_validation/viewer/bdd_graph_data.json
 
 # Architecture diagrams (generated locally)
 *.mmd
+
+# Local discussion notes and experiments
+discussion_*.txt
+DISCUSSIONS_RECOUNT_*.md
+AutoCoder_orders.txt
+old_discussions_*/
+paper_experiments/
+
+# Nexxen demo resources (client-specific, not for version control)
+examples/nexxen/
+examples/datasets/nexxen/
+examples/nexxen.zip
+
+# Local helper scripts
+walkthrough/run_with_env.sh

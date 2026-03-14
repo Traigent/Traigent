@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from traigent.api.functions import _GLOBAL_CONFIG, get_global_parallel_config
@@ -19,7 +20,7 @@ from traigent.config.parallel import (
     merge_parallel_configs,
     resolve_parallel_config,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
@@ -109,7 +110,14 @@ def create_traigent_config(
     """
     return TraigentConfig(
         execution_mode=cast(
-            Literal["edge_analytics", "privacy", "hybrid", "standard", "cloud"],
+            Literal[
+                "edge_analytics",
+                "privacy",
+                "hybrid",
+                "standard",
+                "cloud",
+                "hybrid_api",
+            ],
             execution_mode,
         ),
         local_storage_path=local_storage_path,
@@ -342,6 +350,157 @@ def resolve_effective_workers(
     return effective_workers
 
 
+@dataclass(slots=True)
+class HybridAPIEvaluatorOptions:
+    """Grouped Hybrid API evaluator construction options."""
+
+    endpoint: str | None = None
+    tunable_id: str | None = None
+    transport: Any | None = None
+    transport_type: str = "auto"
+    batch_size: int = 1
+    batch_parallelism: int = 1
+    keep_alive: bool = True
+    heartbeat_interval: float = 30.0
+    timeout: float | None = None
+    auth_header: str | None = None
+    auto_discover_tvars: bool = False
+
+
+def _create_wrapped_custom_evaluator(
+    effective_evaluator: Callable[..., Any],
+    *,
+    objectives: Sequence[str],
+    timeout: float | None,
+) -> tuple[BaseEvaluator, None]:
+    """Wrap a user-supplied evaluator with the SDK adapter."""
+    return (
+        CustomEvaluatorWrapper(
+            custom_evaluator=effective_evaluator,
+            metrics=list(objectives),
+            timeout=timeout or 60.0,
+            capture_llm_metrics=True,
+        ),
+        None,
+    )
+
+
+def _resolve_hybrid_request_timeout(
+    timeout: float | None,
+    hybrid_options: HybridAPIEvaluatorOptions,
+) -> float:
+    """Resolve the request timeout used for Hybrid API evaluation."""
+    if hybrid_options.timeout is not None:
+        return hybrid_options.timeout
+    if timeout is not None:
+        return timeout
+    return 300.0
+
+
+def _create_hybrid_api_evaluator(
+    timeout: float | None,
+    *,
+    objectives: Sequence[str],
+    hybrid_api_options: HybridAPIEvaluatorOptions | None,
+) -> tuple[BaseEvaluator, None]:
+    """Create the Hybrid API evaluator and validate its required options."""
+    from traigent.evaluators.hybrid_api import HybridAPIEvaluator
+
+    hybrid_options = hybrid_api_options or HybridAPIEvaluatorOptions()
+    if hybrid_options.transport is None and not hybrid_options.endpoint:
+        raise ValueError(
+            "hybrid_api execution mode requires hybrid_api_endpoint "
+            "or a preconfigured hybrid_api_transport."
+        )
+
+    return (
+        HybridAPIEvaluator(
+            api_endpoint=hybrid_options.endpoint,
+            transport=hybrid_options.transport,
+            transport_type=cast(
+                Literal["http", "mcp", "auto"], hybrid_options.transport_type
+            ),
+            tunable_id=hybrid_options.tunable_id,
+            auto_discover_tvars=hybrid_options.auto_discover_tvars,
+            batch_size=max(1, int(hybrid_options.batch_size)),
+            batch_parallelism=max(1, int(hybrid_options.batch_parallelism)),
+            keep_alive=hybrid_options.keep_alive,
+            heartbeat_interval=hybrid_options.heartbeat_interval,
+            timeout=_resolve_hybrid_request_timeout(timeout, hybrid_options),
+            auth_header=hybrid_options.auth_header,
+            metrics=list(objectives),
+        ),
+        None,
+    )
+
+
+def _create_js_runtime_evaluator(js_config: Any) -> tuple[BaseEvaluator, Any]:
+    """Create the JS evaluator and optional process pool."""
+    from traigent.evaluators.js_evaluator import JSEvaluator
+
+    js_parallel_workers = getattr(js_config, "js_parallel_workers", 1)
+    process_pool = None
+
+    if js_parallel_workers > 1:
+        from traigent.bridges.process_pool import JSProcessPool, JSProcessPoolConfig
+
+        pool_config = JSProcessPoolConfig(
+            max_workers=js_parallel_workers,
+            module_path=js_config.js_module,
+            function_name=js_config.js_function,
+            trial_timeout=js_config.js_timeout,
+        )
+        process_pool = JSProcessPool(pool_config)
+        logger.info(
+            "Created JS process pool with %d workers for parallel execution",
+            js_parallel_workers,
+        )
+
+    return (
+        JSEvaluator(
+            js_module=js_config.js_module,
+            js_function=js_config.js_function,
+            js_timeout=js_config.js_timeout,
+            process_pool=process_pool,
+        ),
+        process_pool,
+    )
+
+
+def _create_local_evaluator(
+    timeout: float | None,
+    effective_batch_size: int | None,
+    effective_thread_workers: int | None,
+    effective_privacy_enabled: bool,
+    *,
+    objectives: Sequence[str],
+    execution_mode: str,
+    mock_mode_config: dict[str, Any] | None,
+    metric_functions: dict[str, Callable[..., Any]] | None,
+    scoring_function: Callable[..., Any] | None,
+) -> tuple[BaseEvaluator, None]:
+    """Create the default local evaluator."""
+    effective_metric_fns = build_metric_functions(
+        metric_functions, scoring_function, objectives
+    )
+    effective_workers = resolve_effective_workers(
+        effective_batch_size, effective_thread_workers
+    )
+    return (
+        LocalEvaluator(
+            metrics=list(objectives),
+            timeout=timeout or 60.0,
+            max_workers=effective_workers,
+            detailed=True,
+            execution_mode=execution_mode,
+            privacy_enabled=effective_privacy_enabled,
+            mock_mode_config=mock_mode_config,
+            metric_functions=effective_metric_fns or None,
+        ),
+        None,
+    )
+
+
 def create_effective_evaluator(
     timeout: float | None,
     custom_evaluator: Callable[..., Any] | None,
@@ -356,6 +515,7 @@ def create_effective_evaluator(
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
+    hybrid_api_options: HybridAPIEvaluatorOptions | None = None,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
 
@@ -385,71 +545,35 @@ def create_effective_evaluator(
     if effective_evaluator:
         if not callable(effective_evaluator):
             raise ValueError("custom_evaluator must be callable") from None
-        return (
-            CustomEvaluatorWrapper(
-                custom_evaluator=effective_evaluator,
-                metrics=list(objectives),
-                timeout=timeout or 60.0,
-                capture_llm_metrics=True,
-            ),
-            None,
+        return _create_wrapped_custom_evaluator(
+            effective_evaluator,
+            objectives=objectives,
+            timeout=timeout,
+        )
+
+    execution_mode_enum = resolve_execution_mode(execution_mode)
+    if execution_mode_enum is ExecutionMode.HYBRID_API:
+        return _create_hybrid_api_evaluator(
+            timeout,
+            objectives=objectives,
+            hybrid_api_options=hybrid_api_options,
         )
 
     # Check if JS runtime is configured
     js_config = js_runtime_config
     if js_config is not None and getattr(js_config, "is_js_runtime", False):
-        from traigent.evaluators.js_evaluator import JSEvaluator
+        return _create_js_runtime_evaluator(js_config)
 
-        js_parallel_workers = getattr(js_config, "js_parallel_workers", 1)
-        process_pool = None
-
-        if js_parallel_workers > 1:
-            from traigent.bridges.process_pool import (
-                JSProcessPool,
-                JSProcessPoolConfig,
-            )
-
-            pool_config = JSProcessPoolConfig(
-                max_workers=js_parallel_workers,
-                module_path=js_config.js_module,
-                function_name=js_config.js_function,
-                trial_timeout=js_config.js_timeout,
-            )
-            process_pool = JSProcessPool(pool_config)
-            logger.info(
-                "Created JS process pool with %d workers for parallel execution",
-                js_parallel_workers,
-            )
-
-        return (
-            JSEvaluator(
-                js_module=js_config.js_module,
-                js_function=js_config.js_function,
-                js_timeout=js_config.js_timeout,
-                process_pool=process_pool,
-            ),
-            process_pool,
-        )
-
-    effective_metric_fns = build_metric_functions(
-        metric_functions, scoring_function, objectives
-    )
-    effective_workers = resolve_effective_workers(
-        effective_batch_size, effective_thread_workers
-    )
-
-    return (
-        LocalEvaluator(
-            metrics=list(objectives),
-            timeout=timeout or 60.0,
-            max_workers=effective_workers,
-            detailed=True,
-            execution_mode=execution_mode,
-            privacy_enabled=effective_privacy_enabled,
-            mock_mode_config=mock_mode_config,
-            metric_functions=effective_metric_fns or None,
-        ),
-        None,
+    return _create_local_evaluator(
+        timeout,
+        effective_batch_size,
+        effective_thread_workers,
+        effective_privacy_enabled,
+        objectives=objectives,
+        execution_mode=execution_mode,
+        mock_mode_config=mock_mode_config,
+        metric_functions=metric_functions,
+        scoring_function=scoring_function,
     )
 
 
@@ -514,6 +638,7 @@ def collect_orchestrator_kwargs(
     agent_measures: dict[str, Any] | None,
     global_measures: dict[str, Any] | None,
     promotion_gate: Any | None,
+    invocations_per_example: int = 1,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -527,6 +652,7 @@ def collect_orchestrator_kwargs(
         agent_measures: Agent measures mapping
         global_measures: Global measures mapping
         promotion_gate: Promotion gate configuration
+        invocations_per_example: Number of invocations per example (default: 1)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -534,6 +660,7 @@ def collect_orchestrator_kwargs(
     kwargs: dict[str, Any] = {
         "cache_policy": algorithm_kwargs.get("cache_policy", "allow_repeats"),
         "samples_include_pruned": samples_include_pruned_value,
+        "invocations_per_example": invocations_per_example,
     }
 
     optional_keys = [

@@ -242,13 +242,17 @@ class TestDiscoverCallables:
         """Test discovering all public functions."""
         callables = discover_callables(test_module)
 
-        # Should include public functions defined in test_module
+        # Should include all 7 public functions defined in test_module
         assert "retrieve_documents" in callables
         assert "search_index" in callables
         assert "format_context" in callables
         assert "tagged_function" in callables
         assert "decorated_callable" in callables
+        assert "another_decorated" in callables
         assert "get_count" in callables
+        assert (
+            len(callables) == 7
+        ), f"Expected exactly 7 public functions, got {len(callables)}: {list(callables)}"
 
         # Should NOT include private or imported functions
         assert "_internal_helper" not in callables
@@ -430,6 +434,9 @@ class TestFilterBySignature:
 
         # Only retrieve_documents has exact match (query: str, k: int = 5) -> list
         assert "retrieve_documents" in filtered
+        assert (
+            len(filtered) == 1
+        ), f"Strict mode should match only retrieve_documents, got: {list(filtered)}"
 
     def test_filter_allows_extra_defaults(self, test_module: ModuleType) -> None:
         """Test that non-strict mode allows extra parameters with defaults."""
@@ -500,7 +507,9 @@ class TestDiscoveryIntegration:
         """Test complete discovery workflow."""
         # 1. Discover all callables
         all_callables = discover_callables(test_module)
-        assert len(all_callables) >= 6
+        assert (
+            len(all_callables) == 7
+        ), f"Expected 7 public functions, got {len(all_callables)}: {list(all_callables)}"
 
         # 2. Filter by pattern
         retrievers = discover_callables(test_module, pattern=r"^(retrieve|search)_")
@@ -558,3 +567,82 @@ class TestDiscoveryIntegration:
                 f"Inconsistency for {name}: "
                 f"matches_params={has_query}, in_filtered={in_filtered}"
             )
+
+
+# =============================================================================
+# Edge Case Tests
+# =============================================================================
+
+
+class TestEdgeCases:
+    """Edge cases for discovery utilities."""
+
+    def test_empty_module_returns_empty_dict(self) -> None:
+        """Module with no functions should yield empty dict."""
+        empty_mod = ModuleType("empty_module")
+        empty_mod.__name__ = "empty_module"
+
+        result = discover_callables(empty_mod)
+        assert result == {}
+
+    def test_callable_info_default_docstring_is_none(self) -> None:
+        """CallableInfo docstring defaults to None when not provided."""
+
+        def func():
+            pass
+
+        sig = inspect.signature(func)
+        info = CallableInfo(name="func", callable=func, signature=sig, module="test")
+        assert info.docstring is None
+
+    def test_tags_non_list_or_tuple_attribute_ignored(
+        self, test_module: ModuleType
+    ) -> None:
+        """__tags__ attribute that is not list/tuple is silently ignored."""
+        # Set __tags__ to a string (not a list/tuple)
+        test_module.get_count.__tags__ = "should_be_ignored"  # type: ignore[attr-defined]
+
+        callables = discover_callables(test_module)
+        info = callables["get_count"]
+        # Tags extracted from __tags__ string should be empty (not crash or split string)
+        assert (
+            info.tags == ()
+        ), f"Expected no tags from non-list __tags__, got: {info.tags}"
+
+    def test_docstring_without_tags_line_extracts_no_tags(self) -> None:
+        """Function with docstring but no 'Tags:' line gets empty tags tuple."""
+        mod = ModuleType("m")
+        mod.__name__ = "m"
+
+        def no_tags_func() -> None:
+            """A plain function with a docstring but no tag annotations."""
+            pass  # test fixture — no implementation needed
+
+        no_tags_func.__module__ = "m"
+        setattr(mod, "no_tags_func", no_tags_func)
+
+        callables = discover_callables(mod)
+        info = callables["no_tags_func"]
+        assert info.tags == (), f"Expected empty tags, got: {info.tags}"
+        assert info.docstring is not None
+
+    def test_discover_include_private_preserves_public(
+        self, test_module: ModuleType
+    ) -> None:
+        """include_private=True adds private functions but keeps all public ones."""
+        without_private = discover_callables(test_module, include_private=False)
+        with_private = discover_callables(test_module, include_private=True)
+
+        # Private mode is strictly a superset
+        assert len(with_private) > len(without_private)
+        assert "_internal_helper" in with_private
+        # All public functions still present
+        for name in without_private:
+            assert name in with_private, f"{name} missing from include_private result"
+
+    def test_discover_decorated_exact_count(self, test_module: ModuleType) -> None:
+        """Only exactly 2 functions carry __traigent_callable__ in the test module."""
+        callables = discover_callables_by_decorator(test_module)
+        assert (
+            len(callables) == 2
+        ), f"Expected exactly 2 decorated callables, got {len(callables)}: {list(callables)}"

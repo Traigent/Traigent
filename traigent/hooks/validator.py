@@ -13,29 +13,38 @@ from pathlib import Path
 from typing import Any
 
 from traigent.hooks.config import HooksConfig, load_hooks_config
+from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING, MODEL_NAME_ALIASES
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Model cost estimates per 1K tokens (input + output average)
-MODEL_COST_PER_1K: dict[str, float] = {
-    # OpenAI models
-    "gpt-4o-mini": 0.00015,  # $0.15/M input, $0.60/M output average
-    "gpt-4o": 0.005,  # $5/M input, $15/M output average
-    "gpt-4-turbo": 0.01,  # $10/M input, $30/M output average
-    "gpt-4": 0.03,  # $30/M input, $60/M output average
-    "gpt-4-32k": 0.06,  # $60/M input, $120/M output average
-    "gpt-3.5-turbo": 0.0005,  # $0.5/M input, $1.5/M output average
-    # Claude models
-    "claude-3-haiku": 0.00025,  # Very affordable
-    "claude-3-haiku-20240307": 0.00025,
-    "claude-3-sonnet": 0.003,  # Mid-tier
-    "claude-3-sonnet-20240229": 0.003,
-    "claude-3-opus": 0.015,  # Premium
-    "claude-3-opus-20240229": 0.015,
-    "claude-3-5-sonnet": 0.003,
-    "claude-3-5-sonnet-20241022": 0.003,
-}
+
+def _build_model_cost_per_1k() -> dict[str, float]:
+    """Derive MODEL_COST_PER_1K from the canonical ESTIMATION_MODEL_PRICING.
+
+    Computes a blended (input+output)/2 average per-1K-token cost for each
+    model, then adds short-name aliases so that user configs in traigent.yml
+    using names like ``"gpt-4"`` or ``"claude-3-haiku"`` still resolve.
+    """
+    result: dict[str, float] = {}
+    for model, pricing in ESTIMATION_MODEL_PRICING.items():
+        avg_per_token = (
+            pricing["input_cost_per_token"] + pricing["output_cost_per_token"]
+        ) / 2
+        result[model] = avg_per_token * 1000
+
+    # Compatibility aliases are sourced from the canonical pricing module
+    # to avoid duplicated alias maps drifting over time.
+    for alias, canonical in MODEL_NAME_ALIASES.items():
+        if alias not in result and canonical in result:
+            result[alias] = result[canonical]
+
+    return result
+
+
+# Model cost estimates per 1K tokens (input + output average).
+# Derived from the canonical ESTIMATION_MODEL_PRICING in cost_calculator.py.
+MODEL_COST_PER_1K: dict[str, float] = _build_model_cost_per_1k()
 
 # Default tokens per query estimate
 DEFAULT_TOKENS_PER_QUERY = 1000
@@ -152,6 +161,11 @@ class AgentValidator:
         issues.extend(cost_issues)
         warnings.extend(cost_warnings)
 
+        # Tuned variable detection: warn about unoptimized variables
+        # when no configuration_space is configured.
+        if not agent.configuration_space:
+            warnings.extend(self._warn_unoptimized_tvars(agent))
+
         # Calculate estimated cost
         estimated_cost = self._estimate_cost_per_query(agent)
 
@@ -166,6 +180,62 @@ class AgentValidator:
             models_found=agent.models,
             estimated_cost_per_query=estimated_cost,
         )
+
+    def _warn_unoptimized_tvars(self, agent: AgentInfo) -> list[ValidationIssue]:
+        """Detect unoptimized tuned variables and return warnings.
+
+        Only runs when the agent has no configuration_space, giving actionable
+        suggestions rather than errors.
+
+        Args:
+            agent: AgentInfo to inspect.
+
+        Returns:
+            List of warning ValidationIssues (never errors).
+        """
+        try:
+            from traigent.tuned_variables.detection_types import DetectionConfidence
+            from traigent.tuned_variables.detector import TunedVariableDetector
+
+            detector = TunedVariableDetector()
+            results = detector.detect_from_file(agent.file_path, agent.name)
+
+            high_medium = [
+                c
+                for r in results
+                for c in r.candidates
+                if c.confidence
+                in (DetectionConfidence.HIGH, DetectionConfidence.MEDIUM)
+            ]
+
+            if not high_medium:
+                return []
+
+            names = [c.name for c in high_medium]
+            snippets = [
+                c.suggested_range.to_parameter_range_code()
+                for c in high_medium
+                if c.suggested_range
+            ]
+            return [
+                ValidationIssue(
+                    severity="warning",
+                    code="UNOPTIMIZED_TVARS",
+                    message=(
+                        f"No configuration_space set for '{agent.name}', "
+                        f"but {len(high_medium)} tunable variable(s) detected: {names}"
+                    ),
+                    suggestion=(
+                        "Add to @traigent.optimize(configuration_space={...}). "
+                        f"Suggested ranges: {snippets}"
+                    ),
+                )
+            ]
+        except Exception:
+            logger.debug(
+                "Tuned variable detection failed during validation", exc_info=True
+            )
+            return []
 
     def _validate_models(self, agent: AgentInfo) -> list[ValidationIssue]:
         """Validate model constraints.

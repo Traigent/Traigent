@@ -207,6 +207,18 @@ class TestOptimizedFunction:
                 objectives="not_a_list",
             )
 
+    def test_optimized_function_creation_invalid_history_limit(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
+        """History limit must be a positive integer."""
+        with pytest.raises(ValueError, match="optimization_history_limit must be >= 1"):
+            OptimizedFunction(
+                func=mock_function,
+                config_space=sample_config_space,
+                objectives=sample_objectives,
+                optimization_history_limit=0,
+            )
+
     def test_optimized_function_creation_empty_objectives(
         self, mock_function, sample_config_space
     ):
@@ -731,6 +743,7 @@ class TestOptimizedFunction:
             config_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
             max_trials=3,
             eval_dataset=sample_dataset,
         )
@@ -1624,6 +1637,57 @@ class TestReOptimization:
 
             # Verify orchestrator was called twice
             assert mock_orchestrator.optimize.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_optimization_history_is_bounded(
+        self, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """History should keep only the most recent optimization results."""
+
+        def my_func(x: str) -> str:
+            return x.upper()
+
+        opt_func = OptimizedFunction(
+            func=my_func,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            max_trials=2,
+            optimization_history_limit=2,
+        )
+
+        results = [
+            self._create_mock_result(
+                sample_objectives, {"temperature": 0.1, "top_k": 10}, 0.70, "opt_1"
+            ),
+            self._create_mock_result(
+                sample_objectives, {"temperature": 0.5, "top_k": 20}, 0.80, "opt_2"
+            ),
+            self._create_mock_result(
+                sample_objectives, {"temperature": 0.9, "top_k": 50}, 0.90, "opt_3"
+            ),
+        ]
+
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
+            mock_optimizer = Mock()
+            mock_get_optimizer.return_value = mock_optimizer
+
+            mock_orchestrator = Mock()
+            mock_orchestrator_class.return_value = mock_orchestrator
+            mock_orchestrator.optimize = AsyncMock(side_effect=results)
+
+            await opt_func.optimize(algorithm="random")
+            await opt_func.optimize(algorithm="random")
+            await opt_func.optimize(algorithm="random")
+
+        history = opt_func.get_optimization_history()
+        assert len(history) == 2
+        assert [item.optimization_id for item in history] == ["opt_2", "opt_3"]
 
     @pytest.mark.asyncio
     async def test_reset_clears_previous_optimization_state(

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 Call = Callable[..., Any]
@@ -91,7 +91,10 @@ class BatchWrapper:
             async with semaphore:
                 return await self._invoke_async(item, shared_map)
 
-        tasks: list[Awaitable[Any]] = [asyncio.create_task(run(item)) for item in items]
+        tasks: list[asyncio.Task[Any]] = []
+        for item in items:
+            task = asyncio.create_task(run(item))
+            tasks.append(task)
         return list(await asyncio.gather(*tasks))
 
 

@@ -9,6 +9,7 @@ Tests for Traigent workflow traces with LangGraph visualization support.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -783,12 +784,13 @@ class TestWorkflowTracesTracker:
             auto_send=False,
         )
 
-        tracker.add_span(
-            span_id="span_001",
-            span_name="Test Node",
-            span_type="node",
-            start_time=datetime.now(UTC),
-        )
+        with caplog.at_level(logging.WARNING):
+            tracker.add_span(
+                span_id="span_001",
+                span_name="Test Node",
+                span_type="node",
+                start_time=datetime.now(UTC),
+            )
 
         assert "No active trial context" in caplog.text
 
@@ -877,7 +879,8 @@ class TestConvenienceFunctions:
         """Test setup_workflow_tracing when OTEL not available."""
         monkeypatch.setattr(wt_module, "OTEL_AVAILABLE", False)
 
-        result = wt_module.setup_workflow_tracing()
+        with caplog.at_level(logging.WARNING):
+            result = wt_module.setup_workflow_tracing()
 
         assert result is None
         assert "OpenTelemetry not available" in caplog.text
@@ -1182,7 +1185,8 @@ class TestAsyncMethods:
         monkeypatch.setattr(wt_module, "AIOHTTP_AVAILABLE", True)
         return mock_aiohttp
 
-    def test_ingest_traces_async_requires_aiohttp(
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_requires_aiohttp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test that async ingest raises ImportError without aiohttp."""
@@ -1190,28 +1194,19 @@ class TestAsyncMethods:
 
         client = WorkflowTracesClient(backend_url="http://localhost:5000")
 
-        import asyncio
+        with pytest.raises(ImportError, match="aiohttp is required"):
+            await client.ingest_traces_async()
 
-        async def test_async():
-            with pytest.raises(ImportError, match="aiohttp is required"):
-                await client.ingest_traces_async()
-
-        asyncio.get_event_loop().run_until_complete(test_async())
-
-    def test_ingest_traces_async_empty_returns_error(
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_empty_returns_error(
         self, patched_aiohttp: MagicMock
     ) -> None:
         """Test async ingest with no data returns error."""
         client = WorkflowTracesClient(backend_url="http://localhost:5000")
 
-        import asyncio
-
-        async def test_async():
-            response = await client.ingest_traces_async()
-            assert response.success is False
-            assert response.error is not None
-
-        asyncio.get_event_loop().run_until_complete(test_async())
+        response = await client.ingest_traces_async()
+        assert response.success is False
+        assert response.error is not None
 
 
 # =============================================================================
@@ -1595,18 +1590,21 @@ class TestFlushSpansWithoutContext:
             auto_send=False,
         )
 
-        # Manually add spans without context
-        tracker._local.spans = [
-            SpanPayload(
-                span_id="span_001",
-                trace_id="trace_abc",
-                configuration_run_id="config_001",
-                span_name="Test",
-                span_type="node",
-                start_time="2026-01-13T10:00:00Z",
-            )
-        ]
+        # Manually inject spans without context (use ContextVar directly)
+        tracker._cv_spans.set(
+            [
+                SpanPayload(
+                    span_id="span_001",
+                    trace_id="trace_abc",
+                    configuration_run_id="config_001",
+                    span_name="Test",
+                    span_type="node",
+                    start_time="2026-01-13T10:00:00Z",
+                )
+            ]
+        )
 
-        tracker._flush_spans()
+        with caplog.at_level(logging.WARNING):
+            tracker._flush_spans()
 
         assert "No trace context" in caplog.text

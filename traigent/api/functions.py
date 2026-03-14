@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import OptimizationResult, StrategyConfig
@@ -194,12 +194,12 @@ def initialize(  # noqa: C901
         # Cloud mode with explicit URL
         traigent.initialize(
             api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
-            api_url="https://api.traigent.ai"
+            api_url="http://localhost:5000"
         )
 
         # Using environment variables (recommended)
         # export TRAIGENT_BACKEND_URL="http://localhost:5000"
-        # export TRAIGENT_API_KEY="your-key-here"
+        # export TRAIGENT_API_KEY="your-key-here"  # pragma: allowlist secret
         traigent.initialize()
     """
 
@@ -556,8 +556,8 @@ def override_config(
         override["constraints"] = constraints
 
     if max_trials is not None:
-        if max_trials < 1:
-            raise ValueError("max_trials must be >= 1")
+        if max_trials < 0:
+            raise ValueError("max_trials must be non-negative")
         override["max_trials"] = max_trials
 
     if timeout is not None:
@@ -574,6 +574,136 @@ def override_config(
         override["samples_include_pruned"] = bool(samples_include_pruned)
 
     return override
+
+
+def _validate_budget_configuration_inputs(
+    budget_usd: float,
+    min_instances: int,
+    reserve_ratio: float,
+    max_parallel_workers: int | None,
+    model_pricing: Mapping[str, float],
+) -> None:
+    """Validate inputs for budget-aware optimization configuration."""
+    if budget_usd <= 0:
+        raise ValueError("budget_usd must be > 0")
+    if min_instances < 1:
+        raise ValueError("min_instances must be >= 1")
+    if not 0 <= reserve_ratio < 1:
+        raise ValueError("reserve_ratio must be in [0, 1)")
+    if max_parallel_workers is not None and max_parallel_workers < 1:
+        raise ValueError("max_parallel_workers must be >= 1 when provided")
+    if not model_pricing:
+        raise ValueError("model_pricing must not be empty")
+
+
+def _normalize_model_pricing(model_pricing: Mapping[str, float]) -> dict[str, float]:
+    """Normalize model pricing inputs to validated positive floats."""
+    normalized_pricing: dict[str, float] = {}
+    for model, raw_cost in model_pricing.items():
+        if not model:
+            raise ValueError("model_pricing keys must be non-empty model names")
+        try:
+            cost = float(raw_cost)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"model_pricing['{model}'] must be numeric, got {raw_cost!r}"
+            ) from exc
+        if cost <= 0:
+            raise ValueError(f"model_pricing['{model}'] must be > 0")
+        normalized_pricing[model] = cost
+    return normalized_pricing
+
+
+def configure_for_budget(
+    *,
+    budget_usd: float,
+    model_pricing: Mapping[str, float],
+    min_instances: int = 1,
+    reserve_ratio: float = 0.10,
+    max_parallel_workers: int | None = None,
+    return_diagnostics: bool = False,
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
+    """Build budget-aware optimization overrides from model pricing.
+
+    This helper pre-filters candidate models to those that can run at least
+    ``min_instances`` evaluations within budget, then derives trial/parallel
+    limits to keep optimization spend bounded.
+
+    Args:
+        budget_usd: Total spend budget in USD.
+        model_pricing: Mapping of model name to estimated cost per evaluation.
+        min_instances: Minimum evaluations each selected model should support.
+        reserve_ratio: Fraction of budget to reserve as safety headroom.
+        max_parallel_workers: Optional upper bound for parallel workers.
+        return_diagnostics: When True, also return a diagnostics mapping as
+            ``(overrides, diagnostics)``.
+
+    Returns:
+        Recommended ``@optimize`` keyword overrides. The returned mapping is
+        intentionally safe to pass directly as ``@optimize(**overrides)``.
+        When ``return_diagnostics=True``, returns ``(overrides, diagnostics)``.
+    """
+    _validate_budget_configuration_inputs(
+        budget_usd,
+        min_instances,
+        reserve_ratio,
+        max_parallel_workers,
+        model_pricing,
+    )
+    normalized_pricing = _normalize_model_pricing(model_pricing)
+
+    effective_budget = budget_usd * (1.0 - reserve_ratio)
+    affordable_items = sorted(
+        (
+            (model, cost)
+            for model, cost in normalized_pricing.items()
+            if cost * min_instances <= effective_budget
+        ),
+        key=lambda item: (item[1], item[0]),
+    )
+
+    if not affordable_items:
+        cheapest_model, cheapest_cost = min(
+            normalized_pricing.items(), key=lambda item: item[1]
+        )
+        raise ValueError(
+            "No models can satisfy the requested minimum coverage within budget. "
+            f"Cheapest model '{cheapest_model}' needs ${cheapest_cost * min_instances:.4f} "
+            f"for {min_instances} evaluations, but effective budget is ${effective_budget:.4f}."
+        )
+
+    affordable_models = [model for model, _cost in affordable_items]
+    cheapest_affordable_cost = affordable_items[0][1]
+    max_instances = max(
+        min_instances, int(effective_budget // cheapest_affordable_cost)
+    )
+
+    default_workers = int(_GLOBAL_CONFIG.get("parallel_workers", 1))
+    worker_cap = (
+        max_parallel_workers if max_parallel_workers is not None else default_workers
+    )
+    parallel_workers = max(1, min(max_instances, worker_cap))
+    parallel_config = ParallelConfig.from_legacy(
+        parallel_trials=parallel_workers,
+        parallel_workers=parallel_workers,
+    )
+
+    overrides: dict[str, Any] = {
+        "configuration_space": {"model": affordable_models},
+        "max_trials": max_instances,
+        "parallel_config": parallel_config,
+        "cost_limit": float(budget_usd),
+    }
+    diagnostics = {
+        "max_instances": max_instances,
+        "parallel_workers": parallel_workers,
+        "budget_usd": float(budget_usd),
+        "effective_budget_usd": effective_budget,
+        "selected_model_pricing": dict(affordable_items),
+    }
+    if return_diagnostics:
+        return overrides, diagnostics
+    return overrides
 
 
 def set_strategy(

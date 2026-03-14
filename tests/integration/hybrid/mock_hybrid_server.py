@@ -54,7 +54,7 @@ class MockHybridServer:
     active_sessions: set[str] = field(default_factory=set)
 
     # Privacy-preserving mode: local data storage
-    # Maps input_id -> input data
+    # Maps example_id -> input data
     _input_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Maps output_id -> output data
     _output_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -72,17 +72,17 @@ class MockHybridServer:
         self._output_storage = {}
         self._target_storage = {}
 
-    def store_input(self, input_id: str, data: dict[str, Any]) -> None:
+    def store_input(self, example_id: str, data: dict[str, Any]) -> None:
         """Store input data locally (for privacy-preserving mode)."""
-        self._input_storage[input_id] = data
+        self._input_storage[example_id] = data
 
     def store_target(self, target_id: str, data: dict[str, Any]) -> None:
         """Store target data locally (for privacy-preserving mode)."""
         self._target_storage[target_id] = data
 
-    def get_input(self, input_id: str) -> dict[str, Any]:
+    def get_input(self, example_id: str) -> dict[str, Any]:
         """Retrieve locally-stored input data by ID."""
-        return self._input_storage.get(input_id, {})
+        return self._input_storage.get(example_id, {})
 
     def get_output(self, output_id: str) -> dict[str, Any]:
         """Retrieve locally-stored output data by ID."""
@@ -100,43 +100,46 @@ class MockHybridServer:
             "supports_keep_alive": self.config.supports_keep_alive,
             "supports_streaming": False,
             "max_batch_size": self.config.max_batch_size,
+            "max_payload_bytes": None,
         }
 
     def get_config_space(self) -> dict[str, Any]:
         """Return TVAR definitions for the mock agent."""
+        tunables = [
+            {
+                "name": "model",
+                "type": "enum",
+                "domain": {"values": ["fast", "accurate", "balanced"]},
+                "default": "balanced",
+            },
+            {
+                "name": "temperature",
+                "type": "float",
+                "domain": {"range": [0.0, 1.0], "resolution": 0.1},
+                "default": 0.5,
+            },
+            {
+                "name": "max_retries",
+                "type": "int",
+                "domain": {"range": [0, 5]},
+                "default": 2,
+            },
+            {
+                "name": "use_cache",
+                "type": "bool",
+                "domain": {},
+                "default": True,
+            },
+        ]
         return {
             "schema_version": "0.9",
-            "capability_id": "mock_test_agent",
-            "tvars": [
-                {
-                    "name": "model",
-                    "type": "enum",
-                    "domain": {"values": ["fast", "accurate", "balanced"]},
-                    "default": "balanced",
-                },
-                {
-                    "name": "temperature",
-                    "type": "float",
-                    "domain": {"range": [0.0, 1.0], "resolution": 0.1},
-                    "default": 0.5,
-                },
-                {
-                    "name": "max_retries",
-                    "type": "int",
-                    "domain": {"range": [0, 5]},
-                    "default": 2,
-                },
-                {
-                    "name": "use_cache",
-                    "type": "bool",
-                    "domain": {},
-                    "default": True,
-                },
-            ],
+            "tunable_id": "mock_test_agent",
+            "tunables": tunables,
+            "tvars": tunables,
         }
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Execute agent with given config on inputs.
+        """Execute agent with given config on examples.
 
         Simulates agent execution by computing mock outputs based on
         the configuration and tracking costs.
@@ -180,7 +183,7 @@ class MockHybridServer:
                 },
             }
 
-        inputs = request.get("inputs", [])
+        inputs = request.get("examples", [])
         session_id = request.get("session_id")
 
         if session_id:
@@ -192,15 +195,15 @@ class MockHybridServer:
         total_latency = 0.0
 
         for inp in inputs:
-            input_id = inp.get("input_id", str(uuid.uuid4()))
+            example_id = inp.get("example_id", str(uuid.uuid4()))
 
-            # Privacy-preserving mode: look up data locally by input_id
+            # Privacy-preserving mode: look up data locally by example_id
             # Standard mode: use data from request
             if "data" in inp:
                 data = inp["data"]
             else:
                 # Privacy-preserving: look up locally-stored input
-                data = self.get_input(input_id)
+                data = self.get_input(example_id)
 
             # Simulate output based on config
             output = self._simulate_output(config, data)
@@ -223,14 +226,14 @@ class MockHybridServer:
 
             # Build output item
             output_item: dict[str, Any] = {
-                "input_id": input_id,
+                "example_id": example_id,
                 "cost_usd": cost,
                 "latency_ms": latency,
             }
 
             if self.config.privacy_preserving:
                 # Privacy-preserving mode: store output locally and return only ID
-                output_id = f"out_{input_id}_{session_id or 'default'}"
+                output_id = f"out_{example_id}_{session_id or 'default'}"
                 self._output_storage[output_id] = output
                 output_item["output_id"] = output_id
             else:
@@ -320,7 +323,7 @@ class MockHybridServer:
         accuracy_sum = 0.0
 
         for eval_item in evaluations:
-            input_id = eval_item.get("input_id", str(uuid.uuid4()))
+            example_id = eval_item.get("example_id", str(uuid.uuid4()))
 
             # Privacy-preserving mode: look up output and target by ID
             # Standard mode: use data from request
@@ -352,7 +355,7 @@ class MockHybridServer:
 
             results.append(
                 {
-                    "input_id": input_id,
+                    "example_id": example_id,
                     "metrics": {
                         "accuracy": accuracy,
                         "relevance": quality * 0.95,
@@ -386,12 +389,16 @@ class MockHybridServer:
         self.keep_alive_call_count += 1
 
         if not self.config.supports_keep_alive:
-            return {"alive": False, "error": "Keep-alive not supported"}
+            return {
+                "status": "unsupported",
+                "alive": False,
+                "error": "Keep-alive not supported",
+            }
 
         if session_id in self.active_sessions:
-            return {"alive": True, "session_id": session_id}
+            return {"status": "alive", "alive": True, "session_id": session_id}
         else:
-            return {"alive": False, "reason": "Session not found"}
+            return {"status": "expired", "alive": False, "reason": "Session not found"}
 
     def health_check(self) -> dict[str, Any]:
         """Return health status."""
@@ -420,7 +427,9 @@ class MockHTTPTransport:
         data = self._server.get_capabilities()
         return ServiceCapabilities.from_dict(data)
 
-    async def discover_config_space(self) -> dict[str, Any]:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> dict[str, Any]:
         """Fetch config space from mock server."""
         from traigent.hybrid.protocol import ConfigSpaceResponse
 

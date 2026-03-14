@@ -17,6 +17,32 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Canonical status strings used by backend DTO payloads.
+# Keep these aligned with cloud.models enums and backend schemas.
+EXPERIMENT_RUN_STATUS_VALUES = frozenset(
+    {"not_started", "pending", "running", "completed", "failed", "cancelled"}
+)
+CONFIGURATION_RUN_STATUS_VALUES = frozenset(
+    {"not_started", "pending", "running", "completed", "failed", "cancelled", "pruned"}
+)
+
+
+def _warn_if_unknown_status(
+    *,
+    status: str,
+    allowed: frozenset[str],
+    dto_name: str,
+) -> None:
+    """Log unknown status values while preserving backward compatibility."""
+    if status not in allowed:
+        logger.warning(
+            "%s received non-canonical status '%s'. Allowed statuses: %s",
+            dto_name,
+            status,
+            sorted(allowed),
+        )
+
+
 # Try to import optigen_schemas for validation (optional)
 try:
     from optigen_schemas.validator import SchemaValidator
@@ -47,7 +73,7 @@ class ExampleMeasure:
     """
 
     MAX_METRICS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
 
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize from a nested measure dict.
@@ -89,10 +115,12 @@ class ExampleMeasure:
                 raise ValueError(f"metric key must be string, got {type(key).__name__}")
             if not self.KEY_PATTERN.match(key):
                 raise ValueError(
-                    f"metric key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                    f"metric key '{key}' must match pattern ^[a-zA-Z_]\\w*$"
                 )
-            # Values must be numeric or None
-            if value is not None and not isinstance(value, (int, float)):
+            # Values must be numeric or None (bool is explicitly rejected)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
                 raise ValueError(
                     f"metric '{key}' must be numeric, got {type(value).__name__}"
                 )
@@ -131,7 +159,7 @@ class MeasuresDict(UserDict):
     """
 
     MAX_KEYS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.
@@ -171,10 +199,16 @@ class MeasuresDict(UserDict):
             # NEW: Validate key pattern (Python identifier syntax)
             if not self.KEY_PATTERN.match(key):
                 raise ValueError(
-                    f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
+                    f"Measure key '{key}' must match pattern ^[a-zA-Z_]\\w*$ "
                     f"(Python identifier syntax). "
                     f"Use underscores instead of hyphens or spaces. "
                     f"Invalid: 'my-metric', '123abc'. Valid: 'my_metric', 'metric_123'."
+                )
+
+            # bool is not treated as numeric for contract parity with JSON Schema
+            if isinstance(value, bool):
+                raise TypeError(
+                    f"Measure '{key}' must be numeric type (int, float, None), got bool"
                 )
 
             # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
@@ -220,6 +254,12 @@ class MeasuresDict(UserDict):
                 f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
                 f"(Python identifier syntax). "
                 f"Use underscores instead of hyphens or spaces."
+            )
+
+        # bool is not treated as numeric for contract parity with JSON Schema
+        if isinstance(value, bool):
+            raise TypeError(
+                f"Value for measure '{key}' must be numeric type (int, float, None), got bool"
             )
 
         # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
@@ -439,6 +479,11 @@ class ExperimentRunDTO:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=EXPERIMENT_RUN_STATUS_VALUES,
+            dto_name="ExperimentRunDTO",
+        )
         result: dict[str, Any] = {
             "id": self.id,
             "experiment_id": self.experiment_id,
@@ -486,6 +531,11 @@ class ConfigurationRunDTO:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=CONFIGURATION_RUN_STATUS_VALUES,
+            dto_name="ConfigurationRunDTO",
+        )
         result: dict[str, Any] = {
             "id": self.id,
             "experiment_run_id": self.experiment_run_id,

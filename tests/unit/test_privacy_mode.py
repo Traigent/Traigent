@@ -103,11 +103,19 @@ class TestPrivacyCompliance:
             "objectives",
             "dataset_metadata",
             "max_trials",
+            "budget",
+            "constraints",
+            "default_config",
+            "promotion_policy",
             "optimization_strategy",
             "user_id",
             "billing_tier",
             "metadata",
             "problem_type",  # Added as this is a valid non-sensitive field
+            "promotion_policy",
+            "default_config",
+            "constraints",
+            "budget",
         }
 
         for req in dummy_server.received_data:
@@ -271,7 +279,7 @@ class TestPrivacyCompliance:
             bad_request.dataset = Dataset(
                 [
                     EvaluationExample(
-                        input_data={"secret": "data"}, expected_output="output"
+                        input_data={"sensitive_value": "data"}, expected_output="output"
                     )
                 ]
             )

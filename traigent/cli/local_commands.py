@@ -83,7 +83,7 @@ def list_sessions(status: str | None, limit: int, output_format: str) -> None:
                     created_at = str(summary["created_at"])[:10]  # Just the date
                     best_score = (
                         f"{summary['best_score']:.3f}"
-                        if summary["best_score"]
+                        if summary["best_score"] is not None
                         else "N/A"
                     )
                     click.echo(
@@ -171,9 +171,10 @@ def show_session(session_id: str, output_format: str) -> None:
                 click.echo("\n📈 Trial History:")
                 for trial in session.trials[-5:]:  # Show last 5 trials
                     status_icon = "✅" if trial.error is None else "❌"
-                    click.echo(
-                        f"  {status_icon} Trial {trial.trial_id}: {trial.score:.4f}"
+                    score_str = (
+                        f"{trial.score:.4f}" if trial.score is not None else "N/A"
                     )
+                    click.echo(f"  {status_icon} Trial {trial.trial_id}: {score_str}")
 
         else:
             # Summary format
@@ -473,7 +474,9 @@ def sync_to_cloud(
                 "❌ API key required for cloud sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
                 err=True,
             )
-            click.echo("💡 Get your API key at: https://traigent.ai/api-keys")
+            click.echo(
+                "💡 Configure a key with `traigent auth login` or export TRAIGENT_API_KEY."
+            )
             sys.exit(1)
 
         sync_manager = SyncManager(config, api_key)
@@ -628,9 +631,9 @@ def preview_cloud_benefits() -> None:
             )
 
         click.echo("\n🎯 Ready to upgrade?")
-        click.echo("   1. Get API key: https://traigent.ai/signup")
+        click.echo("   1. Get API key: https://portal.traigent.ai/login")
         click.echo("   2. Run: traigent local sync --api-key YOUR_KEY")
-        click.echo("   3. Access dashboard: https://app.traigent.ai")
+        click.echo("   3. Access portal: https://portal.traigent.ai")
 
     except Exception as e:
         click.echo(f"Error previewing cloud benefits: {e}", err=True)

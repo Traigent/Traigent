@@ -43,6 +43,24 @@ from traigent.utils.exceptions import OptimizationError
 MINIMIZE_KEYWORDS = {"cost", "latency", "error", "time", "memory", "loss"}
 
 
+def _resolve_dict_param_type(definition: dict[str, Any]) -> str:
+    """Resolve parameter type for dict-style definitions.
+
+    Hybrid discovery emits float ranges as ``{"low": x, "high": y}``
+    without a ``type`` key. Treat these as float ranges instead of
+    defaulting to categorical.
+    """
+
+    has_range = "low" in definition and "high" in definition
+    param_type = (definition.get("type") or "").lower()
+
+    if not param_type and has_range:
+        return "float"
+    if not param_type:
+        return "categorical"
+    return param_type
+
+
 def ensure_optuna_available() -> None:
     """Ensure Optuna is installed before continuing."""
 
@@ -115,7 +133,7 @@ def config_space_to_distributions(
             definition = definition.to_config_value()
 
         if isinstance(definition, dict):
-            param_type = (definition.get("type") or "categorical").lower()
+            param_type = _resolve_dict_param_type(definition)
 
             if param_type in {"fixed", "constant"}:
                 if include_fixed:
@@ -231,13 +249,109 @@ def discretize_for_grid(
                 if span <= 100:
                     discrete_space[param] = list(range(low, high + 1))
                 else:
-                    step = max(span // (n_bins - 1), 1)
-                    discrete_space[param] = [low + idx * step for idx in range(n_bins)]
+                    grid_step = max(span // (n_bins - 1), 1)
+                    discrete_space[param] = [
+                        low + idx * grid_step for idx in range(n_bins)
+                    ]
             else:
                 interval = (float(high) - float(low)) / (n_bins - 1)
                 discrete_space[param] = [
                     float(low) + idx * interval for idx in range(n_bins)
                 ]
+        elif isinstance(definition, dict):
+            param_type = _resolve_dict_param_type(definition)
+
+            if param_type in {"fixed", "constant"}:
+                discrete_space[param] = [definition.get("value")]
+                continue
+
+            if param_type in {"categorical", "choice"}:
+                choices = definition.get("choices") or definition.get("values")
+                if not choices:
+                    raise OptimizationError(
+                        f"Categorical parameter '{param}' requires 'choices'"
+                    )
+                discrete_space[param] = list(choices)
+                continue
+
+            if param_type in {"int", "integer"}:
+                low = definition.get("low")
+                high = definition.get("high")
+                if low is None or high is None:
+                    raise OptimizationError(
+                        f"Integer parameter '{param}' requires 'low' and 'high'"
+                    )
+                low_i, high_i = int(low), int(high)
+                if low_i > high_i:
+                    raise OptimizationError(
+                        f"Integer parameter '{param}' requires low <= high"
+                    )
+                int_step_raw = definition.get("step")
+                if int_step_raw is not None:
+                    step_i = int(int_step_raw)
+                    if step_i <= 0:
+                        raise OptimizationError(
+                            f"Integer parameter '{param}' requires positive 'step'"
+                        )
+                    int_values = list(range(low_i, high_i + 1, step_i))
+                    if int_values[-1] != high_i:
+                        int_values.append(high_i)
+                    discrete_space[param] = int_values
+                else:
+                    span = high_i - low_i
+                    if span <= 100:
+                        discrete_space[param] = list(range(low_i, high_i + 1))
+                    else:
+                        inferred_step = max(span // (n_bins - 1), 1)
+                        int_values = [
+                            low_i + idx * inferred_step for idx in range(n_bins)
+                        ]
+                        int_values[-1] = high_i
+                        discrete_space[param] = int_values
+                continue
+
+            if param_type in {"float", "double", "loguniform", "qloguniform"}:
+                low = definition.get("low")
+                high = definition.get("high")
+                if low is None or high is None:
+                    raise OptimizationError(
+                        f"Float parameter '{param}' requires 'low' and 'high'"
+                    )
+                low_f, high_f = float(low), float(high)
+                if low_f > high_f:
+                    raise OptimizationError(
+                        f"Float parameter '{param}' requires low <= high"
+                    )
+                float_step_raw = definition.get("step")
+                if float_step_raw is not None:
+                    step_f = float(float_step_raw)
+                    if step_f <= 0:
+                        raise OptimizationError(
+                            f"Float parameter '{param}' requires positive 'step'"
+                        )
+                    float_values: list[float] = []
+                    current = low_f
+                    # Bound iteration to avoid pathological loops for tiny steps.
+                    for _ in range(100_000):
+                        if current > high_f + (step_f / 2):
+                            break
+                        float_values.append(round(current, 12))
+                        current += step_f
+                    if not float_values:
+                        float_values = [round(low_f, 12)]
+                    if float_values[-1] < high_f:
+                        float_values.append(round(high_f, 12))
+                    discrete_space[param] = float_values
+                else:
+                    interval = (high_f - low_f) / (n_bins - 1)
+                    float_values = [low_f + idx * interval for idx in range(n_bins)]
+                    float_values[-1] = high_f
+                    discrete_space[param] = float_values
+                continue
+
+            raise OptimizationError(
+                f"Unsupported parameter type '{param_type}' for '{param}'"
+            )
         elif isinstance(definition, list):
             discrete_space[param] = list(definition)
         else:
@@ -268,7 +382,7 @@ def suggest_from_definition(
                         definition.get("default") if "default" in definition else None
                     )
 
-        param_type = (definition.get("type") or "categorical").lower()
+        param_type = _resolve_dict_param_type(definition)
 
         if param_type in {"fixed", "constant"}:
             return definition.get("value")

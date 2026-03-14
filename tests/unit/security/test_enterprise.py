@@ -213,6 +213,39 @@ class TestSLAMonitor:
         assert len(monitor.alert_handlers) == 1
         assert monitor.alert_handlers[0] == alert_handler
 
+    def test_stop_monitoring_uses_join_timeout(self):
+        """Stopping monitoring should use a bounded join timeout."""
+        sla_config = SLAConfiguration.from_tier(SLATier.STANDARD, "admin@test.com")
+        metrics_collector = MetricsCollector()
+        monitor = SLAMonitor(sla_config, metrics_collector)
+        monitor.running = True
+
+        monitor.monitor_thread = Mock()
+        monitor.monitor_thread.is_alive.return_value = False
+
+        monitor.stop_monitoring()
+
+        assert monitor.running is False
+        monitor.monitor_thread.join.assert_called_once_with(timeout=5.0)
+
+    def test_stop_monitoring_warns_when_thread_stuck(self):
+        """A warning should be emitted when monitor thread does not stop."""
+        sla_config = SLAConfiguration.from_tier(SLATier.STANDARD, "admin@test.com")
+        metrics_collector = MetricsCollector()
+        monitor = SLAMonitor(sla_config, metrics_collector)
+        monitor.running = True
+
+        monitor.monitor_thread = Mock()
+        monitor.monitor_thread.is_alive.return_value = True
+
+        with patch("traigent.security.enterprise.logger") as mock_logger:
+            monitor.stop_monitoring()
+
+        monitor.monitor_thread.join.assert_called_once_with(timeout=5.0)
+        mock_logger.warning.assert_called_once_with(
+            "SLA monitor thread did not stop within 5 seconds"
+        )
+
     def test_sla_compliance_checking(self):
         """Test SLA compliance checking"""
         sla_config = SLAConfiguration.from_tier(SLATier.STANDARD, "admin@test.com")
@@ -460,6 +493,9 @@ class TestEnterpriseDeploymentManager:
     def test_shutdown(self):
         """Test graceful shutdown"""
         manager = EnterpriseDeploymentManager(DeploymentMode.CLOUD_PUBLIC)
+
+        # Override monitoring interval to 1s so the thread doesn't block on sleep
+        manager.config["monitoring_interval_seconds"] = 1
 
         # Setup SLA monitoring
         manager.setup_sla_monitoring(SLATier.STANDARD, "admin@test.com")

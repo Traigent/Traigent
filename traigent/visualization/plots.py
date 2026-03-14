@@ -569,7 +569,10 @@ class PlotGenerator:
         lines.append(f"Total trials: {len(result.trials)}")
         lines.append(f"Successful trials: {len(result.successful_trials)}")
         lines.append(f"Success rate: {result.success_rate:.1%}")
-        lines.append(f"Best score: {result.best_score:.3f}")
+        best_score_str = (
+            f"{result.best_score:.3f}" if result.best_score is not None else "N/A"
+        )
+        lines.append(f"Best score: {best_score_str}")
         lines.append("")
 
         # Progress plot

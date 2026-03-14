@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
 from traigent.evaluators.base import Dataset
+from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.function_identity import FunctionDescriptor
@@ -190,6 +192,51 @@ class BackendSessionManager:
 
         return False
 
+    def _upload_dataset_features(
+        self,
+        *,
+        session_id: str,
+        dataset: Dataset,
+        experiment_run_id: str | None,
+    ) -> None:
+        """Upload deterministic example features for backend-side content analytics."""
+        if not self._backend_client or not experiment_run_id:
+            return
+
+        uploader = getattr(self._backend_client, "upload_example_features", None)
+        if not callable(uploader):
+            return
+
+        try:
+            feature_rows = SimhashFeatureExtractor().extract_dataset_features(dataset)
+        except Exception as exc:
+            logger.debug(
+                "Failed to extract content features for session %s: %s",
+                session_id,
+                exc,
+            )
+            return
+
+        if not feature_rows:
+            return
+
+        try:
+            uploaded = uploader(experiment_run_id, "simhash_v1", feature_rows)
+        except Exception as exc:
+            logger.debug(
+                "Failed to upload content features for session %s: %s",
+                session_id,
+                exc,
+            )
+            return
+
+        if uploaded:
+            logger.debug(
+                "Uploaded %s example features for session %s",
+                len(feature_rows),
+                session_id,
+            )
+
     def create_session(
         self,
         func: Callable[..., Any],
@@ -293,6 +340,14 @@ class BackendSessionManager:
                         "Backend mapping missing for session %s (offline mode - expected)",
                         session_id,
                     )
+            else:
+                self._upload_dataset_features(
+                    session_id=session_id,
+                    dataset=dataset,
+                    experiment_run_id=getattr(
+                        session_mapping, "experiment_run_id", None
+                    ),
+                )
 
         dataset_name = (
             dataset.name if hasattr(dataset, "name") else "default_evaluation"
@@ -326,8 +381,8 @@ class BackendSessionManager:
             trial_result: Completed trial result
             session_id: Backend session identifier
             dataset_name: Name of the dataset (for stable example ID generation)
-            content_scores: Optional dict with keys "uniqueness", "novelty" mapping
-                           example_index -> score (0.0-1.0)
+            content_scores: Deprecated and ignored. Content analytics now upload
+                per-run features once at session creation.
 
         Returns:
             True if submission succeeded
@@ -335,17 +390,18 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return False
 
+        _ = content_scores
+
         primary_objective = (
             self._optimizer.objectives[0] if self._optimizer.objectives else "score"
         )
 
-        score = trial_result.get_metric(primary_objective, 0.0)
+        score = trial_result.get_metric(primary_objective)
         trial_metadata = build_backend_metadata(
             trial_result,
             primary_objective,
             self._traigent_config,
             dataset_name,
-            content_scores,
         )
 
         await self._log_trial_to_backend(
@@ -369,7 +425,10 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return
 
-        sanitized_score = float(score) if score is not None else 0.0
+        sanitized_score = float(score) if score is not None else None
+        metadata_payload = dict(metadata)
+        if score is None:
+            metadata_payload["primary_objective_missing"] = True
 
         # Always record locally so analytics remain available even without backend.
         try:
@@ -377,7 +436,7 @@ class BackendSessionManager:
                 session_id=session_id,
                 config=trial_result.config,
                 score=sanitized_score,
-                metadata=dict(metadata),
+                metadata=metadata_payload,
             )
         except Exception as exc:
             logger.debug(
@@ -483,11 +542,13 @@ class BackendSessionManager:
 
         try:
             try:
-                await self._backend_client.register_trial_start(
+                start_result = self._backend_client.register_trial_start(
                     session_id=session_id,
                     trial_id=trial_result.trial_id,
                     config=trial_result.config,
                 )
+                if inspect.isawaitable(start_result):
+                    await start_result
             except Exception as exc:
                 logger.debug(
                     "Trial start registration failed for session %s trial %s: %s",
@@ -496,7 +557,7 @@ class BackendSessionManager:
                     exc,
                 )
 
-            submitted = await self._backend_client._submit_trial_result_via_session(
+            submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,
                 trial_id=trial_result.trial_id,
                 config=trial_result.config,
@@ -504,6 +565,11 @@ class BackendSessionManager:
                 status=status,
                 error_message=trial_result.error_message,
                 execution_mode=self._traigent_config.execution_mode,
+            )
+            submitted = (
+                await submitted_result
+                if inspect.isawaitable(submitted_result)
+                else submitted_result
             )
             if not submitted:
                 logger.warning(
@@ -766,6 +832,15 @@ class BackendSessionManager:
                 "sdk_version": "2.0.0",
             },
         }
+
+        # Include statistical significance badges if computed
+        stat_sig = (
+            result.metadata.get("statistical_significance") if result.metadata else None
+        )
+        if stat_sig:
+            summary_stats_with_aggregation["metadata"][
+                "statistical_significance"
+            ] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])

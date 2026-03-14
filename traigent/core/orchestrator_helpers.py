@@ -344,6 +344,9 @@ def pre_trial_validate_config(
 
     Returns:
         True if all constraints are satisfied, False otherwise.
+
+    Raises:
+        TVLConstraintError: If a constraint callable raises.
     """
     if not constraints:
         return True
@@ -351,8 +354,12 @@ def pre_trial_validate_config(
         try:
             if not constraint(config):
                 return False
-        except Exception:
-            return False
+        except Exception as exc:
+            identifier = getattr(constraint, "__name__", "constraint")
+            raise TVLConstraintError(
+                f"Constraint '{identifier}' failed during pre_trial validation: {exc}",
+                details={"constraint": identifier, "stage": "pre_trial_validation"},
+            ) from exc
     return True
 
 
@@ -413,6 +420,9 @@ def extract_cost_from_results(
     if total_cost is None and hasattr(eval_result, "aggregated_metrics"):
         agg_metrics = eval_result.aggregated_metrics or {}
         total_cost = agg_metrics.get("total_cost")
+        if total_cost is None:
+            # Backward-compatible fallback for evaluators that still emit "cost".
+            total_cost = agg_metrics.get("cost")
 
     # Prefer evaluator-reported totals when available to avoid double counting
     result_total = getattr(eval_result, "total_examples", None)

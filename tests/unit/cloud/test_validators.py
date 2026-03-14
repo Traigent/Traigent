@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from traigent.cloud.validators import (
+    validate_comparability_metadata,
     validate_configuration_run_submission,
     validate_measure_results,
     validate_measures_array,
@@ -244,6 +245,89 @@ class TestValidateMeasuresArray:
             {"accuracy": 0.90, "latency": 120},
         ]
         assert validate_measures_array(measures) is True
+
+
+class TestValidateComparabilityMetadata:
+    """Tests for validate_comparability_metadata function."""
+
+    def test_valid_comparability_metadata(self) -> None:
+        payload = {
+            "total_examples": 3,
+            "examples_with_primary_metric": 3,
+            "coverage_ratio": 1.0,
+            "ranking_eligible": True,
+            "warning_codes": ["MCI-005"],
+            "missing_example_ids": [],
+            "per_metric_coverage": {
+                "accuracy": {"present": 3, "total": 3, "ratio": 1.0}
+            },
+        }
+        assert validate_comparability_metadata(payload) is True
+
+    @pytest.mark.parametrize(
+        "payload,match",
+        [
+            ("not_a_dict", "comparability metadata must be an object"),
+            (
+                {"total_examples": "3"},
+                "comparability.total_examples must be an integer",
+            ),
+            (
+                {"examples_with_primary_metric": "2"},
+                "comparability.examples_with_primary_metric must be an integer",
+            ),
+            ({"coverage_ratio": "0.5"}, "comparability.coverage_ratio must be numeric"),
+            (
+                {"coverage_ratio": 1.2},
+                "comparability.coverage_ratio must be between 0 and 1",
+            ),
+            (
+                {"ranking_eligible": "yes"},
+                "comparability.ranking_eligible must be boolean",
+            ),
+            (
+                {"warning_codes": "MCI-001"},
+                "comparability.warning_codes must be an array",
+            ),
+            (
+                {"warning_codes": [1, "MCI-002"]},
+                "comparability.warning_codes must contain only strings",
+            ),
+            (
+                {"missing_example_ids": [1, "ex_2"]},
+                "comparability.missing_example_ids must contain only strings",
+            ),
+            (
+                {"per_metric_coverage": []},
+                "comparability.per_metric_coverage must be an object",
+            ),
+            (
+                {"per_metric_coverage": {1: {"present": 1}}},
+                "comparability.per_metric_coverage keys must be strings",
+            ),
+            (
+                {"per_metric_coverage": {"accuracy": []}},
+                "comparability.per_metric_coverage entries must be objects",
+            ),
+            (
+                {"per_metric_coverage": {"accuracy": {"present": "1"}}},
+                "comparability.per_metric_coverage.present must be integer",
+            ),
+            (
+                {"per_metric_coverage": {"accuracy": {"total": "3"}}},
+                "comparability.per_metric_coverage.total must be integer",
+            ),
+            (
+                {"per_metric_coverage": {"accuracy": {"ratio": "0.9"}}},
+                "comparability.per_metric_coverage.ratio must be numeric",
+            ),
+        ],
+    )
+    def test_invalid_comparability_metadata_raises(
+        self, payload: object, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            validate_comparability_metadata(payload)
 
     def test_empty_measures_array(self) -> None:
         """Test validation of empty measures array."""
@@ -770,3 +854,36 @@ class TestValidateConfigurationRunSubmission:
             },
         }
         assert validate_configuration_run_submission(data) is True
+
+    def test_submission_with_metadata_comparability_invalid_raises_error(self) -> None:
+        """Top-level metadata.comparability is validated when provided."""
+        data = {
+            "metadata": {
+                "comparability": {
+                    "coverage_ratio": "0.5",
+                }
+            }
+        }
+        with pytest.raises(
+            ValueError, match="comparability.coverage_ratio must be numeric"
+        ):
+            validate_configuration_run_submission(data)
+
+    def test_submission_with_summary_stats_comparability_invalid_raises_error(
+        self,
+    ) -> None:
+        """summary_stats.metadata.comparability is validated when provided."""
+        data = {
+            "summary_stats": {
+                "metrics": {"accuracy": 0.95},
+                "metadata": {
+                    "comparability": {
+                        "ranking_eligible": "true",
+                    }
+                },
+            }
+        }
+        with pytest.raises(
+            ValueError, match="comparability.ranking_eligible must be boolean"
+        ):
+            validate_configuration_run_submission(data)

@@ -201,6 +201,7 @@ class LocalEvaluator(BaseEvaluator):
         self,
         example_input: Any,
         output: Any,
+        config: dict[str, Any] | None = None,
     ) -> PromptInfo:
         """Extract prompt information for metrics calculation.
 
@@ -210,6 +211,8 @@ class LocalEvaluator(BaseEvaluator):
         Args:
             example_input: Input data from dataset example
             output: Output from function call
+            config: Configuration dictionary (uses ``config["prompt"]`` for
+                template-aware length calculation when available)
 
         Returns:
             PromptInfo with prompt data or lengths based on privacy mode
@@ -220,7 +223,7 @@ class LocalEvaluator(BaseEvaluator):
 
         if self.privacy_enabled:
             # In privacy mode, store lengths for cost calculation
-            prompt_length = self._calculate_input_length(example_input)
+            prompt_length = self._calculate_input_length(example_input, config=config)
             response_length = self._extract_response_length(output)
             original_prompt = None
         else:
@@ -233,8 +236,47 @@ class LocalEvaluator(BaseEvaluator):
             response_length=response_length,
         )
 
-    def _calculate_input_length(self, example_input: Any) -> int:
+    def _calculate_prompt_template_length(
+        self,
+        example_input: Any,
+        config: dict[str, Any] | None = None,
+    ) -> int | None:
+        """Calculate template-aware input length when prompt template is available.
+
+        Uses ``config["prompt"]`` only. If formatting fails, falls back to additive
+        approximation ``len(template) + len(str(example_input))``.
+        """
+        if not isinstance(config, dict):
+            return None
+
+        prompt_template = config.get("prompt")
+        if not isinstance(prompt_template, str) or not prompt_template:
+            return None
+
+        if isinstance(example_input, dict):
+            try:
+                return len(prompt_template.format(**example_input))
+            except Exception as exc:
+                logger.debug(
+                    "Prompt template format failed, using additive length fallback: %s",
+                    exc,
+                )
+                return len(prompt_template) + len(str(example_input))
+
+        return len(prompt_template) + len(str(example_input))
+
+    def _calculate_input_length(
+        self,
+        example_input: Any,
+        config: dict[str, Any] | None = None,
+    ) -> int:
         """Calculate the character length of input data."""
+        template_length = self._calculate_prompt_template_length(
+            example_input, config=config
+        )
+        if template_length is not None:
+            return template_length
+
         if isinstance(example_input, dict):
             if "text" in example_input:
                 return len(example_input["text"])
@@ -363,6 +405,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric: ExampleMetrics,
         output: str,
         example_input: Any,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """Estimate token counts for string outputs.
 
@@ -373,14 +416,21 @@ class LocalEvaluator(BaseEvaluator):
             example_metric: Metrics object to update
             output: String output from function
             example_input: Original input for estimating input tokens
+            config: Configuration dictionary (uses ``config["prompt"]`` when
+                available for template-aware input token estimation)
         """
         # Estimate output tokens
         example_metric.tokens.output_tokens = max(1, len(output) // 4)
 
         # Estimate input tokens if not in privacy mode
         if not self.privacy_enabled:
-            input_text = str(example_input)
-            example_metric.tokens.input_tokens = max(1, len(input_text) // 4)
+            input_length = self._calculate_prompt_template_length(
+                example_input, config=config
+            )
+            if input_length is None:
+                # Preserve historical behavior for non-template fallback.
+                input_length = len(str(example_input))
+            example_metric.tokens.input_tokens = max(1, input_length // 4)
 
         # Update total
         example_metric.tokens.total_tokens = (
@@ -613,7 +663,9 @@ class LocalEvaluator(BaseEvaluator):
         # Extract prompt info using helper method
         if index < len(dataset.examples):
             example_input = dataset.examples[index].input_data
-            prompt_info = self._extract_prompt_info(example_input, output)
+            prompt_info = self._extract_prompt_info(
+                example_input, output, config=config
+            )
             original_prompt = prompt_info.original_prompt
             prompt_length = prompt_info.prompt_length
             response_length = prompt_info.response_length
@@ -654,7 +706,7 @@ class LocalEvaluator(BaseEvaluator):
                 else None
             )
             self._estimate_string_tokens(
-                example_metric, output, example_input_for_tokens
+                example_metric, output, example_input_for_tokens, config=config
             )
 
         return example_metric
@@ -978,13 +1030,14 @@ class LocalEvaluator(BaseEvaluator):
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "
                 f"comprehensive cost={comprehensive_metrics['cost']}"
             )
-            if (
-                aggregated_metrics.get("cost", 0.0) == 0.0
-                and comprehensive_metrics["cost"] != 0.0
+            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
+            comprehensive_cost = float(comprehensive_metrics["cost"])
+            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
+                comprehensive_cost, 0.0, abs_tol=1e-9
             ):
                 logger.info(
                     f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_metrics.get('cost', 0.0)} -> {comprehensive_metrics['cost']}"
+                    f"{aggregated_cost} -> {comprehensive_cost}"
                 )
 
         for key, value in comprehensive_metrics.items():

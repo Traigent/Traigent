@@ -32,10 +32,12 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from traigent.api.constraints import Constraint
+from traigent.api.constraints import BoolExpr, Constraint
 from traigent.api.parameter_ranges import (
     Choices,
     IntRange,
@@ -54,7 +56,40 @@ if TYPE_CHECKING:
     from traigent.tvl.models import StructuralConstraint, TVarDecl
 
 
-@dataclass
+@dataclass(frozen=True)
+class _ImportedConstraintExpression(BoolExpr):
+    """Opaque TVL expression imported from a serialized spec."""
+
+    expression: str
+    _evaluator: Callable[[dict[str, Any], dict[str, Any] | None], bool] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def to_expression(self, _var_names: dict[int, str] | str) -> str:
+        """Return the original expression unchanged."""
+        return self.expression
+
+    def evaluate_config(
+        self, config: dict[str, Any], _var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate the stored TVL expression against a config."""
+        evaluator = self._evaluator
+        if evaluator is None:
+            from traigent.tvl.spec_loader import compile_constraint_expression
+
+            evaluator = compile_constraint_expression(
+                self.expression,
+                label=f"imported_constraint:{self.expression}",
+            )
+            object.__setattr__(self, "_evaluator", evaluator)
+        return bool(evaluator(config, None))
+
+    def explain(self, _var_names: dict[int, str] | None = None) -> str:
+        """Surface the raw expression for human-readable diagnostics."""
+        return self.expression
+
+
+@dataclass(frozen=True)
 class ConfigSpace:
     """A complete configuration space with TVARs and constraints.
 
@@ -67,8 +102,8 @@ class ConfigSpace:
     the TVL ecosystem.
 
     Attributes:
-        tvars: Dict mapping parameter names to their ParameterRange definitions
-        constraints: List of structural constraints on the configuration space
+        tvars: Read-only mapping of parameter names to ParameterRange definitions
+        constraints: Immutable tuple of structural constraints on the space
         description: Optional description of the configuration space
 
     Example:
@@ -84,12 +119,15 @@ class ConfigSpace:
         ... )
     """
 
-    tvars: dict[str, ParameterRange]
-    constraints: list[Constraint] = field(default_factory=list)
+    tvars: Mapping[str, ParameterRange]
+    constraints: tuple[Constraint, ...] = field(default_factory=tuple)
     description: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the configuration space after initialization."""
+        object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+        object.__setattr__(self, "constraints", tuple(self.constraints))
+
         # Ensure all tvars have unique names
         seen_names: set[str] = set()
         for name, tvar in self.tvars.items():
@@ -105,9 +143,9 @@ class ConfigSpace:
     @classmethod
     def from_decorator_args(
         cls,
-        configuration_space: dict[str, Any] | None = None,
-        inline_params: dict[str, Any] | None = None,
-        constraints: list[Constraint] | None = None,
+        configuration_space: Mapping[str, Any] | None = None,
+        inline_params: Mapping[str, Any] | None = None,
+        constraints: Sequence[Constraint] | None = None,
         description: str | None = None,
     ) -> ConfigSpace:
         """Build ConfigSpace from decorator arguments.
@@ -119,8 +157,8 @@ class ConfigSpace:
         3. Or a combination of both
 
         Args:
-            configuration_space: Dict of parameter definitions
-            inline_params: Inline parameter definitions from **kwargs
+            configuration_space: Mapping of parameter definitions
+            inline_params: Mapping of inline parameter definitions
             constraints: List of structural constraints
             description: Optional description
 
@@ -143,18 +181,18 @@ class ConfigSpace:
 
         return cls(
             tvars=tvars,
-            constraints=constraints or [],
+            constraints=tuple(constraints or ()),
             description=description,
         )
 
     @classmethod
     def _process_param_dict(
-        cls, params: dict[str, Any], tvars: dict[str, ParameterRange]
+        cls, params: Mapping[str, Any], tvars: dict[str, ParameterRange]
     ) -> None:
         """Process a parameter dictionary and add ranges to tvars.
 
         Args:
-            params: Dictionary of parameter definitions
+            params: Mapping of parameter definitions
             tvars: Target dictionary to populate with ParameterRange instances
         """
         for name, value in params.items():
@@ -165,6 +203,253 @@ class ConfigSpace:
             elif isinstance(value, dict):
                 tvars[name] = cls._dict_to_range(name, value)
             # Skip non-range values (they might be other decorator args)
+
+    @classmethod
+    def from_tvl_spec(cls, spec: Mapping[str, Any]) -> ConfigSpace:
+        """Build ConfigSpace from a TVL spec dictionary."""
+        if "tvars" in spec:
+            tvars = cls._tvars_from_spec(spec["tvars"])
+        elif "configuration_space" in spec:
+            configuration_space = spec["configuration_space"]
+            if not isinstance(configuration_space, Mapping):
+                raise ValueError("TVL configuration_space must be a mapping")
+            tvars = {}
+            cls._process_param_dict(configuration_space, tvars)
+        else:
+            raise ValueError(
+                "TVL spec must define either 'tvars' or 'configuration_space'"
+            )
+
+        constraints = cls._constraints_from_spec(spec.get("constraints"))
+        description = spec.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ValueError("TVL description must be a string when provided")
+
+        return cls(tvars=tvars, constraints=constraints, description=description)
+
+    @classmethod
+    def _tvars_from_spec(cls, tvars_section: Any) -> dict[str, ParameterRange]:
+        """Reconstruct ParameterRange instances from a TVL tvars section."""
+        if not isinstance(tvars_section, list) or not tvars_section:
+            raise ValueError("TVL 'tvars' must be a non-empty list")
+
+        tvars: dict[str, ParameterRange] = {}
+        for idx, entry in enumerate(tvars_section):
+            if not isinstance(entry, Mapping):
+                raise ValueError(f"TVAR at index {idx} must be a mapping")
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"TVAR at index {idx} requires a 'name' string")
+            tvars[name] = cls._spec_entry_to_range(name, entry)
+        return tvars
+
+    @classmethod
+    def _spec_entry_to_range(
+        cls, name: str, entry: Mapping[str, Any]
+    ) -> ParameterRange:
+        """Convert a TVL tvar entry back into a ParameterRange."""
+        domain = entry.get("domain")
+        if isinstance(domain, list):
+            spec_dict: dict[str, Any] = {
+                "values": list(domain),
+                "default": entry.get("default"),
+            }
+        elif isinstance(domain, Mapping):
+            kind = domain.get("kind")
+            if kind == "enum":
+                spec_dict = {
+                    "values": list(domain.get("values", [])),
+                    "default": entry.get("default"),
+                }
+            elif kind == "range":
+                range_values = domain.get("range")
+                if not isinstance(range_values, list) or len(range_values) != 2:
+                    raise ValueError(
+                        f"TVAR '{name}' range domain must contain a 2-item list"
+                    )
+                spec_dict = {
+                    "low": range_values[0],
+                    "high": range_values[1],
+                    "step": domain.get("resolution"),
+                    "log": bool(domain.get("log", False)),
+                    "default": entry.get("default"),
+                }
+            else:
+                raise ValueError(f"TVAR '{name}' has unsupported domain kind '{kind}'")
+        else:
+            raise ValueError(f"TVAR '{name}' domain must be a list or mapping")
+
+        if isinstance(entry.get("unit"), str):
+            spec_dict["unit"] = entry["unit"]
+        if isinstance(entry.get("agent"), str):
+            spec_dict["agent"] = entry["agent"]
+
+        range_type = entry.get("x_traigent_parameter_range")
+        return cls._build_parameter_range(name, spec_dict, range_type)
+
+    @classmethod
+    def _build_parameter_range(
+        cls,
+        name: str,
+        spec_dict: dict[str, Any],
+        range_type: Any,
+    ) -> ParameterRange:
+        """Reconstruct the exact ParameterRange subclass from a TVL entry."""
+        if range_type == "Choices":
+            values = spec_dict.get("values")
+            if not isinstance(values, list):
+                raise ValueError(f"TVAR '{name}' Choices spec requires 'values'")
+            return Choices(
+                values=values,
+                name=name,
+                default=spec_dict.get("default"),
+                unit=spec_dict.get("unit"),
+                agent=spec_dict.get("agent"),
+            )
+
+        if range_type == "LogRange":
+            return LogRange(
+                low=float(spec_dict["low"]),
+                high=float(spec_dict["high"]),
+                default=spec_dict.get("default"),
+                name=name,
+                unit=spec_dict.get("unit"),
+                agent=spec_dict.get("agent"),
+            )
+
+        if range_type == "IntRange":
+            low = cls._coerce_integral_spec_value(name, "low", spec_dict["low"])
+            high = cls._coerce_integral_spec_value(name, "high", spec_dict["high"])
+            if low is None or high is None:  # pragma: no cover - defensive guard
+                raise ValueError(f"TVAR '{name}' IntRange bounds are required")
+            return IntRange(
+                low=low,
+                high=high,
+                step=cls._coerce_integral_spec_value(
+                    name,
+                    "step",
+                    spec_dict.get("step"),
+                    allow_none=True,
+                ),
+                log=bool(spec_dict.get("log", False)),
+                default=cls._coerce_integral_spec_value(
+                    name,
+                    "default",
+                    spec_dict.get("default"),
+                    allow_none=True,
+                ),
+                name=name,
+                unit=spec_dict.get("unit"),
+                agent=spec_dict.get("agent"),
+            )
+
+        if range_type == "Range":
+            return Range(
+                low=float(spec_dict["low"]),
+                high=float(spec_dict["high"]),
+                step=spec_dict.get("step"),
+                log=bool(spec_dict.get("log", False)),
+                default=spec_dict.get("default"),
+                name=name,
+                unit=spec_dict.get("unit"),
+                agent=spec_dict.get("agent"),
+            )
+
+        return cls._dict_to_range(name, spec_dict)
+
+    @staticmethod
+    def _coerce_integral_spec_value(
+        name: str,
+        field_name: str,
+        value: Any,
+        *,
+        allow_none: bool = False,
+    ) -> int | None:
+        """Coerce an imported TVL field to int without silent truncation."""
+        if value is None:
+            if allow_none:
+                return None
+            raise ValueError(f"TVAR '{name}' field '{field_name}' is required")
+
+        if isinstance(value, bool):
+            raise ValueError(
+                f"TVAR '{name}' field '{field_name}' must be an integer, got bool"
+            )
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, float):
+            if value.is_integer():
+                return int(value)
+            raise ValueError(
+                f"TVAR '{name}' field '{field_name}' must be integral, got {value!r}"
+            )
+
+        raise ValueError(
+            f"TVAR '{name}' field '{field_name}' must be an integer, "
+            f"got {type(value).__name__}"
+        )
+
+    @classmethod
+    def _constraints_from_spec(cls, constraints_section: Any) -> tuple[Constraint, ...]:
+        """Rebuild structural constraints from a TVL constraints section."""
+        if constraints_section is None:
+            return ()
+
+        entries = cls._resolve_constraint_entries(constraints_section)
+        return tuple(
+            cls._parse_single_constraint(idx, entry)
+            for idx, entry in enumerate(entries)
+        )
+
+    @classmethod
+    def _resolve_constraint_entries(cls, constraints_section: Any) -> list[Any]:
+        """Extract the list of constraint entries from a TVL constraints section."""
+        if isinstance(constraints_section, list):
+            return constraints_section
+        if isinstance(constraints_section, Mapping):
+            structural = constraints_section.get("structural", [])
+            if not isinstance(structural, list):
+                raise ValueError("TVL 'constraints.structural' must be a list")
+            return structural
+        raise ValueError("TVL constraints must be a list or mapping")
+
+    @classmethod
+    def _parse_single_constraint(cls, idx: int, entry: Any) -> Constraint:
+        """Parse and validate a single constraint entry from a TVL spec."""
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"Constraint at index {idx} must be a mapping")
+
+        expr = entry.get("expr")
+        when = entry.get("when")
+        then = entry.get("then")
+        description = entry.get("description")
+        constraint_id = entry.get("id")
+
+        if description is not None and not isinstance(description, str):
+            raise ValueError(f"Constraint at index {idx} description must be a string")
+        if constraint_id is not None and not isinstance(constraint_id, str):
+            raise ValueError(f"Constraint at index {idx} id must be a string")
+
+        if isinstance(expr, str):
+            return Constraint(
+                expr=_ImportedConstraintExpression(expr),
+                description=description,
+                id=constraint_id,
+            )
+
+        if isinstance(when, str) and isinstance(then, str):
+            return Constraint(
+                when=_ImportedConstraintExpression(when),
+                then=_ImportedConstraintExpression(then),
+                description=description,
+                id=constraint_id,
+            )
+
+        raise ValueError(
+            f"Constraint at index {idx} must define 'expr' or both 'when' and 'then'"
+        )
 
     @classmethod
     def _sequence_to_range(
@@ -402,11 +687,14 @@ class ConfigSpace:
             "name": name,
             "type": self._infer_tvar_type(tvar),
             "domain": self._tvar_to_domain(tvar),
+            "x_traigent_parameter_range": type(tvar).__name__,
         }
         if hasattr(tvar, "unit") and tvar.unit:
             tvar_dict["unit"] = tvar.unit
         if hasattr(tvar, "default") and tvar.default is not None:
             tvar_dict["default"] = tvar.default
+        if hasattr(tvar, "agent") and tvar.agent:
+            tvar_dict["agent"] = tvar.agent
         return tvar_dict
 
     def _build_constraints_list(self) -> list[dict[str, Any]]:

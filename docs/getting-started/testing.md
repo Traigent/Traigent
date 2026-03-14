@@ -235,8 +235,8 @@ pytest tests/ -v
 # Make sure pytest-asyncio is installed
 pip install pytest-asyncio
 
-# Check pytest.ini configuration
-cat pytest.ini
+# Check pytest configuration in pyproject.toml
+grep -A 5 'tool.pytest' pyproject.toml
 ```
 
 ### Mock Mode Not Working
