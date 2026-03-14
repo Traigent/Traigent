@@ -269,7 +269,7 @@ class JSBridge:
                 await self._terminate()
                 raise JSProcessError(f"JS bridge failed health check: {e}") from e
 
-    async def stop(self, timeout: float | None = None) -> None:
+    async def stop(self, timeout: float | None = None) -> None:  # NOSONAR(S7483)
         """Stop the Node.js process gracefully.
 
         Args:
@@ -393,7 +393,9 @@ class JSBridge:
         except ProcessLookupError:
             pass  # Already dead
 
-    async def ping(self, timeout: float | None = None) -> dict[str, Any]:
+    async def ping(
+        self, timeout: float | None = None
+    ) -> dict[str, Any]:  # NOSONAR(S7483)
         """Ping the Node.js process to check health.
 
         Args:
@@ -432,7 +434,7 @@ class JSBridge:
     async def run_trial(
         self,
         trial_config: dict[str, Any],
-        timeout: float | None = None,
+        timeout: float | None = None,  # NOSONAR(S7483)
     ) -> JSTrialResult:
         """Run a trial in the Node.js process.
 
@@ -533,7 +535,7 @@ class JSBridge:
         self,
         action: str,
         payload: dict[str, Any],
-        timeout: float,
+        timeout: float,  # NOSONAR(S7483)
     ) -> dict[str, Any]:
         """Send a request to the Node.js process and wait for response.
 

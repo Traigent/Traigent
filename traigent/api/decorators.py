@@ -760,6 +760,23 @@ def _ensure_scope_name(scope_var_names: dict[int, str], name: str) -> None:
     scope_var_names[synthetic_id] = name
 
 
+def _iter_constraint_scope_sources(
+    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
+    inline_params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect configuration mappings that contribute names to constraint scope."""
+    sources: list[dict[str, Any]] = []
+    if isinstance(raw_configuration_space, dict):
+        sources.append(raw_configuration_space)
+    else:
+        tvars = getattr(raw_configuration_space, "tvars", None)
+        if isinstance(tvars, Mapping):
+            sources.append(dict(tvars))
+    if inline_params:
+        sources.append(inline_params)
+    return sources
+
+
 def _build_constraint_scope_var_names(
     raw_configuration_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any],
@@ -768,17 +785,9 @@ def _build_constraint_scope_var_names(
     """Build var-name scope used for compile-time constraint validation."""
     scope_var_names: dict[int, str] = dict(config_space_var_names or {})
 
-    sources: list[dict[str, Any]] = []
-    if isinstance(raw_configuration_space, dict):
-        sources.append(raw_configuration_space)
-    elif hasattr(raw_configuration_space, "tvars"):
-        tvars = getattr(raw_configuration_space, "tvars", None)
-        if isinstance(tvars, Mapping):
-            sources.append(dict(tvars))
-    if inline_params:
-        sources.append(inline_params)
-
-    for source in sources:
+    for source in _iter_constraint_scope_sources(
+        raw_configuration_space, inline_params
+    ):
         for name, value in source.items():
             if not isinstance(name, str):
                 continue
@@ -1571,7 +1580,7 @@ def _suggest_detected_tvars(
         return None
 
 
-def optimize(
+def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,

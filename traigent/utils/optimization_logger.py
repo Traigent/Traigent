@@ -506,7 +506,7 @@ class OptimizationLogger:
         lines: list[str] = []
         acc = trial.metrics.get("accuracy", "?") if trial.metrics else "?"
         lines.append(
-            f"=== {trial.trial_id}  |  accuracy={acc}  |  " f"config={trial.config} ==="
+            f"=== {trial.trial_id}  |  accuracy={acc}  |  config={trial.config} ==="
         )
         if serialized_examples:
             hdr = f"  {'example_id':<14} {'acc':>4}  {'expected':<22} {'response'}"

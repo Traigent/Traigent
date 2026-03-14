@@ -112,8 +112,8 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
     """
 
-    # NOSONAR - public constructor intentionally exposes transport/runtime knobs.
-    def __init__(
+    # Public constructor intentionally exposes transport and runtime knobs.
+    def __init__(  # NOSONAR(S107)
         self,
         # Transport options (one required)
         api_endpoint: str | None = None,

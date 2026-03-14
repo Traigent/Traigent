@@ -666,53 +666,52 @@ class OpenAIResponseHandler(ResponseHandler):
 class AnthropicResponseHandler(ResponseHandler):
     """Handler for Anthropic API responses."""
 
-    def can_handle(self, response: Any) -> bool:
-        # Check for Anthropic-specific attributes
-        # 1. Check for explicit Anthropic Message class
-        if type(response).__name__ == "Message" and hasattr(response, "content"):
-            # Additional check for Anthropic-specific structure
-            if (
-                hasattr(response, "model")
-                and "claude" in str(getattr(response, "model", "")).lower()
-            ):
-                return True
+    @staticmethod
+    def _has_usage_attr(usage: Any, name: str) -> bool:
+        if isinstance(usage, dict):
+            return name in usage
+        return hasattr(usage, name)
 
-        # 2. Check for usage pattern specific to Anthropic
-        if hasattr(response, "usage"):
-            usage = response.usage
-
-            # Anthropic uses input/output token keys; Bedrock may use camelCase.
-            def _has(u: Any, name: str) -> bool:
-                if isinstance(u, dict):
-                    return name in u
-                return hasattr(u, name)
-
-            has_anthropic_tokens = (
-                (_has(usage, "input_tokens") and _has(usage, "output_tokens"))
-                or (
-                    _has(usage, "num_input_tokens") and _has(usage, "num_output_tokens")
-                )
-                or (_has(usage, "inputTokens") and _has(usage, "outputTokens"))
-            )
-            has_openai_tokens = _has(usage, "prompt_tokens") and _has(
-                usage, "completion_tokens"
-            )
-            # Only return True if it has Anthropic tokens and NOT OpenAI tokens
-            if has_anthropic_tokens and not has_openai_tokens:
-                return True
-
-        # 3. Check for model name containing claude
-        if (
+    def _is_anthropic_message(self, response: Any) -> bool:
+        """Check for explicit Anthropic Message class with claude model."""
+        if type(response).__name__ != "Message" or not hasattr(response, "content"):
+            return False
+        return (
             hasattr(response, "model")
             and "claude" in str(getattr(response, "model", "")).lower()
-        ):
-            # Additional check to ensure it's not OpenAI
-            if not hasattr(
-                response, "choices"
-            ):  # OpenAI has choices, Anthropic doesn't
-                return True
+        )
 
-        return False
+    def _has_anthropic_usage_pattern(self, response: Any) -> bool:
+        """Check for Anthropic-specific usage token keys (not OpenAI)."""
+        if not hasattr(response, "usage"):
+            return False
+        usage = response.usage
+        _has = self._has_usage_attr
+        has_anthropic_tokens = (
+            (_has(usage, "input_tokens") and _has(usage, "output_tokens"))
+            or (_has(usage, "num_input_tokens") and _has(usage, "num_output_tokens"))
+            or (_has(usage, "inputTokens") and _has(usage, "outputTokens"))
+        )
+        has_openai_tokens = _has(usage, "prompt_tokens") and _has(
+            usage, "completion_tokens"
+        )
+        return has_anthropic_tokens and not has_openai_tokens
+
+    def _is_claude_model_without_choices(self, response: Any) -> bool:
+        """Check for model name containing claude without OpenAI choices attr."""
+        if not hasattr(response, "model"):
+            return False
+        if "claude" not in str(getattr(response, "model", "")).lower():
+            return False
+        return not hasattr(response, "choices")
+
+    def can_handle(self, response: Any) -> bool:
+        # Check for Anthropic-specific attributes via three strategies
+        return (
+            self._is_anthropic_message(response)
+            or self._has_anthropic_usage_pattern(response)
+            or self._is_claude_model_without_choices(response)
+        )
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
         tokens = TokenMetrics()

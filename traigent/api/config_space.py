@@ -397,61 +397,59 @@ class ConfigSpace:
         if constraints_section is None:
             return ()
 
-        entries: list[Any]
+        entries = cls._resolve_constraint_entries(constraints_section)
+        return tuple(
+            cls._parse_single_constraint(idx, entry)
+            for idx, entry in enumerate(entries)
+        )
+
+    @classmethod
+    def _resolve_constraint_entries(cls, constraints_section: Any) -> list[Any]:
+        """Extract the list of constraint entries from a TVL constraints section."""
         if isinstance(constraints_section, list):
-            entries = constraints_section
-        elif isinstance(constraints_section, Mapping):
+            return constraints_section
+        if isinstance(constraints_section, Mapping):
             structural = constraints_section.get("structural", [])
             if not isinstance(structural, list):
                 raise ValueError("TVL 'constraints.structural' must be a list")
-            entries = structural
-        else:
-            raise ValueError("TVL constraints must be a list or mapping")
+            return structural
+        raise ValueError("TVL constraints must be a list or mapping")
 
-        constraints: list[Constraint] = []
-        for idx, entry in enumerate(entries):
-            if not isinstance(entry, Mapping):
-                raise ValueError(f"Constraint at index {idx} must be a mapping")
+    @classmethod
+    def _parse_single_constraint(cls, idx: int, entry: Any) -> Constraint:
+        """Parse and validate a single constraint entry from a TVL spec."""
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"Constraint at index {idx} must be a mapping")
 
-            expr = entry.get("expr")
-            when = entry.get("when")
-            then = entry.get("then")
-            description = entry.get("description")
-            constraint_id = entry.get("id")
+        expr = entry.get("expr")
+        when = entry.get("when")
+        then = entry.get("then")
+        description = entry.get("description")
+        constraint_id = entry.get("id")
 
-            if description is not None and not isinstance(description, str):
-                raise ValueError(
-                    f"Constraint at index {idx} description must be a string"
-                )
-            if constraint_id is not None and not isinstance(constraint_id, str):
-                raise ValueError(f"Constraint at index {idx} id must be a string")
+        if description is not None and not isinstance(description, str):
+            raise ValueError(f"Constraint at index {idx} description must be a string")
+        if constraint_id is not None and not isinstance(constraint_id, str):
+            raise ValueError(f"Constraint at index {idx} id must be a string")
 
-            if isinstance(expr, str):
-                constraints.append(
-                    Constraint(
-                        expr=_ImportedConstraintExpression(expr),
-                        description=description,
-                        id=constraint_id,
-                    )
-                )
-                continue
-
-            if isinstance(when, str) and isinstance(then, str):
-                constraints.append(
-                    Constraint(
-                        when=_ImportedConstraintExpression(when),
-                        then=_ImportedConstraintExpression(then),
-                        description=description,
-                        id=constraint_id,
-                    )
-                )
-                continue
-
-            raise ValueError(
-                f"Constraint at index {idx} must define 'expr' or both 'when' and 'then'"
+        if isinstance(expr, str):
+            return Constraint(
+                expr=_ImportedConstraintExpression(expr),
+                description=description,
+                id=constraint_id,
             )
 
-        return tuple(constraints)
+        if isinstance(when, str) and isinstance(then, str):
+            return Constraint(
+                when=_ImportedConstraintExpression(when),
+                then=_ImportedConstraintExpression(then),
+                description=description,
+                id=constraint_id,
+            )
+
+        raise ValueError(
+            f"Constraint at index {idx} must define 'expr' or both 'when' and 'then'"
+        )
 
     @classmethod
     def _sequence_to_range(

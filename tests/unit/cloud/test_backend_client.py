@@ -182,9 +182,9 @@ class TestBackendIntegratedClient:
             client = BackendIntegratedClient(backend_config=backend_config)
             # Check that the aiohttp warning was logged (among possibly other warnings)
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any("aiohttp not available" in msg for msg in warning_calls), (
-                f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
-            )
+            assert any(
+                "aiohttp not available" in msg for msg in warning_calls
+            ), f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
             assert client is not None
 
     def test_async_context_manager(self, backend_client):
@@ -276,12 +276,9 @@ class TestBackendIntegratedClient:
             )
 
         assert result is True
-        assert (
-            mock_post.call_args.args[0]
-            == (
-                f"{backend_client.api_base_url}/analytics/example-scoring/"
-                "run%2F..%2Funsafe/features"
-            )
+        assert mock_post.call_args.args[0] == (
+            f"{backend_client.api_base_url}/analytics/example-scoring/"
+            "run%2F..%2Funsafe/features"
         )
 
 

@@ -16,7 +16,9 @@ def _load_release_gate_runner_module() -> ModuleType:
     module_path = automation_dir / "release_gate_runner.py"
     sys.path.insert(0, str(automation_dir))
     try:
-        spec = importlib.util.spec_from_file_location("release_gate_runner", module_path)
+        spec = importlib.util.spec_from_file_location(
+            "release_gate_runner", module_path
+        )
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Could not load module from {module_path}")
         module = importlib.util.module_from_spec(spec)
