@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextvars
+import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +20,13 @@ if TYPE_CHECKING:
     from ..api.types import OptimizationResult, TrialResult
 
 logger = get_logger(__name__)
+
+
+def _shutdown_callback_executor(
+    executor: concurrent.futures.ThreadPoolExecutor,
+) -> None:
+    """Shut down a shared callback executor without blocking process exit."""
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 @dataclass
@@ -504,15 +514,18 @@ class CallbackManager:
     Attributes:
         callbacks: List of registered callbacks
         timeout: Maximum seconds to wait for a callback (default 5.0)
+        max_callback_threads: Maximum concurrent callback worker threads
         callback_failures: List of recorded callback failures
     """
 
     DEFAULT_TIMEOUT: float = 5.0
+    DEFAULT_MAX_CALLBACK_THREADS: int = 4
 
     def __init__(
         self,
         callbacks: list[OptimizationCallback] | None = None,
         timeout: float | None = None,
+        max_callback_threads: int = DEFAULT_MAX_CALLBACK_THREADS,
     ) -> None:
         """Initialize callback manager.
 
@@ -523,10 +536,50 @@ class CallbackManager:
                 default timeout (5.0 seconds). When a timeout occurs,
                 optimization continues immediately, but the callback thread may
                 still run to completion in the background.
+            max_callback_threads: Maximum number of shared callback worker
+                threads used when timeout protection is enabled.
         """
+        if max_callback_threads <= 0:
+            raise ValueError("max_callback_threads must be greater than 0")
+
         self.callbacks = callbacks or []
         self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        self.max_callback_threads = max_callback_threads
         self.callback_failures: list[CallbackFailure] = []
+        self._executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._executor_lock = threading.Lock()
+        self._executor_finalizer: weakref.finalize | None = None
+
+    def _ensure_executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        """Create or return the shared callback executor."""
+        executor = self._executor
+        if executor is not None:
+            return executor
+
+        with self._executor_lock:
+            executor = self._executor
+            if executor is None:
+                executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.max_callback_threads,
+                    thread_name_prefix="callback",
+                )
+                self._executor = executor
+                self._executor_finalizer = weakref.finalize(
+                    self,
+                    _shutdown_callback_executor,
+                    executor,
+                )
+            return executor
+
+    def close(self) -> None:
+        """Release callback worker threads owned by this manager."""
+        with self._executor_lock:
+            finalizer = self._executor_finalizer
+            self._executor = None
+            self._executor_finalizer = None
+
+        if finalizer is not None and finalizer.alive:
+            finalizer()
 
     def _invoke_callback_safe(
         self,
@@ -562,39 +615,31 @@ class CallbackManager:
                 )
             return
 
-        # Use ThreadPoolExecutor for timeout protection
-        # Note: We don't use context manager to avoid blocking on shutdown
-        # In Python 3.9+, executor threads are daemon by default, allowing
-        # clean process exit even if callbacks are blocked
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="callback"
-        )
+        # Use a shared ThreadPoolExecutor for timeout protection to avoid
+        # creating a new thread pool per callback invocation.
+        executor = self._ensure_executor()
+        future = executor.submit(contextvars.Context().run, method_func, *args)
         try:
-            future = executor.submit(method_func, *args)
-            try:
-                future.result(timeout=self.timeout)
-            except concurrent.futures.TimeoutError:
-                self._record_failure(
-                    callback_name,
-                    method_name,
-                    "timeout",
-                    f"Timed out after {self.timeout}s",
-                )
-                logger.warning(
-                    f"Callback {callback_name}.{method_name} timed out "
-                    f"after {self.timeout}s - continuing optimization"
-                )
-                # Cancel if possible (may not stop already-running threads)
-                future.cancel()
-            except Exception as e:
-                self._record_failure(callback_name, method_name, "exception", str(e))
-                logger.warning(
-                    f"Callback {callback_name}.{method_name} failed: {e} "
-                    "- continuing optimization"
-                )
-        finally:
-            # Don't wait for threads to finish - they may be blocked
-            executor.shutdown(wait=False)
+            future.result(timeout=self.timeout)
+        except concurrent.futures.TimeoutError:
+            self._record_failure(
+                callback_name,
+                method_name,
+                "timeout",
+                f"Timed out after {self.timeout}s",
+            )
+            logger.warning(
+                f"Callback {callback_name}.{method_name} timed out "
+                f"after {self.timeout}s - continuing optimization"
+            )
+            # Cancel if possible (may not stop already-running threads)
+            future.cancel()
+        except Exception as e:
+            self._record_failure(callback_name, method_name, "exception", str(e))
+            logger.warning(
+                f"Callback {callback_name}.{method_name} failed: {e} "
+                "- continuing optimization"
+            )
 
     def _record_failure(
         self, callback_name: str, method: str, error_type: str, error_message: str
@@ -688,13 +733,16 @@ class CallbackManager:
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Notify all callbacks of optimization completion."""
-        for callback in self.callbacks:
-            self._invoke_callback_safe(
-                callback,
-                "on_optimization_complete",
-                callback.on_optimization_complete,
-                result,
-            )
+        try:
+            for callback in self.callbacks:
+                self._invoke_callback_safe(
+                    callback,
+                    "on_optimization_complete",
+                    callback.on_optimization_complete,
+                    result,
+                )
+        finally:
+            self.close()
 
 
 class DetailedProgressCallback(OptimizationCallback):
