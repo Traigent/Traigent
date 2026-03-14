@@ -38,6 +38,7 @@ Implements: FUNC-TVLSPEC
 from __future__ import annotations
 
 import json
+import operator
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -51,6 +52,14 @@ try:
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
+
+
+_COMPARISON_OPERATORS = {
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+}
 
 
 class FileRegistryResolver:
@@ -481,6 +490,10 @@ class FileRegistryResolver:
         Returns:
             Filtered list of items.
         """
+        comparator = _COMPARISON_OPERATORS.get(op)
+        if comparator is None:
+            raise ValueError(f"Unsupported comparison operator: {op}")
+
         result = []
         for item in items:
             item_value = item.get(field)
@@ -489,18 +502,8 @@ class FileRegistryResolver:
 
             try:
                 lhs, rhs = self._coerce_comparison_operands(item_value, value)
-                if op == ">=":
-                    if lhs >= rhs:
-                        result.append(item)
-                elif op == "<=":
-                    if lhs <= rhs:
-                        result.append(item)
-                elif op == ">":
-                    if lhs > rhs:
-                        result.append(item)
-                elif op == "<":
-                    if lhs < rhs:
-                        result.append(item)
+                if comparator(lhs, rhs):
+                    result.append(item)
             except (TypeError, ValueError):
                 continue
 

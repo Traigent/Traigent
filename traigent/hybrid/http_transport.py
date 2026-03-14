@@ -128,6 +128,66 @@ class HTTPTransport:
 
         return self._client
 
+    @staticmethod
+    def _parse_retry_after(headers: httpx.Headers) -> float | None:
+        """Extract Retry-After value from response headers.
+
+        Returns:
+            Parsed float seconds, or None if absent/unparseable.
+        """
+        raw = headers.get("Retry-After")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None  # Could be HTTP-date format, ignore for now
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        """Raise the appropriate TransportError for non-2xx responses.
+
+        Args:
+            response: The HTTP response to inspect.
+        """
+        code = response.status_code
+
+        if code == 401:
+            raise TransportAuthError(
+                "Authentication failed",
+                status_code=401,
+                response_body=response.text,
+            )
+        if code == 403:
+            raise TransportAuthError(
+                "Authorization denied",
+                status_code=403,
+                response_body=response.text,
+            )
+        if code == 429:
+            raise TransportRateLimitError(
+                "Rate limit exceeded",
+                retry_after=self._parse_retry_after(response.headers),
+                response_body=response.text,
+            )
+        if code in (408, 504):
+            raise TransportTimeoutError(
+                f"Request timed out: HTTP {code}",
+                status_code=code,
+                response_body=response.text,
+            )
+        if code >= 500:
+            raise TransportServerError(
+                f"Server error: HTTP {code}",
+                status_code=code,
+                response_body=response.text,
+            )
+        if code >= 400:
+            raise TransportError(
+                f"HTTP {code}: {response.reason_phrase}",
+                status_code=code,
+                response_body=response.text,
+            )
+
     async def _request(
         self,
         method: str,
@@ -181,51 +241,7 @@ class HTTPTransport:
                     response_body=response.text,
                 )
 
-            # Handle HTTP errors
-            if response.status_code == 401:
-                raise TransportAuthError(
-                    "Authentication failed",
-                    status_code=401,
-                    response_body=response.text,
-                )
-            elif response.status_code == 403:
-                raise TransportAuthError(
-                    "Authorization denied",
-                    status_code=403,
-                    response_body=response.text,
-                )
-            elif response.status_code == 429:
-                # Parse Retry-After header if present
-                retry_after_str = response.headers.get("Retry-After")
-                retry_after: float | None = None
-                if retry_after_str:
-                    try:
-                        retry_after = float(retry_after_str)
-                    except ValueError:
-                        pass  # Could be HTTP-date format, ignore for now
-                raise TransportRateLimitError(
-                    "Rate limit exceeded",
-                    retry_after=retry_after,
-                    response_body=response.text,
-                )
-            elif response.status_code in (408, 504):
-                raise TransportTimeoutError(
-                    f"Request timed out: HTTP {response.status_code}",
-                    status_code=response.status_code,
-                    response_body=response.text,
-                )
-            elif response.status_code >= 500:
-                raise TransportServerError(
-                    f"Server error: HTTP {response.status_code}",
-                    status_code=response.status_code,
-                    response_body=response.text,
-                )
-            elif response.status_code >= 400:
-                raise TransportError(
-                    f"HTTP {response.status_code}: {response.reason_phrase}",
-                    status_code=response.status_code,
-                    response_body=response.text,
-                )
+            self._raise_for_status(response)
 
             result: dict[str, Any] = response.json()
             return result
@@ -325,6 +341,52 @@ class HTTPTransport:
         data = await self._request("GET", self.BENCHMARKS_PATH, params=params)
         return BenchmarksResponse.from_dict(data)
 
+    @staticmethod
+    def _build_legacy_payload(
+        request: HybridExecuteRequest,
+    ) -> dict[str, Any]:
+        """Build legacy execute payload using ``inputs``/``input_id`` keys.
+
+        Some deployed services still require the old shape.
+
+        Args:
+            request: The original execute request.
+
+        Returns:
+            Dict payload with ``inputs`` instead of ``examples``.
+        """
+        legacy_inputs: list[dict[str, Any]] = []
+        for item in request.examples:
+            if not isinstance(item, dict):
+                legacy_inputs.append({"input_id": str(item)})
+                continue
+
+            example_id = item.get("example_id")
+            payload_data = item.get("data")
+
+            input_id = example_id
+            if isinstance(payload_data, dict):
+                input_id = (
+                    payload_data.get("input_id")
+                    or payload_data.get("example_id")
+                    or example_id
+                )
+
+            legacy_inputs.append({"input_id": str(input_id or "")})
+
+        payload: dict[str, Any] = {
+            "request_id": request.request_id,
+            "tunable_id": request.tunable_id,
+            "benchmark_id": request.benchmark_id,
+            "config": request.config,
+            "inputs": legacy_inputs,
+        }
+        if request.session_id is not None:
+            payload["session_id"] = request.session_id
+        if request.timeout_ms is not None:
+            payload["timeout_ms"] = request.timeout_ms
+        return payload
+
     async def execute(
         self,
         request: HybridExecuteRequest,
@@ -363,37 +425,6 @@ class HTTPTransport:
             if not is_legacy_shape_error:
                 raise
 
-            legacy_inputs: list[dict[str, Any]] = []
-            for item in request.examples:
-                if not isinstance(item, dict):
-                    legacy_inputs.append({"input_id": str(item)})
-                    continue
-
-                example_id = item.get("example_id")
-                payload_data = item.get("data")
-
-                input_id = example_id
-                if isinstance(payload_data, dict):
-                    input_id = (
-                        payload_data.get("input_id")
-                        or payload_data.get("example_id")
-                        or example_id
-                    )
-
-                legacy_inputs.append({"input_id": str(input_id or "")})
-
-            legacy_payload: dict[str, Any] = {
-                "request_id": request.request_id,
-                "tunable_id": request.tunable_id,
-                "benchmark_id": request.benchmark_id,
-                "config": request.config,
-                "inputs": legacy_inputs,
-            }
-            if request.session_id is not None:
-                legacy_payload["session_id"] = request.session_id
-            if request.timeout_ms is not None:
-                legacy_payload["timeout_ms"] = request.timeout_ms
-
             logger.info(
                 "Execute request falling back to legacy payload format "
                 "(inputs/input_id) for compatibility"
@@ -401,7 +432,7 @@ class HTTPTransport:
             data = await self._request(
                 "POST",
                 self.EXECUTE_PATH,
-                json_data=legacy_payload,
+                json_data=self._build_legacy_payload(request),
                 timeout_override=timeout_s,
             )
 

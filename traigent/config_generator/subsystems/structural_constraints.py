@@ -11,6 +11,7 @@ from traigent.config_generator.presets.constraint_templates import (
     get_matching_constraints,
 )
 from traigent.config_generator.types import StructuralConstraintSpec, TVarSpec
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 
 def generate_structural_constraints(
@@ -43,6 +44,20 @@ def generate_structural_constraints(
     return constraints
 
 
+def _parse_constraint_item(item: dict) -> StructuralConstraintSpec | None:
+    """Parse a single LLM-suggested constraint, or *None* if invalid."""
+    desc = item.get("description", "")
+    code = item.get("constraint_code", "")
+    if not desc or not code:
+        return None
+    return StructuralConstraintSpec(
+        description=desc,
+        constraint_code=code,
+        source="llm",
+        reasoning=item.get("reasoning", ""),
+    )
+
+
 def _llm_suggest_constraints(
     tvars: list[TVarSpec],
     llm: ConfigGenLLM,
@@ -73,15 +88,7 @@ def _llm_suggest_constraints(
     except BudgetExhausted:
         return []
 
-    text = response.strip()
-    if "```" in text:
-        for part in text.split("```"):
-            stripped = part.strip()
-            if stripped.startswith("json"):
-                stripped = stripped[4:].strip()
-            if stripped.startswith("["):
-                text = stripped
-                break
+    text = extract_json_array_text(response)
 
     try:
         data = json.loads(text)
@@ -91,18 +98,4 @@ def _llm_suggest_constraints(
     if not isinstance(data, list):
         return []
 
-    results: list[StructuralConstraintSpec] = []
-    for item in data:
-        desc = item.get("description", "")
-        code = item.get("constraint_code", "")
-        reasoning = item.get("reasoning", "")
-        if desc and code:
-            results.append(
-                StructuralConstraintSpec(
-                    description=desc,
-                    constraint_code=code,
-                    source="llm",
-                    reasoning=reasoning,
-                )
-            )
-    return results
+    return [c for item in data if (c := _parse_constraint_item(item)) is not None]

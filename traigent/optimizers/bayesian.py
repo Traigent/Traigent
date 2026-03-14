@@ -581,6 +581,25 @@ class BayesianOptimizer(BaseOptimizer):
             )
             return self._random_config()
 
+    def _has_converged(self, history: list[TrialResult]) -> bool:
+        """Check if recent successful trials show negligible improvement."""
+        successful_trials = [trial for trial in history if trial.is_successful]
+        if len(successful_trials) < 10:
+            return False
+        primary_objective = self.objectives[0]
+        recent_scores = [
+            score
+            for trial in successful_trials[-10:]
+            if (score := trial.get_metric(primary_objective)) is not None
+        ]
+        if len(recent_scores) < 10:
+            return False
+        improvement = max(recent_scores) - min(recent_scores)
+        if improvement < 0.01:  # Less than 1% improvement
+            logger.info("Convergence detected, stopping optimization")
+            return True
+        return False
+
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
 
@@ -590,25 +609,8 @@ class BayesianOptimizer(BaseOptimizer):
         Returns:
             True if optimization should stop
         """
-        # Basic stopping criterion
         if len(history) >= 100:  # Maximum trials
             return True
-
-        # Check for convergence (no improvement in last 10 trials)
-        if len(history) >= 20:
-            successful_trials = [trial for trial in history if trial.is_successful]
-            if len(successful_trials) >= 10:
-                primary_objective = self.objectives[0]
-                recent_scores = []
-                for trial in successful_trials[-10:]:
-                    score = trial.get_metric(primary_objective)
-                    if score is not None:
-                        recent_scores.append(score)
-
-                if len(recent_scores) >= 10:
-                    improvement = max(recent_scores) - min(recent_scores)
-                    if improvement < 0.01:  # Less than 1% improvement
-                        logger.info("Convergence detected, stopping optimization")
-                        return True
-
+        if len(history) >= 20 and self._has_converged(history):
+            return True
         return False

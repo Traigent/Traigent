@@ -38,11 +38,17 @@ def _sanitize_source_path(file_path: Path) -> Path:
     safe = Path(file_path).resolve()
     base = _get_safe_base_dir()
     try:
-        safe.relative_to(base)
+        relative = safe.relative_to(base)
     except ValueError as exc:
         raise ValueError(
             f"Path '{safe}' is outside the allowed base directory '{base}'"
         ) from exc
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError(f"Unsafe path components in: {safe}")
+
+    # Reconstruct from the trusted base plus validated relative components so
+    # downstream reads/writes never use the original user-controlled path.
+    safe = base.joinpath(*relative.parts)
     if not safe.is_file():
         raise ValueError(f"Not a file: {safe}")
     if safe.suffix != ".py":
@@ -85,9 +91,7 @@ def apply_config(
 
     safe_path = _sanitize_source_path(file_path)
 
-    source = (
-        safe_path.read_text()
-    )  # NOSONAR: validated canonical path from _sanitize_source_path
+    source = safe_path.read_text()  # NOSONAR(S2083)
     lines = source.splitlines(keepends=True)
 
     try:
@@ -133,11 +137,10 @@ def apply_config(
 
     # Write back
     if backup:
-        shutil.copy2(safe_path, safe_path.with_suffix(".py.bak"))
+        backup_path = safe_path.parent / f"{safe_path.name}.bak"
+        shutil.copy2(safe_path, backup_path)
 
-    safe_path.write_text(
-        "".join(lines)
-    )  # NOSONAR: validated canonical path from _sanitize_source_path
+    safe_path.write_text("".join(lines))  # NOSONAR(S2083)
     return safe_path
 
 

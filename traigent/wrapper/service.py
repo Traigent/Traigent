@@ -395,6 +395,27 @@ class TraigentService:
             raise ValueError("declaration handlers must be synchronous functions")
         return value
 
+    @staticmethod
+    def _validate_declared_sections(sections: dict[str, Any]) -> None:
+        """Validate types of resolved declarative config-space sections."""
+        _type_rules: list[tuple[str, type | tuple[type, ...], str]] = [
+            ("constraints", (dict, list), "constraints must be a dict or list"),
+            ("objectives", list, "objectives must be a list"),
+            ("exploration", dict, "exploration must be a dict"),
+            ("promotion_policy", dict, "promotion_policy must be a dict"),
+            ("defaults", dict, "defaults must be a dict"),
+        ]
+        for key, expected, msg in _type_rules:
+            value = sections.get(key)
+            if value is not None and not isinstance(value, expected):
+                raise ValueError(msg)
+        measures = sections.get("measures")
+        if measures is not None and (
+            not isinstance(measures, list)
+            or not all(isinstance(m, str) for m in measures)
+        ):
+            raise ValueError("measures must be a list of strings")
+
     def get_config_space(self) -> dict[str, Any]:
         """Get TVAR definitions.
 
@@ -405,74 +426,76 @@ class TraigentService:
             tvars_dict = self._tvars_handler()
             if not isinstance(tvars_dict, dict):
                 raise ValueError("tunables handler must return a dict")
-            # Convert to TVL format if needed
             self._cached_tvars = self._normalize_tvars(tvars_dict)
 
         tvars = self._cached_tvars or {}
         tunables = [{"name": name, **spec} for name, spec in tvars.items()]
-        constraints = self._resolve_declared_section(
-            self._constraints_handler,
-            self.config.constraints,
-        )
-        objectives = self._resolve_declared_section(
-            self._objectives_handler,
-            self.config.objectives,
-        )
-        exploration = self._resolve_declared_section(
-            self._exploration_handler,
-            self.config.exploration,
-        )
-        promotion_policy = self._resolve_declared_section(
-            self._promotion_policy_handler,
-            self.config.promotion_policy,
-        )
-        defaults = self._resolve_declared_section(
-            self._defaults_handler,
-            self.config.defaults,
-        )
-        measures = self._resolve_declared_section(
-            self._measures_handler,
-            self.config.measures,
-        )
 
-        if constraints is not None and not isinstance(constraints, (dict, list)):
-            raise ValueError("constraints must be a dict or list")
-        if objectives is not None and not isinstance(objectives, list):
-            raise ValueError("objectives must be a list")
-        if exploration is not None and not isinstance(exploration, dict):
-            raise ValueError("exploration must be a dict")
-        if promotion_policy is not None and not isinstance(promotion_policy, dict):
-            raise ValueError("promotion_policy must be a dict")
-        if defaults is not None and not isinstance(defaults, dict):
-            raise ValueError("defaults must be a dict")
-        if measures is not None and (
-            not isinstance(measures, list)
-            or not all(isinstance(measure, str) for measure in measures)
-        ):
-            raise ValueError("measures must be a list of strings")
+        sections = {
+            "constraints": self._resolve_declared_section(
+                self._constraints_handler, self.config.constraints
+            ),
+            "objectives": self._resolve_declared_section(
+                self._objectives_handler, self.config.objectives
+            ),
+            "exploration": self._resolve_declared_section(
+                self._exploration_handler, self.config.exploration
+            ),
+            "promotion_policy": self._resolve_declared_section(
+                self._promotion_policy_handler, self.config.promotion_policy
+            ),
+            "defaults": self._resolve_declared_section(
+                self._defaults_handler, self.config.defaults
+            ),
+            "measures": self._resolve_declared_section(
+                self._measures_handler, self.config.measures
+            ),
+        }
+        self._validate_declared_sections(sections)
 
         response: dict[str, Any] = {
             "schema_version": self.config.schema_version,
             "tunable_id": self.config.tunable_id,
             "tunables": tunables,
             "tvars": tunables,  # Backward compatibility alias
-            "constraints": constraints or {},
+            "constraints": sections["constraints"] or {},
         }
-        if objectives is not None:
-            response["objectives"] = objectives
-        if exploration is not None:
-            response["exploration"] = exploration
-        if promotion_policy is not None:
-            response["promotion_policy"] = promotion_policy
-        if defaults is not None:
-            response["defaults"] = defaults
-        if measures is not None:
-            response["measures"] = measures
+        for key in (
+            "objectives",
+            "exploration",
+            "promotion_policy",
+            "defaults",
+            "measures",
+        ):
+            if sections[key] is not None:
+                response[key] = sections[key]
         if self.config.estimated_tokens_per_example is not None:
             response["estimated_tokens_per_example"] = (
                 self.config.estimated_tokens_per_example.to_dict()
             )
         return response
+
+    @staticmethod
+    def _normalize_single_tvar(spec: Any) -> dict[str, Any]:
+        """Normalize a single TVAR spec to TVL format."""
+        if isinstance(spec, list):
+            return {"type": "enum", "domain": {"values": spec}}
+        if not isinstance(spec, dict):
+            return {"type": "str", "domain": {"values": [spec]}, "default": spec}
+
+        normalized_spec = dict(spec)
+        domain = normalized_spec.get("domain", {})
+        if not isinstance(domain, dict):
+            domain = {}
+
+        # Accept wrapper-friendly top-level values/range/resolution and
+        # normalize to contract-compliant nested domain shape.
+        for key in ("values", "range", "resolution"):
+            if key in normalized_spec and key not in domain:
+                domain[key] = normalized_spec.pop(key)
+
+        normalized_spec["domain"] = domain
+        return normalized_spec
 
     def _normalize_tvars(self, tvars: dict[str, Any]) -> dict[str, Any]:
         """Normalize TVAR definitions to TVL format."""
@@ -483,35 +506,7 @@ class TraigentService:
                     f"Invalid TVAR name '{name}': must be a valid Python identifier "
                     f"(pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$)"
                 )
-            if isinstance(spec, dict):
-                normalized_spec = dict(spec)
-                domain = normalized_spec.get("domain", {})
-                if not isinstance(domain, dict):
-                    domain = {}
-
-                # Accept wrapper-friendly top-level values/range/resolution and
-                # normalize to contract-compliant nested domain shape.
-                if "values" in normalized_spec and "values" not in domain:
-                    domain["values"] = normalized_spec.pop("values")
-                if "range" in normalized_spec and "range" not in domain:
-                    domain["range"] = normalized_spec.pop("range")
-                if "resolution" in normalized_spec and "resolution" not in domain:
-                    domain["resolution"] = normalized_spec.pop("resolution")
-
-                if domain is not None:
-                    normalized_spec["domain"] = domain
-
-                normalized[name] = normalized_spec
-            elif isinstance(spec, list):
-                # List of values -> enum type
-                normalized[name] = {"type": "enum", "domain": {"values": spec}}
-            else:
-                # Scalar default value
-                normalized[name] = {
-                    "type": "str",
-                    "domain": {"values": [spec]},
-                    "default": spec,
-                }
+            normalized[name] = self._normalize_single_tvar(spec)
         return normalized
 
     def get_capabilities(self) -> dict[str, Any]:
@@ -548,6 +543,75 @@ class TraigentService:
             },
         }
 
+    def _check_idempotency_cache(
+        self,
+        cache: dict[str, tuple[str, dict[str, Any]]],
+        request_id: str,
+        fingerprint: str,
+        operation: str,
+    ) -> dict[str, Any] | None:
+        """Return cached response if request_id was seen before, or None."""
+        cached = cache.get(request_id)
+        if cached is None:
+            return None
+        cached_fingerprint, cached_response = cached
+        if cached_fingerprint != fingerprint:
+            raise ValueError(
+                f"request_id reuse with different payload in {operation} request"
+            )
+        return copy.deepcopy(cached_response)
+
+    def _store_in_idempotency_cache(
+        self,
+        cache: dict[str, tuple[str, dict[str, Any]]],
+        request_id: str,
+        fingerprint: str,
+        response: dict[str, Any],
+    ) -> None:
+        """Store a response in an idempotency cache with FIFO eviction."""
+        if len(cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(cache))
+            del cache[oldest_key]
+        cache[request_id] = (fingerprint, copy.deepcopy(response))
+
+    @staticmethod
+    def _determine_batch_status(total: int, failed: int) -> str:
+        """Return 'completed', 'partial', or 'failed' for a batch result."""
+        if failed == 0:
+            return "completed"
+        if failed < total:
+            return "partial"
+        return "failed"
+
+    @staticmethod
+    def _parse_example_input(inp: Any) -> tuple[str, Any]:
+        """Extract (example_id, data) from a single execute input."""
+        if isinstance(inp, dict):
+            raw_id = inp.get("example_id")
+            example_id = str(raw_id) if raw_id else str(uuid.uuid4())
+            return example_id, inp.get("data", inp)
+        return str(uuid.uuid4()), inp
+
+    @staticmethod
+    def _unpack_execute_result(result: Any) -> dict[str, Any]:
+        """Normalize a single execute-handler result into a flat dict."""
+        if not isinstance(result, dict):
+            return {
+                "output": result,
+                "cost_usd": 0.0,
+                "latency_ms": None,
+                "metrics": {},
+            }
+        metrics = (
+            result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+        )
+        return {
+            "output": result.get("output", result),
+            "cost_usd": float(result.get("cost_usd", 0.0) or 0.0),
+            "latency_ms": result.get("latency_ms"),
+            "metrics": metrics,
+        }
+
     async def handle_execute(
         self,
         request: dict[str, Any],
@@ -569,25 +633,19 @@ class TraigentService:
 
         request_id = str(request.get("request_id", str(uuid.uuid4())))
         request_fingerprint = self._fingerprint_request(request)
-        cached_execute = self._execute_idempotency_cache.get(request_id)
-        if cached_execute is not None:
-            cached_fingerprint, cached_response = cached_execute
-            if cached_fingerprint != request_fingerprint:
-                raise ValueError(
-                    "request_id reuse with different payload in execute request"
-                )
-            return copy.deepcopy(cached_response)
+        cached = self._check_idempotency_cache(
+            self._execute_idempotency_cache, request_id, request_fingerprint, "execute"
+        )
+        if cached is not None:
+            return cached
 
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
-
         examples = request.get("examples")
-
         session_id = request.get("session_id")
 
         # Validate benchmark_id is present before any handler work.
-        benchmark_id = request.get("benchmark_id")
-        if not benchmark_id:
+        if not request.get("benchmark_id"):
             raise BadRequestError(
                 "Missing required field 'benchmark_id' in execute request",
                 error_code="INVALID_BENCHMARK_ID",
@@ -596,21 +654,18 @@ class TraigentService:
         if not isinstance(examples, list) or len(examples) == 0:
             raise ValueError("examples must be a non-empty list")
 
-        # Validate tunable_id matches this service
         if tunable_id != self.config.tunable_id:
             raise ValueError(
                 f"tunable_id mismatch: request has '{tunable_id}', "
                 f"service is '{self.config.tunable_id}'"
             )
 
-        # Enforce max_batch_size from capabilities
         max_batch = self.config.max_batch_size
         if max_batch and len(examples) > max_batch:
             raise ValueError(
                 f"Batch size {len(examples)} exceeds max_batch_size {max_batch}"
             )
 
-        # Update session if provided
         if session_id:
             self._touch_or_create_session(session_id)
 
@@ -621,75 +676,39 @@ class TraigentService:
         failed_example_ids: list[str] = []
 
         for inp in examples:
-            if isinstance(inp, dict):
-                example_id = inp.get("example_id")
-                example_id = str(example_id) if example_id else str(uuid.uuid4())
-                data = inp.get("data", inp)
-            else:
-                example_id = str(uuid.uuid4())
-                data = inp
-
+            example_id, data = self._parse_example_input(inp)
             try:
-                # Call handler
                 result = self._execute_handler(example_id, data, config)
                 if inspect.isawaitable(result):
                     result = await result
 
-                # Extract output and metrics
-                if isinstance(result, dict):
-                    output = result.get("output", result)
-                    cost = float(result.get("cost_usd", 0.0) or 0.0)
-                    latency_ms = result.get("latency_ms")
-                    metrics = (
-                        result.get("metrics")
-                        if isinstance(result.get("metrics"), dict)
-                        else {}
-                    )
-                else:
-                    output = result
-                    cost = 0.0
-                    latency_ms = None
-                    metrics = {}
-
-                total_cost += cost
-                if metrics:
-                    all_quality_metrics.append(metrics)
+                unpacked = self._unpack_execute_result(result)
+                total_cost += unpacked["cost_usd"]
+                if unpacked["metrics"]:
+                    all_quality_metrics.append(unpacked["metrics"])
 
                 output_item: dict[str, Any] = {
                     "example_id": example_id,
-                    "output": output,
-                    "cost_usd": cost,
+                    "output": unpacked["output"],
+                    "cost_usd": unpacked["cost_usd"],
                 }
-                if isinstance(latency_ms, (int, float)):
-                    output_item["latency_ms"] = float(latency_ms)
-                if metrics:
-                    output_item["metrics"] = metrics
-
+                if isinstance(unpacked["latency_ms"], (int, float)):
+                    output_item["latency_ms"] = float(unpacked["latency_ms"])
+                if unpacked["metrics"]:
+                    output_item["metrics"] = unpacked["metrics"]
                 outputs.append(output_item)
 
             except HybridAPIError:
-                # Bubble up explicit transport-level errors (401/429/503/etc.)
                 raise
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error(f"Execute failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
-                outputs.append(
-                    {
-                        "example_id": example_id,
-                        "error": str(e),
-                    }
-                )
+                outputs.append({"example_id": example_id, "error": str(e)})
 
         elapsed_ms = (time.time() - start_time) * 1000
-        successful_outputs = len(outputs) - len(failed_example_ids)
-        if successful_outputs == 0 and outputs:
-            status = "failed"
-        elif failed_example_ids:
-            status = "partial"
-        else:
-            status = "completed"
+        status = self._determine_batch_status(len(outputs), len(failed_example_ids))
 
         response: dict[str, Any] = {
             "request_id": request_id,
@@ -714,23 +733,31 @@ class TraigentService:
                 "failed_examples": failed_example_ids,
             }
 
-        # Include quality metrics if available (combined mode)
         if all_quality_metrics:
             response["quality_metrics"] = self._aggregate_metrics(all_quality_metrics)
 
         if session_id:
             response["session_id"] = session_id
 
-        # Cache terminal response for idempotent retries.
-        # Evict oldest entry if cache is full.
-        if len(self._execute_idempotency_cache) >= self._idempotency_cache_max_size:
-            oldest_key = next(iter(self._execute_idempotency_cache))
-            del self._execute_idempotency_cache[oldest_key]
-        self._execute_idempotency_cache[request_id] = (
-            request_fingerprint,
-            copy.deepcopy(response),
+        self._store_in_idempotency_cache(
+            self._execute_idempotency_cache, request_id, request_fingerprint, response
         )
         return response
+
+    @staticmethod
+    def _resolve_evaluation_fields(evaluation: dict[str, Any]) -> tuple[str, Any, Any]:
+        """Extract (example_id, output, target) from an evaluation item."""
+        raw_id = evaluation.get("example_id")
+        example_id = str(raw_id) if raw_id else str(uuid.uuid4())
+
+        output = evaluation.get("output")
+        if output is None and "output_id" in evaluation:
+            output = {"output_id": evaluation["output_id"]}
+        target = evaluation.get("target")
+        if target is None and "target_id" in evaluation:
+            target = {"target_id": evaluation["target_id"]}
+
+        return example_id, output, target
 
     async def handle_evaluate(
         self,
@@ -752,23 +779,21 @@ class TraigentService:
 
         request_id = str(request.get("request_id", str(uuid.uuid4())))
         request_fingerprint = self._fingerprint_request(request)
-        cached_evaluate = self._evaluate_idempotency_cache.get(request_id)
-        if cached_evaluate is not None:
-            cached_fingerprint, cached_response = cached_evaluate
-            if cached_fingerprint != request_fingerprint:
-                raise ValueError(
-                    "request_id reuse with different payload in evaluate request"
-                )
-            return copy.deepcopy(cached_response)
+        cached = self._check_idempotency_cache(
+            self._evaluate_idempotency_cache,
+            request_id,
+            request_fingerprint,
+            "evaluate",
+        )
+        if cached is not None:
+            return cached
 
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
         session_id = request.get("session_id")
 
-        # Validate benchmark_id is present before any handler work.
-        benchmark_id = request.get("benchmark_id")
-        if not benchmark_id:
+        if not request.get("benchmark_id"):
             raise BadRequestError(
                 "Missing required field 'benchmark_id' in evaluate request",
                 error_code="INVALID_BENCHMARK_ID",
@@ -777,14 +802,12 @@ class TraigentService:
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
 
-        # Validate tunable_id matches this service
         if tunable_id != self.config.tunable_id:
             raise ValueError(
                 f"tunable_id mismatch: request has '{tunable_id}', "
                 f"service is '{self.config.tunable_id}'"
             )
 
-        # Update session if provided
         if session_id:
             self._touch_or_create_session(session_id)
 
@@ -793,34 +816,17 @@ class TraigentService:
         failed_example_ids: list[str] = []
 
         for evaluation in evaluations:
-            example_id = evaluation.get("example_id")
-            example_id = str(example_id) if example_id else str(uuid.uuid4())
-
-            output = evaluation.get("output")
-            if output is None and "output_id" in evaluation:
-                output = {"output_id": evaluation["output_id"]}
-            target = evaluation.get("target")
-            if target is None and "target_id" in evaluation:
-                target = {"target_id": evaluation["target_id"]}
-
+            example_id, output, target = self._resolve_evaluation_fields(evaluation)
             try:
-                # Call handler
                 result = self._evaluate_handler(output, target, config)
                 if inspect.isawaitable(result):
                     result = await result
 
                 metrics = result if isinstance(result, dict) else {"score": result}
                 all_metrics.append(metrics)
-
-                results.append(
-                    {
-                        "example_id": example_id,
-                        "metrics": metrics,
-                    }
-                )
+                results.append({"example_id": example_id, "metrics": metrics})
 
             except HybridAPIError:
-                # Bubble up explicit transport-level errors (401/429/503/etc.)
                 raise
             except asyncio.CancelledError:
                 raise
@@ -828,20 +834,10 @@ class TraigentService:
                 logger.error(f"Evaluate failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 results.append(
-                    {
-                        "example_id": example_id,
-                        "metrics": {},
-                        "error": str(e),
-                    }
+                    {"example_id": example_id, "metrics": {}, "error": str(e)}
                 )
 
-        successful_results = len(results) - len(failed_example_ids)
-        if successful_results == 0 and results:
-            status = "failed"
-        elif failed_example_ids:
-            status = "partial"
-        else:
-            status = "completed"
+        status = self._determine_batch_status(len(results), len(failed_example_ids))
 
         response: dict[str, Any] = {
             "request_id": request_id,
@@ -861,16 +857,28 @@ class TraigentService:
                 "failed_examples": failed_example_ids,
             }
 
-        # Cache terminal response for idempotent retries.
-        # Evict oldest entry if cache is full.
-        if len(self._evaluate_idempotency_cache) >= self._idempotency_cache_max_size:
-            oldest_key = next(iter(self._evaluate_idempotency_cache))
-            del self._evaluate_idempotency_cache[oldest_key]
-        self._evaluate_idempotency_cache[request_id] = (
-            request_fingerprint,
-            copy.deepcopy(response),
+        self._store_in_idempotency_cache(
+            self._evaluate_idempotency_cache, request_id, request_fingerprint, response
         )
         return response
+
+    @staticmethod
+    def _collect_numeric_values(
+        metrics_list: list[dict[str, float]],
+    ) -> dict[str, list[float]]:
+        """Collect finite numeric values grouped by metric name.
+
+        Filters out bools, NaN, and Inf.
+        """
+        by_name: dict[str, list[float]] = {}
+        for metrics in metrics_list:
+            for name, value in metrics.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isnan(value) or math.isinf(value):
+                    continue
+                by_name.setdefault(name, []).append(float(value))
+        return by_name
 
     def _aggregate_metrics(
         self, metrics_list: list[dict[str, float]]
@@ -878,26 +886,9 @@ class TraigentService:
         """Aggregate per-example metrics to single values."""
         if not metrics_list:
             return {}
-
-        aggregated: dict[str, float] = {}
-        counts: dict[str, int] = {}
-
-        for metrics in metrics_list:
-            for name, value in metrics.items():
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                if math.isnan(value) or math.isinf(value):
-                    continue
-                if name not in aggregated:
-                    aggregated[name] = 0.0
-                    counts[name] = 0
-                aggregated[name] += value
-                counts[name] += 1
-
         return {
-            name: total / counts[name]
-            for name, total in aggregated.items()
-            if counts[name] > 0
+            name: sum(vals) / len(vals)
+            for name, vals in self._collect_numeric_values(metrics_list).items()
         }
 
     def _compute_aggregate_metrics(
@@ -907,29 +898,14 @@ class TraigentService:
         if not metrics_list:
             return {}
 
-        aggregates: dict[str, dict[str, float | int]] = {}
-
-        # Collect values by metric name
-        values_by_metric: dict[str, list[float]] = {}
-        for metrics in metrics_list:
-            for name, value in metrics.items():
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                if math.isnan(value) or math.isinf(value):
-                    continue
-                if name not in values_by_metric:
-                    values_by_metric[name] = []
-                values_by_metric[name].append(float(value))
-
-        # Compute stats
         import statistics
 
-        for name, values in values_by_metric.items():
+        aggregates: dict[str, dict[str, float | int]] = {}
+        for name, values in self._collect_numeric_values(metrics_list).items():
             n = len(values)
             mean = sum(values) / n
             std = statistics.stdev(values) if n > 1 else 0.0
             aggregates[name] = {"mean": mean, "std": std, "n": n}
-
         return aggregates
 
     def handle_keep_alive(self, session_id: str) -> bool:

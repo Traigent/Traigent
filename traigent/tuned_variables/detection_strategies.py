@@ -25,6 +25,7 @@ from traigent.tuned_variables.detection_types import (
     SuggestedRange,
     TunedVariableCandidate,
 )
+from traigent.utils.llm_response_parsing import extract_json_array_text
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +566,32 @@ Function to analyze:
 """
 
 
+def _parse_candidate_item(item: Any) -> TunedVariableCandidate | None:
+    """Parse a single dict from the LLM response into a candidate."""
+    if not isinstance(item, dict) or "name" not in item:
+        return None
+
+    name = str(item["name"])
+    type_str = item.get("type", "categorical")
+    try:
+        ctype = CandidateType(type_str)
+    except ValueError:
+        ctype = CandidateType.CATEGORICAL
+
+    canonical = _REVERSE_MAPPING.get(name)
+    return TunedVariableCandidate(
+        name=name,
+        candidate_type=ctype,
+        confidence=DetectionConfidence.LOW,
+        location=SourceLocation(line=0, col_offset=0),
+        current_value=item.get("current_value"),
+        suggested_range=_suggest_range(canonical, ctype, item.get("current_value")),
+        detection_source="llm",
+        reasoning=item.get("reasoning", ""),
+        canonical_name=canonical,
+    )
+
+
 class LLMDetectionStrategy:
     """LLM-based detection of tuned variable candidates.
 
@@ -630,19 +657,7 @@ class LLMDetectionStrategy:
 
     def _parse_response(self, response: str) -> list[TunedVariableCandidate]:
         """Parse LLM JSON response into candidates."""
-        # Try to extract JSON from the response
-        text = response.strip()
-
-        # Handle markdown code blocks
-        if "```" in text:
-            parts = text.split("```")
-            for part in parts:
-                stripped = part.strip()
-                if stripped.startswith("json"):
-                    stripped = stripped[4:].strip()
-                if stripped.startswith("["):
-                    text = stripped
-                    break
+        text = extract_json_array_text(response)
 
         try:
             items = json.loads(text)
@@ -655,34 +670,8 @@ class LLMDetectionStrategy:
 
         candidates: list[TunedVariableCandidate] = []
         for item in items:
-            if not isinstance(item, dict) or "name" not in item:
-                continue
-
-            name = str(item["name"])
-            type_str = item.get("type", "categorical")
-            try:
-                ctype = CandidateType(type_str)
-            except ValueError:
-                ctype = CandidateType.CATEGORICAL
-
-            current_value = item.get("current_value")
-            reasoning = item.get("reasoning", "")
-
-            # Check if this maps to a known canonical name
-            canonical = _REVERSE_MAPPING.get(name)
-
-            candidates.append(
-                TunedVariableCandidate(
-                    name=name,
-                    candidate_type=ctype,
-                    confidence=DetectionConfidence.LOW,
-                    location=SourceLocation(line=0, col_offset=0),
-                    current_value=current_value,
-                    suggested_range=_suggest_range(canonical, ctype, current_value),
-                    detection_source="llm",
-                    reasoning=reasoning,
-                    canonical_name=canonical,
-                )
-            )
+            candidate = _parse_candidate_item(item)
+            if candidate is not None:
+                candidates.append(candidate)
 
         return candidates

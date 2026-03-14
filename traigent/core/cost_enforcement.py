@@ -924,40 +924,106 @@ Options:
             )
             return False
 
-        # Validate permit exists in active registry
+        self._release_reserved_permit_locked(
+            permit,
+            caller=caller,
+            log_release=True,
+        )
+
+        return True
+
+    def _release_reserved_permit_locked(
+        self,
+        permit: Permit,
+        *,
+        caller: str,
+        log_release: bool,
+    ) -> None:
+        """Release an active permit reservation under the lock."""
         if permit.id not in self._active_permits:
             logger.warning(
                 "Foreign or already-removed permit %d passed to %s",
                 permit.id,
                 caller,
             )
-            # Still return True since permit was marked released, but don't
-            # adjust counters for unknown permits
 
-        # Remove from active permits registry
         removed = self._active_permits.pop(permit.id, None)
+        if removed is None:
+            return
 
-        if removed is not None and self._in_flight_count > 0:
+        if self._in_flight_count > 0:
             self._in_flight_count -= 1
             self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
-            logger.debug(
-                "Released permit %d without cost tracking "
-                "(in_flight: %d, released: $%.4f)",
-                permit.id,
-                self._in_flight_count,
-                permit.amount,
-            )
-        elif removed is None:
-            # Already warned above about foreign/removed permit
-            pass
-        else:
-            logger.warning(
-                "%s called with no in-flight permits (permit %d)",
-                caller,
-                permit.id,
+            if log_release:
+                logger.debug(
+                    "Released permit %d without cost tracking "
+                    "(in_flight: %d, released: $%.4f)",
+                    permit.id,
+                    self._in_flight_count,
+                    permit.amount,
+                )
+            return
+
+        logger.warning(
+            "%s called with no in-flight permits (permit %d)",
+            caller,
+            permit.id,
+        )
+
+    def _handle_unknown_cost_locked(
+        self,
+        trial_desc: str,
+        *,
+        require_cost_tracking: bool,
+        include_limit_in_warning: bool,
+    ) -> None:
+        """Handle unknown cost under the lock, including strict-mode failure."""
+        if require_cost_tracking:
+            raise CostTrackingRequiredError(
+                f"Cost extraction failed for {trial_desc} but "
+                "TRAIGENT_REQUIRE_COST_TRACKING=true or "
+                "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
+                "Set to 'false' or fix cost extraction."
             )
 
-        return True
+        if not self._unknown_cost_mode:
+            if include_limit_in_warning:
+                logger.warning(
+                    "Cost unknown for %s. Falling back to trial count limit (%d).",
+                    trial_desc,
+                    self.config.fallback_trial_limit,
+                )
+            else:
+                logger.warning(
+                    "Cost unknown for %s, falling back to trial limit",
+                    trial_desc,
+                )
+            self._unknown_cost_mode = True
+
+        self._maybe_warn_cold_start_estimate()
+
+    def _record_known_cost_locked(
+        self,
+        cost: float,
+        *,
+        trial_desc: str,
+        trial_failed: bool,
+        include_status_log: bool,
+    ) -> None:
+        """Record a known trial cost under the lock."""
+        self._accumulated_cost += cost
+        if include_status_log:
+            status = "failed" if trial_failed else "completed"
+            logger.debug(
+                "%s %s: +$%.4f (total: $%.4f)",
+                trial_desc,
+                status,
+                cost,
+                self._accumulated_cost,
+            )
+
+        self._update_cost_estimate(cost)
+        self._check_thresholds()
 
     def _track_cost_locked(
         self,
@@ -984,66 +1050,32 @@ Options:
             )
 
         # Validate permit exists in active registry (unless already released)
-        if permit_was_active and permit.id not in self._active_permits:
-            logger.warning(
-                "Foreign or already-removed permit %d passed to %s",
-                permit.id,
-                caller,
-            )
-
         self._trial_count += 1
         trial_desc = f"trial {trial_id or self._trial_count}"
 
         # Release in-flight reservation only if permit was active
         if permit_was_active:
-            # Remove from active permits registry
-            removed = self._active_permits.pop(permit.id, None)
-
-            if removed is not None and self._in_flight_count > 0:
-                self._in_flight_count -= 1
-                self._reserved_cost = max(0.0, self._reserved_cost - permit.amount)
+            self._release_reserved_permit_locked(
+                permit,
+                caller=caller,
+                log_release=False,
+            )
 
         # Handle unknown cost with optional strict mode
         if cost is None:
-            if require_cost_tracking:
-                raise CostTrackingRequiredError(
-                    f"Cost extraction failed for {trial_desc} but "
-                    "TRAIGENT_REQUIRE_COST_TRACKING=true or "
-                    "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
-                    "Set to 'false' or fix cost extraction."
-                )
-            if not self._unknown_cost_mode:
-                if include_limit_in_warning:
-                    logger.warning(
-                        "Cost unknown for %s. Falling back to trial count limit (%d).",
-                        trial_desc,
-                        self.config.fallback_trial_limit,
-                    )
-                else:
-                    logger.warning(
-                        "Cost unknown for %s, falling back to trial limit",
-                        trial_desc,
-                    )
-                self._unknown_cost_mode = True
-            self._maybe_warn_cold_start_estimate()
+            self._handle_unknown_cost_locked(
+                trial_desc,
+                require_cost_tracking=require_cost_tracking,
+                include_limit_in_warning=include_limit_in_warning,
+            )
             return
 
-        self._accumulated_cost += cost
-        if include_status_log:
-            status = "failed" if trial_failed else "completed"
-            logger.debug(
-                "%s %s: +$%.4f (total: $%.4f)",
-                trial_desc,
-                status,
-                cost,
-                self._accumulated_cost,
-            )
-
-        # Update cost estimate using exponential moving average
-        self._update_cost_estimate(cost)
-
-        # Emit warnings at thresholds
-        self._check_thresholds()
+        self._record_known_cost_locked(
+            cost,
+            trial_desc=trial_desc,
+            trial_failed=trial_failed,
+            include_status_log=include_status_log,
+        )
 
     def _maybe_warn_cold_start_estimate(self) -> None:
         """Warn once when estimate stays at cold-start value after repeated unknown costs."""

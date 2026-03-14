@@ -79,6 +79,49 @@ def _infer_total_examples_from_trial(trial: TrialResult) -> int:
     return 0
 
 
+def _resolve_from_primary_match(
+    comparability: dict[str, Any],
+    total_examples: int,
+) -> tuple[int, int, float]:
+    """Resolve coverage when the comparability primary matches the objective."""
+    primary_present = (
+        _coerce_int(comparability.get("examples_with_primary_metric")) or 0
+    )
+    coverage_ratio = _coerce_float(comparability.get("coverage_ratio"))
+    if coverage_ratio is None and total_examples > 0:
+        coverage_ratio = primary_present / total_examples
+    return primary_present, total_examples, float(coverage_ratio or 0.0)
+
+
+def _lookup_per_metric_coverage(
+    per_metric: dict[str, Any],
+    objective_key: str,
+    objective_key_lower: str,
+    total_examples: int,
+) -> tuple[int, int, float] | None:
+    """Look up coverage for a metric in per_metric_coverage, returning None if absent."""
+    metric_coverage = per_metric.get(objective_key)
+    if metric_coverage is None:
+        metric_coverage = next(
+            (
+                value
+                for key, value in per_metric.items()
+                if isinstance(key, str) and key.lower() == objective_key_lower
+            ),
+            None,
+        )
+    if not isinstance(metric_coverage, dict):
+        return None
+    present = _coerce_int(metric_coverage.get("present")) or 0
+    metric_total = _coerce_int(metric_coverage.get("total"))
+    if metric_total is not None and metric_total >= 0:
+        total_examples = metric_total
+    ratio = _coerce_float(metric_coverage.get("ratio"))
+    if ratio is None and total_examples > 0:
+        ratio = present / total_examples
+    return present, total_examples, float(ratio or 0.0)
+
+
 def _resolve_primary_coverage(
     trial: TrialResult,
     comparability: dict[str, Any],
@@ -97,40 +140,38 @@ def _resolve_primary_coverage(
     )
 
     if comparability_primary and comparability_primary == objective_key_lower:
-        primary_present = _coerce_int(comparability.get("examples_with_primary_metric"))
-        if primary_present is None:
-            primary_present = 0
-        coverage_ratio = _coerce_float(comparability.get("coverage_ratio"))
-        if coverage_ratio is None and total_examples > 0:
-            coverage_ratio = primary_present / total_examples
-        return primary_present, total_examples, float(coverage_ratio or 0.0)
+        return _resolve_from_primary_match(comparability, total_examples)
 
     per_metric = comparability.get("per_metric_coverage")
     if isinstance(per_metric, dict):
-        metric_coverage = per_metric.get(objective_key)
-        if metric_coverage is None:
-            metric_coverage = next(
-                (
-                    value
-                    for key, value in per_metric.items()
-                    if isinstance(key, str) and key.lower() == objective_key_lower
-                ),
-                None,
-            )
-        if isinstance(metric_coverage, dict):
-            present = _coerce_int(metric_coverage.get("present")) or 0
-            metric_total = _coerce_int(metric_coverage.get("total"))
-            if metric_total is not None and metric_total >= 0:
-                total_examples = metric_total
-            ratio = _coerce_float(metric_coverage.get("ratio"))
-            if ratio is None and total_examples > 0:
-                ratio = present / total_examples
-            return present, total_examples, float(ratio or 0.0)
+        result = _lookup_per_metric_coverage(
+            per_metric, objective_key, objective_key_lower, total_examples
+        )
+        if result is not None:
+            return result
 
     primary_value = trial.get_metric(objective_key)
     if primary_value is not None and total_examples > 0:
         return total_examples, total_examples, 1.0
     return 0, total_examples, 0.0
+
+
+def _find_blocking_warning_codes(
+    comparability: dict[str, Any],
+    primary_objective: str,
+) -> list[str] | None:
+    """Return sorted blocking codes if the comparability payload contains any, else None."""
+    comparability_primary = (
+        str(comparability.get("primary_objective", "")).strip().lower()
+    )
+    if comparability_primary != primary_objective.strip().lower():
+        return None
+    codes = comparability.get("warning_codes")
+    if not isinstance(codes, list):
+        return None
+    blocking = {"MCI-001", "MCI-002", "MCI-004", "MCI-007"}
+    found = {str(c) for c in codes} & blocking
+    return sorted(found) if found else None
 
 
 def _is_ranking_eligible(
@@ -169,16 +210,9 @@ def _is_ranking_eligible(
     if objective_class == "quality" and evaluation_mode != "evaluated":
         return False, False, ["MCI-004", "QUALITY_OBJECTIVE_REQUIRES_EVALUATED_MODE"]
 
-    comparability_primary = (
-        str(comparability.get("primary_objective", "")).strip().lower()
-    )
-    if comparability_primary == primary_objective.strip().lower():
-        codes = comparability.get("warning_codes")
-        if isinstance(codes, list):
-            blocking = {"MCI-001", "MCI-002", "MCI-004", "MCI-007"}
-            present_codes = {str(code) for code in codes}
-            if present_codes.intersection(blocking):
-                return False, False, sorted(present_codes.intersection(blocking))
+    blocking = _find_blocking_warning_codes(comparability, primary_objective)
+    if blocking is not None:
+        return False, False, blocking
 
     return True, False, []
 
@@ -244,6 +278,22 @@ def apply_tie_breaker(
     return tied_trials[0]
 
 
+def _secondary_metric_total(
+    metrics: dict[str, Any],
+    exclude_objective: str,
+) -> float:
+    """Sum secondary metrics, subtracting minimization objectives."""
+    total = 0.0
+    for name, value in metrics.items():
+        if not isinstance(value, (int, float)) or name == exclude_objective:
+            continue
+        if is_minimization_objective(name):
+            total -= float(value)
+        else:
+            total += float(value)
+    return total
+
+
 def _apply_min_abs_deviation(
     trials: list[TrialResult],
     objective: str,
@@ -251,28 +301,15 @@ def _apply_min_abs_deviation(
 ) -> TrialResult:
     """Select trial with minimum absolute deviation from target or best stability."""
     if band_target is not None:
-        # For banded objectives: pick closest to target
+
         def deviation(t: TrialResult) -> float:
             value = t.get_metric(objective)
-            if value is None:
-                return float("inf")
-            return abs(value - band_target)
+            return float("inf") if value is None else abs(value - band_target)
 
         return min(trials, key=deviation)
 
-    # For non-banded: prefer trials with better secondary metrics
-    # Use trial_id as final tie-breaker for determinism
     def secondary_score(t: TrialResult) -> tuple[float, str]:
-        # Sum of all positive metrics (normalized approach)
-        total = 0.0
-        for name, value in (t.metrics or {}).items():
-            if isinstance(value, (int, float)) and name != objective:
-                # For cost/latency metrics, invert (lower is better)
-                if is_minimization_objective(name):
-                    total -= float(value)
-                else:
-                    total += float(value)
-        return (total, t.trial_id or "")
+        return (_secondary_metric_total(t.metrics or {}, objective), t.trial_id or "")
 
     return max(trials, key=secondary_score)
 
@@ -396,30 +433,21 @@ def _apply_aggregated_tie_breaker(
 
     tie_breaker = tie_breakers.get(primary_objective, "min_abs_deviation")
 
-    if tie_breaker == "min_abs_deviation":
-        if band_target is not None:
-            # Pick entry closest to band target
-            def deviation(entry: dict[str, Any]) -> float:
-                value = _compute_mean_metrics(entry).get(primary_objective, 0.0)
-                return abs(value - band_target)
+    if tie_breaker != "min_abs_deviation":
+        return tied_entries[0]
 
-            return min(tied_entries, key=deviation)
+    if band_target is not None:
 
-        # For non-banded: use secondary metrics
-        def secondary_score(entry: dict[str, Any]) -> float:
-            total = 0.0
-            for name, value in _compute_mean_metrics(entry).items():
-                if name != primary_objective:
-                    if is_minimization_objective(name):
-                        total -= value
-                    else:
-                        total += value
-            return total
+        def deviation(entry: dict[str, Any]) -> float:
+            value = _compute_mean_metrics(entry).get(primary_objective, 0.0)
+            return abs(value - band_target)
 
-        return max(tied_entries, key=secondary_score)
+        return min(tied_entries, key=deviation)
 
-    # For "custom" or unknown, return the first entry
-    return tied_entries[0]
+    def agg_secondary_score(entry: dict[str, Any]) -> float:
+        return _secondary_metric_total(_compute_mean_metrics(entry), primary_objective)
+
+    return max(tied_entries, key=agg_secondary_score)
 
 
 def _select_best_aggregated(

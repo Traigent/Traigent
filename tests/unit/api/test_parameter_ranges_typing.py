@@ -16,8 +16,7 @@ def test_parameter_range_config_value_typing_with_mypy(tmp_path: Path) -> None:
 
     snippet = tmp_path / "typing_check.py"
     snippet.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             from typing import Literal, assert_type
 
             from traigent.api.parameter_ranges import (
@@ -53,8 +52,7 @@ def test_parameter_range_config_value_typing_with_mypy(tmp_path: Path) -> None:
             choices: Choices[str] = Choices(["gpt-4", "gpt-4.1"])
             choice_value = choices.to_config_value()
             assert_type(choice_value, ChoicesConfigValue[str])
-            """
-        ),
+            """),
         encoding="utf-8",
     )
 
