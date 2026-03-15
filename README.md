@@ -494,9 +494,9 @@ pip install -e ".[all]"
 
 3. **Browse core examples**: `examples/core/` has feature-specific references (RAG, few-shot, multi-objective, safety, etc.)
 
-3. **Set up API keys** (optional): Copy `.env.example` to `.env` and add your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+4. **Set up API keys** (optional): Copy `.env.example` to `.env` and add your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
 
-4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
+5. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
 > **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The quickstart commands above include this export.
 
