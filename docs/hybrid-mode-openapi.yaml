@@ -6,13 +6,15 @@ info:
 
     Implement these endpoints to enable Traigent to optimize your service's configuration.
     Production integrations should use HTTPS with HTTP/2.
+    Open-source releases of the Traigent SDK are licensed under AGPLv3.
+    Commercial licenses are available separately from Traigent.
   version: 1.0.0
   contact:
     name: Traigent Support
-    url: https://github.com/traigent/traigent-sdk
+    url: https://github.com/Traigent/Traigent
   license:
-    name: Proprietary
-    url: https://traigent.ai/license
+    name: AGPL-3.0-only
+    url: https://www.gnu.org/licenses/agpl-3.0.en.html
 servers:
   - url: http://127.0.0.1:8080
     description: Local development server

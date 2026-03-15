@@ -10,13 +10,13 @@ authors = [
 ]
 description = "Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -312,12 +312,9 @@ addopts = [
     "--tb=short",
     "-n", "auto",
     "--dist", "loadgroup",
+    "-m", "not performance",
     "-v",
-    "--ignore=demos",
-    "--ignore=playground",
     "--ignore=plugins",
-    "--ignore=tests/manual_validation",
-    "--ignore=tests/legacy",
     "--ignore=tests/auto_tune",
     # JS bridge tests — require Node.js runtime, can crash terminals
     "--ignore=tests/unit/bridges",
@@ -350,6 +347,7 @@ markers = [
     "rate_limit: marks tests for rate limit handling behavior",
     "chaos: marks chaos/fault injection tests (slow, may be flaky)",
     "contract: marks contract tests against real APIs (requires credentials)",
+    "performance: marks benchmark/performance tests (excluded from default suite)",
 ]
 
 [tool.coverage.run]

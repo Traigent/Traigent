@@ -298,7 +298,10 @@ We welcome bug reports and feature requests via [GitHub Issues](https://github.c
 
 ## 📄 License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Open-source releases of this project are licensed under the GNU Affero General
+Public License v3 (AGPLv3). Commercial licenses are available from Traigent for
+organizations that need different terms. See [LICENSE](LICENSE) and
+[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md).
 
 ---
 

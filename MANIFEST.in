@@ -6,6 +6,8 @@ include LICENSE
 include NOTICE
 include CHANGELOG.md
 include CONTRIBUTING.md
+include CONTRIBUTOR-LICENSING.md
+include COMMERCIAL-LICENSING.md
 include SECURITY.md
 include DISCLAIMER.md
 
