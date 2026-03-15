@@ -41,7 +41,7 @@ echo -e "${GREEN}✅ Quickstart completed${NC}"
 echo ""
 
 echo -e "${YELLOW}Step 3/6: Test first run example${NC}"
-$PYTHON examples/core/simple-prompt/run.py || { echo -e "${RED}❌ First run example failed${NC}"; exit 1; }
+$PYTHON examples/quickstart/01_simple_qa.py || { echo -e "${RED}❌ First run example failed${NC}"; exit 1; }
 echo -e "${GREEN}✅ First run example passed${NC}"
 echo ""
 
