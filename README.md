@@ -1,25 +1,53 @@
-# ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required
+<p align="center">
+  <img src="assets/branding/traigent-banner.png" alt="Traigent" width="600">
+</p>
 
-**Current Version**: 0.10.0 (Beta)
+<h4 align="center">Optimize any LLM agent with one decorator</h4>
+
+<p align="center">
+  <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://docs.traigent.ai"><img src="https://img.shields.io/badge/docs-traigent.ai-brightgreen.svg" alt="Docs"></a>
+</p>
+
+Traigent finds the best LLM parameters for your specific task — model, temperature, prompts, RAG settings — by running controlled experiments. Add one decorator to your existing code, and Traigent handles the rest.
+
+> **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` for development, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
+
+```bash
+git clone https://github.com/Traigent/Traigent.git && cd Traigent
+pip install -e ".[recommended]"
+```
+
+```python
+import traigent
+from langchain_openai import ChatOpenAI
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": (0.0, 1.0),
+    },
+    objectives=["accuracy", "cost"],
+    eval_dataset="my_data.jsonl",
+)
+def my_agent(question: str) -> str:
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+    return llm.invoke(question).content
+```
+
+<p align="center">
+  <a href="https://docs.traigent.ai">Documentation</a> &middot;
+  <a href="https://portal.traigent.ai">Portal</a> &middot;
+  <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
+  <a href="examples/">Examples</a>
+</p>
 
 ---
 
-## Cost Warning
-
-Traigent optimizes LLM applications by running multiple trials across configurations.
-**This can result in significant API costs.**
-
-| Recommendation      | How                                                         |
-| ------------------- | ----------------------------------------------------------- |
-| Development/Testing | Use `TRAIGENT_MOCK_LLM=true`                               |
-| Control Spending    | Set `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2 USD per run) |
-| Before Production   | Review the [DISCLAIMER.md](DISCLAIMER.md)                   |
-
-**Important**: Cost estimates are approximations. Actual billing is determined by your LLM provider.
-
----
-
-## Navigation
+<details>
+<summary>Full Documentation Navigation</summary>
 
 | | |
 | --- | --- |
@@ -29,16 +57,10 @@ Traigent optimizes LLM applications by running multiple trials across configurat
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 | **Contributing** | [Contributing Guide](docs/contributing/CONTRIBUTING.md) · [Architecture](docs/architecture/ARCHITECTURE.md) |
 
----
-
-Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
-
-> 💡 **Interactive Demos & Use Cases**: Advanced examples, use-cases, playground UI, and demos have been moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo). The core SDK examples remain in `examples/` and `walkthrough/`.
+</details>
 
 > **Note**: Research papers and experimental code are in separate repositories:
->
-> - [TraigentDemo](https://github.com/Traigent/TraigentDemo) - Use cases, playground, demos
-> - [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments) - Research papers
+> [TraigentDemo](https://github.com/Traigent/TraigentDemo) (use cases, playground, demos) · [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments) (research papers)
 
 ## 🎬 See Traigent in Action
 
@@ -70,14 +92,14 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ## 🚀 Quick Example: See Tuned Variables in Action
 
-> **Want to run this now?** First [install Traigent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
+> **Want to run this now?** First [install Traigent](#-quick-installation), then try the simplest example (no API keys needed):
 >
 > ```bash
 > export TRAIGENT_MOCK_LLM=true
-> python examples/quickstart/01_simple_qa.py
+> python examples/core/simple-prompt/run.py
 > ```
 >
-> The `examples/quickstart/` directory contains runnable versions that work without API keys.
+> See `walkthrough/mock/` for a progressive 8-step tutorial, or browse `examples/core/` for feature-specific references.
 
 ```python
 import traigent
@@ -214,7 +236,7 @@ def weighted_agent(question: str) -> str:
 
 Positive weights can be written as fractions (`0.7` / `0.3`) or percentages (`70` / `30`); Traigent normalizes them automatically before scoring.
 
-> **Tip**: See `examples/quickstart/03_custom_objectives.py` for a complete working example.
+> **Tip**: See `walkthrough/mock/04_multi_objective.py` for a complete working example.
 
 ### Injection modes & default values
 
@@ -276,6 +298,17 @@ python -c "import traigent; print('✅ Traigent ready')"
 ```
 
 > Not on PyPI yet—install from source using the commands above.
+
+### Cost Management
+
+Traigent runs multiple LLM trials to find optimal configurations. Use these settings to control spend:
+
+| Setting | How |
+|---------|-----|
+| Development/Testing | `TRAIGENT_MOCK_LLM=true` (no API calls) |
+| Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
+
+Cost estimates are approximations. Actual billing is determined by your LLM provider. See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ### Environment Configuration
 
@@ -427,7 +460,6 @@ When installing Traigent, you can choose specific feature sets:
 | Feature Set      | Description                            | Use Case                         |
 | ---------------- | -------------------------------------- | -------------------------------- |
 | `[recommended]`  | **All user-facing features (default)** | Quick install — everything you need |
-| `[core]`         | Basic functionality only               | Minimal install                  |
 | `[integrations]` | Framework integrations                 | LangChain, OpenAI, Anthropic     |
 | `[analytics]`    | Analytics and visualization            | View optimization results        |
 | `[bayesian]`     | Bayesian optimization                  | Advanced optimization algorithms |
@@ -449,22 +481,22 @@ pip install -e ".[all]"
 
 ### Next Steps
 
-1. **Try the quickstart examples** (recommended first):
+1. **Try the simplest example** (recommended first):
 
    ```bash
    export TRAIGENT_MOCK_LLM=true
-   python examples/quickstart/01_simple_qa.py
-   python examples/quickstart/02_customer_support_rag.py
-   python examples/quickstart/03_custom_objectives.py
+   python examples/core/simple-prompt/run.py
    ```
 
    > 💡 If you see `joblib will operate in serial mode` warnings, that's harmless—see [Restricted Environments](#restricted-environments) to suppress them.
 
-2. **Run the curated walkthroughs**: Explore `examples/core/simple-prompt/run.py` and other examples (each README shows the `export` commands to copy)
+2. **Follow the walkthrough tutorials**: `walkthrough/mock/` has 8 progressive examples building from basic QA to multi-provider optimization — no API keys needed.
 
-3. **Set up API keys** (optional): Copy `.env.example` to `.env` and add your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+3. **Browse core examples**: `examples/core/` has feature-specific references (RAG, few-shot, multi-objective, safety, etc.)
 
-4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
+4. **Set up API keys** (optional): Copy `.env.example` to `.env` and add your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+
+5. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
 > **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The quickstart commands above include this export.
 
@@ -953,7 +985,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 | Permission errors | Use `pip install --user` or create a fresh venv |
 | Dependency conflicts | `pip install --upgrade pip` then try a fresh venv |
 
-**Note**: README code examples show patterns but may need API keys. Use `examples/quickstart/` for ready-to-run examples with `TRAIGENT_MOCK_LLM=true`.
+**Note**: README code examples show patterns but may need API keys. Use `examples/core/simple-prompt/run.py` or `walkthrough/mock/` for ready-to-run examples with `TRAIGENT_MOCK_LLM=true`.
 
 ## 🌟 Community
 
