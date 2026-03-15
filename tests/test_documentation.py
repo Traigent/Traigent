@@ -477,35 +477,35 @@ class TestDocumentationConsistency(unittest.TestCase):
 class TestDocumentationExamples(unittest.TestCase):
     """Test that documentation examples work correctly."""
 
-    def test_readme_quickstart_example(self):
-        """Test that the quickstart example in README would work."""
+    def test_readme_first_code_example(self):
+        """Test that the first code example in README would work."""
         readme_path = PROJECT_ROOT / "README.md"
         if not readme_path.exists():
             self.skipTest("README.md not found")
 
         content = readme_path.read_text()
 
-        # Extract the first Python code block (usually the quickstart)
+        # Extract the first Python code block (usually the first example)
         python_blocks = re.findall(r"```python\n(.*?)\n```", content, re.DOTALL)
 
         if python_blocks:
-            quickstart_code = python_blocks[0]
+            first_example_code = python_blocks[0]
 
             # Basic checks for a valid example
             self.assertIn(
-                "import", quickstart_code, "Quickstart should include imports"
+                "import", first_example_code, "First example should include imports"
             )
             self.assertIn(
-                "traigent", quickstart_code, "Quickstart should mention traigent"
+                "traigent", first_example_code, "First example should mention traigent"
             )
 
             # Check syntax
             try:
                 # Replace placeholders
-                test_code = quickstart_code.replace("...", "pass")
+                test_code = first_example_code.replace("...", "pass")
                 ast.parse(test_code)
             except SyntaxError as e:
-                self.fail(f"Quickstart example has syntax error: {e}")
+                self.fail(f"First code example has syntax error: {e}")
 
     def test_decorator_usage_examples(self):
         """Test that decorator usage examples are valid."""
