@@ -309,7 +309,7 @@ Traigent runs multiple LLM trials to find optimal configurations. Use these sett
 
 | Setting | How |
 |---------|-----|
-| Development/Testing | `TRAIGENT_MOCK_LLM=true` (no API calls) |
+| Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
 | Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
 
 Cost estimates are approximations. Actual billing is determined by your LLM provider. See [DISCLAIMER.md](DISCLAIMER.md) for details.
@@ -392,36 +392,42 @@ def my_agent(query: str) -> str:
 
 ### ☁️ Traigent Cloud
 
-Connect your SDK to the Traigent cloud to see optimization results in the [portal](https://portal.traigent.ai).
+Connect your SDK to [Traigent Portal](https://portal.traigent.ai) to view optimization results, compare trials, and collaborate with your team.
 
-**Quick start (3 steps):**
+**1. Create an account**
 
-1. Install the SDK:
-   ```bash
-   pip install -e ".[recommended]"
-   ```
+Sign up at [portal.traigent.ai](https://portal.traigent.ai) — enter your email, name, organization, and a password. Verify your email to activate.
 
-2. Log in:
-   ```bash
-   traigent auth login
-   ```
+**2. Create an API key**
 
-3. Run your optimization — results appear in the portal automatically:
-   ```bash
-   python playground.py
-   ```
+Once logged in, click your name (top-right) → **API Keys** → **+ Create API Key**. Copy the key — it is shown only once.
 
-No environment variables needed after login — the SDK picks up stored credentials automatically.
+**3. Connect the SDK**
+
+Option A — CLI login (recommended for local development):
+```bash
+traigent auth login
+```
+
+Option B — environment variable (recommended for CI/automation):
+```bash
+export TRAIGENT_API_KEY="sk_..."
+```
+
+**4. Run — results appear in the portal automatically**
+
+```bash
+python your_optimization.py
+```
 
 **Credential priority order:**
 
 | Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
 |-------------|--------------------------------|------------------------|----------------------|
 | API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
-| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `localhost:5000` (generic SDK) |
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `portal.traigent.ai` |
 
-> **Tip:** Use env vars for CI/automation. Use `traigent auth login` for local development.
-> Cloud-facing entry points such as `traigent auth login`, `TraigentCloudClient`, and `SyncManager` default to `portal.traigent.ai` when no backend URL is configured.
+> **Tip:** No environment variables needed after `traigent auth login` — the SDK picks up stored credentials automatically.
 
 ### Testing Models from Multiple Providers
 
@@ -947,29 +953,7 @@ pre-commit install
 
 ## 🤝 Contributing
 
-We welcome contributions! See the guidelines below for how to get started.
-
-### Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=traigent --cov-report=html
-
-# Run specific test module
-pytest tests/unit/test_api.py
-```
-
-### Areas for Contribution
-
-- **🏗️ New AI Models**: Add support for Claude, Cohere, Edge Analytics models
-- **🧠 Better Testing**: Improve subset selection algorithms
-- **🎮 UI Features**: Enhance the Streamlit Playground
-- **📊 Metrics**: Add domain-specific evaluation metrics
-- **📖 Documentation**: Share your success stories
-- **🐛 Bug Fixes**: Help improve reliability
+We welcome bug reports and feature requests via [GitHub Issues](https://github.com/Traigent/Traigent/issues). For security vulnerabilities, please email security@traigent.ai.
 
 ## 📄 License
 
