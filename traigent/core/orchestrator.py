@@ -87,6 +87,7 @@ from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
+from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.optimization_logger import OptimizationLogger
@@ -1925,6 +1926,20 @@ class OptimizationOrchestrator:
             result, session_id, session_summary
         )
 
+        # Populate experiment_id and cloud_url from session metadata
+        exp_id = (result.metadata or {}).get("experiment_id")
+        if exp_id:
+            result.experiment_id = exp_id
+            try:
+                from traigent.cloud.sync_manager import build_experiment_url
+                from traigent.config.backend_config import BackendConfig
+
+                result.cloud_url = build_experiment_url(
+                    BackendConfig.get_cloud_backend_url(), exp_id
+                )
+            except Exception:
+                pass  # Cloud URL is best-effort
+
         await self._submit_usage_analytics()
 
         # Submit collected workflow traces and graph to backend
@@ -2269,6 +2284,10 @@ class OptimizationOrchestrator:
                 }
             )
 
+        # Flag offline mode so callbacks can show appropriate hints
+        if is_backend_offline():
+            metadata["offline_mode"] = True
+
         return metadata
 
     def _create_optimization_result(self) -> OptimizationResult:
@@ -2321,6 +2340,17 @@ class OptimizationOrchestrator:
             cache_policy_used=self.cache_policy_handler.cache_policy_used,
         )
 
+        # Generate human-readable run label
+        func_name = "run"
+        if self._function_descriptor is not None:
+            func_name = (
+                self._function_descriptor.display_name
+                or self._function_descriptor.identifier
+                or "run"
+            )
+        now = datetime.now(UTC)
+        run_label = generate_run_label(func_name, self._optimization_id, now)
+
         # Create optimization result
         optimization_result = OptimizationResult(
             trials=self._trials.copy(),
@@ -2332,12 +2362,13 @@ class OptimizationOrchestrator:
             status=self._status,
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
-            timestamp=datetime.now(UTC),
+            timestamp=now,
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=self._build_result_metadata(session_summary, safeguards_telemetry),
             stop_reason=self._stop_reason,
+            run_label=run_label,
         )
 
         # Log optimization completion
