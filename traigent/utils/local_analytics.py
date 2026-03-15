@@ -524,7 +524,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
                     except Exception as e:
                         logger.debug(f"Analytics submission failed: {e}")
 
-            task = asyncio.create_task(_submit_wrapper(), name="analytics_submit")
+            task = asyncio.ensure_future(_submit_wrapper())
             _register_background_task(task)
         except RuntimeError:
             # No running loop, we're in a sync context

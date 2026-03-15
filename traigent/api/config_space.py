@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.constraints import BoolExpr, Constraint
 from traigent.api.parameter_ranges import (
@@ -139,6 +139,22 @@ class ConfigSpace:
             if hasattr(tvar, "name") and tvar.name is None:
                 # Note: We can't modify frozen dataclasses, so we just validate
                 pass
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return a pickle-safe representation of the config space."""
+        return {
+            "tvars": dict(self.tvars),
+            "constraints": tuple(self.constraints),
+            "description": self.description,
+        }
+
+    def __setstate__(self, state: Mapping[str, Any]) -> None:
+        """Restore immutable state after unpickling."""
+        object.__setattr__(self, "tvars", MappingProxyType(dict(state["tvars"])))
+        object.__setattr__(
+            self, "constraints", tuple(cast(Sequence[Constraint], state["constraints"]))
+        )
+        object.__setattr__(self, "description", state.get("description"))
 
     @classmethod
     def from_decorator_args(
