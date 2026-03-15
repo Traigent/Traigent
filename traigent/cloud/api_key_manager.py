@@ -256,7 +256,8 @@ class APIKeyManager:
         credentials = self._get_credentials_fn() if self._get_credentials_fn else None
         if credentials and credentials.api_key:
             api_key: str | None = credentials.api_key
-            return api_key
+            if self.validate_format(api_key):
+                return api_key
 
         provided = (
             self._get_provided_credentials_fn()
@@ -265,14 +266,16 @@ class APIKeyManager:
         )
         if provided and provided.api_key:
             provided_key: str | None = provided.api_key
-            return provided_key
+            if self.validate_format(provided_key):
+                return provided_key
 
         last_result = (
             self._get_last_auth_result_fn() if self._get_last_auth_result_fn else None
         )
         if last_result and last_result.credentials:
             result_key: str | None = last_result.credentials.api_key
-            return result_key
+            if self.validate_format(result_key):
+                return result_key
 
         return None
 
@@ -317,7 +320,7 @@ class APIKeyManager:
             return False
 
         allowed = set(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"  # pragma: allowlist secret
         )
         return all(char in allowed for char in key[3:])
 
