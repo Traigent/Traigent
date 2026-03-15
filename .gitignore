@@ -466,3 +466,15 @@ examples/nexxen.zip
 
 # Local helper scripts
 walkthrough/run_with_env.sh
+
+# Release polish: internal tracking and dev artifacts (root-level)
+israel_issues*.json
+project_items.json
+sonarcloud_issues*.csv
+coverage_observability_modules.xml
+RELIABILITY_SWEEP_*.md
+PR[0-9]*.md
+playground.py
+test_redact*.py
+test_timeout*.py
+nvidia/
