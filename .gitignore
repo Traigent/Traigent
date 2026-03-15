@@ -296,43 +296,9 @@ validate_*.py
 *_AUTOMATION.md
 *_PROTOCOL.md
 
-# Release review workspace
-# Keep core protocol/tracking files versioned for team sharing
-!.release_review/
-!.release_review/*.md
-# Keep run contract docs versioned, ignore generated run payloads
-.release_review/runs/*
-!.release_review/runs/
-!.release_review/runs/README.md
-.release_review/CURRENT_RUN
-# Ignore agent artifacts (scratch outputs, notes)
-.release_review/**/artifacts/
-.release_review/**/.mypy_cache/
-.release_review/walkthrough_review/
-
-# Client-specific example runs (keep only README)
-examples/bazak/*
-!examples/bazak/README.md
-
-# Post-release fixes workspace
-# Keep core protocol/tracking files versioned for team sharing
-!.post_release_recommendation_fixes/
-!.post_release_recommendation_fixes/*.md
-# Ignore agent artifacts and caches
-.post_release_recommendation_fixes/**/artifacts/
-.post_release_recommendation_fixes/**/.mypy_cache/
-.post_release_recommendation_fixes/**/.tracking.lock
-.post_release_recommendation_fixes/**/tmp/
-# Keep shared templates versioned
-!.post_release_recommendation_fixes/templates/
-!.post_release_recommendation_fixes/templates/**
-
-# Marketing materials viewer (removed - was local development only)
-tools/marketing-viewer/
-run_marketing_viewer.sh
-
-# Node modules in tools (regenerate with npm install)
-tools/**/node_modules/
+# DVC infrastructure (pipeline examples are in examples/ci-pipeline/)
+.dvc/
+.dvcignore
 
 # Virtual environments (additional)
 test_env/
