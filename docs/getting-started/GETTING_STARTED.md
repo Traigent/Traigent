@@ -7,6 +7,7 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 1) Install from source (recommended for examples):
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"        # All integrations, analytics, Bayesian, visualization
 export TRAIGENT_MOCK_LLM=true          # Run examples without API keys
 python walkthrough/mock/01_tuning_qa.py
