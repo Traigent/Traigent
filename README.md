@@ -22,26 +22,7 @@ pip install -e ".[recommended]"
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
-python examples/core/simple-prompt/run.py
-```
-
-**One decorator, two parameters, multi-objective optimization:**
-
-```python
-import traigent
-from langchain_openai import ChatOpenAI
-
-@traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": (0.0, 1.0),
-    },
-    objectives=["accuracy", "cost"],
-    eval_dataset="my_data.jsonl",
-)
-def my_agent(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-    return llm.invoke(question).content
+python walkthrough/mock/01_tuning_qa.py
 ```
 
 <p align="center">
@@ -105,61 +86,22 @@ def my_agent(question: str) -> str:
 
 ---
 
-## 🚀 More Examples
+## 🚀 Walkthrough — 8 runnable examples
 
-### RAG with retrieval depth tuning
+All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 
-```python
-@traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.1, 0.5, 0.9],
-        "k": [3, 5, 10],  # RAG retrieval depth
-    },
-    objectives=["accuracy", "cost"],
-    eval_dataset="rag_feedback.jsonl",
-)
-def support_agent(query: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-    docs = vectorstore.similarity_search(query, k=5)
-    context = "\n".join(d.page_content for d in docs)
-    return llm.invoke(f"Context: {context}\nQ: {query}").content
+| # | Run | What you'll learn |
+|---|-----|-------------------|
+| 1 | `python walkthrough/mock/01_tuning_qa.py` | Basic model + temperature optimization |
+| 2 | `python walkthrough/mock/02_zero_code_change.py` | Seamless mode — zero code changes to existing code |
+| 3 | `python walkthrough/mock/03_parameter_mode.py` | Explicit config access via `traigent.get_config()` |
+| 4 | `python walkthrough/mock/04_multi_objective.py` | Balance accuracy, cost, and latency |
+| 5 | `python walkthrough/mock/05_rag_parallel.py` | RAG optimization with parallel evaluation |
+| 6 | `python walkthrough/mock/06_custom_evaluator.py` | Define your own success metrics |
+| 7 | `python walkthrough/mock/07_multi_provider.py` | Compare OpenAI, Anthropic, Google in one run |
+| 8 | `python walkthrough/mock/08_privacy_modes.py` | Local-only privacy-first execution |
 
-results = asyncio.run(support_agent.optimize(algorithm="random", max_trials=20))
-print(results.best_config)  # {'model': 'gpt-4o-mini', 'temperature': 0.1, 'k': 3}
-```
-
-### Multi-objective with custom weights
-
-```python
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-
-@traigent.optimize(
-    objectives=ObjectiveSchema.from_objectives([
-        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.7),
-        ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
-    ]),
-    configuration_space={"temperature": (0.0, 1.0), "model": ["gpt-4o-mini", "gpt-4o"]},
-    eval_dataset="data/qa_samples.jsonl",
-)
-def weighted_agent(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
-    return llm.invoke(f"Answer concisely: {question}").content
-```
-
-### TVL specs — declarative optimization
-
-TVL (Tunable Variable Language) defines constraints, objectives, and boundaries in a YAML file — leaving the optimizer choice to runtime:
-
-```python
-@traigent.optimize(tvl_spec="experiment.tvl.yml")
-def rag_agent(query: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
-    docs = vectorstore.similarity_search(query, k=5)
-    return llm.invoke(f"Context: {docs}\nQ: {query}").content
-```
-
-**[Browse all examples →](examples/) · [8-step walkthrough →](walkthrough/mock/) · [Injection modes →](docs/user-guide/injection_modes.md)**
+**[Browse reference examples →](examples/) · [Injection modes →](docs/user-guide/injection_modes.md)**
 
 ---
 
