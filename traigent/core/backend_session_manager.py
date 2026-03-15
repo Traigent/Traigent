@@ -299,7 +299,7 @@ class BackendSessionManager:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
 
             session_id = self._backend_client.create_session(
-                function_name=function_slug,
+                function_name=function_display_name or function_identifier,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
