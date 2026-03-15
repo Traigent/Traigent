@@ -250,7 +250,7 @@ and an optional `--tvl-environment staging` flag.
 
 | Requirement  | Supported                                |
 |--------------|------------------------------------------|
-| **Python**   | 3.11, 3.12, 3.13, 3.14                   |
+| **Python**   | 3.11, 3.12, 3.13                         |
 | **Platform** | Linux (tested on Ubuntu), macOS, Windows |
 
 > **Note:** CI testing runs on Ubuntu Linux. macOS and Windows are expected to work but are not continuously tested.
@@ -261,7 +261,7 @@ and an optional `--tvl-environment staging` flag.
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"   # All integrations, analytics, Bayesian, visualization
+pip install -e ".[recommended]"   # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
 python -c "import traigent; print('✅ Traigent ready')"
 ```
 
@@ -275,7 +275,7 @@ uv pip install -e ".[recommended]"
 python -c "import traigent; print('✅ Traigent ready')"
 ```
 
-> Not on PyPI yet—install from source using the commands above.
+> `0.10.0` release validation uses the source-install commands above. Treat this checkout as the default install path for this release.
 
 ### Environment Configuration
 

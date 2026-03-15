@@ -8,7 +8,6 @@ include CHANGELOG.md
 include CONTRIBUTING.md
 include SECURITY.md
 include DISCLAIMER.md
-include MAINTENANCE.md
 
 # Requirements files
 include requirements/*.txt
@@ -20,60 +19,17 @@ include pyproject.toml
 recursive-include traigent *.py
 recursive-include traigent *.json
 recursive-include traigent *.yaml
-recursive-include traigent *.yml
-recursive-include traigent *.txt
 include traigent/py.typed
 
 # Documentation
 recursive-include docs *.md
-recursive-include docs *.rst
-recursive-include docs *.txt
 prune docs/demos/node_modules
-
-# Exclude development and build artifacts
-recursive-exclude * __pycache__
-recursive-exclude * *.py[co]
-recursive-exclude * *.pyo
-recursive-exclude * *.pyd
-recursive-exclude * .DS_Store
-recursive-exclude * .pytest_cache
-recursive-exclude * .coverage
-recursive-exclude * .tox
-recursive-exclude * *.egg-info
-
-# Exclude test files from package
-recursive-exclude tests *
-recursive-exclude test *
-
-# Exclude examples and demos from package distribution
-recursive-exclude examples *
-recursive-exclude demos *
-recursive-exclude playground *
-
-# Exclude CI/CD and development files
-exclude .github
-recursive-exclude .github *
-exclude .gitignore
-exclude .pre-commit-config.yaml
-exclude docker-compose.yml
-exclude Dockerfile*
-
-# Exclude IDE and editor files
-exclude .vscode
-recursive-exclude .vscode *
-exclude .idea
-recursive-exclude .idea *
-exclude *.swp
-exclude *.swo
-exclude *~
-
-# Exclude backup and temporary files
-exclude *.bak
-exclude *.tmp
-exclude .env*
-exclude .local*
+prune tests
 
 # Exclude local type-checker caches from package artifacts
 prune traigent/.mypy_cache
 prune traigent/*/.mypy_cache
 prune traigent/*/*/.mypy_cache
+
+# Exclude development and build artifacts
+global-exclude __pycache__ *.py[co] *.pyd .DS_Store *.swp *.swo *~ *.bak *.tmp
