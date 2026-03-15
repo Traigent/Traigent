@@ -261,7 +261,7 @@ and an optional `--tvl-environment staging` flag.
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"   # All integrations, analytics, Bayesian, visualization
+pip install -e ".[integrations]"   # Core + LangChain/OpenAI/Anthropic
 python -c "import traigent; print('✅ Traigent ready')"
 ```
 
@@ -271,7 +271,7 @@ python -c "import traigent; print('✅ Traigent ready')"
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 uv venv && source .venv/bin/activate
-uv pip install -e ".[recommended]"
+uv pip install -e ".[integrations]"
 python -c "import traigent; print('✅ Traigent ready')"
 ```
 
@@ -361,7 +361,7 @@ Connect your SDK to the Traigent cloud to see optimization results in the [porta
 
 1. Install the SDK:
    ```bash
-   pip install -e ".[recommended]"
+   pip install -e ".[integrations]"
    ```
 
 2. Log in:
@@ -424,24 +424,20 @@ LiteLLM supports 100+ LLM providers with a consistent API, making it easy to com
 
 When installing Traigent, you can choose specific feature sets:
 
-| Feature Set      | Description                            | Use Case                         |
-| ---------------- | -------------------------------------- | -------------------------------- |
-| `[recommended]`  | **All user-facing features (default)** | Quick install — everything you need |
-| `[core]`         | Basic functionality only               | Minimal install                  |
-| `[integrations]` | Framework integrations                 | LangChain, OpenAI, Anthropic     |
-| `[analytics]`    | Analytics and visualization            | View optimization results        |
-| `[bayesian]`     | Bayesian optimization                  | Advanced optimization algorithms |
-| `[dev]`          | Development tools                      | pytest, black, ruff, mypy        |
-| `[all]`          | Complete installation                  | All optional features            |
+| Feature Set      | Description                   | Use Case                         |
+| ---------------- | ----------------------------- | -------------------------------- |
+| `[core]`         | Basic functionality (default) | Minimal install                  |
+| `[analytics]`    | Analytics and visualization   | View optimization results        |
+| `[bayesian]`     | Bayesian optimization         | Advanced optimization algorithms |
+| `[integrations]` | Framework integrations        | LangChain, OpenAI, Anthropic     |
+| `[dev]`          | Development tools             | pytest, black, ruff, mypy        |
+| `[all]`          | Complete installation         | All optional features            |
 
 **Recommended installs:**
 
 ```bash
-# Quick install — all user-facing features
-pip install -e ".[recommended]"
-
-# For development/contributing
-pip install -e ".[recommended,dev]"
+# For running examples and development
+pip install -e ".[dev,integrations,analytics]"
 
 # For everything (largest install)
 pip install -e ".[all]"
@@ -947,7 +943,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 | Problem | Fix |
 |---------|-----|
-| `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check your venv is activated |
+| `ModuleNotFoundError` | `pip install -e ".[integrations]"` or check your venv is activated |
 | 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true` for demo mode, or check dataset format |
 | Missing API keys | Copy `.env.example` to `.env` and add your keys; or use mock mode |
 | Permission errors | Use `pip install --user` or create a fresh venv |

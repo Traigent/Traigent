@@ -191,12 +191,6 @@ cloud = [
     "boto3>=1.28.0",
 ]
 
-# Recommended bundle for end users — everything needed to run optimizations
-# out of the box without dev/test/docs overhead
-recommended = [
-    "traigent[integrations,analytics,bayesian,visualization,hybrid,pydanticai]",
-]
-
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
     "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
