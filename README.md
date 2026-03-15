@@ -15,6 +15,7 @@ Traigent finds the best LLM parameters for your specific task — model, tempera
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"
 ```
 
@@ -115,6 +116,7 @@ All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"
 ```
 
