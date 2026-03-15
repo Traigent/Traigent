@@ -21,6 +21,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Example lists
+QUICKSTART_EXAMPLES=(
+    "examples/quickstart/01_simple_qa.py"
+    "examples/quickstart/02_customer_support_rag.py"
+    "examples/quickstart/03_custom_objectives.py"
+)
+
 CORE_EXAMPLES=(
     "examples/core/hello-world/run.py"
     "examples/core/simple-prompt/run.py"
@@ -58,6 +64,7 @@ DOCS_EXAMPLES=(
 
 # Combine all examples
 ALL_EXAMPLES=(
+    "${QUICKSTART_EXAMPLES[@]}"
     "${CORE_EXAMPLES[@]}"
     "${ADVANCED_EXAMPLES[@]}"
     "${DOCS_EXAMPLES[@]}"
