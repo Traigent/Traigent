@@ -2089,7 +2089,7 @@
     {
       "batch": 2,
       "file": "tests/test_documentation.py",
-      "test_name": "test_readme_first_code_example",
+      "test_name": "test_readme_quickstart_example",
       "line": 456,
       "issue_type": "IT-NA",
       "description": "Test has no assert statements",

@@ -1,7 +1,7 @@
 # Traigent SDK Publication Manifest
 # Canonical list of all publication-ready examples that must pass in mock mode.
 # Documentation artifact (not parsed at runtime; keep in sync with test_all_examples.sh arrays).
-# 34 examples total.
+# 37 examples total.
 
 # Core (12)
 core/hello-world/run.py
@@ -23,6 +23,11 @@ core/multi-objective-tradeoff/run_openai.py
 core/multi-objective-tradeoff/run_openai_optuna.py
 core/multi-objective-tradeoff/run_openai_optuna_concurrency.py
 core/multi-objective-tradeoff/run_many_providers.py
+
+# Quickstart (3)
+quickstart/01_simple_qa.py
+quickstart/02_customer_support_rag.py
+quickstart/03_custom_objectives.py
 
 # TVL Tutorials (5)
 tvl/tutorials/01_getting_started/run_optimization.py

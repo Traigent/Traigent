@@ -32,7 +32,8 @@ traigent/
 └── tvl/              # Test Validation Language support
 
 examples/
-├── core/             # Core feature examples (start with simple-prompt/)
+├── quickstart/       # Basic examples (01_simple_qa.py, etc.)
+├── core/             # Core feature examples
 ├── advanced/         # Advanced patterns (callbacks, hooks, RAG)
 ├── integrations/     # Framework integration examples
 └── datasets/         # Sample evaluation datasets
@@ -137,10 +138,10 @@ Key environment variables (see `.env.example` for complete list):
 
 ## 📝 Examples Usage
 Examples are in `examples/` directory:
-- **Core**: `examples/core/` - Core features and getting started (start with `simple-prompt/run.py`)
+- **Quickstart**: `examples/quickstart/` - Basic usage patterns (run with `TRAIGENT_MOCK_LLM=true`)
+- **Core**: `examples/core/` - Core features (objectives, config spaces)
 - **Advanced**: `examples/advanced/` - Callbacks, hooks, RAG patterns
 - **Integrations**: `examples/integrations/` - LangChain, OpenAI, Anthropic examples
-- **Walkthrough**: `walkthrough/mock/` - Progressive 8-step tutorial
 
 Each example directory contains a README.md with setup instructions and commands.
 

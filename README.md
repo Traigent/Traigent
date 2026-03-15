@@ -120,7 +120,7 @@ load_dotenv()
         "temperature": [0.1, 0.5, 0.9]                         # 🎯 Tuned Variable #2
     },
     objectives=["accuracy", "cost"],    # What to optimize for
-    # Dataset file path
+    # Dataset file path (relative to examples/datasets/quickstart/)
     evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -508,7 +508,7 @@ pip install -e ".[all]"
 
 5. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The commands above include this export.
+> **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The quickstart commands above include this export.
 
 ---
 
