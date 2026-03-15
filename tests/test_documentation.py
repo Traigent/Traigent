@@ -19,6 +19,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 class TestDocumentationConsistency(unittest.TestCase):
     """Test documentation consistency with implementation."""
 
+    @staticmethod
+    def _is_overload_stub(node: ast.AST) -> bool:
+        """Return True for typing-only overload declarations."""
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Name) and decorator.id == "overload":
+                return True
+            if isinstance(decorator, ast.Attribute) and decorator.attr == "overload":
+                return True
+        return False
+
     @classmethod
     def setUpClass(cls):
         """Set up test environment."""
@@ -139,7 +152,11 @@ class TestDocumentationConsistency(unittest.TestCase):
                 try:
                     tree = ast.parse(content)
                     for node in ast.walk(tree):
-                        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                        if isinstance(
+                            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                        ):
+                            if self._is_overload_stub(node):
+                                continue
                             # Skip private functions
                             if node.name.startswith("_") and node.name != "__init__":
                                 continue
