@@ -22,7 +22,6 @@ The gallery provides:
 
 | Folder | Description | Count |
 | ------ | ----------- | ----- |
-| **`quickstart/`** | **Start here!** Ready-to-run README examples | 3 examples |
 | **`core/`** | Essential examples introducing core Traigent concepts | 12 examples |
 | **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
@@ -32,20 +31,6 @@ The gallery provides:
 | **`utils/`** | Reusable utility modules shared across examples | Shared utilities |
 | **`tvl/`** | TVL (Traigent Variable Language) specification examples | TVL specs |
 | **`archive/`** | Historical artifacts and legacy examples for reference | Archive |
-
-## ⚡ Quickstart Examples (Start Here!)
-
-Run these quickstart examples to get started:
-
-```bash
-pip install -e ".[examples]"          # Ensure example deps
-export TRAIGENT_MOCK_LLM=true        # No API keys needed
-python examples/quickstart/01_simple_qa.py           # Basic Q&A optimization
-python examples/quickstart/02_customer_support_rag.py # RAG with customer support
-python examples/quickstart/03_custom_objectives.py    # Custom weighted objectives
-```
-
-Each quickstart example demonstrates a key concept from the README with working code.
 
 ## 🚀 Core Examples
 
@@ -211,12 +196,11 @@ cd examples
 
 # Run examples by category (mock mode, no API keys)
 ./test_all_examples.sh core               # Run 12 core examples
-./test_all_examples.sh quickstart         # Run 3 quickstart examples
 ./test_all_examples.sh tvl                # Run 5 TVL tutorial examples
 ./test_all_examples.sh multi-objective    # Run 5 multi-objective variants
 ./test_all_examples.sh walkthrough        # Run 8 walkthrough examples
 ./test_all_examples.sh advanced-walkthrough # Run 5 advanced walkthrough examples
-./test_all_examples.sh manifest           # Run all 37 manifest examples (strict)
+./test_all_examples.sh manifest           # Run all 34 manifest examples (strict)
 ./test_all_examples.sh all                # Run all categories
 
 # Run with real API keys
@@ -232,14 +216,13 @@ cd examples
 | Category | Examples | Description |
 | -------- | -------- | ----------- |
 | `core` | 12 | Main Traigent feature demonstrations |
-| `quickstart` | 3 | Ready-to-run README examples |
 | `tvl` | 5 | TVL specification tutorials |
 | `multi-objective` | 5 | Multi-objective optimization variants |
 | `walkthrough` | 8 | Tutorial walkthrough examples |
 | `advanced-walkthrough` | 5 | Advanced walkthrough mock examples |
 | `ragas` | 3 | RAGAS evaluation integration |
 | `docs` | 2 | Documentation inline examples |
-| `manifest` | 37 | All publication-ready examples (strict) |
+| `manifest` | 34 | All publication-ready examples (strict) |
 | `all` | — | Run all categories |
 
 ### Quick Start (No API Keys!)
@@ -270,9 +253,8 @@ python examples/core/multi-objective-tradeoff/run_anthropic.py
 
 ### Recommended Learning Path
 
-1. **Quickstart:** `quickstart/01_simple_qa.py` (1 min) - README examples that just work
-2. **Basics:** `core/simple-prompt/run.py` (1 min) - The absolute basics
-3. **Learn:** `core/hello-world/run.py` (2 min) - RAG & parameter injection
+1. **Start here:** `core/simple-prompt/run.py` (1 min) - The absolute basics
+2. **Learn:** `core/hello-world/run.py` (2 min) - RAG & parameter injection
 4. **Explore:** `core/few-shot-classification/run.py` (3 min) - Few-shot optimization
 5. **Deep Dive:** `core/multi-objective-tradeoff/run_anthropic.py` (5 min) - Real optimization
 6. **Advance:** `advanced/ai-engineering-tasks/` - Specialized patterns
