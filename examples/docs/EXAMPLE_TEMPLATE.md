@@ -68,7 +68,7 @@ MULTI-LINE: Why it's useful, what it teaches
 
 ```
 examples/
-├── quickstart/           # 5-minute basics
+├── core/                 # Core feature examples (start here)
 ├── core-concepts/        # Fundamental features
 ├── advanced-patterns/    # Complex use cases
 ├── integrations/         # External service examples

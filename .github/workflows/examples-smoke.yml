@@ -54,12 +54,12 @@ jobs:
       run: |
         python -c "import sys; sys.path.insert(0, 'examples'); import utils.base_example"
 
-    - name: Run quickstart example
+    - name: Run smoke test example
       env:
         TRAIGENT_MOCK_LLM: "true"
         TRAIGENT_OFFLINE_MODE: "true"
       run: |
-        python examples/quickstart/01_simple_qa.py
+        python examples/core/simple-prompt/run.py
 
     - name: Run core examples smoke test
       env:
@@ -129,7 +129,7 @@ jobs:
       run: |
         pip install -e ".[dev,integrations]"
         python -c "import traigent; print('Import works')"
-        python examples/quickstart/01_simple_qa.py || true
+        python examples/core/simple-prompt/run.py || true
         echo "Quick validation passed"
 
   lint-check:
