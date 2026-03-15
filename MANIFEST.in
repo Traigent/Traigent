@@ -28,6 +28,7 @@ include traigent/py.typed
 recursive-include docs *.md
 recursive-include docs *.rst
 recursive-include docs *.txt
+prune docs/demos/node_modules
 
 # Exclude development and build artifacts
 recursive-exclude * __pycache__
@@ -71,3 +72,8 @@ exclude *.bak
 exclude *.tmp
 exclude .env*
 exclude .local*
+
+# Exclude local type-checker caches from package artifacts
+prune traigent/.mypy_cache
+prune traigent/*/.mypy_cache
+prune traigent/*/*/.mypy_cache
