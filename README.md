@@ -116,7 +116,7 @@ load_dotenv()
         "temperature": [0.1, 0.5, 0.9]                         # 🎯 Tuned Variable #2
     },
     objectives=["accuracy", "cost"],    # What to optimize for
-    # Dataset file path (relative to examples/datasets/quickstart/)
+    # Dataset file path
     evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -249,7 +249,7 @@ Traigent can inject parameters in two ways:
 
 ### TVL Specs: The Foundation Layer
 
-TVL (Traigent Validation Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
+TVL (Tunable Variable Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
 
 ```python
 @traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
@@ -498,7 +498,7 @@ pip install -e ".[all]"
 
 5. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The quickstart commands above include this export.
+> **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The commands above include this export.
 
 ---
 
