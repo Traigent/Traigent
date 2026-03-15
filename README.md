@@ -11,18 +11,18 @@ Traigent finds the best LLM parameters for your specific task — model, tempera
 
 > **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
 
-**Try it now:**
-
-```bash
-export TRAIGENT_MOCK_LLM=true
-python examples/core/simple-prompt/run.py
-```
-
 **Quick Install:**
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
 pip install -e ".[recommended]"
+```
+
+**Try it now:**
+
+```bash
+export TRAIGENT_MOCK_LLM=true
+python examples/core/simple-prompt/run.py
 ```
 
 **One decorator, two parameters, multi-objective optimization:**
