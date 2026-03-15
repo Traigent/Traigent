@@ -59,8 +59,8 @@ def my_agent(question: str) -> str:
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
 | **Try examples locally** | [Mock walkthrough](walkthrough/mock/) (8 progressive steps) | 15 min |
-| **Understand the architecture** | [Architecture Overview](#️-architecture-overview) | 5 min |
-| **Connect to Traigent Cloud** | [Cloud Setup](#️-traigent-cloud) | 5 min |
+| **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
+| **Connect to Traigent Cloud** | [Cloud Setup](#-traigent-cloud) | 5 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
 
 <details>
@@ -68,7 +68,7 @@ def my_agent(question: str) -> str:
 
 | | |
 | --- | --- |
-| **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) · [Quick Example](#-quick-example-see-tuned-variables-in-action) |
+| **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Tuned Variables](docs/user-guide/tuned_variables.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
