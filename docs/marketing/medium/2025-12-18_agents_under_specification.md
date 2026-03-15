@@ -52,7 +52,7 @@ At a high level, you define:
 - what you optimize (objectives like accuracy/cost/latency)
 - how you evaluate (a small dataset or harness)
 
-Example (simplified pseudo-code; runnable quickstarts are linked below):
+Example (simplified pseudo-code; runnable examples are linked below):
 
 ```python
 import traigent
@@ -122,6 +122,6 @@ See: `docs/api-reference/telemetry.md`
 Traigent includes mock mode so you can test the workflow without provider calls:
 
 - `export TRAIGENT_MOCK_LLM=true`
-- `python examples/quickstart/01_simple_qa.py`
+- `python examples/core/simple-prompt/run.py`
 
 Repo: https://github.com/Traigent/Traigent

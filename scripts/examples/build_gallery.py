@@ -152,7 +152,7 @@ def format_run_command(run_path: str | None) -> str:
         return ""
     cmd = f"python examples/{run_path}"
     if not run_path.startswith("integrations/"):
-        # Highlight mock flag for quickstarts
+        # Highlight mock flag for non-integration examples
         cmd = f"TRAIGENT_MOCK_LLM=true {cmd}"
     return cmd
 

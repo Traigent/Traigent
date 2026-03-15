@@ -32,7 +32,7 @@ export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 
 ---
 
-## PART 1: Installation & Quickstart Validation
+## PART 1: Installation & First Example Validation
 
 ### 1.1 Installation (Time yourself - should be <5 min)
 
@@ -65,27 +65,24 @@ python -c "import traigent; print(traigent.__version__)"
 - [ ] `traigent info` shows expected features and integrations
 - [ ] No import warnings when loading traigent module
 
-### 1.3 Quickstart Examples (Time each one)
+### 1.3 First Examples (Time each one)
 
-Run each in order, noting any issues:
+Run in order, noting any issues:
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
 
-# Example 1
-python examples/quickstart/01_simple_qa.py
+# Smoke test (simplest example)
+python examples/core/simple-prompt/run.py
 # Expected: Runs optimization, shows trials, prints best config
 # Time: _____ seconds
+```
 
-# Example 2
-python examples/quickstart/02_customer_support_rag.py
-# Expected: Runs RAG optimization
-# Time: _____ seconds
+Then follow the progressive tutorial in `walkthrough/mock/`:
 
-# Example 3
-python examples/quickstart/03_custom_objectives.py
-# Expected: Custom objective optimization
-# Time: _____ seconds
+```bash
+python walkthrough/mock/01_tuning_qa.py
+python walkthrough/mock/02_zero_code_change.py
 ```
 
 **For each example, note:**
@@ -583,10 +580,10 @@ After completing all tests, fill out this summary:
 - [ ] Version numbers consistent everywhere
 - [ ] No scary warnings during install
 
-### Quickstarts
-- [ ] All 3 quickstart examples run
+### First Examples
+- [ ] Smoke test example runs (core/simple-prompt)
 - [ ] Output is understandable
-- [ ] Total quickstart time < 10 minutes
+- [ ] Total first-example time < 10 minutes
 
 ### Documentation
 - [ ] Can create dataset from README alone
@@ -620,7 +617,7 @@ After completing all tests, fill out this summary:
 
 Traigent is **release-ready** when:
 
-1. ✅ A new user can install and run quickstarts in **under 10 minutes**
+1. ✅ A new user can install and run the first example in **under 10 minutes**
 2. ✅ Creating a custom optimization experiment is **intuitive from README alone**
 3. ✅ Error messages **guide users toward solutions** (not just "error occurred")
 4. ✅ No **silent failures** or confusing behaviors in common use cases
