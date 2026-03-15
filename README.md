@@ -40,9 +40,9 @@ python walkthrough/mock/01_tuning_qa.py
 | Goal | Resource | Time |
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
-| **Try examples locally** | [Mock walkthrough](walkthrough/mock/) (8 progressive steps) | 15 min |
 | **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
 | **Connect to Traigent Cloud** | [Cloud Setup](#-traigent-cloud) | 5 min |
+| **Try examples locally, see them on the cloud** | [Mock walkthrough](walkthrough/mock/) (8 progressive steps) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
 
 <details>
