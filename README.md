@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/branding/traigent-banner.png" alt="Traigent" width="600">
-</p>
-
 <h4 align="center">Optimize any LLM agent with one decorator</h4>
 
 <p align="center">
@@ -11,14 +7,25 @@
   <a href="https://docs.traigent.ai"><img src="https://img.shields.io/badge/docs-traigent.ai-brightgreen.svg" alt="Docs"></a>
 </p>
 
-Traigent finds the best LLM parameters for your specific task — model, temperature, prompts, RAG settings — by running controlled experiments. Add one decorator to your existing code, and Traigent handles the rest.
+Traigent finds the best LLM parameters for your specific task — model, temperature, prompts, RAG settings, and more — by running controlled experiments. Add one decorator to your existing code, and Traigent handles the rest.
 
-> **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` for development, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
+> **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
+
+**Try it now:**
+
+```bash
+export TRAIGENT_MOCK_LLM=true
+python examples/core/simple-prompt/run.py
+```
+
+**Quick Install:**
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
 pip install -e ".[recommended]"
 ```
+
+Here's the smallest useful example—one decorator, two parameters, multi-objective optimization:
 
 ```python
 import traigent
@@ -59,9 +66,6 @@ def my_agent(question: str) -> str:
 
 </details>
 
-> **Note**: Research papers and experimental code are in separate repositories:
-> [TraigentDemo](https://github.com/Traigent/TraigentDemo) (use cases, playground, demos) · [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments) (research papers)
-
 ## 🎬 See Traigent in Action
 
 > Click any demo to play the animated version.
@@ -80,8 +84,6 @@ def my_agent(question: str) -> str:
 
 ## 🏗️ Architecture Overview
 
-![Architecture Overview](docs/demos/output/architecture.svg)
-
 **How it works:**
 
 1. **Suggest**: The optimizer proposes a configuration to test
@@ -90,7 +92,7 @@ def my_agent(question: str) -> str:
 4. **Record**: Results update the optimizer's model
 5. **Continue**: Loop continues until budget/trials exhausted, then outputs results
 
-## 🚀 Quick Example: See Tuned Variables in Action
+![Architecture Overview](docs/demos/output/architecture.svg)
 
 > **Want to run this now?** First [install Traigent](#-quick-installation), then try the simplest example (no API keys needed):
 >
@@ -100,6 +102,8 @@ def my_agent(question: str) -> str:
 > ```
 >
 > See `walkthrough/mock/` for a progressive 8-step tutorial, or browse `examples/core/` for feature-specific references.
+
+## 🚀 Quick Example: See Tuned Variables in Action
 
 ```python
 import traigent
