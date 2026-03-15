@@ -50,7 +50,8 @@ python walkthrough/mock/01_tuning_qa.py
 | | |
 | --- | --- |
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
-| **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Tuned Variables](docs/user-guide/tuned_variables.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
+| **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
+| **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
 | **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
@@ -117,7 +118,7 @@ git clone https://github.com/Traigent/Traigent.git && cd Traigent
 pip install -e ".[recommended]"
 ```
 
-> Not on PyPI yet — install from source. Use `uv pip install` for faster installs.
+> Not on PyPI yet — install from source.
 
 | Feature Set | Description |
 |-------------|-------------|
