@@ -10,7 +10,7 @@ Release-ready, minimal install steps for the SDK and examples.
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
+pip install -e ".[recommended]"           # All integrations, analytics, Bayesian, visualization
 ```
 
 ### Faster path (uv)
@@ -19,7 +19,7 @@ pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 uv venv && source .venv/bin/activate
-uv pip install -e ".[integrations]"       # Same extras, faster resolver
+uv pip install -e ".[recommended]"        # Same extras, faster resolver
 ```
 
 ### PyPI vs source installs
@@ -30,11 +30,12 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 
 | Extra | What's included | Install example |
 | --- | --- | --- |
+| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install -e ".[recommended]"`** |
+| `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
 | `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
 | `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
-| `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
-| `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
+| `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
 | `test` | pytest + tooling | `pip install -e ".[test]"` |
 | `dev` | Linters + tests | `pip install -e ".[dev]"` |
 | `docs` | MkDocs tooling | `pip install -e ".[docs]"` |
@@ -46,7 +47,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 - **Run examples (no API keys):**
 
   ```bash
-  pip install -e ".[integrations]"
+  pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
   python examples/core/hello-world/run.py
   ```
@@ -54,7 +55,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 - **Develop/contribute:**
 
   ```bash
-  pip install -e ".[dev,integrations,analytics]"
+  pip install -e ".[recommended,dev]"
   TRAIGENT_MOCK_LLM=true pytest tests/ -q
   ```
 
@@ -79,9 +80,9 @@ PY
 
 ## Troubleshooting (quick fixes)
 
-- **`ModuleNotFoundError: langchain`** — install integrations: `pip install -e ".[integrations]"`.
+- **`ModuleNotFoundError: langchain`** — install recommended extras: `pip install -e ".[recommended]"`.
 - **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`). On Ubuntu desktop, you can also store keys in GNOME Keyring and run via `python3 tools/keyring_run.py` (see `docs/guides/secrets_management.md`).
-- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[integrations]"`.
+- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[recommended]"`.
 
 ---
 
