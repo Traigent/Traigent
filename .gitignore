@@ -420,10 +420,20 @@ tests/optimizer_validation/viewer/bdd_graph_data.json
 
 # Local discussion notes and experiments
 discussion_*.txt
+discussion_*.md
 DISCUSSIONS_RECOUNT_*.md
 AutoCoder_orders.txt
 old_discussions_*/
 paper_experiments/
+
+# Internal/proprietary docs (relocated to Traigent/business-strategy and Traigent/internal-docs)
+.archive/docs-internal/
+.release_review/
+.post_release_recommendation_fixes/
+docs/marketing/
+docs/reviews/what_if_*/
+scripts/project_review/
+tests/BROAD_TEST_REVIEW_*.json
 
 # Nexxen demo resources (client-specific, not for version control)
 examples/nexxen/
