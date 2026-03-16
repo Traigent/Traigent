@@ -14,10 +14,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_openai import ChatOpenAI
-
-import traigent
-from traigent import TraigentConfig
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -28,6 +24,9 @@ from utils.helpers import (
     sanitize_traigent_api_key,
 )
 from utils.scoring import token_match_score
+
+import traigent
+from traigent import TraigentConfig
 
 require_openai_key("03_parameter_mode.py")
 sanitize_traigent_api_key()

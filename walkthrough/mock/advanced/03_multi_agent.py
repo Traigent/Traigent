@@ -27,10 +27,14 @@ os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
+DATASET_PATH = str(
+    (SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()
+)
 
 # Initialize Traigent in mock mode
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Constants for mock responses
 ML_RESPONSE = "Machine learning enables computers to learn from data."
@@ -80,6 +84,18 @@ def mock_generate(
     return answer
 
 
+def _print_best_results(results: object) -> None:
+    """Print best configuration and performance in standard format."""
+    print("\n  Best Configuration Found:")
+    for key, value in results.best_config.items():
+        if isinstance(value, float):
+            print(f"    {key}: {value:.2f}")
+        else:
+            print(f"    {key}: {value}")
+    print("\n  Performance:")
+    print(f"    Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+
+
 # =============================================================================
 # Method 1: Per-parameter agent= assignment
 # =============================================================================
@@ -127,14 +143,7 @@ async def method_1_per_parameter_agent() -> None:
         algorithm="random", max_trials=8, random_seed=42
     )
 
-    print("\n  Best Configuration Found:")
-    for key, value in results.best_config.items():
-        if isinstance(value, float):
-            print(f"    {key}: {value:.2f}")
-        else:
-            print(f"    {key}: {value}")
-    print(f"\n  Performance:")
-    print(f"    Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 # =============================================================================
@@ -183,14 +192,7 @@ async def method_2_prefix_grouping() -> None:
         algorithm="random", max_trials=8, random_seed=42
     )
 
-    print("\n  Best Configuration Found:")
-    for key, value in results.best_config.items():
-        if isinstance(value, float):
-            print(f"    {key}: {value:.2f}")
-        else:
-            print(f"    {key}: {value}")
-    print(f"\n  Performance:")
-    print(f"    Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 # =============================================================================
@@ -262,14 +264,7 @@ async def method_3_explicit_agents() -> None:
         algorithm="random", max_trials=12, random_seed=42
     )
 
-    print("\n  Best Configuration Found:")
-    for key, value in results.best_config.items():
-        if isinstance(value, float):
-            print(f"    {key}: {value:.2f}")
-        else:
-            print(f"    {key}: {value}")
-    print(f"\n  Performance:")
-    print(f"    Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 async def main() -> None:
