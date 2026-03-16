@@ -10,7 +10,7 @@ Key scenarios tested:
 - High concurrency fairness and invariant preservation
 - Mixed success/failure batches
 
-Reference: /home/nimrodbu/.claude/plans/snazzy-whistling-kettle.md
+
 """
 
 from __future__ import annotations
