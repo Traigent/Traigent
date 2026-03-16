@@ -1605,7 +1605,7 @@ class OptimizationOrchestrator:
                 )
                 decision = await self._handle_vendor_pause(exc)
                 if decision == "break":
-                    self._stop_reason = "vendor_error_user_stop"
+                    self._stop_reason = "vendor_error"
                     return trial_count, "break"
 
         # Phase 10: Checkpoint logging
@@ -1924,7 +1924,7 @@ class OptimizationOrchestrator:
             except VendorPauseError as e:
                 decision = await self._handle_vendor_pause(e)
                 if decision == "break":
-                    self._stop_reason = "vendor_error_user_stop"
+                    self._stop_reason = "vendor_error"
                     break
                 continue  # User chose to resume — retry
 
