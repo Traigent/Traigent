@@ -1,6 +1,6 @@
 site_name: Traigent SDK Documentation
 site_description: Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights
-site_url: https://docs.traigent.ai
+site_url: https://github.com/Traigent/Traigent/tree/main/docs
 repo_url: https://github.com/Traigent/Traigent
 repo_name: Traigent/Traigent
 edit_uri: edit/main/docs/

@@ -1,16 +1,7 @@
-"""Regression tests for Codex security review fixes.
+"""Regression tests for past security fixes.
 
-These tests ensure the 5 security issues identified in the Codex review
-remain fixed and don't regress:
-
-1. CRITICAL: Deterministic fallback key in crypto_utils.py
-2. CRITICAL: Sensitive trial payloads logged in plaintext
-3. HIGH: ES256 tokens rejected due to RSA key size check
-4. HIGH: create_session blocks inside running event loop
-5. HIGH: Summary stats submission uses closed aiohttp session
-
-Tests are designed to catch regressions by verifying the specific
-fixes are in place.
+Tests are designed to catch regressions by verifying specific
+fixes remain in place.
 """
 
 from __future__ import annotations

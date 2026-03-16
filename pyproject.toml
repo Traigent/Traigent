@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=70.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -208,7 +208,7 @@ enterprise = [
 
 [project.urls]
 Homepage = "https://github.com/traigent/traigent-sdk"
-Documentation = "https://docs.traigent.ai"
+Documentation = "https://github.com/Traigent/Traigent/tree/main/docs"
 Repository = "https://github.com/traigent/traigent-sdk"
 "Bug Tracker" = "https://github.com/traigent/traigent-sdk/issues"
 Changelog = "https://github.com/traigent/traigent-sdk/blob/main/CHANGELOG.md"

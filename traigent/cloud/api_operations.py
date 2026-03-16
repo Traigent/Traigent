@@ -105,6 +105,9 @@ class ApiOperations:
         if not url:
             raise ValueError("URL cannot be empty") from None
 
+        # Strip whitespace to prevent CVE-2023-24329 bypass on older Python
+        url = url.strip()
+
         # Parse URL
         parsed = urlparse(url)
 
