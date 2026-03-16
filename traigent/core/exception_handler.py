@@ -165,8 +165,7 @@ class TerminalPausePrompt:
         """
         if not sys.stdin.isatty():
             logger.info(
-                "Non-interactive mode: auto-stopping at budget limit "
-                "($%.2f / $%.2f)",
+                "Non-interactive mode: auto-stopping at budget limit ($%.2f / $%.2f)",
                 accumulated,
                 limit,
             )
