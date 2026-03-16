@@ -239,7 +239,7 @@ def print_next_steps():
 
     print(f"{Colors.BOLD}Quick commands to try:{Colors.ENDC}")
     print("\n1. Run examples:")
-    print("   python examples/core/hello-world/run.py")
+    print("   python examples/core/rag-optimization/run.py")
     print("   python examples/core/multi-objective-tradeoff/run.py")
 
     print("\n2. Verify installation:")
