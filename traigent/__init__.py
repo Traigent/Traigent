@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import builtins
 import sys
+import warnings
 
 from traigent._version import get_version
 
@@ -163,6 +164,11 @@ from traigent.utils.validation import (
     validate_and_suggest,
 )
 from traigent.visualization.plots import PlotGenerator, create_quick_plot
+
+# Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
+)
 
 __all__ = [
     # Main decorator

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=70.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,19 +10,18 @@ authors = [
 ]
 description = "Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Monitoring",
@@ -42,9 +41,6 @@ dependencies = [
     "requests>=2.28.0",  # Required by Langfuse integration sync fallback
     "jsonschema>=4.0.0",
     "cryptography>=44.0.1",
-    "typing-extensions>=4.0.0; python_version<'3.11'",
-    "claude-code-sdk>=0.0.14",
-    "mcp>=1.23.0",  # CVE-2025-66416 fix (claude-code-sdk dependency)
     "backoff>=2.2.0",
     "litellm>=1.0.0",
     "rank-bm25",
@@ -124,6 +120,8 @@ visualization = [
 # Hybrid mode - external agentic service optimization via REST API
 hybrid = [
     "httpx[http2]>=0.24.0",
+    "claude-code-sdk>=0.0.14",
+    "mcp>=1.23.0",  # CVE-2025-66416 fix (claude-code-sdk dependency)
 ]
 
 # Testing dependencies
@@ -175,7 +173,6 @@ docs = [
 ]
 
 # NOTE: playground and examples dependencies moved to TraigentDemo project
-# See: REDACTED_TRAIGENT_ROOT/TraigentDemo/
 
 # Machine Learning bundle (parallel execution, advanced algorithms, multi-objective)
 # This is the recommended bundle for production ML workloads
@@ -208,11 +205,11 @@ enterprise = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/traigent/traigent-sdk"
+Homepage = "https://github.com/Traigent/Traigent"
 Documentation = "https://docs.traigent.ai"
-Repository = "https://github.com/traigent/traigent-sdk"
-"Bug Tracker" = "https://github.com/traigent/traigent-sdk/issues"
-Changelog = "https://github.com/traigent/traigent-sdk/blob/main/CHANGELOG.md"
+Repository = "https://github.com/Traigent/Traigent"
+"Bug Tracker" = "https://github.com/Traigent/Traigent/issues"
+Changelog = "https://github.com/Traigent/Traigent/blob/main/CHANGELOG.md"
 
 [project.scripts]
 traigent = "traigent.cli.main:cli"
@@ -315,12 +312,9 @@ addopts = [
     "--tb=short",
     "-n", "auto",
     "--dist", "loadgroup",
+    "-m", "not performance",
     "-v",
-    "--ignore=demos",
-    "--ignore=playground",
     "--ignore=plugins",
-    "--ignore=tests/manual_validation",
-    "--ignore=tests/legacy",
     "--ignore=tests/auto_tune",
     # JS bridge tests — require Node.js runtime, can crash terminals
     "--ignore=tests/unit/bridges",
@@ -339,6 +333,7 @@ asyncio_mode = "auto"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    "ignore:\\s*All support for the `google\\.generativeai` package has ended\\..*:FutureWarning",
 ]
 markers = [
     "unit: marks tests as unit tests",
@@ -352,6 +347,7 @@ markers = [
     "rate_limit: marks tests for rate limit handling behavior",
     "chaos: marks chaos/fault injection tests (slow, may be flaky)",
     "contract: marks contract tests against real APIs (requires credentials)",
+    "performance: marks benchmark/performance tests (excluded from default suite)",
 ]
 
 [tool.coverage.run]

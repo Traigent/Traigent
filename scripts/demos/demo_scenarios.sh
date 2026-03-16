@@ -24,7 +24,7 @@ fi
 # See: https://github.com/Traigent/TraigentDemo
 
 scenarios=(
-  "Hello World – RAG tuner"
+  "RAG Optimization – RAG tuner"
   "Prompt A/B tradeoff"
   "Structured JSON extractor"
 )
@@ -36,7 +36,7 @@ descriptions=(
 )
 
 commands=(
-  "python examples/core/hello-world/run.py"
+  "python examples/core/rag-optimization/run.py"
   "python examples/core/prompt-ab-test/run.py"
   "python examples/core/structured-output-json/run.py"
 )
@@ -48,13 +48,13 @@ real_flags=(
 )
 
 dataset_paths=(
-  "${PROJECT_ROOT}/examples/datasets/hello-world/evaluation_set.jsonl"
+  "${PROJECT_ROOT}/examples/datasets/rag-optimization/evaluation_set.jsonl"
   "${PROJECT_ROOT}/examples/datasets/prompt-ab-test/evaluation_set.jsonl"
   "${PROJECT_ROOT}/examples/datasets/structured-output-json/evaluation_set.jsonl"
 )
 
 snippet_paths=(
-  "${PROJECT_ROOT}/examples/core/hello-world/run.py"
+  "${PROJECT_ROOT}/examples/core/rag-optimization/run.py"
   "${PROJECT_ROOT}/examples/core/prompt-ab-test/run.py"
   "${PROJECT_ROOT}/examples/core/structured-output-json/run.py"
 )

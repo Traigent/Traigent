@@ -61,7 +61,7 @@ class TraceIdResolver(Protocol):
 class LangfuseOptimizationCallback(OptimizationCallback):
     """Callback that enriches trial metrics with Langfuse trace data.
 
-    Follows dependency injection pattern per CLAUDE.md:
+    Follows the project dependency injection pattern:
     - Client injected, not instantiated
     - Thread-safe for parallel trial execution (stateless per-trial ops)
     - Errors logged but don't block optimization

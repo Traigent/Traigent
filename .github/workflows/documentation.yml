@@ -40,11 +40,13 @@ jobs:
         from pathlib import Path
 
         SKIP_DIRS = {".archive", "_archived", ".release_review", ".post_release_recommendation_fixes",
-                     "node_modules", ".git", "venv", ".venv", "configs"}
+                     "node_modules", ".git", "venv", ".venv", "configs", ".claude", "local"}
 
         errors = []
         for md_file in Path(".").rglob("*.md"):
             if any(part in SKIP_DIRS for part in md_file.parts):
+                continue
+            if len(md_file.parts) > 1 and md_file.parts[0] == "docs" and md_file.parts[1] == "internal":
                 continue
             content = md_file.read_text()
             links = re.findall(r"\[([^\]]+)\]\(([^\)]+)\)", content)

@@ -11,7 +11,7 @@ examples/docs/page-inline/<page-id>/<section-id>/<example-id>/
 
 Usage:
   python scripts/extract_inline_examples.py \
-    examples/archive/docs/sections/configuration-management.html \
+    path/to/configuration-management.html \
     configuration-management
 """
 from __future__ import annotations
@@ -31,6 +31,7 @@ from traigent.utils.secure_path import (
     safe_write_text,
     validate_path,
 )
+
 
 class Node:
     def __init__(

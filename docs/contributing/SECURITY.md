@@ -96,7 +96,7 @@ from traigent.security.auth import OIDCAuthProvider
 
 oidc_settings = {
     "client_id": "your-client-id",
-    "client_secret": "your-client-secret",
+    "client_secret": "your-client-secret",  # pragma: allowlist secret
     "issuer": "https://accounts.google.com",
     "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
     "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -209,7 +209,9 @@ store.rotate_credential("DATABASE_PASSWORD", "<NEW_DATABASE_PASSWORD>")
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.10.x  | :white_check_mark: |
+| 0.9.x   | :white_check_mark: |
+| < 0.9   | :x:                |
 
 ## Reporting Security Issues
 

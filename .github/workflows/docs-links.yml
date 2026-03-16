@@ -76,7 +76,7 @@ jobs:
         for doc_file in $(find docs/ -name "*.md" 2>/dev/null || true); do
           echo "  Checking $doc_file..."
           # Check for examples references that should be updated
-          if grep -q "examples/\(learn-traigent\|use-cases\|quickstart\|shared_utils\)" "$doc_file" 2>/dev/null; then
+          if grep -q "examples/\(learn-traigent\|use-cases\|shared_utils\)" "$doc_file" 2>/dev/null; then
             echo "⚠️  Found legacy example paths in $doc_file"
           fi
         done
@@ -113,6 +113,11 @@ jobs:
     - name: Check archive integrity
       run: |
         echo "📚 Checking archive directory integrity..."
+
+        if [ ! -d "examples/archive" ]; then
+          echo "ℹ️ Archive directory not present; skipping integrity check"
+          exit 0
+        fi
 
         if [ ! -f "examples/archive/README.md" ]; then
           echo "❌ Archive overview missing"

@@ -10,7 +10,7 @@ Key scenarios tested:
 - Cost tracking updates accumulated cost
 - Unknown cost mode fallback
 
-Reference: REDACTED_HOME/.claude/plans/snazzy-whistling-kettle.md
+
 """
 
 from __future__ import annotations

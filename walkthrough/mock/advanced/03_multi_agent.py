@@ -10,18 +10,31 @@ Run with: TRAIGENT_MOCK_LLM=true python 03_multi_agent.py
 """
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from utils.mock_answers import configure_mock_notice
+
 import traigent
+from traigent import TraigentConfig
 from traigent.api.parameter_ranges import Choices, IntRange, Range
 from traigent.api.types import AgentDefinition
 
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
+DATASET_PATH = str(
+    (SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()
+)
 
 # Initialize Traigent in mock mode
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Constants for mock responses
 ML_RESPONSE = "Machine learning enables computers to learn from data."
@@ -71,6 +84,18 @@ def mock_generate(
     return answer
 
 
+def _print_best_results(results: object) -> None:
+    """Print best configuration and performance in standard format."""
+    print("\n  Best Configuration Found:")
+    for key, value in results.best_config.items():
+        if isinstance(value, float):
+            print(f"    {key}: {value:.2f}")
+        else:
+            print(f"    {key}: {value}")
+    print("\n  Performance:")
+    print(f"    Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+
+
 # =============================================================================
 # Method 1: Per-parameter agent= assignment
 # =============================================================================
@@ -78,9 +103,9 @@ def mock_generate(
 
 async def method_1_per_parameter_agent() -> None:
     """Assign agents using the agent= parameter on each Range/Choices."""
-    print("\n" + "=" * 60)
+    print("\n" + "-" * 50)
     print("Method 1: Per-parameter agent= assignment")
-    print("=" * 60)
+    print("-" * 50)
 
     @traigent.optimize(
         # Retriever agent parameters - use agent= on Range/Choices directly
@@ -118,8 +143,7 @@ async def method_1_per_parameter_agent() -> None:
         algorithm="random", max_trials=8, random_seed=42
     )
 
-    print(f"\nBest config: {results.best_config}")
-    print(f"Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 # =============================================================================
@@ -129,9 +153,9 @@ async def method_1_per_parameter_agent() -> None:
 
 async def method_2_prefix_grouping() -> None:
     """Group parameters automatically by prefix pattern."""
-    print("\n" + "=" * 60)
+    print("\n" + "-" * 50)
     print("Method 2: Prefix-based automatic grouping")
-    print("=" * 60)
+    print("-" * 50)
 
     @traigent.optimize(
         # Parameters grouped by prefix (retriever_, generator_)
@@ -168,8 +192,7 @@ async def method_2_prefix_grouping() -> None:
         algorithm="random", max_trials=8, random_seed=42
     )
 
-    print(f"\nBest config: {results.best_config}")
-    print(f"Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 # =============================================================================
@@ -179,9 +202,9 @@ async def method_2_prefix_grouping() -> None:
 
 async def method_3_explicit_agents() -> None:
     """Define agents explicitly with full control over parameters and measures."""
-    print("\n" + "=" * 60)
+    print("\n" + "-" * 50)
     print("Method 3: Explicit AgentDefinition")
-    print("=" * 60)
+    print("-" * 50)
 
     # Define agents explicitly
     retriever_agent = AgentDefinition(
@@ -241,24 +264,28 @@ async def method_3_explicit_agents() -> None:
         algorithm="random", max_trials=12, random_seed=42
     )
 
-    print(f"\nBest config: {results.best_config}")
-    print(f"Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    _print_best_results(results)
 
 
 async def main() -> None:
-    print("Traigent Example: Multi-Agent Optimization")
-    print("Demonstrates three methods for grouping parameters by agent")
+    print("Traigent Advanced: Multi-Agent Optimization")
+    print("=" * 50)
+    configure_mock_notice("advanced/03_multi_agent.py")
+    print("Demonstrates methods for grouping parameters by agent.")
 
     await method_1_per_parameter_agent()
     # Method 2 (prefix-based) is commented out due to SDK validation requirements
     # await method_2_prefix_grouping()
     await method_3_explicit_agents()
 
-    print("\n" + "=" * 60)
+    print("\n" + "-" * 50)
     print("Summary: Both methods achieve the same goal -")
     print("grouping parameters by agent for multi-agent experiments.")
-    print("=" * 60)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
