@@ -2,15 +2,17 @@
 """Generate the Examples gallery pages from catalog metadata.
 
 This script reads ``examples/catalog.yaml`` and renders the landing page
-``examples/docs/index.html``. All example links, run commands, and dataset
-references flow from the catalog so the site stays consistent with the
-directory structure.
+``examples/gallery/index.html`` plus the generated core example detail pages.
+All example links, run commands, and dataset references flow from the catalog
+so the site stays consistent with the directory structure.
 """
 
 from __future__ import annotations
 
 import argparse
 import html
+import re
+import sys
 import textwrap
 from collections import defaultdict
 from pathlib import Path
@@ -18,9 +20,18 @@ from typing import Any
 
 import yaml
 
+# Ensure sibling modules are importable regardless of cwd.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from example_detail_pages import _RAW_FILE_RE
+from example_detail_pages import _sort_key as catalog_sort_key  # noqa: E402
+from example_detail_pages import generate_detail_pages
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = REPO_ROOT / "examples" / "catalog.yaml"
-OUTPUT_PATH = REPO_ROOT / "examples" / "docs" / "index.html"
+OUTPUT_PATH = REPO_ROOT / "examples" / "gallery" / "index.html"
 
 # Order and labels used for navigation
 CATEGORY_CONFIG = {
@@ -112,7 +123,7 @@ tvl-measure-validate
             </article>
         </div>
         <div class="tvl-footer">
-            <p>TVL currently lives in <code>TraigentPaper/tvl</code>. Watch release notes or ping the platform team to join the private beta.</p>
+            <p>TVL is under active development. Watch the release notes for availability updates.</p>
         </div>
     </section>
     """
@@ -171,14 +182,14 @@ def render_card(entry: dict[str, Any]) -> str:
     doc_sections = entry.get("docs_sections") or []
 
     primary_link = None
-    if docs_ref:
+    if docs_ref and not _RAW_FILE_RE.search(docs_ref):
         primary_link = docs_ref if docs_ref.startswith("http") else f"{docs_ref}"
     elif entry.get("run"):
         # Link to the example directory index if present
         parts = entry["run"].split("/")
         if len(parts) >= 3:
-            # e.g., core/rag-optimization/run.py -> core/rag-optimization/index.html
-            primary_link = "/".join(["../..", "examples"] + parts[:2] + ["index.html"])
+            # e.g., core/rag-optimization/run.py -> ../core/rag-optimization/index.html
+            primary_link = "/".join([".."] + parts[:2] + ["index.html"])
     button_html = ""
     if primary_link:
         button_html = (
@@ -230,11 +241,14 @@ def render_card(entry: dict[str, Any]) -> str:
         for ref in doc_sections:
             if isinstance(ref, dict):
                 label = html.escape(ref.get("label") or "Documentation")
-                href = html.escape(ref.get("href") or "#")
+                raw_href = ref.get("href") or "#"
             else:
                 label = html.escape(str(ref))
-                href = label
-            items.append(f'<li><a href="{href}">{label}</a></li>')
+                raw_href = str(ref)
+            if _RAW_FILE_RE.search(raw_href):
+                items.append(f'<li><span class="repo-ref">{label}</span></li>')
+            else:
+                items.append(f'<li><a href="{html.escape(raw_href)}">{label}</a></li>')
         docs_sections_html = textwrap.dedent(
             f"""
             <div class="docs-block" aria-label="Related docs">
@@ -369,6 +383,7 @@ def build_html(entries: list[dict[str, Any]]) -> str:
                 .docs-block a {{ color: var(--primary); text-decoration: none; }}
                 .docs-block a:hover {{ text-decoration: underline; }}
                 .docs-heading {{ font-weight: 600; color: var(--text-secondary); }}
+                .repo-ref {{ color: var(--text-secondary); font-style: italic; }}
 .coming-soon .example-card {{ border-style: dashed; }}
 .coming-soon-badge {{ display: inline-block; background: rgba(96,165,250,0.15); color: #60a5fa; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }}
 .tvl-grid {{ display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-top: 12px; }}
@@ -400,6 +415,37 @@ def build_html(entries: list[dict[str, Any]]) -> str:
     ).strip()
 
 
+def validate_catalog(entries: list[dict[str, Any]]) -> list[str]:
+    """Check catalog entries for missing targets. Returns a list of warnings/errors."""
+    issues: list[str] = []
+    examples_dir = REPO_ROOT / "examples"
+    for entry in entries:
+        slug = entry.get("slug") or ""
+        category = entry.get("category") or "core"
+        # Allow an explicit ``dir`` override for entries whose slug
+        # differs from the on-disk directory name.
+        dir_name = entry.get("dir") or slug
+        # Check that the example directory exists
+        example_dir = examples_dir / category / dir_name
+        if not example_dir.is_dir():
+            issues.append(f"ERROR: [{slug}] directory not found: {example_dir.relative_to(REPO_ROOT)}")
+        # Check run target
+        run_path = entry.get("run")
+        if run_path and not (examples_dir / run_path).exists():
+            issues.append(f"ERROR: [{slug}] run target missing: examples/{run_path}")
+        # Check datasets
+        for ds in entry.get("datasets") or []:
+            if not (examples_dir / ds).exists():
+                issues.append(f"WARN:  [{slug}] dataset not found: examples/{ds}")
+        # Flag raw .md/.yml doc hrefs (informational)
+        for ref in entry.get("docs_sections") or []:
+            href = ref.get("href", "") if isinstance(ref, dict) else str(ref)
+            if _RAW_FILE_RE.search(href):
+                label = ref.get("label", href) if isinstance(ref, dict) else href
+                issues.append(f"INFO:  [{slug}] docs_sections href is a raw repo file (rendered as label): {label}")
+    return issues
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate examples gallery page.")
     parser.add_argument(
@@ -414,13 +460,32 @@ def main() -> None:
         default=OUTPUT_PATH,
         help="Destination HTML path.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help="Fail on any validation errors (not just warnings).",
+    )
     args = parser.parse_args()
 
     entries = load_catalog(args.catalog)
+
+    # --- Build-time validation ---
+    issues = validate_catalog(entries)
+    for issue in issues:
+        print(issue)
+    errors = [i for i in issues if i.startswith("ERROR:")]
+    if errors and args.strict:
+        raise SystemExit(f"Validation failed with {len(errors)} error(s). Use --strict=false to continue.")
+    elif errors:
+        print(f"  ({len(errors)} error(s) found — pass --strict to abort on errors)")
+
     html_content = build_html(entries)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(html_content, encoding="utf-8")
+    detail_pages = generate_detail_pages(REPO_ROOT, entries)
     print(f"Wrote gallery to {args.output}")
+    print(f"Generated {len(detail_pages)} detail pages under examples/core/")
 
 
 if __name__ == "__main__":

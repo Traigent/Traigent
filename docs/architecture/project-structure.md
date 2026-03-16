@@ -49,13 +49,14 @@ Unit, integration, e2e, security, and performance suites.
 Documentation content:
 - `getting-started/` quickstart and install
 - `user-guide/` how-to guides
+- `examples/` canonical example guides and navigation docs
 - `api-reference/` API docs
 - `architecture/` design docs
-- `marketing/` marketing materials and content calendars
-- `feature_matrices/`, `traceability/`, `planned_features/`, `plans/`
+- `guides/`, `operations/`, `testing/` practitioner docs
+- `feature_matrices/`, `traceability/`, `internal/`, `reviews/`
 
 ### `/examples/`
-Usage examples and the Examples Navigator (`examples/index.html`).
+Usage examples, datasets, and the browser gallery assets (`examples/gallery/`).
 
 ### `/walkthrough/`
 Interactive step-by-step tutorials with datasets.

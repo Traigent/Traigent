@@ -71,30 +71,37 @@ runtime.
 sudo apt install libsecret-tools
 ```
 
-### Import secrets from an existing `.env` file (one-time per machine)
+### Store one secret (one-time per machine)
 
-This repository includes helper tooling that stores secrets under:
-`project=<project>, name=<ENV_VAR_NAME>`.
+`libsecret-tools` exposes `secret-tool`, which writes to GNOME Keyring /
+Secret Service directly:
 
 ```bash
-python3 tools/keyring_import_env.py --env-file walkthrough/real/.env --project traigent
+printf '%s' "$OPENAI_API_KEY" | \
+  secret-tool store --label='Traigent OPENAI_API_KEY' project traigent name OPENAI_API_KEY
 ```
 
-This keeps non-secrets (URLs, flags) out of the keyring by default; pass `--all`
-to store everything, or use `--include VAR_NAME` for an explicit list.
+Repeat for any other secret you want to keep out of shell history.
 
-### Run commands with secrets loaded (without printing them)
+### Load secrets into the current shell
 
 ```bash
-python3 tools/keyring_run.py --project traigent --vars GROQ_API_KEY --require -- \
-  python3 examples/tvl/reusable_safety/run_demo.py --real-llm
+export OPENAI_API_KEY="$(secret-tool lookup project traigent name OPENAI_API_KEY)"
+export ANTHROPIC_API_KEY="$(secret-tool lookup project traigent name ANTHROPIC_API_KEY)"
+```
+
+### Run commands with secrets loaded
+
+```bash
+export GROQ_API_KEY="$(secret-tool lookup project traigent name GROQ_API_KEY)"
+python3 examples/tvl/reusable_safety/run_demo.py --real-llm
 ```
 
 Notes:
-- `keyring_run.py` only fills variables that are missing from `os.environ`, so it
-  works alongside existing `.env`/CI setups.
-- For shared rotation/auditing/revocation, prefer a real secrets manager (AWS
-  Secrets Manager / Vault / Azure Key Vault / GCP Secret Manager).
+- `secret-tool lookup ...` returns an empty string if a key is missing, so add
+  your own guardrails in wrapper scripts if you require strict failure.
+- For shared rotation, auditing, and revocation, prefer a real secrets manager
+  (AWS Secrets Manager / Vault / Azure Key Vault / GCP Secret Manager).
 
 ## CI / Automation Workflow
 

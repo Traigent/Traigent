@@ -161,8 +161,8 @@ declare -a ADVANCED_EXAMPLES=(
 
 # Docs examples - documentation inline (only those with runtime mock checks)
 declare -a DOCS_EXAMPLES=(
-    "docs/page-inline/core-concepts/ex01-configuration-spaces/run.py"
-    "docs/page-inline/core-concepts/ex02-objectives-metrics/run.py"
+    "gallery/page-inline/core-concepts/ex01-configuration-spaces/run.py"
+    "gallery/page-inline/core-concepts/ex02-objectives-metrics/run.py"
 )
 
 # Walkthrough examples - tutorial series

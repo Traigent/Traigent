@@ -16,7 +16,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from inspect import getattr_static
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.bridges.js_bridge import (
     JSBridge,
@@ -49,6 +50,9 @@ class JSEvaluatorConfig:
     js_module: str
     js_function: str = "runTrial"
     js_timeout: float = 300.0
+    js_use_npx: bool = True
+    js_runner_path: str | None = None
+    js_node_executable: str = "node"
     experiment_run_id: str | None = None
 
 
@@ -81,6 +85,9 @@ class JSEvaluator(BaseEvaluator):
         js_module: str,
         js_function: str = "runTrial",
         js_timeout: float = 300.0,
+        js_use_npx: bool = True,
+        js_runner_path: str | None = None,
+        js_node_executable: str = "node",
         experiment_run_id: str | None = None,
         process_pool: JSProcessPool | None = None,
         **kwargs: Any,
@@ -91,6 +98,9 @@ class JSEvaluator(BaseEvaluator):
             js_module: Path to the JS module containing the trial function.
             js_function: Name of the exported function to call.
             js_timeout: Timeout for trial execution in seconds.
+            js_use_npx: Whether to invoke the JS runner via `npx`.
+            js_runner_path: Explicit path to the JS runner script.
+            js_node_executable: Node.js executable for explicit runner paths.
             experiment_run_id: ID of the experiment run for trial tracking.
             process_pool: Optional process pool for parallel execution.
                 If provided, trials will be executed via the pool instead of
@@ -102,6 +112,9 @@ class JSEvaluator(BaseEvaluator):
             js_module=js_module,
             js_function=js_function,
             js_timeout=js_timeout,
+            js_use_npx=js_use_npx,
+            js_runner_path=js_runner_path,
+            js_node_executable=js_node_executable,
             experiment_run_id=experiment_run_id,
         )
         self._bridge: JSBridge | None = None
@@ -115,6 +128,9 @@ class JSEvaluator(BaseEvaluator):
                 module_path=self._js_config.js_module,
                 function_name=self._js_config.js_function,
                 trial_timeout_seconds=self._js_config.js_timeout,
+                use_npx=self._js_config.js_use_npx,
+                runner_path=self._js_config.js_runner_path,
+                node_executable=self._js_config.js_node_executable,
             )
             self._bridge = JSBridge(bridge_config)
             await self._bridge.start()
@@ -176,6 +192,36 @@ class JSEvaluator(BaseEvaluator):
             errors=[error],
         )
 
+    @staticmethod
+    def _lease_remaining(sample_lease: SampleBudgetLease) -> float:
+        """Return remaining samples from either method- or property-style leases."""
+        try:
+            remaining = getattr_static(sample_lease, "remaining")
+        except AttributeError:
+            return 0.0
+        if callable(remaining):
+            return float(sample_lease.remaining())
+        return float(remaining)
+
+    @staticmethod
+    def _consume_lease(sample_lease: SampleBudgetLease, count: int) -> None:
+        """Consume samples on either the production lease API or lightweight mocks."""
+        if count <= 0:
+            return
+        try:
+            try_take = getattr_static(sample_lease, "try_take")
+        except AttributeError:
+            try_take = None
+        if callable(try_take):
+            sample_lease.try_take(count)
+            return
+        try:
+            consume = getattr_static(sample_lease, "consume")
+        except AttributeError:
+            consume = None
+        if callable(consume):
+            cast(Any, sample_lease).consume(count)
+
     def _convert_js_result(
         self,
         result: JSTrialResult,
@@ -187,7 +233,7 @@ class JSEvaluator(BaseEvaluator):
         if result.status == "completed":
             consumed = len(indices)
             if sample_lease is not None:
-                sample_lease.try_take(consumed)
+                self._consume_lease(sample_lease, consumed)
 
             aggregated_metrics = {
                 k: float(v)
@@ -252,7 +298,7 @@ class JSEvaluator(BaseEvaluator):
         # Build dataset subset based on sample budget
         dataset_size = len(dataset)
         if sample_lease is not None:
-            available = min(int(sample_lease.remaining()), dataset_size)
+            available = min(int(self._lease_remaining(sample_lease)), dataset_size)
             indices = list(range(available))
         else:
             indices = list(range(dataset_size))

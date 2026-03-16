@@ -47,7 +47,7 @@ examples/
 |  `- bedrock/
 |
 |- datasets/
-|- docs/
+|- gallery/
 |- templates/
 |- utils/
 `- tvl/
@@ -81,4 +81,4 @@ python examples/core/multi-objective-tradeoff/run_anthropic.py
 - Every example notes its dataset under `examples/datasets/<example>/`.
 - Copy an example folder into your project to bootstrap a workflow.
 
-Need more? See `EXAMPLES_GUIDE.md` or `TROUBLESHOOTING.md`.
+Need more? See [Examples Guide](README.md) or [Troubleshooting](TROUBLESHOOTING.md).

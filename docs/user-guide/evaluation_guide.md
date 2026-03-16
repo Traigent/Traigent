@@ -122,7 +122,7 @@ Tips:
 - To keep all artifacts local and writable in restricted environments, set `TRAIGENT_RESULTS_FOLDER` to a project path:
   - `export TRAIGENT_RESULTS_FOLDER="./.traigent_local"`
 - The Examples Navigator pages work from `file://`, but some browsers block `fetch()` on local files. Serve via HTTP to avoid CORS:
-  - `python -m http.server -d examples 8000` → open http://localhost:8000/
+  - `python -m http.server 8000` → open http://localhost:8000/examples/
   - On “Getting Started”, a built-in inline fallback shows demo results even on file://
 
 ## Creating Evaluation Datasets
@@ -380,6 +380,6 @@ def qa_system(question, temperature=0.5, max_tokens=100):
 
 ## Next Steps
 
-- [Custom Evaluator Patterns](../../examples/docs/API_PATTERNS.md)
+- [Custom Evaluator Patterns](../../docs/examples/API_PATTERNS.md)
 - [Dataset Creation Tools](../../examples/datasets/)
 - [Troubleshooting Guide](../README.md#troubleshooting)

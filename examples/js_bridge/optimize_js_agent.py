@@ -16,7 +16,8 @@ The JS agent handles:
 - Computing metrics per trial
 
 Prerequisites:
-1. Build the JS demo: cd ../../../traigent-js/demos/agent-app && npm run build
+1. Provide a built JS trial module via TRAIGENT_JS_MODULE, or keep a sibling
+   `traigent-js` checkout with the demo built under `demos/agent-app/dist/`
 2. Set environment: export TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true
 3. Run: python optimize_js_agent.py
 
@@ -35,15 +36,21 @@ from traigent.api.decorators import ExecutionOptions
 # Initialize Traigent in edge_analytics mode (local execution with analytics)
 traigent.initialize(execution_mode="edge_analytics")
 
-# Path to the compiled JS module (relative to this file)
-JS_MODULE_PATH = str(
-    Path(__file__).parent.parent.parent.parent
+# Path to the compiled JS module (override with TRAIGENT_JS_MODULE)
+DEFAULT_JS_MODULE_PATH = (
+    Path(__file__).resolve().parents[3]
     / "traigent-js"
     / "demos"
     / "agent-app"
     / "dist"
     / "run-trial.js"
 )
+JS_MODULE_PATH = os.getenv("TRAIGENT_JS_MODULE", str(DEFAULT_JS_MODULE_PATH))
+DEFAULT_JS_RUNNER_PATH = (
+    Path(__file__).resolve().parents[3] / "traigent-js" / "dist" / "cli" / "runner.js"
+)
+JS_RUNNER_PATH = os.getenv("TRAIGENT_JS_RUNNER", str(DEFAULT_JS_RUNNER_PATH))
+USE_NPX = not os.path.exists(JS_RUNNER_PATH)
 
 # Create a simple dataset file for the demo
 DATASET_PATH = Path(__file__).parent / "sentiment_dataset.jsonl"
@@ -99,6 +106,8 @@ create_demo_dataset()
         js_function="runTrial",  # Exported function name
         js_timeout=60.0,  # 60 second timeout per trial
         js_parallel_workers=2,  # Run 2 Node.js processes in parallel
+        js_use_npx=USE_NPX,
+        js_runner_path=None if USE_NPX else JS_RUNNER_PATH,
     ),
     # Injection mode must be PARAMETER for JS runtime
     injection={"injection_mode": "parameter"},
@@ -126,12 +135,14 @@ async def main():
     # Check if JS module exists
     if not os.path.exists(JS_MODULE_PATH):
         print(f"\nJS module not found at: {JS_MODULE_PATH}")
-        print("\nTo build the JS demo:")
-        print("  cd ../../../traigent-js/demos/agent-app")
+        print("\nSet TRAIGENT_JS_MODULE to a compiled run-trial.js file, or build")
+        print("the companion JS demo in a sibling ../traigent-js checkout:")
+        print("  cd ../traigent-js/demos/agent-app")
         print("  npm install && npm run build")
         return
 
     print(f"\nJS Module: {JS_MODULE_PATH}")
+    print(f"JS Runner: {'npx traigent-js' if USE_NPX else JS_RUNNER_PATH}")
     print(f"Dataset: {DATASET_PATH}")
     print("\nConfiguration Space:")
     print("  Models:      gpt-3.5-turbo, gpt-4o-mini, gpt-4o")

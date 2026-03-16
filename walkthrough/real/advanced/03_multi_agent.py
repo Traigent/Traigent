@@ -20,7 +20,7 @@ from traigent.api.types import AgentDefinition
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / "simple_questions.jsonl").resolve())
+DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
 
 # Check for API key before initialization
 if not os.getenv("OPENAI_API_KEY"):

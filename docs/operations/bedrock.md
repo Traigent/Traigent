@@ -1,6 +1,7 @@
-# AWS Bedrock Operations Guide (Experiments)
+# AWS Bedrock Operations Guide
 
-This guide outlines a minimal setup to run paper experiments against AWS Bedrock without deploying any server components.
+This guide outlines the current Bedrock validation surfaces that ship in this
+repository.
 
 ## Prerequisites
 - Bedrock enabled in your AWS account and region (e.g., `us-east-1`).
@@ -34,42 +35,26 @@ Ensure you installed integration dependencies:
 pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
 ```
 
-## Smoke Tests
-
-Run the KILT case study with Bedrock:
+## Validation Checks
 ```bash
-# Ensure a single trial and a tiny dataset subset if needed to keep costs low
-python paper_experiments/case_study_kilt/run_case_study.py \
-  --real-mode on --provider bedrock \
-  --model claude-3-sonnet \
-  --temperature 0.3 \
-  --trials 1 --parallel-trials 1
+pytest -q tests/unit/integrations/test_cloud_plugins.py -o addopts='' -k bedrock
+pytest -q tests/unit/integrations/test_bedrock_client.py -o addopts=''
 ```
 
-Run the FEVER case study with Bedrock:
+## Minimal Real Run
+
+With AWS credentials configured, you can exercise the shipped Bedrock example:
 
 ```bash
-python paper_experiments/case_study_fever/run_case_study.py \
-  --mock-mode off --provider bedrock \
-  --trials 1 --parallel-trials 1
+python examples/integrations/bedrock/bedrock_hello.py
 ```
-
-Run the Spider case study with Bedrock:
-
-```bash
-python paper_experiments/case_study_spider/run_case_study.py \
-  --mock-mode off --provider bedrock \
-  --trials 1 --parallel-trials 1
-```
-
-Note: use `--provider bedrock` in the experiment scripts above.
 
 If the Bedrock path is selected, the pipeline will route through `traigent.integrations.bedrock_client.BedrockChatClient`.
 
 ## Troubleshooting
 - `AccessDeniedException`: Verify model access is granted in Bedrock console and IAM policy includes `InvokeModel*`.
 - `RegionError`: Confirm `AWS_REGION` is a Bedrock-enabled region and matches your model access region.
-- `ImportError: boto3`: Run `pip install boto3 botocore` or install `requirements-integrations.txt` bundle.
+- `ImportError: boto3`: Run `pip install boto3 botocore` or install the `integrations` extra.
 
 ## Notes
 - Costs: Start with small max tokens and low trial counts. Use AWS Budgets/Cost Anomaly detection alerts.

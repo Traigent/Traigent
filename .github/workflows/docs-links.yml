@@ -159,7 +159,7 @@ jobs:
         violations=0
 
         # Check main documentation files (excluding archive)
-        for doc in README.md examples/README.md examples/docs/*.md docs/**/*.md; do
+        for doc in README.md examples/README.md docs/examples/*.md docs/**/*.md; do
           if [ -f "$doc" ] && [[ "$doc" != *"archive"* ]]; then
             for legacy_path in "${legacy_paths[@]}"; do
               if grep -q "$legacy_path" "$doc" 2>/dev/null; then

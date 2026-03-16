@@ -356,7 +356,7 @@ except SessionError as e:
 ```python
 # Configure retry behavior
 client = TraigentCloudClient(
-    api_key="your-key",
+    api_key="your-key",  # pragma: allowlist secret
     max_retries=5,
     timeout=60.0
 )
@@ -372,7 +372,7 @@ await asyncio.sleep(1.0)  # Add delay between trials if needed
 
 ## Next Steps
 
-1. Explore the [examples catalog](../../examples/docs/START_HERE.md)
+1. Explore the [examples catalog](../../docs/examples/START_HERE.md)
 2. Learn about [agent-based optimization](./agent_optimization.md)
 3. Read the [API reference](../api-reference/interactive_optimizer.md)
 4. Join our [community forum](https://community.traigent.ai) for support

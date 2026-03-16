@@ -53,21 +53,14 @@ except ImportError as e:
     sys.exit(1)
 
 # Import local components
-from context_config import (
-    CONTEXT_ENGINEERING_SEARCH_SPACE,
-    create_context_config,
-)
+from context_config import CONTEXT_ENGINEERING_SEARCH_SPACE, create_context_config
 from dataset import (
     RAGDataset,
     analyze_retrieval_quality,
-    chunk_documents,
     create_rag_dataset,
     generate_baseline_configs,
 )
-from evaluator import (
-    evaluate_answer_quality,
-    retrieve_context,
-)
+from evaluator import evaluate_answer_quality, retrieve_context
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -100,13 +93,6 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
         # Create config from parameters
         config = create_context_config(**config_params)
 
-        # Chunk documents based on configuration
-        chunks = chunk_documents(
-            dataset.documents,
-            chunk_size=config.chunk_size,
-            overlap=config.chunk_overlap,
-        )
-
         # Track metrics across all queries
         answer_qualities = []
         retrieval_metrics = []
@@ -118,23 +104,24 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
                 start_time = time.time()
 
                 # Retrieve context using current configuration
-                retrieved_chunks = retrieve_context(
+                context_result = retrieve_context(
                     query=query.question,
-                    chunks=chunks,
                     config=config,
-                    query_metadata=query.metadata,
+                    documents=dataset.documents,
                 )
 
                 # Evaluate answer quality
-                quality_score = evaluate_answer_quality(
-                    query=query, retrieved_chunks=retrieved_chunks, config=config
+                quality_metrics = evaluate_answer_quality(
+                    context=context_result["context"],
+                    query=query.question,
                 )
+                quality_score = quality_metrics["overall_quality"]
 
                 answer_qualities.append(quality_score)
 
                 # Analyze retrieval quality
                 retrieval_quality = analyze_retrieval_quality(
-                    retrieved_chunks=retrieved_chunks,
+                    retrieved_chunks=context_result["retrieved_chunks"],
                     query=query,
                     documents=dataset.documents,
                 )
@@ -145,9 +132,7 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
                 latencies.append(latency)
 
                 # Calculate cost (simplified - tokens * price per token)
-                context_tokens = sum(
-                    len(chunk.content.split()) * 1.3 for chunk in retrieved_chunks
-                )
+                context_tokens = context_result["token_count"]
                 cost = context_tokens * 0.000001  # Simplified pricing
                 costs.append(cost)
 
