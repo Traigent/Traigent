@@ -2,9 +2,7 @@ name: Typed Session Smoke
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "20 2 * * *"
-
+  
 jobs:
   typed-session-smoke:
     runs-on: ubuntu-latest
