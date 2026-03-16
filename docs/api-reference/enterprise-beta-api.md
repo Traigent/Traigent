@@ -288,6 +288,4 @@ Examples:
 - `EXPORT_STORAGE_FAILED`
 
 ## Related Documents
-- [enterprise_beta_execution_plan.md](../feature_matrices/enterprise_beta_execution_plan.md)
-- [enterprise_beta_execution_tracker.md](../feature_matrices/enterprise_beta_execution_tracker.md)
-- [enterprise_beta_threat_model.md](../architecture/enterprise_beta_threat_model.md)
+Related planning and threat-model documents are maintained outside this public repository.
