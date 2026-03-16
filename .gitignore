@@ -452,3 +452,5 @@ nvidia/
 .codesync.yml
 MAINTENANCE.md
 tools/
+manual_validation/
+scripts/project_review/

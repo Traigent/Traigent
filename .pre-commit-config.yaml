@@ -29,7 +29,7 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        exclude: .*\.lock$|package-lock\.json$|.*\.example$
+        exclude: .*\.lock$|package-lock\.json$|.*\.example$|\.secrets\.baseline$|\.venv/
 
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks

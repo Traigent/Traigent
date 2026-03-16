@@ -27,7 +27,7 @@ class TestSessionExpiryAndRefresh:
     @pytest.mark.asyncio
     async def test_session_recreated_after_expiry(self):
         """Test that expired sessions are detected and recreated."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track session creation
         session_creations = []
@@ -75,7 +75,7 @@ class TestSessionExpiryAndRefresh:
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):
         """Test token refresh when receiving 401 Unauthorized."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track token refresh attempts
         token_refresh_attempts = []
@@ -148,7 +148,7 @@ class TestSessionExpiryAndRefresh:
     @pytest.mark.asyncio
     async def test_session_invalidation_recovery(self):
         """Test recovery from server-side session invalidation."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         session_recreations = 0
         request_attempts = 0
@@ -227,7 +227,7 @@ class TestSessionExpiryAndRefresh:
     @pytest.mark.asyncio
     async def test_concurrent_token_refresh(self):
         """Test that concurrent requests handle token refresh correctly."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track refresh operations
         refresh_operations = []
@@ -296,8 +296,8 @@ class TestAuthenticationErrorRecovery:
     @pytest.mark.asyncio
     async def test_recovery_from_invalid_api_key(self):
         """Test recovery when API key becomes invalid."""
-        invalid_key = "tg_invalid_key"
-        valid_key = "tg_" + "b" * 61
+        invalid_key = "tg_invalid_key"  # pragma: allowlist secret
+        valid_key = "tg_" + "b" * 61  # pragma: allowlist secret
 
         error_responses = []
 
@@ -371,7 +371,7 @@ class TestAuthenticationErrorRecovery:
     @pytest.mark.asyncio
     async def test_auth_service_outage_recovery(self):
         """Test recovery when authentication service is temporarily unavailable."""
-        api_key = "tg_" + "c" * 61
+        api_key = "tg_" + "c" * 61  # pragma: allowlist secret
 
         auth_attempts = 0
 
@@ -419,7 +419,7 @@ class TestAuthenticationErrorRecovery:
     @pytest.mark.asyncio
     async def test_corrupted_token_recovery(self):
         """Test recovery from corrupted or malformed tokens."""
-        api_key = "tg_" + "d" * 61
+        api_key = "tg_" + "d" * 61  # pragma: allowlist secret
 
         token_generation_attempts = 0
 
@@ -520,7 +520,7 @@ class TestBackendClientAuthLifecycle:
                 # But for direct calls in methods, we need to handle differently
                 # This is a workaround for the bug in the implementation
                 return {
-                    "X-API-Key": "fallback-key",  # Use fallback format
+                            "X-API-Key": "fallback-key",  # pragma: allowlist secret
                     "X-Traigent-Client": "backend-test",
                 }
             else:
@@ -597,18 +597,18 @@ class TestBackendClientAuthLifecycle:
                         mock_auth_instance = Mock()
                         mock_auth_instance.get_headers = mock_get_headers
                         mock_auth_instance.api_key = (
-                            "fallback-key"  # Set api_key for fallback
+                            "fallback-key"  # pragma: allowlist secret
                         )
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="fallback-key", backend_config=config
+                            api_key="fallback-key", backend_config=config  # pragma: allowlist secret
                         )
                         # Set proper nested structure for auth_manager.auth
                         client.auth_manager = Mock()
                         client.auth_manager.auth = mock_auth_instance
                         client.auth_manager.auth.api_key = (
-                            "fallback-key"  # Also set on auth object
+                            "fallback-key"  # pragma: allowlist secret
                         )
                         # Also set client.auth for backwards compatibility
                         client.auth = mock_auth_instance
@@ -716,13 +716,13 @@ class TestBackendClientAuthLifecycle:
                         ]
 
                         client_1 = BackendIntegratedClient(
-                            api_key="key-1", backend_config=config_1
+                            api_key="key-1", backend_config=config_1  # pragma: allowlist secret
                         )
                         client_1.auth_manager.auth = mock_auth_instance_1
                         client_1.auth = mock_auth_instance_1
 
                         client_2 = BackendIntegratedClient(
-                            api_key="key-2", backend_config=config_2
+                            api_key="key-2", backend_config=config_2  # pragma: allowlist secret
                         )
                         client_2.auth_manager.auth = mock_auth_instance_2
                         client_2.auth = mock_auth_instance_2
@@ -741,10 +741,12 @@ class TestBackendClientAuthLifecycle:
                         require("Authorization" in headers_1)
                         require("Bearer client-1-token" in headers_1["Authorization"])
 
-                        # Client 2 should have fallback auth
+                        # Client 2 should fall back to the explicit API key when
+                        # auth header generation fails.
                         headers_2 = session_data[1]["headers"]
                         require("Content-Type" in headers_2)
-                        require("X-API-Key" not in headers_2)
+                        require(headers_2.get("X-API-Key") == "key-2")
+                        require(headers_2.get("Authorization") == "Bearer key-2")
 
                         # Verify appropriate auth calls were made
                         require("client_1_auth" in auth_calls)
@@ -757,7 +759,7 @@ class TestAdvancedAuthScenarios:
     @pytest.mark.asyncio
     async def test_auth_during_high_error_rate(self):
         """Test authentication behavior during periods of high error rates."""
-        api_key = "tg_" + "e" * 61
+        api_key = "tg_" + "e" * 61  # pragma: allowlist secret
 
         request_count = 0
         success_threshold = 8  # Succeed after 8th request
@@ -830,7 +832,7 @@ class TestAdvancedAuthScenarios:
     @pytest.mark.asyncio
     async def test_authentication_under_memory_pressure(self):
         """Test authentication behavior under simulated memory pressure."""
-        api_key = "tg_" + "f" * 61
+        api_key = "tg_" + "f" * 61  # pragma: allowlist secret
 
         # Track memory-sensitive operations
         large_objects_created = []
@@ -887,7 +889,7 @@ class TestAdvancedAuthScenarios:
     @pytest.mark.asyncio
     async def test_auth_header_encoding_edge_cases(self):
         """Test authentication with various header encoding scenarios."""
-        api_key = "tg_" + "g" * 61
+        api_key = "tg_" + "g" * 61  # pragma: allowlist secret
 
         # Test different encoding scenarios
         encoding_scenarios = [
