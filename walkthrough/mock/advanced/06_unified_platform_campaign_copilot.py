@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover - optional convenience import
         return False
 
 import traigent
+from traigent import TraigentConfig
 from traigent.integrations.observability.workflow_traces import (
     WorkflowEdge,
     WorkflowGraphPayload,
@@ -50,8 +51,10 @@ from traigent.integrations.observability.workflow_traces import (
     detect_loops_in_graph,
 )
 
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+
 load_dotenv()
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
 
 SCRIPT_DIR = Path(__file__).parent
 DATASET_PATH = str(
@@ -419,29 +422,23 @@ def run_campaign_copilot(campaign_brief: str) -> str:
     return result["recommendation"]
 
 
+DISPLAY_METRICS = {"business_fit", "operational_efficiency"}
+
+
 async def main() -> None:
     """Run the unified platform campaign copilot example."""
-    print("=" * 72)
-    print("Unified Platform Campaign Copilot with LangGraph + Traigent")
-    print("=" * 72)
-    print("Domain: audience discovery, cross-screen planning, supply strategy,")
-    print("activation review, and measurement on a unified media platform.")
-    print()
+    print("Traigent Advanced: Unified Platform Campaign Copilot")
+    print("=" * 50)
+    print("MOCK MODE: Running with simulated responses.")
+    print("Domain: audience discovery, cross-screen planning,")
+    print("supply strategy, activation review, measurement.")
 
     api_key = os.environ.get("TRAIGENT_API_KEY")
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     offline_mode = os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
 
-    print(f"Dataset: {DATASET_PATH}")
-    print(f"Mock mode: {MOCK_MODE}")
-    print(
-        "Workflow graph export: "
-        f"{'enabled' if api_key and not offline_mode else 'disabled'}"
-    )
-    print()
-
     max_trials = 6 if MOCK_MODE else 3
-    print(f"Running optimization with {max_trials} trials...")
+    print(f"\nRunning optimization with {max_trials} trials...")
     results = await run_campaign_copilot.optimize(
         algorithm="random",
         max_trials=max_trials,
@@ -469,21 +466,20 @@ async def main() -> None:
         else:
             print(f"Workflow graph export failed: {response.error}")
 
-    print()
-    print("Best Configuration:")
+    print("\nBest Configuration Found:")
     for key, value in results.best_config.items():
         print(f"  {key}: {value}")
 
-    print()
-    print("Best Metrics:")
+    print("\nPerformance:")
     for key, value in results.best_metrics.items():
+        if key not in DISPLAY_METRICS:
+            continue
         if isinstance(value, float):
-            print(f"  {key}: {value:.3f}")
+            print(f"  {key}: {value:.2%}")
         else:
             print(f"  {key}: {value}")
 
-    print()
-    print("Suggested client framing:")
+    print("\nSuggested client framing:")
     print("  - Discovery agent turns briefs into audience strategy")
     print("  - Supply agent chooses full-stack vs curated access")
     print("  - Review loop adds operational control before activation")
@@ -491,4 +487,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

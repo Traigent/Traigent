@@ -132,7 +132,7 @@ def answer_with_any_provider(question: str) -> str:
 async def main() -> None:
     """Run the multi-provider optimization example."""
     print("Traigent Example 7: Multi-Provider LLM Support")
-    print("=" * 55)
+    print("=" * 50)
     configure_mock_notice("07_multi_provider.py")
 
     # Show the provider breakdown
@@ -174,7 +174,7 @@ async def main() -> None:
     estimated_latency = get_mock_latency(best_model, "simple_qa")
     print(f"  Est. Latency: {estimated_latency:.3f}s (per call)")
 
-    print("\n" + "-" * 55)
+    print("\n" + "-" * 50)
     print("Optimization finished.")
     print("To use this with real API calls:")
     print("  1. Set the required API key(s):")

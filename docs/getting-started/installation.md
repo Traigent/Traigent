@@ -50,7 +50,7 @@ uv pip install -e ".[recommended]"        # Same recommended bundle, faster reso
   ```bash
   pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
-  python examples/core/hello-world/run.py
+  python examples/core/rag-optimization/run.py
   ```
 
 - **Develop/contribute:**

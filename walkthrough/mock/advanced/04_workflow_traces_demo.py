@@ -226,9 +226,8 @@ def simulate_workflow_execution(
 
 def main() -> None:
     """Run the workflow traces demo."""
-    print("=" * 60)
-    print("Workflow Traces Demo - Multi-Agent Visualization")
-    print("=" * 60)
+    print("Traigent Advanced: Workflow Traces Demo")
+    print("=" * 50)
 
     # Get backend URL and auth token (uses same env vars as rest of SDK)
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
@@ -300,9 +299,8 @@ def main() -> None:
         print("\nNote: Make sure the backend is running and accessible.")
         print("Set TRAIGENT_BACKEND_URL in .env to point to your backend.")
 
-    print("\n" + "=" * 60)
+    print("\n" + "-" * 50)
     print("Check the frontend to see the workflow graph visualization!")
-    print("=" * 60)
 
 
 if __name__ == "__main__":
