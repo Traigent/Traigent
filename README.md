@@ -53,6 +53,15 @@ def my_agent(question: str) -> str:
   <a href="examples/">Examples</a>
 </p>
 
+### 🤖 AI Agent Skill
+
+This repo ships a built-in [Agent Skill](https://agentskills.io/) that teaches your AI coding agent how to set up and validate Traigent optimizations — dry-run first, real when you're ready. Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, and [30+ more](https://agentskills.io/).
+
+```bash
+# Full skill catalog (all 8 skills)
+npx skills add Traigent/agent-skills
+```
+
 ---
 
 ## Choose Your Path
