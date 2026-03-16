@@ -1,20 +1,6 @@
 name: Examples Smoke Test
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'examples/**'
-      - 'traigent/**'
-      - 'scripts/examples/**'
-      - 'README.md'
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'examples/**'
-      - 'traigent/**'
-      - 'scripts/examples/**'
-      - 'README.md'
   workflow_dispatch:
 
 jobs:
