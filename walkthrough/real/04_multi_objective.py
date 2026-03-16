@@ -15,10 +15,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_openai import ChatOpenAI
-
-import traigent
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -28,6 +24,9 @@ from utils.helpers import (
     require_openai_key,
     sanitize_traigent_api_key,
 )
+
+import traigent
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 require_openai_key("04_multi_objective.py")
 sanitize_traigent_api_key()
@@ -40,13 +39,22 @@ traigent.initialize(execution_mode="edge_analytics")
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 
-OBJECTIVES = ObjectiveSchema.from_objectives([
-    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.3),
-    ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
-    ObjectiveDefinition("latency", orientation="minimize", weight=0.5),
-])
+OBJECTIVES = ObjectiveSchema.from_objectives(
+    [
+        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.3),
+        ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
+        ObjectiveDefinition("latency", orientation="minimize", weight=0.5),
+    ]
+)
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-5.2", "gpt-5-nano", "gpt-5.1"],
+    "model": [
+        "gpt-3.5-turbo",
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-5.2",
+        "gpt-5-nano",
+        "gpt-5.1",
+    ],
     "prompt": ["v1", "v2"],
     "temperature": [0.0, 0.3],
     "instructions": ["CoT", "direct"],
