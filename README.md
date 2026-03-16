@@ -26,6 +26,25 @@ export TRAIGENT_MOCK_LLM=true
 python walkthrough/mock/01_tuning_qa.py
 ```
 
+**One decorator, two parameters, multi-objective optimization:**
+
+```python
+import traigent
+from langchain_openai import ChatOpenAI
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": (0.0, 1.0),
+    },
+    objectives=["accuracy", "cost"],
+    eval_dataset="my_data.jsonl",
+)
+def my_agent(question: str) -> str:
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+    return llm.invoke(question).content
+```
+
 <p align="center">
   <a href="https://docs.traigent.ai">Documentation</a> &middot;
   <a href="https://portal.traigent.ai">Portal</a> &middot;
@@ -92,6 +111,9 @@ python walkthrough/mock/01_tuning_qa.py
 
 All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 
+<details>
+<summary>Show all 8 walkthrough steps</summary>
+
 | # | Run | What you'll learn |
 |---|-----|-------------------|
 | 1 | `python walkthrough/mock/01_tuning_qa.py` | Basic model + temperature optimization |
@@ -103,24 +125,18 @@ All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 | 7 | `python walkthrough/mock/07_multi_provider.py` | Compare OpenAI, Anthropic, Google in one run |
 | 8 | `python walkthrough/mock/08_privacy_modes.py` | Local-only privacy-first execution |
 
+</details>
+
 **[Browse reference examples →](examples/) · [Injection modes →](docs/user-guide/injection_modes.md)**
 
 ---
 
 ## 📦 Installation
 
-| Requirement | Supported |
-|-------------|-----------|
-| **Python** | 3.11, 3.12, 3.13, 3.14 |
-| **Platform** | Linux (tested on Ubuntu), macOS, Windows |
+Python 3.11+ on Linux, macOS, or Windows. Not on PyPI yet — install from source.
 
-```bash
-git clone https://github.com/Traigent/Traigent.git && cd Traigent
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"
-```
-
-> Not on PyPI yet — install from source.
+<details>
+<summary>Feature sets and options</summary>
 
 | Feature Set | Description |
 |-------------|-------------|
@@ -129,6 +145,8 @@ pip install -e ".[recommended]"
 | `[analytics]` | Visualization and analytics |
 | `[bayesian]` | Bayesian optimization (TPE, NSGA-II) |
 | `[all]` | Everything |
+
+</details>
 
 **[Full installation guide →](docs/getting-started/installation.md)**
 
@@ -139,64 +157,30 @@ pip install -e ".[recommended]"
 | Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
 | Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
 
-Cost estimates are approximations. Actual billing is determined by your LLM provider. See [DISCLAIMER.md](DISCLAIMER.md) for details.
-
-### Working with Results
-
-```python
-result = await my_agent.optimize(algorithm="random", max_trials=10)
-print(result.best_config)  # {'model': 'gpt-4o-mini', 'temperature': 0.1}
-print(result.best_score)   # 0.94
-
-my_agent.apply_best_config(result)  # Apply for future calls
-```
-
-Results are stored in `.traigent_local/`. Use `traigent results` to list past runs, `traigent plot <name>` to visualize.
+Cost estimates are approximations. See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ---
 
 ### ☁️ Traigent Cloud
 
-Connect your SDK to [Traigent Portal](https://portal.traigent.ai) to view optimization results, compare trials, and collaborate with your team.
+Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate.
 
-**1. Create an account**
+1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
+2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
+3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`
+4. **Run** — results appear in the portal automatically
 
-Sign up at [portal.traigent.ai](https://portal.traigent.ai) — enter your email, name, organization, and a password. Verify your email to activate.
-
-**2. Create an API key**
-
-Once logged in, click your name (top-right) → **API Keys** → **+ Create API Key**. Copy the key — it is shown only once.
-
-**3. Connect the SDK**
-
-Option A — CLI login (recommended for local development):
-```bash
-traigent auth login
-```
-
-Option B — environment variable (recommended for CI/automation):
-```bash
-export TRAIGENT_API_KEY="sk_..."
-```
-
-**4. Run — results appear in the portal automatically**
-
-```bash
-python your_optimization.py
-```
-
-**Credential priority order:**
+<details>
+<summary>Credential priority and multi-provider setup</summary>
 
 | Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
 |-------------|--------------------------------|------------------------|----------------------|
 | API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
 | Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `portal.traigent.ai` |
 
-> **Tip:** No environment variables needed after `traigent auth login` — the SDK picks up stored credentials automatically.
+> **Tip:** No env vars needed after `traigent auth login` — the SDK picks up stored credentials automatically.
 
-### Multi-provider optimization
-
-Use [LiteLLM](https://github.com/BerriAI/litellm) to compare models across OpenAI, Anthropic, Google, Mistral, and 100+ providers with a single interface:
+**Multi-provider optimization** — use [LiteLLM](https://github.com/BerriAI/litellm) to compare OpenAI, Anthropic, Google, Mistral, and 100+ providers:
 
 ```python
 @traigent.optimize(
@@ -217,6 +201,8 @@ def multi_provider_agent(question: str) -> str:
     return response.choices[0].message.content
 ```
 
+</details>
+
 ---
 
 ## 📏 Evaluation
@@ -232,6 +218,8 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 - `output` (optional): expected output for accuracy scoring
 
 **[Evaluation guide →](docs/guides/evaluation.md)** — custom evaluators, dataset formats, troubleshooting
+
+---
 
 ## 🎯 Execution Modes
 
