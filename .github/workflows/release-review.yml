@@ -1,11 +1,6 @@
 name: release-gate
 
 on:
-  push:
-    branches:
-      - "develop"
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       release_id:
@@ -28,9 +23,7 @@ on:
       expires_at:
         description: "Required for emergency override (UTC: YYYY-MM-DDTHH:MM:SSZ)"
         required: false
-  pull_request:
-    branches: [main]
-
+  
 permissions:
   contents: read
 
