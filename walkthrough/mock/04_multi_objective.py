@@ -27,7 +27,9 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -51,17 +53,23 @@ CONFIG_SPACE = {
     "instructions": ["CoT", "direct"],
 }
 
-OBJECTIVES = ObjectiveSchema.from_objectives([
-    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
-    ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
-    ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
-])
+OBJECTIVES = ObjectiveSchema.from_objectives(
+    [
+        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
+        ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
+        ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
+    ]
+)
 
 
-def mock_accuracy_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+def mock_accuracy_score(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Scoring function with config-dependent mock accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         temperature = config.get("temperature") if config else None
         instructions = config.get("instructions") if config else None
         use_cot = instructions == "CoT" if instructions else None
@@ -109,7 +117,9 @@ async def main() -> None:
         algorithm="random", max_trials=8, random_seed=42
     )
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="classification")
+    print_results_table(
+        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="classification"
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

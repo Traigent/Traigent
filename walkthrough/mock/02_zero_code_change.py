@@ -29,7 +29,9 @@ from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -46,14 +48,18 @@ CONFIG_SPACE = {
 }
 
 
-def results_match_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+def results_match_score(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Simple scoring: 1.0 if expected answer appears in output, else 0.0.
 
     In mock mode, returns model-dependent accuracy (gpt-4o > gpt-4o-mini > gpt-3.5-turbo).
     In real mode, checks if the expected answer appears in the LLM output.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         return get_mock_accuracy(model, "simple_qa")
     if output is None or expected is None:
         return 0.0
@@ -95,7 +101,9 @@ async def main() -> None:
         algorithm="random", max_trials=6, random_seed=42
     )
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa")
+    print_results_table(
+        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

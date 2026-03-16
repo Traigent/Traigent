@@ -25,7 +25,9 @@ from traigent.config.parallel import ParallelConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -61,10 +63,14 @@ KNOWLEDGE_BASE = [
 ]
 
 
-def semantic_similarity_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+def semantic_similarity_score(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Score based on key-term overlap. Mock mode returns model-dependent accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         return get_mock_accuracy(model, "rag_qa")
     # Real mode: simple contains check
     if output is None or expected is None:
@@ -131,7 +137,9 @@ async def main() -> None:
         parallel_config=parallel_config,
     )
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="rag_qa")
+    print_results_table(
+        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="rag_qa"
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Retrieval k: {results.best_config.get('k')}")

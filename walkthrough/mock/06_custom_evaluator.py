@@ -23,7 +23,9 @@ from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -49,13 +51,17 @@ _LOG_EVERY = int(os.getenv("TRAIGENT_GEN_LOG_EVERY", "0"))
 _DATASET_WARNING_FILTER_ADDED = False
 
 
-def code_evaluator(output: str, expected: str, config: dict | None = None, **_) -> float:
+def code_evaluator(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Custom evaluator for code generation quality.
 
     In mock mode, returns model-dependent accuracy.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         return get_mock_accuracy(model, "code_generation")
     score = 0.0
     if "def " in output:
@@ -116,9 +122,9 @@ def generate_code(task: str) -> str:
         total += n
     return total'''
     elif style == "documented":
-        return '''def calculate_sum(numbers):
+        return """def calculate_sum(numbers):
     # Sum all numbers
-    return sum(numbers)'''
+    return sum(numbers)"""
     return "def calculate_sum(nums): return sum(nums)"
 
 
@@ -135,7 +141,14 @@ async def main() -> None:
         algorithm="grid", max_trials=8, random_seed=42
     )
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="code_generation", dataset_size=10)
+    print_results_table(
+        results,
+        CONFIG_SPACE,
+        OBJECTIVES,
+        is_mock=True,
+        task_type="code_generation",
+        dataset_size=10,
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

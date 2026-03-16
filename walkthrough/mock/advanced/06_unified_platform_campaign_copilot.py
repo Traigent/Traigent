@@ -38,8 +38,10 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional convenience import
+
     def load_dotenv() -> bool:
         return False
+
 
 import traigent
 from traigent import TraigentConfig
@@ -51,10 +53,11 @@ from traigent.integrations.observability.workflow_traces import (
     detect_loops_in_graph,
 )
 
-os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-
 load_dotenv()
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 SCRIPT_DIR = Path(__file__).parent
 DATASET_PATH = str(
@@ -62,6 +65,9 @@ DATASET_PATH = str(
 )
 
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
+
+# Only display these metrics in output (filter internal SDK metrics)
+DISPLAY_METRICS = {"business_fit", "operational_efficiency"}
 
 
 class CampaignState(TypedDict):
@@ -180,7 +186,9 @@ def review_activation_plan(state: CampaignState) -> CampaignState:
     if strictness == "strict" and "identity_graph" not in state["audience_segments"]:
         notes.append("identity_signal_missing")
 
-    revision_count = state["revision_count"] + (1 if "revise_supply_path" in notes else 0)
+    revision_count = state["revision_count"] + (
+        1 if "revise_supply_path" in notes else 0
+    )
 
     return {
         **state,
@@ -201,7 +209,9 @@ def generate_recommendation(state: CampaignState) -> CampaignState:
     style = str(_config_value("generate.style", "executive"))
     audience_text = ", ".join(state["audience_segments"])
     channel_text = ", ".join(state["channel_mix"])
-    review_text = ", ".join(state["review_notes"]) if state["review_notes"] else "approved"
+    review_text = (
+        ", ".join(state["review_notes"]) if state["review_notes"] else "approved"
+    )
 
     if style == "ops":
         recommendation = (
@@ -306,7 +316,9 @@ def extract_workflow_graph(
         WorkflowEdge(from_node="__start__", to_node="discover_audiences"),
         WorkflowEdge(from_node="discover_audiences", to_node="plan_channel_mix"),
         WorkflowEdge(from_node="plan_channel_mix", to_node="select_supply_strategy"),
-        WorkflowEdge(from_node="select_supply_strategy", to_node="review_activation_plan"),
+        WorkflowEdge(
+            from_node="select_supply_strategy", to_node="review_activation_plan"
+        ),
         WorkflowEdge(
             from_node="review_activation_plan",
             to_node="select_supply_strategy",
@@ -344,7 +356,9 @@ def extract_workflow_graph(
 def business_fit_metric(output: str, expected: str) -> float:
     """Score whether the recommendation covers the right business concepts."""
     output_lower = output.lower()
-    expected_tokens = [token.strip() for token in expected.lower().split(",") if token.strip()]
+    expected_tokens = [
+        token.strip() for token in expected.lower().split(",") if token.strip()
+    ]
 
     if not expected_tokens:
         return 0.0
@@ -371,7 +385,9 @@ def operational_efficiency_metric(output: str, expected: str) -> float:
         score += 0.15
     if "high_intent_signals" in output_lower:
         score += 0.05
-    if any(kpi in output_lower for kpi in ("completed_events", "viewability", "attention")):
+    if any(
+        kpi in output_lower for kpi in ("completed_events", "viewability", "attention")
+    ):
         score += 0.1
     if "revise_supply_path" in output_lower:
         score -= 0.15
@@ -422,23 +438,28 @@ def run_campaign_copilot(campaign_brief: str) -> str:
     return result["recommendation"]
 
 
-DISPLAY_METRICS = {"business_fit", "operational_efficiency"}
-
-
 async def main() -> None:
     """Run the unified platform campaign copilot example."""
     print("Traigent Advanced: Unified Platform Campaign Copilot")
     print("=" * 50)
-    print("MOCK MODE: Running with simulated responses.")
-    print("Domain: audience discovery, cross-screen planning,")
-    print("supply strategy, activation review, measurement.")
+    print("Domain: audience discovery, cross-screen planning, supply strategy,")
+    print("activation review, and measurement on a unified media platform.")
+    print()
 
     api_key = os.environ.get("TRAIGENT_API_KEY")
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     offline_mode = os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
 
+    print(f"Dataset: {DATASET_PATH}")
+    print(f"Mock mode: {MOCK_MODE}")
+    print(
+        "Workflow graph export: "
+        f"{'enabled' if api_key and not offline_mode else 'disabled'}"
+    )
+    print()
+
     max_trials = 6 if MOCK_MODE else 3
-    print(f"\nRunning optimization with {max_trials} trials...")
+    print(f"Running optimization with {max_trials} trials...")
     results = await run_campaign_copilot.optimize(
         algorithm="random",
         max_trials=max_trials,
@@ -468,7 +489,10 @@ async def main() -> None:
 
     print("\nBest Configuration Found:")
     for key, value in results.best_config.items():
-        print(f"  {key}: {value}")
+        if isinstance(value, float):
+            print(f"  {key}: {value:.2f}")
+        else:
+            print(f"  {key}: {value}")
 
     print("\nPerformance:")
     for key, value in results.best_metrics.items():
