@@ -17,7 +17,7 @@
 #   ./test_all_examples.sh tvl                     # Run TVL tutorial examples
 #   ./test_all_examples.sh multi-objective         # Run multi-objective examples
 #   ./test_all_examples.sh advanced-walkthrough    # Run advanced walkthrough
-#   ./test_all_examples.sh manifest                # Run SDK manifest (37 examples, strict)
+#   ./test_all_examples.sh manifest                # Run SDK manifest (38 examples, strict)
 #   ./test_all_examples.sh all                     # Run all examples (broad smoke)
 #   ./test_all_examples.sh --real core             # Real mode (needs API keys)
 #
