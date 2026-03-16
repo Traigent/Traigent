@@ -11,16 +11,7 @@
 name: Architecture Analysis
 
 on:
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - 'traigent/**'
-      - 'tests/**'
-  push:
-    branches: [main]
-    paths:
-      - 'traigent/**'
-  workflow_dispatch:
+    workflow_dispatch:
     inputs:
       full_analysis:
         description: 'Run full analysis including coverage'
