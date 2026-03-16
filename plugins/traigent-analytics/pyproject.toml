@@ -40,7 +40,7 @@ analytics = "traigent_analytics:AnalyticsPlugin"
 
 [project.urls]
 Homepage = "https://github.com/Traigent/Traigent"
-Documentation = "https://docs.traigent.ai/plugins/analytics"
+Documentation = "https://github.com/Traigent/Traigent/tree/main/docs"
 Repository = "https://github.com/Traigent/Traigent"
 
 [tool.hatch.build.targets.wheel]
