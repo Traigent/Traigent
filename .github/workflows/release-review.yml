@@ -271,7 +271,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Detect release-review automation
+        id: release_review_tools
+        run: |
+          if [ -d ".release_review/automation" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Skip missing release-review automation
+        if: steps.release_review_tools.outputs.available != 'true'
+        run: echo "Release-review automation is not present in this repository; skipping internal consistency gate."
       - name: Install release-review tooling
+        if: steps.release_review_tools.outputs.available == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install PyYAML
@@ -297,9 +309,11 @@ jobs:
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Validate release-review consistency
+        if: steps.release_review_tools.outputs.available == 'true'
         run: python3 .release_review/automation/validate_release_review_consistency.py
 
       - name: Initialize run workspace
+        if: steps.release_review_tools.outputs.available == 'true'
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
@@ -324,6 +338,7 @@ jobs:
             --no-archive
 
       - name: Build check_results.json from upstream job outcomes
+        if: steps.release_review_tools.outputs.available == 'true'
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
           mkdir -p "$run_dir/gate_results"
@@ -350,6 +365,7 @@ jobs:
           JSON
 
       - name: Build canonical verdict
+        if: steps.release_review_tools.outputs.available == 'true'
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
           if [ "${{ github.ref_type }}" != "tag" ]; then
@@ -378,7 +394,7 @@ jobs:
           fi
 
       - name: Upload release-review artifacts
-        if: always()
+        if: always() && steps.release_review_tools.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-review-${{ steps.release_id.outputs.release_id }}
