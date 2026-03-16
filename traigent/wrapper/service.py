@@ -22,7 +22,7 @@ Example:
         return {"output": result, "cost_usd": 0.002, "latency_ms": 150}
 
     @app.evaluate
-    async def score(output: dict, target: dict, config: dict) -> dict:
+    async def score(output: dict, target: dict, kwargs: dict) -> dict:
         return {"accuracy": 0.95, "safety": 1.0}
 
     if __name__ == "__main__":
@@ -46,7 +46,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
-from traigent.hybrid.protocol import EstimatedTokensPerExample
+from traigent.hybrid.protocol import (
+    EstimatedTokensPerExample,
+    EvaluationKwargDefinition,
+)
 from traigent.utils.logging import get_logger
 from traigent.wrapper.errors import BadRequestError, HybridAPIError
 
@@ -58,6 +61,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
 _ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
 _ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
+ScalarValue = str | int | float | bool
 
 
 def _estimated_tokens_from_env() -> EstimatedTokensPerExample | None:
@@ -113,6 +117,7 @@ class ServiceConfig:
         promotion_policy: Optional promotion policy definition.
         defaults: Optional default configuration values.
         measures: Optional declared measure names.
+        evaluation_kwargs: Optional supported evaluate kwargs.
         estimated_tokens_per_example: Optional per-example token estimate used
             for hybrid pre-run approval checks.
     """
@@ -129,6 +134,9 @@ class ServiceConfig:
     promotion_policy: dict[str, Any] | None = None
     defaults: dict[str, Any] | None = None
     measures: list[str] | None = None
+    evaluation_kwargs: list[EvaluationKwargDefinition] | list[dict[str, Any]] | None = (
+        None
+    )
     estimated_tokens_per_example: EstimatedTokensPerExample | None = None
 
 
@@ -151,6 +159,27 @@ class Session:
     def touch(self) -> None:
         """Update last activity timestamp."""
         self.last_activity = time.time()
+
+
+@dataclass(frozen=True)
+class EvaluationContext:
+    """Optional wrapper-only context for evaluate handlers."""
+
+    execution_id: str | None = None
+    execution_config: dict[str, Any] | None = None
+    execute_session_id: str | None = None
+    evaluate_session_id: str | None = None
+    tunable_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _ExecutionContextEntry:
+    """Cached execution context for follow-up evaluation calls."""
+
+    execution_id: str
+    execution_config: dict[str, Any]
+    execute_session_id: str | None
+    tunable_id: str
 
 
 class TraigentService:
@@ -187,6 +216,9 @@ class TraigentService:
         promotion_policy: dict[str, Any] | None = None,
         defaults: dict[str, Any] | None = None,
         measures: list[str] | None = None,
+        evaluation_kwargs: (
+            list[EvaluationKwargDefinition] | list[dict[str, Any]] | None
+        ) = None,
         estimated_tokens_per_example: (
             EstimatedTokensPerExample | dict[str, Any] | None
         ) = None,
@@ -205,6 +237,7 @@ class TraigentService:
             promotion_policy: Optional promotion policy.
             defaults: Optional default tunable values.
             measures: Optional declared measure names.
+            evaluation_kwargs: Optional supported evaluate kwargs.
             estimated_tokens_per_example: Optional per-example token estimate
                 for cost approval. Falls back to environment variables when not
                 provided.
@@ -221,6 +254,7 @@ class TraigentService:
             promotion_policy=promotion_policy,
             defaults=defaults,
             measures=measures,
+            evaluation_kwargs=evaluation_kwargs,
             estimated_tokens_per_example=_resolve_estimated_tokens_per_example(
                 estimated_tokens_per_example
             ),
@@ -238,6 +272,8 @@ class TraigentService:
         self._promotion_policy_handler: Callable[[], dict[str, Any]] | None = None
         self._defaults_handler: Callable[[], dict[str, Any]] | None = None
         self._measures_handler: Callable[[], list[str]] | None = None
+        self._evaluation_kwargs_handler: Callable[[], list[Any]] | None = None
+        self._evaluate_handler_arity: int | None = None
 
         # Session management
         self._sessions: dict[str, Session] = {}
@@ -249,6 +285,7 @@ class TraigentService:
         self._idempotency_cache_max_size = 1000
         self._execute_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
         self._evaluate_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._execution_context_cache: dict[str, _ExecutionContextEntry] = {}
 
         # Cached config space
         self._cached_tvars: dict[str, Any] | None = None
@@ -333,16 +370,18 @@ class TraigentService:
         The decorated function receives:
             - output: Any - The agent output
             - target: Any - The expected output
-            - config: dict - Configuration parameters
+            - kwargs: dict - Evaluator-specific request parameters
+            - context: EvaluationContext (optional) - Execute-time context
 
         Should return a dict of metric names to values.
 
         Example:
             @app.evaluate
-            async def score(output: dict, target: dict, config: dict) -> dict:
+            async def score(output: dict, target: dict, kwargs: dict) -> dict:
                 accuracy = compute_accuracy(output, target)
                 return {"accuracy": accuracy, "safety": 1.0}
         """
+        self._evaluate_handler_arity = self._validate_evaluate_signature(func)
         self._evaluate_handler = func
         return func
 
@@ -376,6 +415,32 @@ class TraigentService:
         self._measures_handler = func  # type: ignore[assignment]
         return func
 
+    def evaluation_kwargs(self, func: F) -> F:
+        """Decorator to register supported evaluate kwargs."""
+        self._evaluation_kwargs_handler = func  # type: ignore[assignment]
+        return func
+
+    @staticmethod
+    def _validate_evaluate_signature(func: Callable[..., Any]) -> int:
+        """Validate supported evaluate callback signatures."""
+        signature = inspect.signature(func)
+        parameters = list(signature.parameters.values())
+        for parameter in parameters:
+            if parameter.kind not in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                raise ValueError(
+                    "evaluate handlers may only declare positional parameters"
+                )
+        if len(parameters) not in (2, 3, 4):
+            raise ValueError(
+                "evaluate handlers must have signature "
+                "(output, target), (output, target, kwargs), or "
+                "(output, target, kwargs, context)"
+            )
+        return len(parameters)
+
     def _resolve_declared_section(
         self,
         handler: Callable[[], Any] | None,
@@ -394,6 +459,203 @@ class TraigentService:
                 close()
             raise ValueError("declaration handlers must be synchronous functions")
         return value
+
+    @staticmethod
+    def _is_scalar_value(value: Any) -> bool:
+        """Return whether a value is OpenAPI-scalar compatible."""
+        return isinstance(value, (str, int, float, bool)) and not isinstance(
+            value, complex
+        )
+
+    def _normalize_evaluation_kwarg_definition(
+        self, spec: Any
+    ) -> EvaluationKwargDefinition:
+        """Normalize one declared evaluation kwarg definition."""
+        if isinstance(spec, EvaluationKwargDefinition):
+            definition = spec
+        elif isinstance(spec, dict):
+            definition = EvaluationKwargDefinition.from_dict(spec)
+        else:
+            raise ValueError(
+                "evaluation_kwargs entries must be dicts or EvaluationKwargDefinition instances"
+            )
+
+        if not _IDENTIFIER_RE.match(definition.name):
+            raise ValueError(
+                f"Invalid evaluation kwarg name '{definition.name}': "
+                "must be a valid Python identifier"
+            )
+        if definition.description is not None and not isinstance(
+            definition.description, str
+        ):
+            raise ValueError("evaluation kwarg description must be a string")
+        if definition.domain is not None and not isinstance(definition.domain, dict):
+            raise ValueError("evaluation kwarg domain must be a dict")
+        if definition.default is not None and not self._is_scalar_value(
+            definition.default
+        ):
+            raise ValueError("evaluation kwarg default must be a scalar value")
+
+        domain = dict(definition.domain or {})
+        allowed_domain_keys = {"values", "range", "resolution"}
+        unknown_domain_keys = set(domain) - allowed_domain_keys
+        if unknown_domain_keys:
+            raise ValueError(
+                f"evaluation kwarg domain contains unsupported keys: {sorted(unknown_domain_keys)}"
+            )
+
+        if "values" in domain:
+            values = domain["values"]
+            if not isinstance(values, list) or not values:
+                raise ValueError(
+                    "evaluation kwarg domain.values must be a non-empty list"
+                )
+            if not all(self._is_scalar_value(item) for item in values):
+                raise ValueError(
+                    "evaluation kwarg domain.values entries must all be scalar values"
+                )
+        if "range" in domain:
+            range_spec = domain["range"]
+            if (
+                not isinstance(range_spec, list)
+                or len(range_spec) != 2
+                or not all(
+                    isinstance(item, (int, float)) and not isinstance(item, bool)
+                    for item in range_spec
+                )
+            ):
+                raise ValueError(
+                    "evaluation kwarg domain.range must be a two-item numeric list"
+                )
+        if "resolution" in domain and not (
+            isinstance(domain["resolution"], (int, float))
+            and not isinstance(domain["resolution"], bool)
+        ):
+            raise ValueError("evaluation kwarg domain.resolution must be numeric")
+        if definition.type == "enum" and "values" not in domain:
+            raise ValueError("enum evaluation kwargs must declare domain.values")
+
+        if definition.default is not None:
+            self._validate_evaluation_kwarg_value(definition, definition.default)
+
+        return EvaluationKwargDefinition(
+            name=definition.name,
+            type=definition.type,
+            description=definition.description,
+            domain=domain or None,
+            default=definition.default,
+        )
+
+    def _resolve_declared_evaluation_kwargs(
+        self,
+    ) -> list[EvaluationKwargDefinition] | None:
+        """Resolve configured or decorated evaluation kwargs definitions."""
+        raw_value = self._resolve_declared_section(
+            self._evaluation_kwargs_handler, self.config.evaluation_kwargs
+        )
+        if raw_value is None:
+            return None
+        if not isinstance(raw_value, list):
+            raise ValueError("evaluation_kwargs must be a list")
+
+        normalized = [
+            self._normalize_evaluation_kwarg_definition(item) for item in raw_value
+        ]
+        return normalized or None
+
+    def _validate_evaluation_kwarg_value(
+        self,
+        definition: EvaluationKwargDefinition,
+        value: ScalarValue,
+    ) -> None:
+        """Validate one incoming evaluation kwarg value."""
+        if not self._is_scalar_value(value):
+            raise ValueError("evaluation kwarg values must be scalar")
+
+        domain = definition.domain or {}
+        values = domain.get("values")
+        if definition.type == "bool":
+            if not isinstance(value, bool):
+                raise ValueError("must be a bool")
+        elif definition.type == "int":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError("must be an int")
+        elif definition.type == "float":
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError("must be numeric")
+        elif definition.type == "str":
+            if not isinstance(value, str):
+                raise ValueError("must be a string")
+        elif definition.type == "enum":
+            if values is None or value not in values:
+                raise ValueError("must be one of the declared enum values")
+
+        if values is not None and definition.type != "enum" and value not in values:
+            raise ValueError("must be one of the declared values")
+
+        range_spec = domain.get("range")
+        if (
+            range_spec is not None
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            if value < range_spec[0] or value > range_spec[1]:
+                raise ValueError(
+                    f"must be within range [{range_spec[0]}, {range_spec[1]}]"
+                )
+
+    def _validate_effective_evaluation_kwargs(
+        self,
+        effective_kwargs: dict[str, ScalarValue],
+        declared_kwargs: list[EvaluationKwargDefinition] | None,
+    ) -> None:
+        """Validate incoming evaluation kwargs against declared definitions."""
+        if not effective_kwargs:
+            return
+        if declared_kwargs is None:
+            raise BadRequestError(
+                "This service does not accept evaluation kwargs",
+                error_code="INVALID_EVALUATION_KWARGS",
+                details={
+                    "invalid_keys": sorted(effective_kwargs),
+                    "invalid_values": {},
+                    "allowed_keys": [],
+                    "allowed_values": {},
+                },
+            )
+
+        definitions_by_name = {
+            definition.name: definition for definition in declared_kwargs
+        }
+        invalid_keys = sorted(
+            key for key in effective_kwargs if key not in definitions_by_name
+        )
+        invalid_values: dict[str, ScalarValue] = {}
+        for key, value in effective_kwargs.items():
+            definition = definitions_by_name.get(key)
+            if definition is None:
+                continue
+            try:
+                self._validate_evaluation_kwarg_value(definition, value)
+            except ValueError:
+                invalid_values[key] = value
+
+        if invalid_keys or invalid_values:
+            allowed_values = {
+                definition.name: definition.domain["values"]
+                for definition in declared_kwargs
+                if definition.domain is not None and "values" in definition.domain
+            }
+            raise BadRequestError(
+                "Invalid evaluation kwargs provided for this service",
+                error_code="INVALID_EVALUATION_KWARGS",
+                details={
+                    "invalid_keys": invalid_keys,
+                    "invalid_values": invalid_values,
+                    "allowed_keys": sorted(definitions_by_name),
+                    "allowed_values": allowed_values,
+                },
+            )
 
     @staticmethod
     def _validate_declared_sections(sections: dict[str, Any]) -> None:
@@ -451,6 +713,7 @@ class TraigentService:
                 self._measures_handler, self.config.measures
             ),
         }
+        evaluation_kwargs = self._resolve_declared_evaluation_kwargs()
         self._validate_declared_sections(sections)
 
         response: dict[str, Any] = {
@@ -469,6 +732,10 @@ class TraigentService:
         ):
             if sections[key] is not None:
                 response[key] = sections[key]
+        if evaluation_kwargs is not None:
+            response["evaluation_kwargs"] = [
+                definition.to_dict() for definition in evaluation_kwargs
+            ]
         if self.config.estimated_tokens_per_example is not None:
             response["estimated_tokens_per_example"] = (
                 self.config.estimated_tokens_per_example.to_dict()
@@ -518,6 +785,9 @@ class TraigentService:
         return {
             "version": self.config.version,
             "supports_evaluate": self._evaluate_handler is not None,
+            "supports_evaluation_kwargs": bool(
+                self._resolve_declared_evaluation_kwargs()
+            ),
             "supports_keep_alive": self.config.supports_keep_alive,
             "supports_streaming": self.config.supports_streaming,
             "max_batch_size": self.config.max_batch_size,
@@ -574,6 +844,50 @@ class TraigentService:
             del cache[oldest_key]
         cache[request_id] = (fingerprint, copy.deepcopy(response))
 
+    def _store_execution_context(
+        self,
+        execution_id: str,
+        config: dict[str, Any],
+        session_id: str | None,
+    ) -> None:
+        """Store execution context for optional later evaluation lookup."""
+        if len(self._execution_context_cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(self._execution_context_cache))
+            del self._execution_context_cache[oldest_key]
+        self._execution_context_cache[execution_id] = _ExecutionContextEntry(
+            execution_id=execution_id,
+            execution_config=copy.deepcopy(config),
+            execute_session_id=session_id,
+            tunable_id=self.config.tunable_id,
+        )
+
+    def _lookup_execution_context(
+        self, execution_id: str | None, evaluate_session_id: str | None
+    ) -> EvaluationContext:
+        """Best-effort lookup of cached execution context."""
+        if not execution_id:
+            return EvaluationContext(evaluate_session_id=evaluate_session_id)
+
+        entry = self._execution_context_cache.get(execution_id)
+        if entry is None:
+            logger.warning(
+                "Evaluate request referenced unknown or evicted execution_id %s; continuing without execution_config",
+                execution_id,
+            )
+            return EvaluationContext(
+                execution_id=execution_id,
+                execution_config=None,
+                evaluate_session_id=evaluate_session_id,
+                tunable_id=self.config.tunable_id,
+            )
+        return EvaluationContext(
+            execution_id=entry.execution_id,
+            execution_config=copy.deepcopy(entry.execution_config),
+            execute_session_id=entry.execute_session_id,
+            evaluate_session_id=evaluate_session_id,
+            tunable_id=entry.tunable_id,
+        )
+
     @staticmethod
     def _determine_batch_status(total: int, failed: int) -> str:
         """Return 'completed', 'partial', or 'failed' for a batch result."""
@@ -619,8 +933,7 @@ class TraigentService:
         """Handle execute request.
 
         Args:
-            request: Execute request with tunable_id, config, examples,
-                and benchmark_id.
+            request: Execute request with tunable_id, config, and examples.
 
         Returns:
             Execute response with outputs and metrics.
@@ -643,13 +956,6 @@ class TraigentService:
         config = request.get("config", {})
         examples = request.get("examples")
         session_id = request.get("session_id")
-
-        # Validate benchmark_id is present before any handler work.
-        if not request.get("benchmark_id"):
-            raise BadRequestError(
-                "Missing required field 'benchmark_id' in execute request",
-                error_code="INVALID_BENCHMARK_ID",
-            )
 
         if not isinstance(examples, list) or len(examples) == 0:
             raise ValueError("examples must be a non-empty list")
@@ -710,9 +1016,10 @@ class TraigentService:
         elapsed_ms = (time.time() - start_time) * 1000
         status = self._determine_batch_status(len(outputs), len(failed_example_ids))
 
+        execution_id = str(uuid.uuid4())
         response: dict[str, Any] = {
             "request_id": request_id,
-            "execution_id": str(uuid.uuid4()),
+            "execution_id": execution_id,
             "status": status,
             "outputs": outputs,
             "operational_metrics": {
@@ -738,6 +1045,8 @@ class TraigentService:
 
         if session_id:
             response["session_id"] = session_id
+
+        self._store_execution_context(execution_id, config, session_id)
 
         self._store_in_idempotency_cache(
             self._execute_idempotency_cache, request_id, request_fingerprint, response
@@ -789,15 +1098,11 @@ class TraigentService:
             return cached
 
         tunable_id = request.get("tunable_id", self.config.tunable_id)
+        execution_id = request.get("execution_id")
         evaluations = request.get("evaluations", [])
-        config = request.get("config", {})
+        raw_kwargs = request.get("kwargs")
+        raw_config_alias = request.get("config")
         session_id = request.get("session_id")
-
-        if not request.get("benchmark_id"):
-            raise BadRequestError(
-                "Missing required field 'benchmark_id' in evaluate request",
-                error_code="INVALID_BENCHMARK_ID",
-            )
 
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
@@ -811,6 +1116,30 @@ class TraigentService:
         if session_id:
             self._touch_or_create_session(session_id)
 
+        declared_evaluation_kwargs = self._resolve_declared_evaluation_kwargs()
+        effective_kwargs_raw = (
+            raw_kwargs if raw_kwargs is not None else raw_config_alias or {}
+        )
+        if not isinstance(effective_kwargs_raw, dict):
+            raise BadRequestError(
+                "evaluate kwargs must be an object",
+                error_code="INVALID_EVALUATION_KWARGS",
+            )
+        if not all(
+            self._is_scalar_value(value) for value in effective_kwargs_raw.values()
+        ):
+            raise BadRequestError(
+                "evaluation kwargs must contain only scalar values",
+                error_code="INVALID_EVALUATION_KWARGS",
+            )
+        effective_kwargs: dict[str, ScalarValue] = {
+            str(key): value for key, value in effective_kwargs_raw.items()
+        }
+        self._validate_effective_evaluation_kwargs(
+            effective_kwargs, declared_evaluation_kwargs
+        )
+        evaluation_context = self._lookup_execution_context(execution_id, session_id)
+
         results: list[dict[str, Any]] = []
         all_metrics: list[dict[str, float]] = []
         failed_example_ids: list[str] = []
@@ -818,7 +1147,14 @@ class TraigentService:
         for evaluation in evaluations:
             example_id, output, target = self._resolve_evaluation_fields(evaluation)
             try:
-                result = self._evaluate_handler(output, target, config)
+                if self._evaluate_handler_arity == 2:
+                    result = self._evaluate_handler(output, target)
+                elif self._evaluate_handler_arity == 3:
+                    result = self._evaluate_handler(output, target, effective_kwargs)
+                else:
+                    result = self._evaluate_handler(
+                        output, target, effective_kwargs, evaluation_context
+                    )
                 if inspect.isawaitable(result):
                     result = await result
 

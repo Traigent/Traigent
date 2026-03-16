@@ -296,7 +296,7 @@ def patch_langchain_for_metadata_capture() -> bool:
         logger.error(f"Failed to patch ChatOpenAI: {e}")
 
     if not patched_any:
-        logger.warning("No LangChain models could be patched for metadata capture")
+        logger.debug("No LangChain models could be patched for metadata capture")
         return False
 
     return True
