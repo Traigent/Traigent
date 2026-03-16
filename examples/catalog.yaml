@@ -170,6 +170,16 @@
   docs_sections:
     - label: "RAG Evaluation Notes"
       href: "../../reports/1_quality/quality_reports/pylance_issues_analysis.md"
+- slug: deepeval-optimization
+  category: integrations
+  title: "DeepEval Integration"
+  summary: "Use DeepEval evaluation metrics (relevancy, faithfulness, etc.) as Traigent optimization objectives."
+  run: "integrations/deepeval/run.py"
+  difficulty: intermediate
+  est_time: "10 min"
+  tags: ["deepeval", "evaluation", "metrics"]
+  datasets:
+    - "datasets/deepeval/evaluation_set.jsonl"
 - slug: ci-cd-quality-gates
   category: integrations
   title: "CI/CD Quality Gates"
