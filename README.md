@@ -7,7 +7,9 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
 </p>
 
-Traigent finds the best LLM parameters for your specific task — model, temperature, prompts, RAG settings, and more — by running controlled experiments. Add one decorator to your existing code, and Traigent handles the rest.
+**Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
+
+Our mission: **Anything you can measure, we can improve.** Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
 
 > **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
 
