@@ -479,6 +479,19 @@ class TestWeightValidationHardening:
                 ]
             )
 
+    def test_dominance_guard_on_deserialization(self):
+        """Dominance guard fires on from_dict (not just from_objectives)."""
+        degenerate_data = {
+            "objectives": [
+                {"name": "a", "orientation": "maximize", "weight": 999},
+                {"name": "b", "orientation": "maximize", "weight": 1},
+            ],
+            "weights_sum": 1000.0,
+            "weights_normalized": {"a": 0.999, "b": 0.001},
+        }
+        with pytest.raises(ValueError, match="exceed 99%"):
+            ObjectiveSchema.from_dict(degenerate_data)
+
     def test_single_objective_weight_1_allowed(self):
         """Single objective with weight=1.0 is valid."""
         schema = ObjectiveSchema.from_objectives(
