@@ -841,3 +841,60 @@ class TestStatisticalSignificanceWiring:
         summary_stats = payload_metadata.get("summary_stats", {})
         inner_metadata = summary_stats.get("metadata", {})
         assert "statistical_significance" not in inner_metadata
+
+
+class TestTrialSkipWarningIncludesSignupUrl:
+    """Verify the no-API-key trial-skip warning includes the signup URL."""
+
+    @pytest.mark.asyncio
+    async def test_log_trial_warns_with_signup_url_when_no_api_key(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """_log_trial_to_backend must emit WARNING with signup URL when no key."""
+        import logging
+        from unittest.mock import patch
+
+        import traigent.core.backend_session_manager as bsm
+        from traigent.config.backend_config import SIGNUP_URL
+
+        # Reset the once-per-process guard
+        bsm._warned_no_api_key = False
+
+        client = Mock()
+        auth_manager = Mock()
+        auth_manager.has_api_key = Mock(return_value=False)
+        client.auth_manager = auth_manager
+        client.log_trial = AsyncMock()
+
+        manager = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        trial_result = Mock(spec=TrialResult)
+        trial_result.trial_id = "t1"
+
+        with (
+            patch(
+                "traigent.core.backend_session_manager.is_backend_offline",
+                return_value=False,
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="traigent.core.backend_session_manager"
+            ),
+        ):
+            await manager._log_trial_to_backend(
+                session_id="s1", trial_result=trial_result, score=0.9, metadata={}
+            )
+
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+        # Verify it's WARNING level, not DEBUG
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_records) >= 1

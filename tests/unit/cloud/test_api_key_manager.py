@@ -121,6 +121,29 @@ class TestSetToken:
         # Token should be None, but source should still be set
         assert manager.api_key_source == "test"  # pragma: allowlist secret
 
+    def test_set_token_invalid_key_warning_includes_signup_url(
+        self, manager: APIKeyManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Invalid-key warning must include the signup URL."""
+        import logging
+        from unittest.mock import patch
+
+        from traigent.cloud.api_key_manager import _warned_api_key_sources
+        from traigent.config.backend_config import SIGNUP_URL
+
+        # Clear any previously warned sources so the warning fires
+        _warned_api_key_sources.clear()
+
+        with (
+            patch("traigent.utils.env_config.is_backend_offline", return_value=False),
+            caplog.at_level(logging.WARNING, logger="traigent.cloud.api_key_manager"),
+        ):
+            manager.set_token("bad", source="test_url_check")
+
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+
 
 class TestClearToken:
     """Tests for clear_token method."""
@@ -226,7 +249,9 @@ class TestValidateFormat:
     ) -> None:
         """Test validation accepts uk_ keys with mixed alphanumerics."""
         # uk_ (3 chars) + 43 alphanumeric chars = 46 total (backend format)
-        suffix = "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4c"  # pragma: allowlist secret
+        suffix = (
+            "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4c"  # pragma: allowlist secret
+        )
         key = "uk_" + suffix
         assert len(key) == 46  # Verify length
         assert manager.validate_format(key) is True
