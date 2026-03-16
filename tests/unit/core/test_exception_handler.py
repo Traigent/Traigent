@@ -175,3 +175,43 @@ class TestTerminalPausePromptBudget:
             mock_stdin.isatty.return_value = True
             result = prompt.prompt_budget_pause(1.50, 2.00)
         assert result == "stop"
+
+    def test_keyboard_interrupt_returns_stop(self):
+        prompt = TerminalPausePrompt()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("builtins.input", side_effect=KeyboardInterrupt),
+        ):
+            mock_stdin.isatty.return_value = True
+            result = prompt.prompt_budget_pause(1.50, 2.00)
+        assert result == "stop"
+
+    def test_infinity_input_returns_stop(self):
+        prompt = TerminalPausePrompt()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("builtins.input", return_value="inf"),
+        ):
+            mock_stdin.isatty.return_value = True
+            result = prompt.prompt_budget_pause(1.50, 2.00)
+        assert result == "stop"
+
+    def test_zero_input_returns_stop(self):
+        prompt = TerminalPausePrompt()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("builtins.input", return_value="0"),
+        ):
+            mock_stdin.isatty.return_value = True
+            result = prompt.prompt_budget_pause(1.50, 2.00)
+        assert result == "stop"
+
+    def test_empty_input_returns_stop(self):
+        prompt = TerminalPausePrompt()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("builtins.input", return_value=""),
+        ):
+            mock_stdin.isatty.return_value = True
+            result = prompt.prompt_budget_pause(1.50, 2.00)
+        assert result == "stop"
