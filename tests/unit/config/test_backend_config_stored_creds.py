@@ -399,6 +399,6 @@ class TestCentralizedCredentialHints:
         ):
             BackendConfig.get_api_key()
 
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
+        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
+            f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
+        )
