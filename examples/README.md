@@ -133,6 +133,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 Production-ready integrations with popular platforms and workflows:
 
+- **`deepeval/`** - DeepEval evaluation metrics as optimization objectives. Use research-backed metrics (relevancy, faithfulness, hallucination) to drive Traigent optimization.
 - **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline). Run Traigent optimizations as part of your CI/CD workflow.
 - **`bedrock/`** - AWS Bedrock integration patterns. Use Traigent with Amazon's managed LLM service.
 

@@ -182,6 +182,11 @@ ml = [
     "scipy>=1.7.0",
 ]
 
+# DeepEval integration (LLM evaluation metrics as optimization objectives)
+deepeval = [
+    "deepeval>=1.0.0",
+]
+
 # Cloud bundle (cloud execution mode, advanced session management)
 cloud = [
     "traigent[security]",
@@ -196,12 +201,12 @@ recommended = [
 
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
+    "traigent[analytics,bayesian,deepeval,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
 enterprise = [
-    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
+    "traigent[analytics,bayesian,deepeval,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]
 
 [project.urls]
