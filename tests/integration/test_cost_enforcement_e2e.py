@@ -12,7 +12,7 @@ Critical scenarios tested:
 - E2E-06: Cost enforcement integrates with all execution modes
 - E2E-07: Permit tracking remains accurate across full optimization
 
-Reference: /home/nimrodbu/.claude/plans/snazzy-whistling-kettle.md
+
 """
 
 from __future__ import annotations
