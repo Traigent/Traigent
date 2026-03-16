@@ -30,6 +30,7 @@ from example_detail_pages import _sort_key as catalog_sort_key  # noqa: E402
 from example_detail_pages import generate_detail_pages
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+EXAMPLES_DIR = REPO_ROOT / "examples"
 CATALOG_PATH = REPO_ROOT / "examples" / "catalog.yaml"
 OUTPUT_PATH = REPO_ROOT / "examples" / "gallery" / "index.html"
 
@@ -185,11 +186,16 @@ def render_card(entry: dict[str, Any]) -> str:
     if docs_ref and not _RAW_FILE_RE.search(docs_ref):
         primary_link = docs_ref if docs_ref.startswith("http") else f"{docs_ref}"
     elif entry.get("run"):
-        # Link to the example directory index if present
+        # Prefer an example index page when it exists; otherwise link to the
+        # runnable source file so the gallery never emits a dead detail link.
         parts = entry["run"].split("/")
         if len(parts) >= 3:
-            # e.g., core/rag-optimization/run.py -> ../core/rag-optimization/index.html
-            primary_link = "/".join([".."] + parts[:2] + ["index.html"])
+            index_path = EXAMPLES_DIR.joinpath(*parts[:2], "index.html")
+            if index_path.exists():
+                # e.g., core/rag-optimization/run.py -> ../core/rag-optimization/index.html
+                primary_link = "/".join([".."] + parts[:2] + ["index.html"])
+            else:
+                primary_link = "/".join([".."] + parts)
     button_html = ""
     if primary_link:
         button_html = (
