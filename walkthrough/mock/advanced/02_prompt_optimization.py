@@ -27,10 +27,14 @@ os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
+DATASET_PATH = str(
+    (SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()
+)
 
 # Initialize Traigent in mock mode
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [
@@ -129,9 +133,17 @@ async def main() -> None:
     best_prompt = results.best_config.get("system_prompt", "N/A")
     print(f"  System Prompt: {best_prompt[:50]}...")
     temp_val = results.best_config.get("temperature")
-    print(f"  Temperature: {temp_val:.2f}" if isinstance(temp_val, float) else f"  Temperature: {temp_val}")
+    print(
+        f"  Temperature: {temp_val:.2f}"
+        if isinstance(temp_val, float)
+        else f"  Temperature: {temp_val}"
+    )
     top_p_val = results.best_config.get("top_p")
-    print(f"  Top P: {top_p_val:.2f}" if isinstance(top_p_val, float) else f"  Top P: {top_p_val}")
+    print(
+        f"  Top P: {top_p_val:.2f}"
+        if isinstance(top_p_val, float)
+        else f"  Top P: {top_p_val}"
+    )
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")

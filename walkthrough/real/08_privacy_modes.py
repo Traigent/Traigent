@@ -14,9 +14,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_openai import ChatOpenAI
-
-import traigent
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -26,6 +23,8 @@ from utils.helpers import (
     require_openai_key,
 )
 from utils.scoring import token_match_score
+
+import traigent
 
 require_openai_key("08_privacy_modes.py")
 configure_logging()
