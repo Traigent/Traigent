@@ -442,30 +442,15 @@ class TrialLifecycle:
         ) as vendor_exc:
             # Re-raise as VendorPauseError so the orchestrator can prompt
             # the user to resume or stop, instead of silently failing.
+            # classify_vendor_error is guaranteed to match for these types.
             from traigent.core.exception_handler import classify_vendor_error
 
             category = classify_vendor_error(vendor_exc)
-            if category is not None:
-                raise VendorPauseError(
-                    str(vendor_exc),
-                    original_error=vendor_exc,
-                    category=category,
-                ) from vendor_exc
-            # Defensive: if classify returns None, fall through to generic
-            logger.exception("Trial %s vendor error not classified", trial_id)
-            result = self._build_trial_error_result(
-                trial_id,
-                evaluation_config,
-                start_time,
-                lease,
-                progress_state,
-                optuna_trial_id,
-                vendor_exc,
-            )
-            record_trial_result(span, status="failed", error=str(vendor_exc))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
-            return result
+            raise VendorPauseError(
+                str(vendor_exc),
+                original_error=vendor_exc,
+                category=category,
+            ) from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
