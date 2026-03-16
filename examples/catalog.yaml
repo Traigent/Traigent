@@ -2,7 +2,7 @@
 # Update entries as examples evolve; documentation and tooling consume this file.
 - slug: rag-optimization
   category: core
-  title: "Hello World"
+  title: "RAG Optimization"
   summary: "Optimize a simple sentiment workflow with optional RAG context."
   run: "core/rag-optimization/run.py"
   difficulty: beginner
