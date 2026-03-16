@@ -38,7 +38,6 @@ _SYSTEM_PROMPT_PARAMS = frozenset(
 _system_prompt_warning_emitted = False
 
 
-
 class IntegrationPriority(Enum):
     """Priority levels for integration plugins."""
 
