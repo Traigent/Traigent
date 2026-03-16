@@ -29,15 +29,15 @@ from traigent.utils.logging import setup_logging  # noqa: E402
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
-# Canonical answers and prompt template (reuse from core/hello-world)
-_HELLO_WORLD_ROOT = Path(__file__).parent.parent / "core" / "hello-world"
-_HELLO_WORLD_DATA_ROOT = Path(__file__).parent.parent / "datasets" / "hello-world"
-_HELLO_WORLD_PROMPT_PATH = _HELLO_WORLD_ROOT / "prompt.txt"
+# Canonical answers and prompt template (reuse from core/rag-optimization)
+_RAG_OPT_ROOT = Path(__file__).parent.parent / "core" / "rag-optimization"
+_RAG_OPT_DATA_ROOT = Path(__file__).parent.parent / "datasets" / "rag-optimization"
+_RAG_OPT_PROMPT_PATH = _RAG_OPT_ROOT / "prompt.txt"
 
 
 def _prompt_template() -> str:
-    if _HELLO_WORLD_PROMPT_PATH.exists():
-        return _HELLO_WORLD_PROMPT_PATH.read_text().strip()
+    if _RAG_OPT_PROMPT_PATH.exists():
+        return _RAG_OPT_PROMPT_PATH.read_text().strip()
     return "Answer concisely."
 
 
@@ -180,7 +180,7 @@ def _load_context_docs() -> list[str]:
     global _context_docs
     if _context_docs is not None:
         return _context_docs
-    ctx_path = _HELLO_WORLD_DATA_ROOT / "context_documents.jsonl"
+    ctx_path = _RAG_OPT_DATA_ROOT / "context_documents.jsonl"
     docs: list[str] = []
     if ctx_path.exists():
         with open(ctx_path) as f:
@@ -556,7 +556,7 @@ def _parse_row_config(row_id: int) -> ScenarioConfig:
         injection_mode=(row.get("injection_mode") or "context").strip(),
         framework_targets=_parse_json(row.get("framework_targets"), []) or [],
         dataset=(
-            row.get("dataset") or "examples/datasets/hello-world/evaluation_set.jsonl"
+            row.get("dataset") or "examples/datasets/rag-optimization/evaluation_set.jsonl"
         ).strip(),
         parallel_config=parallel_config,
         privacy_enabled=_to_bool(row.get("privacy_enabled", "false")),

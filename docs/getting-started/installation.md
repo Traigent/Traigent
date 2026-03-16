@@ -49,7 +49,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
   ```bash
   pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
-  python examples/core/hello-world/run.py
+  python examples/core/rag-optimization/run.py
   ```
 
 - **Develop/contribute:**
