@@ -239,6 +239,20 @@ class ObjectiveSchema:
                         f"Expected {expected_normalized}, got {actual_normalized}"
                     )
 
+        # Multi-objective dominance guard: no single objective may dominate
+        if len(self.objectives) > 1:
+            for obj in self.objectives:
+                nw = self.weights_normalized.get(obj.name, 0)
+                if nw > MAX_SINGLE_OBJECTIVE_WEIGHT:
+                    raise ValueError(
+                        f"In a multi-objective schema, no single objective "
+                        f"can exceed {MAX_SINGLE_OBJECTIVE_WEIGHT:.0%} of "
+                        f"the total weight. Objective '{obj.name}' has "
+                        f"normalized weight {nw:.4f} ({nw:.0%}). Ensure the "
+                        f"smallest objective contributes at least "
+                        f"{1 - MAX_SINGLE_OBJECTIVE_WEIGHT:.0%}."
+                    )
+
     @classmethod
     def from_objectives(
         cls, objectives: list[ObjectiveDefinition], schema_version: str = "1.0.0"
@@ -263,20 +277,6 @@ class ObjectiveSchema:
 
         # Calculate normalized weights
         weights_normalized = {obj.name: obj.weight / weights_sum for obj in objectives}
-
-        # Multi-objective guard: no single objective may hold 100%
-        if len(objectives) > 1:
-            for obj in objectives:
-                nw = weights_normalized[obj.name]
-                if nw > MAX_SINGLE_OBJECTIVE_WEIGHT:
-                    raise ValueError(
-                        f"In a multi-objective schema, no single objective "
-                        f"can exceed {MAX_SINGLE_OBJECTIVE_WEIGHT:.0%} of "
-                        f"the total weight. Objective '{obj.name}' has "
-                        f"normalized weight {nw:.4f} ({nw:.0%}). Ensure the "
-                        f"smallest objective contributes at least "
-                        f"{1 - MAX_SINGLE_OBJECTIVE_WEIGHT:.0%}."
-                    )
 
         # Log when weights are re-scaled
         if abs(weights_sum - 1.0) > 1e-9:
