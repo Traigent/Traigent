@@ -60,7 +60,18 @@ jobs:
       - name: Install Graphviz
         run: sudo apt-get install -y graphviz
 
+      - name: Check tools exist
+        id: check_tools
+        run: |
+          if [ ! -f "tools/architecture/generate_diagrams.py" ]; then
+            echo "⚠️ Architecture tools not present — skipping analysis"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Architecture Analysis
+        if: steps.check_tools.outputs.skip != 'true'
         id: analyze
         run: |
           echo "🔍 Running architecture analysis..."
@@ -81,11 +92,13 @@ jobs:
           echo "analysis_complete=true" >> $GITHUB_OUTPUT
 
       - name: Generate Focused Diagrams
+        if: steps.check_tools.outputs.skip != 'true'
         run: |
           python tools/architecture/generate_focused_diagrams.py \
             --output-dir tools/architecture/output/focused
 
       - name: Render SVG Diagrams
+        if: steps.check_tools.outputs.skip != 'true'
         run: |
           mkdir -p tools/architecture/output/svg
 
@@ -104,6 +117,7 @@ jobs:
           done
 
       - name: Check Complexity Thresholds
+        if: steps.check_tools.outputs.skip != 'true'
         id: thresholds
         run: |
           python tools/architecture/check_thresholds.py \
@@ -113,7 +127,7 @@ jobs:
             --max-lines 2500
 
       - name: Run Coverage Analysis (Optional)
-        if: github.event.inputs.full_analysis == 'true'
+        if: steps.check_tools.outputs.skip != 'true' && github.event.inputs.full_analysis == 'true'
         run: |
           pytest tests/unit/ \
             --cov=traigent \
@@ -127,13 +141,14 @@ jobs:
 
       - name: Compare with Baseline
         id: compare
-        if: github.event_name == 'pull_request'
+        if: steps.check_tools.outputs.skip != 'true' && github.event_name == 'pull_request'
         run: |
           python tools/architecture/compare_baseline.py \
             --current tools/architecture/output/architecture_data.json \
             --output tools/architecture/output/drift_report.md
 
       - name: Upload Architecture Reports
+        if: steps.check_tools.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: architecture-reports
@@ -144,7 +159,7 @@ jobs:
           retention-days: 30
 
       - name: Comment on PR
-        if: github.event_name == 'pull_request'
+        if: steps.check_tools.outputs.skip != 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -182,7 +197,7 @@ jobs:
             });
 
       - name: Update Baseline (on main)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: steps.check_tools.outputs.skip != 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           # Store current metrics as new baseline
           cp tools/architecture/output/architecture_data.json \
