@@ -483,4 +483,4 @@ Best accuracy: 0.00
 **Need Help?**
 - [GitHub Issues](https://github.com/Traigent/Traigent/issues)
 - [Discord Community](https://discord.gg/traigent)
-- [Documentation](https://docs.traigent.ai)
+- [Documentation](https://github.com/Traigent/Traigent/tree/main/docs)

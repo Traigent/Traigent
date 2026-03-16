@@ -8,6 +8,7 @@ integration plugins that handle parameter mappings and framework overrides.
 
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +27,16 @@ if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
 
 logger = logging.getLogger(__name__)
+
+# Parameters that control system-level prompt content.
+# Modifying these via the optimizer changes LLM behaviour fundamentally.
+_SYSTEM_PROMPT_PARAMS = frozenset(
+    {"system", "system_prompt", "system_message", "system_instruction", "preamble"}
+)
+
+# One-time flag so the informational log fires at most once per process.
+_system_prompt_warning_emitted = False
+
 
 
 class IntegrationPriority(Enum):
@@ -296,6 +307,44 @@ class IntegrationPlugin(ABC):
         # Add custom params
         if hasattr(config_obj, "custom_params") and config_obj.custom_params:
             config_dict.update(config_obj.custom_params)
+
+        # Guard system-prompt parameters (audit log + optional lock)
+        lock_prompt = os.environ.get("TRAIGENT_LOCK_SYSTEM_PROMPT", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        prompt_params_in_config = _SYSTEM_PROMPT_PARAMS & config_dict.keys()
+        if prompt_params_in_config:
+            global _system_prompt_warning_emitted  # noqa: PLW0603
+            if not _system_prompt_warning_emitted:
+                logger.info(
+                    "System prompt parameter(s) %s included in optimization "
+                    "config space. Ensure all candidate values are trusted.",
+                    sorted(prompt_params_in_config),
+                )
+                _system_prompt_warning_emitted = True
+
+            if lock_prompt:
+                for p in prompt_params_in_config:
+                    logger.warning(
+                        "TRAIGENT_LOCK_SYSTEM_PROMPT is set — dropping "
+                        "optimizer-supplied '%s' parameter.",
+                        p,
+                    )
+                    del config_dict[p]
+            else:
+                # Audit-log every time the optimizer changes a prompt param
+                for p in prompt_params_in_config:
+                    val = config_dict[p]
+                    truncated = (
+                        str(val)[:120] + "…" if len(str(val)) > 120 else str(val)
+                    )
+                    logger.warning(
+                        "Optimizer is modifying system prompt param '%s': %s",
+                        p,
+                        truncated,
+                    )
 
         # Apply mappings
         mapped_params: set[str] = set()
