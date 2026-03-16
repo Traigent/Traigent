@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    DEFAULT_CLOUD_URL,
+    SIGNUP_URL,
+    BackendConfig,
+    get_no_credentials_hint,
+)
 
 
 class TestBackendConfigStoredApiKey:
@@ -360,3 +365,40 @@ class TestCliAuthEnvFileGuard:
         with patch("pathlib.Path.cwd", return_value=tmp_path):
             with pytest.raises(ValueError, match="must remain within the current"):
                 TraigentAuthCLI._resolve_env_file_path(outside)
+
+
+class TestCentralizedCredentialHints:
+    """Verify SIGNUP_URL is derived from DEFAULT_CLOUD_URL and appears in warnings."""
+
+    def test_signup_url_derived_from_cloud_url(self):
+        """SIGNUP_URL must start with the portal base constant."""
+        assert SIGNUP_URL.startswith(DEFAULT_CLOUD_URL)
+
+    def test_hint_contains_signup_url(self):
+        """get_no_credentials_hint() must include the signup URL."""
+        hint = get_no_credentials_hint()
+        assert SIGNUP_URL in hint
+
+    def test_class_constants_match_module_constants(self):
+        """BackendConfig class re-exports must equal module-level values."""
+        assert BackendConfig.DEFAULT_CLOUD_URL == DEFAULT_CLOUD_URL
+        assert BackendConfig.DEFAULT_PROD_URL == DEFAULT_CLOUD_URL
+
+    def test_get_api_key_warning_includes_signup_url(self, caplog):
+        """get_api_key() warning must contain the signup URL."""
+        import logging
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_api_key_only",
+                return_value=None,
+            ),
+            patch("traigent.utils.env_config.is_backend_offline", return_value=False),
+            caplog.at_level(logging.WARNING, logger="traigent.config.backend_config"),
+        ):
+            BackendConfig.get_api_key()
+
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
