@@ -47,20 +47,11 @@ def my_agent(question: str) -> str:
 ```
 
 <p align="center">
-  <a href="https://docs.traigent.ai">Documentation</a> &middot;
   <a href="https://portal.traigent.ai">Portal</a> &middot;
   <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
-  <a href="examples/">Examples</a>
+  <a href="examples/">Examples</a> &middot;
+  <a href=".agents/skills/traigent/SKILL.md">Skill</a>
 </p>
-
-### 🤖 AI Agent Skill
-
-This repo ships a built-in [Agent Skill](https://agentskills.io/) that teaches your AI coding agent how to set up and validate Traigent optimizations — dry-run first, real when you're ready. Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, and [30+ more](https://agentskills.io/).
-
-```bash
-# Full skill catalog (all 8 skills)
-npx skills add Traigent/agent-skills
-```
 
 ---
 
@@ -400,4 +391,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ---
 
-**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)**
+**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](.agents/skills/traigent/SKILL.md)**
