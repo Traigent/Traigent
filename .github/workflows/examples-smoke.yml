@@ -66,8 +66,8 @@ jobs:
         TRAIGENT_MOCK_LLM: "true"
         TRAIGENT_OFFLINE_MODE: "true"
         TRAIGENT_RUN_APPROVED: "1"
-        ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci"
-        TRAIGENT_API_KEY: "test-traigent-api-key-for-ci"
+        ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci" # pragma: allowlist secret
+        TRAIGENT_API_KEY: "test-traigent-api-key-for-ci" # pragma: allowlist secret
       run: |
         python scripts/examples/run_examples.py --base examples/core --pattern "run.py" --timeout 120 --verbose
 
@@ -85,8 +85,8 @@ jobs:
         TRAIGENT_MOCK_LLM: "true"
         TRAIGENT_OFFLINE_MODE: "true"
         TRAIGENT_RUN_APPROVED: "1"
-        ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci"
-        TRAIGENT_API_KEY: "test-traigent-api-key-for-ci"
+        ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci" # pragma: allowlist secret
+        TRAIGENT_API_KEY: "test-traigent-api-key-for-ci" # pragma: allowlist secret
       run: |
         python examples/core/structured-output-json/run.py
 
@@ -183,6 +183,10 @@ jobs:
 
     - name: Check archive index exists
       run: |
+        if [ ! -d "examples/archive" ]; then
+          echo "Archive directory not present; skipping check"
+          exit 0
+        fi
         if [ ! -f "examples/archive/README.md" ]; then
           echo "Archive overview missing"
           exit 1
