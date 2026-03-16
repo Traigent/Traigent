@@ -35,11 +35,17 @@ except ImportError:
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import safe_write_text, validate_path
+from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
 logger = get_logger(__name__)
 
 _EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
+_SENSITIVE_METADATA_KEY_PATTERN = re.compile(
+    r"(password|secret|token|api[_-]?key|credit[_-]?card|authorization)",
+    re.IGNORECASE,
+)
+_TAG_KEY_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_TAG_CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f]+")
 
 
 @dataclass
@@ -162,6 +168,51 @@ class DatasetConverter:
 
         return candidate
 
+    @staticmethod
+    def _sanitize_example_set_name(name: str) -> str:
+        """Sanitize dataset/example set names for backend-safe transport."""
+        candidate = _TAG_CONTROL_CHARS_PATTERN.sub("", name).strip()
+        return sanitize_filename(candidate, max_length=128)
+
+    @staticmethod
+    def _is_sensitive_metadata_key(key: str) -> bool:
+        """Return True when metadata should not be exposed as backend tags."""
+        normalized = key.strip().lower()
+        return bool(_SENSITIVE_METADATA_KEY_PATTERN.search(normalized))
+
+    @staticmethod
+    def _sanitize_tag_key(key: str) -> str:
+        """Normalize metadata keys to safe backend tag keys."""
+        normalized = _TAG_CONTROL_CHARS_PATTERN.sub("", key).strip()
+        normalized = _TAG_KEY_SANITIZE_PATTERN.sub("_", normalized)
+        return normalized.strip("._-")[:64]
+
+    @staticmethod
+    def _sanitize_tag_value(value: Any) -> str:
+        """Normalize metadata values for CSV/tag-safe backend transport."""
+        normalized = _TAG_CONTROL_CHARS_PATTERN.sub(" ", str(value))
+        normalized = normalized.replace(",", " ").strip()
+        return normalized[:160]
+
+    def _metadata_to_tags(
+        self, metadata: dict[str, Any], privacy_mode: bool = False
+    ) -> list[str]:
+        """Convert metadata to backend tags while filtering sensitive keys."""
+        if privacy_mode or not metadata:
+            return []
+
+        tags: list[str] = []
+        for key, value in metadata.items():
+            if not isinstance(value, (str, int, float, bool)):
+                continue
+            if self._is_sensitive_metadata_key(str(key)):
+                continue
+            safe_key = self._sanitize_tag_key(str(key))
+            safe_value = self._sanitize_tag_value(value)
+            if safe_key and safe_value:
+                tags.append(f"{safe_key}:{safe_value}")
+        return tags
+
     # SDK Dataset to Backend Example Set Conversion
 
     def sdk_dataset_to_backend_examples(
@@ -197,9 +248,10 @@ class DatasetConverter:
         example_type = self._determine_example_set_type(dataset)
 
         # Create metadata
+        dataset_name = dataset.name or f"SDK_Dataset_{int(uuid.uuid4().hex[:8], 16)}"
         metadata = ExampleSetMetadata(
             example_set_id=str(uuid.uuid4()),
-            name=dataset.name or f"SDK_Dataset_{int(uuid.uuid4().hex[:8], 16)}",
+            name=self._sanitize_example_set_name(dataset_name),
             type=example_type,
             description=dataset.description
             or f"Converted from SDK dataset with {len(examples)} examples",
@@ -286,7 +338,7 @@ class DatasetConverter:
             )
 
             if example_set_name:
-                metadata.name = example_set_name
+                metadata.name = self._sanitize_example_set_name(example_set_name)
 
             # Create example set via API
             example_set_id = await self._create_backend_example_set(metadata, agent_id)
@@ -561,7 +613,7 @@ class DatasetConverter:
 
         # Add metadata as tags if available and not in privacy mode
         if not privacy_mode and hasattr(example, "metadata") and example.metadata:
-            backend_example["tags"] = [f"{k}:{v}" for k, v in example.metadata.items()]
+            backend_example["tags"] = self._metadata_to_tags(example.metadata)
 
         return backend_example
 
@@ -623,12 +675,7 @@ class DatasetConverter:
         if privacy_mode or not metadata:
             return ""
 
-        tags = []
-        for key, value in metadata.items():
-            if isinstance(value, (str, int, float, bool)):
-                tags.append(f"{key}:{value}")
-
-        return ",".join(tags)
+        return ",".join(self._metadata_to_tags(metadata))
 
     def _deserialize_tags_to_metadata(self, tags: str | list[str]) -> dict[str, Any]:
         """Deserialize tags back to metadata dictionary."""

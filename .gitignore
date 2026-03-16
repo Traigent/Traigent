@@ -296,43 +296,9 @@ validate_*.py
 *_AUTOMATION.md
 *_PROTOCOL.md
 
-# Release review workspace
-# Keep core protocol/tracking files versioned for team sharing
-!.release_review/
-!.release_review/*.md
-# Keep run contract docs versioned, ignore generated run payloads
-.release_review/runs/*
-!.release_review/runs/
-!.release_review/runs/README.md
-.release_review/CURRENT_RUN
-# Ignore agent artifacts (scratch outputs, notes)
-.release_review/**/artifacts/
-.release_review/**/.mypy_cache/
-.release_review/walkthrough_review/
-
-# Client-specific example runs (keep only README)
-examples/bazak/*
-!examples/bazak/README.md
-
-# Post-release fixes workspace
-# Keep core protocol/tracking files versioned for team sharing
-!.post_release_recommendation_fixes/
-!.post_release_recommendation_fixes/*.md
-# Ignore agent artifacts and caches
-.post_release_recommendation_fixes/**/artifacts/
-.post_release_recommendation_fixes/**/.mypy_cache/
-.post_release_recommendation_fixes/**/.tracking.lock
-.post_release_recommendation_fixes/**/tmp/
-# Keep shared templates versioned
-!.post_release_recommendation_fixes/templates/
-!.post_release_recommendation_fixes/templates/**
-
-# Marketing materials viewer (removed - was local development only)
-tools/marketing-viewer/
-run_marketing_viewer.sh
-
-# Node modules in tools (regenerate with npm install)
-tools/**/node_modules/
+# DVC infrastructure (pipeline examples are in examples/ci-pipeline/)
+.dvc/
+.dvcignore
 
 # Virtual environments (additional)
 test_env/
@@ -454,10 +420,25 @@ tests/optimizer_validation/viewer/bdd_graph_data.json
 
 # Local discussion notes and experiments
 discussion_*.txt
+discussion_*.md
 DISCUSSIONS_RECOUNT_*.md
 AutoCoder_orders.txt
 old_discussions_*/
 paper_experiments/
+
+# Internal/proprietary docs (relocated to Traigent/business-strategy and Traigent/internal-docs)
+.archive/docs-internal/
+.release_review/
+.post_release_recommendation_fixes/
+local/
+CLAUDE.md
+docs/hybrid-mode-integration-guide.pdf
+examples/archive/
+examples/bazak/
+docs/marketing/
+docs/reviews/what_if_*/
+scripts/project_review/
+tests/BROAD_TEST_REVIEW_*.json
 
 # Nexxen demo resources (client-specific, not for version control)
 examples/nexxen/
@@ -466,3 +447,24 @@ examples/nexxen.zip
 
 # Local helper scripts
 walkthrough/run_with_env.sh
+
+# Release polish: internal tracking and dev artifacts (root-level)
+israel_issues*.json
+project_items.json
+sonarcloud_issues*.csv
+coverage_observability_modules.xml
+RELIABILITY_SWEEP_*.md
+PR[0-9]*.md
+playground.py
+test_redact*.py
+test_timeout*.py
+nvidia/
+# Internal maintenance and dev-only directories
+.archive/
+.post_release_recommendation_fixes/
+.release_review/
+.codesync.yml
+MAINTENANCE.md
+tools/
+manual_validation/
+scripts/project_review/

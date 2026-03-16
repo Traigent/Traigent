@@ -25,11 +25,10 @@ QUICKSTART_EXAMPLES=(
     "examples/quickstart/01_simple_qa.py"
     "examples/quickstart/02_customer_support_rag.py"
     "examples/quickstart/03_custom_objectives.py"
-    "examples/quickstart/05_prompt_techniques.py"
 )
 
 CORE_EXAMPLES=(
-    "examples/core/hello-world/run.py"
+    "examples/core/rag-optimization/run.py"
     "examples/core/simple-prompt/run.py"
     "examples/core/prompt-style-optimization/run.py"
     "examples/core/structured-output-json/run.py"

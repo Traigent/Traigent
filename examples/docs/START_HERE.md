@@ -4,7 +4,7 @@ Pick an example in under a minute.
 
 ## Quick picks
 - 2 min: `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py`
-- 5 min: `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
+- 5 min: `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py`
 - 8 min: `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py`
 - 10 min: `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
 - 30+ min: browse `examples/advanced/` playbooks
@@ -24,7 +24,7 @@ Pick an example in under a minute.
 examples/
 |- core/
 |  |- simple-prompt/
-|  |- hello-world/
+|  |- rag-optimization/
 |  |- few-shot-classification/
 |  |- multi-objective-tradeoff/
 |  |- token-budget-summarization/
@@ -55,7 +55,7 @@ examples/
 
 ## Recommended path (beginner)
 1. `core/simple-prompt/` - sanity check and mock mode setup
-2. `core/hello-world/` - RAG toggle and telemetry
+2. `core/rag-optimization/` - RAG toggle and telemetry
 3. `core/few-shot-classification/` - few-shot concepts
 4. `core/multi-objective-tradeoff/` - balance accuracy, latency, cost
 5. `advanced/ai-engineering-tasks/` - specialized playbooks
@@ -70,8 +70,8 @@ python examples/core/simple-prompt/run.py
 
 With real APIs (optional):
 ```bash
-export ANTHROPIC_API_KEY="your-key"
-export OPENAI_API_KEY="your-key"
+export ANTHROPIC_API_KEY="your-key" # pragma: allowlist secret
+export OPENAI_API_KEY="your-key" # pragma: allowlist secret
 python examples/core/multi-objective-tradeoff/run_anthropic.py
 ```
 

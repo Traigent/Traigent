@@ -24,7 +24,9 @@ from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -38,10 +40,14 @@ CONFIG_SPACE = {
 }
 
 
-def results_match_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+def results_match_score(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Simple scoring - mock returns model-dependent accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         return get_mock_accuracy(model, "privacy_test")
     # Real mode: simple contains check
     if output is None or expected is None:
@@ -74,11 +80,11 @@ async def main() -> None:
 
     print("\nLOCAL - All data stays on your machine")
 
-    results = await local_mode.optimize(
-        algorithm="grid", max_trials=2, random_seed=42
-    )
+    results = await local_mode.optimize(algorithm="grid", max_trials=2, random_seed=42)
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa")
+    print_results_table(
+        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

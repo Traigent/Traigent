@@ -85,7 +85,7 @@ COPY . /app
 WORKDIR /app
 RUN pip install -r requirements/requirements-integrations.txt
 RUN pip install -e .
-RUN python examples/quickstart/simple_demo.py
+RUN python examples/quickstart/01_simple_qa.py
 ```
 
 #### Integration Tests for Examples

@@ -24,7 +24,9 @@ from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -54,13 +56,17 @@ SHOW_DETAIL_LOGS = os.getenv("TRAIGENT_SHOW_DETAIL_LOGS", "").lower() in (
 )
 
 
-def results_match_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+def results_match_score(
+    output: str, expected: str, config: dict | None = None, **_
+) -> float:
     """Simple scoring: 1.0 if expected answer appears in output, else 0.0.
 
     In mock mode, returns model-dependent accuracy.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         return get_mock_accuracy(model, "simple_qa")
     if output is None or expected is None:
         return 0.0
@@ -102,13 +108,15 @@ async def main() -> None:
         algorithm="random", max_trials=4, random_seed=42
     )
 
-    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa")
+    print_results_table(
+        results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="simple_qa"
+    )
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
     print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
-    use_sys = "yes" if results.best_config.get('use_system_prompt') else "no"
+    use_sys = "yes" if results.best_config.get("use_system_prompt") else "no"
     print(f"  System Prompt: {use_sys}")
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")

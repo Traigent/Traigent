@@ -37,14 +37,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 _error_counts: Counter[str] = Counter()
 _MAX_ERRORS_PER_MODEL = 1  # Only show first error per model
 
-import traigent
-from traigent import TraigentConfig
-from traigent.providers import (
-    get_provider_for_model,
-    print_provider_status,
-    validate_providers,
-)
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -53,6 +45,14 @@ from utils.helpers import (
     print_results_table,
 )
 from utils.scoring import token_match_score
+
+import traigent
+from traigent import TraigentConfig
+from traigent.providers import (
+    get_provider_for_model,
+    print_provider_status,
+    validate_providers,
+)
 
 # -----------------------------------------------------------------------------
 # Environment Setup

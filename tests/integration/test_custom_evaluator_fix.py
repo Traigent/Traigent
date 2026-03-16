@@ -103,7 +103,7 @@ async def main():
 
     print("\n" + "=" * 60)
     print("💡 Now check the database with:")
-    print("psql postgresql://optigen:optigen_local@localhost:5432/optigen \\")
+    print("psql $DB_URL \\")
     print(
         '  -c "SELECT id, measures FROM configuration_runs ORDER BY created_at DESC LIMIT 1;"'
     )

@@ -1,6 +1,6 @@
 # Traigent SDK API Reference
 
-Authoritative reference for Traigent SDK **v0.9.0 (Beta)**.
+Authoritative reference for Traigent SDK **v0.10.0 (Beta)**.
 
 ## Quick Navigation
 
@@ -590,4 +590,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects Traigent SDK v0.9.0.
+This documentation reflects Traigent SDK v0.10.0.

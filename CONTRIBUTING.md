@@ -25,6 +25,13 @@ full suite in CI-equivalent mode.
 Open focused pull requests with a clear summary, rationale, and test evidence.
 Link related issues and call out any known tradeoffs.
 
+## Contributor Licensing
+
+External contributors must sign Traigent's Contributor License Agreement (CLA)
+before non-trivial changes can be merged. See
+[`CONTRIBUTOR-LICENSING.md`](CONTRIBUTOR-LICENSING.md) for the policy and
+contact path.
+
 ## Issue Reporting
 
 When filing an issue, include reproduction steps, expected behavior, actual

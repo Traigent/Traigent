@@ -17,7 +17,7 @@ Note: We do NOT test "accumulated + reserved <= limit" as an invariant because
 budget enforcement happens at acquire_permit() time. After track_cost(), the
 total CAN exceed the limit if actual_cost > estimated_cost. This is by design.
 
-Reference: /home/nimrodbu/.claude/plans/snazzy-whistling-kettle.md
+
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ import traigent
 from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
-    eval_dataset="examples/datasets/hello-world/evaluation_set.jsonl",
+    eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
 )
@@ -44,13 +44,6 @@ def answer_question(question: str) -> str:
 - **[Evaluation](guides/evaluation.md)** - Evaluation best practices and troubleshooting
 - **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
 - **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys
-- **[n8n Access and Local Runbook](guides/n8n-access-and-local-runbook.md)** - Bring up n8n integration and track external access blockers
-- **[n8n Access Request Template](guides/n8n-access-request-template.md)** - Standard request format to unblock external n8n environment access
-- **[n8n Agent Evaluation Matrix](guides/n8n-agent-evaluation-matrix.md)** - Select agents, datasets, and objective weights before optimization
-- **[n8n Optimization Execution Playbook](guides/n8n-optimization-execution-playbook.md)** - Execute baseline, optimization, and validation for selected n8n agents
-- **[n8n Optimization Report Template](guides/n8n-optimization-report-template.md)** - Capture baseline vs optimized evidence and rollout decision
-- **[Weighted Score Frontend Contract](guides/weighted-score-frontend-contract.md)** - Backend-to-frontend payload rules for multi-objective weighted score rendering
-- **[Frontend Video Fix Checklist](guides/frontend-video-fix-checklist.md)** - Repro and validation checklist for video-related frontend issues
 
 ### 🔧 [API Reference](api-reference/)
 - **[Complete Function Specification](api-reference/complete-function-specification.md)** - Full API documentation
@@ -104,7 +97,7 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 - Enable: `TRAIGENT_MOCK_LLM=true` (no API keys needed)
 - Benefits: realistic scores, zero cost, quick iteration
 - Example:
-  - `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
+  - `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py`
   - Or copy a command from the Examples Navigator "Run" icon
 
 ---

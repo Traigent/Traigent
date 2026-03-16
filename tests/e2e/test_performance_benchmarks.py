@@ -32,6 +32,8 @@ from traigent.cloud.models import (
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
+pytestmark = pytest.mark.performance
+
 
 class PerformanceMetrics:
     """Track and analyze performance metrics."""

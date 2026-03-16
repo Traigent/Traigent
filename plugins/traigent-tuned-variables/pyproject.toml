@@ -58,7 +58,7 @@ tuned_variables = "traigent_tuned_variables:TunedVariablesPlugin"
 
 [project.urls]
 Homepage = "https://github.com/Traigent/Traigent"
-Documentation = "https://docs.traigent.ai/plugins/tuned-variables"
+Documentation = "https://github.com/Traigent/Traigent/tree/main/docs"
 Repository = "https://github.com/Traigent/Traigent"
 
 [tool.hatch.build.targets.wheel]
