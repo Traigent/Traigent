@@ -460,6 +460,15 @@ AutoCoder_orders.txt
 old_discussions_*/
 paper_experiments/
 
+# Internal/proprietary docs (relocated to Traigent/business-strategy and Traigent/internal-docs)
+.archive/docs-internal/
+.release_review/
+.post_release_recommendation_fixes/
+docs/marketing/
+docs/reviews/what_if_*/
+scripts/project_review/
+tests/BROAD_TEST_REVIEW_*.json
+
 # Nexxen demo resources (client-specific, not for version control)
 examples/nexxen/
 examples/datasets/nexxen/
