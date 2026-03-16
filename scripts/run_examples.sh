@@ -28,7 +28,7 @@ QUICKSTART_EXAMPLES=(
 )
 
 CORE_EXAMPLES=(
-    "examples/core/hello-world/run.py"
+    "examples/core/rag-optimization/run.py"
     "examples/core/simple-prompt/run.py"
     "examples/core/prompt-style-optimization/run.py"
     "examples/core/structured-output-json/run.py"

@@ -9,7 +9,7 @@ A concise path from first run to production-ready evaluations.
 
 ## Week 1: Foundations (beginner)
 1. Sanity check: `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py`
-2. RAG toggle: `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
+2. RAG toggle: `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py`
 3. Few-shot prompts: `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py`
 4. Trade-offs: `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
 
