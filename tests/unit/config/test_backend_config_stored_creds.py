@@ -379,9 +379,8 @@ class TestCentralizedCredentialHints:
         hint = get_no_credentials_hint()
         assert SIGNUP_URL in hint
 
-    def test_class_constants_match_module_constants(self):
-        """BackendConfig class re-exports must equal module-level values."""
-        assert BackendConfig.DEFAULT_CLOUD_URL == DEFAULT_CLOUD_URL
+    def test_class_constant_matches_module_constant(self):
+        """BackendConfig.DEFAULT_PROD_URL must equal module-level DEFAULT_CLOUD_URL."""
         assert BackendConfig.DEFAULT_PROD_URL == DEFAULT_CLOUD_URL
 
     def test_get_api_key_warning_includes_signup_url(self, caplog):
