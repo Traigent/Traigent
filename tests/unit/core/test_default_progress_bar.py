@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 from traigent.core.optimized_function import _resolve_callbacks
 from traigent.utils.callbacks import ProgressBarCallback
 
@@ -78,11 +77,16 @@ class TestResolveCallbacks:
         assert callbacks[1] is dec_cb
 
     def test_force_progress_bar_non_interactive(self):
-        """progress_bar=True forces injection even in non-interactive mode.
+        """progress_bar=True forces injection even in non-interactive mode."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(None, None, progress_bar=True)
 
-        Note: current implementation only auto-injects when isatty()=True.
-        progress_bar=None with isatty=False should not inject.
-        """
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], ProgressBarCallback)
+
+    def test_auto_skips_non_interactive(self):
+        """progress_bar=None with isatty=False should not inject."""
         with patch("traigent.core.optimized_function.sys") as mock_sys:
             mock_sys.stdin.isatty.return_value = False
             callbacks = _resolve_callbacks(None, None, progress_bar=None)
