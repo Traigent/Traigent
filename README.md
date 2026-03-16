@@ -23,7 +23,7 @@ pip install -e ".[recommended]"
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
-python walkthrough/mock/01_tuning_qa.py
+python hello.py
 ```
 
 **One decorator, two parameters, multi-objective optimization:**
