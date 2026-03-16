@@ -182,6 +182,11 @@ ml = [
     "scipy>=1.7.0",
 ]
 
+# DeepEval integration (LLM evaluation metrics as optimization objectives)
+deepeval = [
+    "deepeval>=1.0.0",
+]
+
 # Cloud bundle (cloud execution mode, advanced session management)
 cloud = [
     "traigent[security]",

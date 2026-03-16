@@ -17,7 +17,7 @@
 #   ./test_all_examples.sh tvl                     # Run TVL tutorial examples
 #   ./test_all_examples.sh multi-objective         # Run multi-objective examples
 #   ./test_all_examples.sh advanced-walkthrough    # Run advanced walkthrough
-#   ./test_all_examples.sh manifest                # Run SDK manifest (37 examples, strict)
+#   ./test_all_examples.sh manifest                # Run SDK manifest (38 examples, strict)
 #   ./test_all_examples.sh all                     # Run all examples (broad smoke)
 #   ./test_all_examples.sh --real core             # Real mode (needs API keys)
 #
@@ -29,9 +29,10 @@
 #   walkthrough         - Walkthrough tutorial examples (8 examples)
 #   advanced-walkthrough - Advanced walkthrough examples (5 examples)
 #   advanced            - Execution modes and specialized features
+#   integrations        - Third-party evaluation framework integrations (1 example)
 #   ragas               - RAGAS evaluation integration examples (3 examples)
 #   docs                - Documentation inline examples (2 examples)
-#   manifest            - SDK publication manifest (37 examples, strict — skips = failure)
+#   manifest            - SDK publication manifest (38 examples, strict — skips = failure)
 #   all                 - Run all categories (broad smoke, skips OK)
 #
 # MODE FLAGS:
@@ -90,9 +91,10 @@ while [[ $# -gt 0 ]]; do
             echo "  walkthrough         - Walkthrough tutorials (8 examples)"
             echo "  advanced-walkthrough - Advanced walkthrough (5 examples)"
             echo "  advanced            - Execution modes and specialized features"
+            echo "  integrations        - Third-party evaluation integrations (1 example)"
             echo "  ragas               - RAGAS evaluation integration (3 examples)"
             echo "  docs                - Documentation inline examples (2 examples)"
-            echo "  manifest            - SDK publication manifest (37 examples, strict)"
+            echo "  manifest            - SDK publication manifest (38 examples, strict)"
             echo "  all                 - Run all categories (broad smoke)"
             echo ""
             echo "Mode flags:"
@@ -141,6 +143,11 @@ declare -a RAGAS_EXAMPLES=(
     "advanced/ragas/basics/run.py"
     "advanced/ragas/column_map/run.py"
     "advanced/ragas/with_llm/run.py"
+)
+
+# Integration examples - third-party evaluation frameworks
+declare -a INTEGRATION_EXAMPLES=(
+    "integrations/deepeval/run.py"
 )
 
 # Advanced examples - execution modes (require API keys for most)
@@ -337,6 +344,10 @@ case "$CATEGORY" in
         print_header "Core Examples" "$MODE_NAME"
         run_category "Core" "${CORE_EXAMPLES[@]}"
         ;;
+    integrations)
+        print_header "Integration Examples" "$MODE_NAME"
+        run_category "Integrations" "${INTEGRATION_EXAMPLES[@]}"
+        ;;
     ragas)
         print_header "RAGAS Examples" "$MODE_NAME"
         run_category "RAGAS" "${RAGAS_EXAMPLES[@]}"
@@ -371,7 +382,7 @@ case "$CATEGORY" in
         run_category "Advanced Walkthrough" "${ADVANCED_WALKTHROUGH_EXAMPLES[@]}"
         ;;
     manifest)
-        print_header "SDK Publication Manifest (37 examples)" "$MODE_NAME"
+        print_header "SDK Publication Manifest (38 examples)" "$MODE_NAME"
         echo -e "${YELLOW}--- Core (12) ---${NC}"
         run_category "Core" "${CORE_EXAMPLES[@]}"
         echo ""
@@ -384,12 +395,15 @@ case "$CATEGORY" in
         echo -e "${YELLOW}--- TVL Tutorials (5) ---${NC}"
         run_category "TVL Tutorials" "${TVL_EXAMPLES[@]}"
         echo ""
+        echo -e "${YELLOW}--- Integrations (1) ---${NC}"
+        run_category "Integrations" "${INTEGRATION_EXAMPLES[@]}"
+        echo ""
         echo -e "${YELLOW}--- Walkthrough (7) ---${NC}"
         run_category "Walkthrough" "${WALKTHROUGH_MANIFEST_EXAMPLES[@]}"
         echo ""
         echo -e "${YELLOW}--- Advanced Walkthrough (5) ---${NC}"
         run_category "Advanced Walkthrough" "${ADVANCED_WALKTHROUGH_EXAMPLES[@]}"
-        # Strict: manifest requires ALL 37 to pass, no skips allowed
+        # Strict: manifest requires ALL 38 to pass, no skips allowed
         if [ $skipped -gt 0 ]; then
             echo ""
             echo -e "${RED}Manifest requires all examples to pass (${skipped} skipped)${NC}"
@@ -410,6 +424,9 @@ case "$CATEGORY" in
         echo ""
         echo -e "${YELLOW}--- TVL Tutorials ---${NC}"
         run_category "TVL Tutorials" "${TVL_EXAMPLES[@]}"
+        echo ""
+        echo -e "${YELLOW}--- Integrations ---${NC}"
+        run_category "Integrations" "${INTEGRATION_EXAMPLES[@]}"
         echo ""
         echo -e "${YELLOW}--- RAGAS ---${NC}"
         run_category "RAGAS" "${RAGAS_EXAMPLES[@]}"
