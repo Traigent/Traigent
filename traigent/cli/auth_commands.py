@@ -44,7 +44,7 @@ from traigent.cloud.auth import (
     AuthManager,
     InvalidCredentialsError,
 )
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -656,9 +656,7 @@ class TraigentAuthCLI:
         except AuthenticationError as e:
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
-            console.print(
-                "If you don't have an account, visit: https://portal.traigent.ai/login\n"
-            )
+            console.print(f"If you don't have an account, visit: {SIGNUP_URL}\n")
             return False
         except TimeoutError as e:
             console.print(f"\n[red]❌ Connection timed out: {e}[/red]")
