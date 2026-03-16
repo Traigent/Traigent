@@ -370,9 +370,9 @@ class TestCliAuthEnvFileGuard:
 class TestCentralizedCredentialHints:
     """Verify SIGNUP_URL is derived from DEFAULT_CLOUD_URL and appears in warnings."""
 
-    def test_signup_url_derived_from_cloud_url(self):
-        """SIGNUP_URL must start with the portal base constant."""
-        assert SIGNUP_URL.startswith(DEFAULT_CLOUD_URL)
+    def test_signup_url_is_portal_root(self):
+        """SIGNUP_URL must equal the portal base (users register or login there)."""
+        assert SIGNUP_URL == DEFAULT_CLOUD_URL
 
     def test_hint_contains_signup_url(self):
         """get_no_credentials_hint() must include the signup URL."""
@@ -399,6 +399,6 @@ class TestCentralizedCredentialHints:
         ):
             BackendConfig.get_api_key()
 
-        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
-            f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
-        )
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
