@@ -488,7 +488,7 @@ def main() -> None:
 
     html_content = build_html(entries)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(html_content, encoding="utf-8")
+    args.output.write_text(f"{html_content}\n", encoding="utf-8")
     detail_pages = generate_detail_pages(REPO_ROOT, entries)
     print(f"Wrote gallery to {args.output}")
     print(f"Generated {len(detail_pages)} detail pages under examples/core/")

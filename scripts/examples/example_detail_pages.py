@@ -657,7 +657,7 @@ def generate_detail_pages(repo_root: Path, catalog_entries: list[dict[str, Any]]
         parsed = parse_readme(output_dir / "README.md")
         html_content = build_detail_page(entry, parsed, output_dir, tour_entries)
         output_file = output_dir / "index.html"
-        output_file.write_text(html_content, encoding="utf-8")
+        output_file.write_text(f"{html_content}\n", encoding="utf-8")
         generated_paths.append(output_file)
 
     return generated_paths
