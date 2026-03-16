@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
+  <a href="https://docs.traigent.ai"><img src="https://img.shields.io/badge/docs-docs.traigent.ai-blue.svg" alt="Documentation"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
 </p>
@@ -45,6 +46,7 @@ def my_agent(question: str) -> str:
 ```
 
 <p align="center">
+  <a href="https://docs.traigent.ai">Documentation</a> &middot;
   <a href="https://portal.traigent.ai">Portal</a> &middot;
   <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
   <a href="examples/">Examples</a>
@@ -298,7 +300,10 @@ We welcome bug reports and feature requests via [GitHub Issues](https://github.c
 
 ## 📄 License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Open-source releases of this project are licensed under the GNU Affero General
+Public License v3 (AGPLv3). Commercial licenses are available from Traigent for
+organizations that need different terms. See [LICENSE](LICENSE) and
+[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md).
 
 ---
 

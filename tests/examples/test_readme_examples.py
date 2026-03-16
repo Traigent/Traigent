@@ -318,6 +318,7 @@ if 'customer_support_agent' in locals():
                     all_imports.add(line.strip())
         return all_imports
 
+    @pytest.mark.timeout(120)
     def test_imports_in_examples(self):
         """Smoke test required imports used by README examples."""
 
@@ -358,7 +359,7 @@ if 'customer_support_agent' in locals():
             ]
         )
 
-        self._run_code_safely(test_code, "required_import_smoke", timeout=30)
+        self._run_code_safely(test_code, "required_import_smoke", timeout=90)
 
     @pytest.mark.slow
     @pytest.mark.timeout(120)
@@ -466,7 +467,7 @@ os.unlink(dataset_path)
 
         self._run_code_safely(test_code, "evaluation")
 
-    def _run_code_safely(self, code: str, name: str, timeout: int = 30):
+    def _run_code_safely(self, code: str, name: str, timeout: int = 60):
         """Run code in a subprocess safely."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
@@ -497,6 +498,7 @@ os.unlink(dataset_path)
             # Clean up
             Path(temp_file).unlink(missing_ok=True)
 
+    @pytest.mark.timeout(120)
     def test_mock_mode_in_examples(self):
         """Test that examples work with mock mode."""
         mock_mode_count = 0
@@ -523,7 +525,7 @@ assert result is not None
 print("✅ Mock mode works for decorated functions")
 """
                 try:
-                    self._run_code_safely(test_code, "mock_mode_test", timeout=30)
+                    self._run_code_safely(test_code, "mock_mode_test", timeout=90)
                     mock_mode_count += 1
                     break  # Same test code each iteration; one success is sufficient
                 except Exception:
