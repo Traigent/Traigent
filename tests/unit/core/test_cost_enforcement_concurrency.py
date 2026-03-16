@@ -9,7 +9,7 @@ Key scenarios tested:
 - C6: Acquire while another thread is releasing
 - C7: track_cost while another thread is releasing same permit
 
-Reference: REDACTED_HOME/.claude/plans/snazzy-whistling-kettle.md
+
 """
 
 from __future__ import annotations

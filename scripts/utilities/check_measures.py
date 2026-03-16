@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 import sys
 
 try:
@@ -17,7 +18,7 @@ except ImportError:
         try:
             cmd = [
                 "psql",
-                "postgresql://optigen:optigen_local@localhost:5432/optigen",
+                os.environ.get("DB_URL", "postgresql://localhost:5432/optigen"),
                 "-c",
                 "SELECT id, name, created_at FROM experiments ORDER BY created_at DESC LIMIT 5",
             ]
@@ -28,7 +29,7 @@ except ImportError:
             # Also check configuration runs
             cmd2 = [
                 "psql",
-                "postgresql://optigen:optigen_local@localhost:5432/optigen",
+                os.environ.get("DB_URL", "postgresql://localhost:5432/optigen"),
                 "-c",
                 "SELECT id, score, jsonb_array_length(measures) as measure_count FROM configuration_runs ORDER BY created_at DESC LIMIT 5",
             ]
@@ -43,7 +44,7 @@ except ImportError:
     sys.exit(0)
 
 # Database connection parameters
-DB_URL = "postgresql://optigen:optigen_local@localhost:5432/optigen"
+DB_URL = os.environ.get("DB_URL", "postgresql://localhost:5432/optigen")
 
 
 async def check_measures():

@@ -14,10 +14,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_openai import ChatOpenAI
-
-import traigent
-from traigent import TraigentConfig
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -29,6 +25,9 @@ from utils.helpers import (
     setup_example_logger,
 )
 from utils.scoring import STOPWORDS, token_match_score, token_matches, tokenize
+
+import traigent
+from traigent import TraigentConfig
 
 require_openai_key("01_tuning_qa.py")
 sanitize_traigent_api_key()
@@ -136,13 +135,11 @@ def answer_question(question: str) -> str:
     )
     try:
         response = llm.invoke(
-
-                "Answer with the final answer only. Do not ask questions. "
-                "Keep it concise and use the question's terminology. "
-                "If the answer is numeric, use digits only (no commas), no units, "
-                "and follow the units implied by the question. Do not round. "
-                f"{question}"
-
+            "Answer with the final answer only. Do not ask questions. "
+            "Keep it concise and use the question's terminology. "
+            "If the answer is numeric, use digits only (no commas), no units, "
+            "and follow the units implied by the question. Do not round. "
+            f"{question}"
         )
         return str(response.content)
     except Exception as exc:

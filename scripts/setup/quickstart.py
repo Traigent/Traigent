@@ -53,14 +53,14 @@ def check_python_version():
     """Check if Python version is suitable."""
     print_header("Checking Python Version")
     version = sys.version_info
-    if version.major == 3 and version.minor >= 8:
+    if version.major == 3 and version.minor >= 11:
         print_success(
             f"Python {version.major}.{version.minor}.{version.micro} is supported"
         )
         return True
     else:
         print_error(
-            f"Python {version.major}.{version.minor} is not supported. Please use Python 3.8+"
+            f"Python {version.major}.{version.minor} is not supported. Please use Python 3.11+"
         )
         return False
 
@@ -86,31 +86,10 @@ def install_dependencies():
     """Install required dependencies."""
     print_header("Installing Dependencies")
 
-    requirements_files = [
-        "requirements/requirements.txt",
-        "requirements/requirements-integrations.txt",
-    ]
-
-    for req_file in requirements_files:
-        if Path(req_file).exists():
-            print_info(f"Installing from {req_file}...")
-            try:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-r", req_file, "--quiet"],
-                    check=True,
-                    capture_output=True,
-                )
-                print_success(f"Installed dependencies from {req_file}")
-            except subprocess.CalledProcessError as e:
-                print_error(f"Failed to install from {req_file}")
-                print(e.stderr.decode() if e.stderr else "")
-                return False
-
-    # Install Traigent itself
-    print_info("Installing Traigent SDK...")
+    print_info('Installing Traigent SDK with the documented source install...')
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+            [sys.executable, "-m", "pip", "install", '-e', '.[recommended]', "--quiet"],
             check=True,
             capture_output=True,
         )
@@ -133,7 +112,10 @@ def verify_imports():
         ("langchain_chroma", "LangChain Chroma"),
         ("openai", "OpenAI"),
         ("dotenv", "python-dotenv"),
-        ("tokencost", "tokencost (for accurate cost calculation)"),
+        ("numpy", "NumPy"),
+        ("pandas", "pandas"),
+        ("httpx", "httpx"),
+        ("mcp", "MCP"),
     ]
 
     all_good = True
@@ -161,6 +143,7 @@ def setup_environment():
         env_content = """# Traigent Environment Variables
 # For mock mode testing (no real API calls)
 TRAIGENT_MOCK_LLM=true
+TRAIGENT_OFFLINE_MODE=true
 
 # Add your real API keys here when ready:
 # OPENAI_API_KEY=your-key-here
@@ -173,6 +156,7 @@ TRAIGENT_MOCK_LLM=true
 
     # Set mock mode for this session
     os.environ["TRAIGENT_MOCK_LLM"] = "true"
+    os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
     print_success("Mock mode enabled for this session")
     return True
 
@@ -255,11 +239,11 @@ def print_next_steps():
 
     print(f"{Colors.BOLD}Quick commands to try:{Colors.ENDC}")
     print("\n1. Run examples:")
-    print("   python examples/core/hello-world/run.py")
+    print("   python examples/core/rag-optimization/run.py")
     print("   python examples/core/multi-objective-tradeoff/run.py")
 
     print("\n2. Verify installation:")
-    print("   python scripts/verify_installation.py")
+    print("   python scripts/validation/verify_installation.py")
 
     print("\n3. Explore documentation:")
     print("   - README.md - Main documentation")
@@ -290,17 +274,13 @@ def main():
     # Install dependencies
     if not install_dependencies():
         print_error("Failed to install dependencies")
-        print_info(
-            "Try running: pip install -r requirements/requirements-integrations.txt"
-        )
+        print_info('Try running: pip install -e ".[recommended]"')
         return 1
 
     # Verify imports
     if not verify_imports():
         print_error("Some imports failed")
-        print_info(
-            "Try running: pip install langchain-openai langchain-chroma python-dotenv"
-        )
+        print_info('Try reinstalling the documented bundle: pip install -e ".[recommended]"')
         return 1
 
     # Set up environment

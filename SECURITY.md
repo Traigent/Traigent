@@ -4,6 +4,7 @@
 
 | Version | Supported |
 |---------|-----------|
+| 0.10.x  | ✅ Yes    |
 | 0.9.x   | ✅ Yes    |
 | < 0.9   | ❌ No     |
 
@@ -13,7 +14,7 @@
 
 To report a security vulnerability:
 
-1. Email: security@traigent.com
+1. Email: security@traigent.ai
 2. Include:
    - Description of the vulnerability
    - Steps to reproduce

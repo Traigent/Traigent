@@ -73,7 +73,9 @@ setup_logging(level=os.getenv("TRAIGENT_LOG_LEVEL", "INFO"))
 # ---------------------------------------------------------------------------
 # Configuration — all values come from environment / .env (no hardcoded secrets)
 # ---------------------------------------------------------------------------
-SERVER_URL: Final[str] = get_env_var("MASTRA_JS_BASE_URL", "https://ai.bazak.ai")
+SERVER_URL: Final[str] = get_env_var(
+    "MASTRA_JS_BASE_URL", "https://your-mastra-server.example.com"
+)
 AUTH_TOKEN: Final[str] = get_env_var("MASTRA_JS_AUTH_TOKEN", "", mask_in_logs=True)
 AUTH_HEADERS: Final[dict[str, str]] = {
     "Authorization": AUTH_TOKEN,

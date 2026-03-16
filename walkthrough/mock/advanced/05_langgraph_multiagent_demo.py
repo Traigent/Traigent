@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import TypedDict
 
 from dotenv import load_dotenv
-from langgraph.graph import END, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 import traigent
@@ -128,7 +128,9 @@ def grade_documents(state: RAGState) -> RAGState:
         for doc in docs:
             doc_lower = doc.lower()
             # Check if any question word appears in document
-            if any(word in doc_lower for word in question.lower().split() if len(word) > 3):
+            if any(
+                word in doc_lower for word in question.lower().split() if len(word) > 3
+            ):
                 relevant.append(doc)
     else:
         # Real LLM grading - use LangChain wrapper for automatic cost tracking
@@ -141,8 +143,12 @@ def grade_documents(state: RAGState) -> RAGState:
 
         for doc in docs:
             messages = [
-                SystemMessage(content="You are a document relevance grader. Answer only 'yes' or 'no'."),
-                HumanMessage(content=f"Is this document relevant to the question?\n\nQuestion: {question}\n\nDocument: {doc}\n\nAnswer (yes/no):")
+                SystemMessage(
+                    content="You are a document relevance grader. Answer only 'yes' or 'no'."
+                ),
+                HumanMessage(
+                    content=f"Is this document relevant to the question?\n\nQuestion: {question}\n\nDocument: {doc}\n\nAnswer (yes/no):"
+                ),
             ]
             response = llm.invoke(messages)
             answer = response.content.strip().lower()
@@ -210,8 +216,12 @@ def generate_answer(state: RAGState) -> RAGState:
         context = "\n".join(docs) if docs else "No relevant documents found."
 
         messages = [
-            SystemMessage(content="You are a helpful assistant. Answer the question based on the provided context. Be concise."),
-            HumanMessage(content=f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
+            SystemMessage(
+                content="You are a helpful assistant. Answer the question based on the provided context. Be concise."
+            ),
+            HumanMessage(
+                content=f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+            ),
         ]
         response = llm.invoke(messages)
         answer = response.content.strip()
@@ -293,7 +303,10 @@ def extract_workflow_graph(
             id="grade_documents",
             type="agent",
             display_name="Document Grader",
-            tunable_params=["grade_documents.model", "grade_documents.relevance_threshold"],
+            tunable_params=[
+                "grade_documents.model",
+                "grade_documents.relevance_threshold",
+            ],
             metadata={
                 "purpose": "Evaluate document relevance",
                 "function": "grade_documents",
@@ -313,7 +326,11 @@ def extract_workflow_graph(
             id="generate",
             type="agent",
             display_name="Generator Agent",
-            tunable_params=["generate.model", "generate.temperature", "generate.max_tokens"],
+            tunable_params=[
+                "generate.model",
+                "generate.temperature",
+                "generate.max_tokens",
+            ],
             metadata={
                 "purpose": "Generate final answer from context",
                 "function": "generate_answer",
@@ -452,7 +469,9 @@ def cost_metric(output: str, expected: str) -> float:
 
 
 @traigent.optimize(
-    eval_dataset=str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()),
+    eval_dataset=str(
+        (SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()
+    ),
     objectives=["accuracy", "cost"],
     metric_functions={
         "accuracy": accuracy_metric,  # Custom accuracy metric
@@ -512,9 +531,8 @@ def run_rag_workflow(question: str) -> str:
 
 async def main() -> None:
     """Run the LangGraph multi-agent demo with Traigent optimization."""
-    print("=" * 70)
-    print("LangGraph Multi-Agent RAG Workflow with Traigent Optimization")
-    print("=" * 70)
+    print("Traigent Advanced: LangGraph Multi-Agent RAG Workflow")
+    print("=" * 50)
 
     # Check environment
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
@@ -524,7 +542,9 @@ async def main() -> None:
     print(f"\nBackend URL: {backend_url}")
     print(f"Traigent API Key: {'set' if api_key else 'NOT SET'}")
     print(f"OpenAI API Key: {'set' if openai_key else 'NOT SET'}")
-    print(f"\n*** MODE: {'MOCK (no real API costs)' if MOCK_MODE else f'REAL (using OpenAI {DEFAULT_MODEL})'} ***")
+    print(
+        f"Mode: {'MOCK (no real API costs)' if MOCK_MODE else f'REAL (using OpenAI {DEFAULT_MODEL})'}"
+    )
 
     if not MOCK_MODE and not openai_key:
         print("\nERROR: OPENAI_API_KEY not set for real mode.")
@@ -536,9 +556,9 @@ async def main() -> None:
         return
 
     # First, send the workflow graph for visualization
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 1: Sending workflow graph topology to backend...")
-    print("-" * 70)
+    print("-" * 50)
 
     tracker = WorkflowTracesTracker(
         backend_url=backend_url,
@@ -550,9 +570,9 @@ async def main() -> None:
     print("  Graph will be sent during optimization...")
 
     # Run optimization
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 2: Running Traigent optimization...")
-    print("-" * 70)
+    print("-" * 50)
     print("\nWorkflow structure:")
     print("  START -> retrieve -> grade_documents --(relevant)--> generate -> END")
     print("                            |")
@@ -567,7 +587,9 @@ async def main() -> None:
     # Set a generous timeout to allow all trials to complete
     # Each trial takes ~100s with 20 examples, so timeout should be at least max_trials * 120s
     timeout_seconds = max_trials * 120  # 240s for 2 trials in real mode
-    print(f"  Timeout: {timeout_seconds}s (allowing ~{timeout_seconds // max_trials}s per trial)")
+    print(
+        f"  Timeout: {timeout_seconds}s (allowing ~{timeout_seconds // max_trials}s per trial)"
+    )
 
     results = await run_rag_workflow.optimize(
         algorithm="grid",
@@ -578,9 +600,9 @@ async def main() -> None:
 
     # Send the workflow graph to backend for visualization
     # Note: The experiment_id comes from the backend session
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 3: Sending workflow graph topology...")
-    print("-" * 70)
+    print("-" * 50)
 
     # Get experiment_id and experiment_run_id directly from results metadata
     experiment_id = None
@@ -594,7 +616,9 @@ async def main() -> None:
         response = tracker.client.ingest_traces(graph=graph_payload)
         if response.success:
             print(f"  Graph sent successfully (ID: {response.graph_id})")
-            print(f"  Nodes: {len(graph_payload.nodes)}, Edges: {len(graph_payload.edges)}")
+            print(
+                f"  Nodes: {len(graph_payload.nodes)}, Edges: {len(graph_payload.edges)}"
+            )
             if graph_payload.loops:
                 print(f"  Detected loops: {len(graph_payload.loops)}")
         else:
@@ -603,9 +627,9 @@ async def main() -> None:
         # Note: Per-agent spans are automatically recorded via OpenTelemetry
         # and exported to the Traigent backend by the OptiGenSpanExporter.
         # No manual span creation needed - OTEL handles it during workflow execution.
-        print("\n" + "-" * 70)
+        print("\n" + "-" * 50)
         print("Note: Per-agent spans automatically recorded via OpenTelemetry")
-        print("-" * 70)
+        print("-" * 50)
         print("  Spans are created during workflow execution with:")
         print("  - node.id attribute for parameter attribution")
         print("  - llm.input_tokens, llm.output_tokens for cost tracking")
@@ -615,25 +639,30 @@ async def main() -> None:
         print("  Per-agent spans are automatically recorded via OpenTelemetry.")
 
     # Display results
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Optimization Results")
-    print("-" * 70)
+    print("-" * 50)
 
-    print("\nBest Configuration:")
+    print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
-    print(f"  Cost: ${results.best_metrics.get('total_cost', results.best_metrics.get('cost', 0)):.6f}")
+    print(
+        f"  Cost: ${results.best_metrics.get('total_cost', results.best_metrics.get('cost', 0)):.6f}"
+    )
 
-    print("\n" + "=" * 70)
+    print("\n" + "-" * 50)
     print("Check the Traigent frontend to see:")
     print("  1. Workflow graph visualization (nodes, edges, loops)")
     print("  2. Trial execution traces (spans for each trial)")
     print("  3. Agent performance breakdown")
-    print("=" * 70)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

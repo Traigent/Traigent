@@ -21,19 +21,16 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Run all tests (mock mode to avoid API costs)
-TRAIGENT_MOCK_LLM=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
 
 # Run with coverage
-TRAIGENT_MOCK_LLM=true pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=html
 
-# Run specific test file
-TRAIGENT_MOCK_LLM=true pytest tests/unit/core/test_orchestrator.py
-
-# Run specific test
-TRAIGENT_MOCK_LLM=true pytest tests/unit/core/test_orchestrator.py::test_orchestrator_initialization -v
+# Run all unit tests with repo-default ignores
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/unit -q --tb=short
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_LLM=true pytest -k "test_optimization" -v
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest -k "test_optimization" -v
 ```
 
 ## Test Dependencies
@@ -117,7 +114,7 @@ export TRAIGENT_MOCK_LLM=true
 TRAIGENT_MOCK_LLM=true pytest tests/
 
 # Run specific example in mock mode
-TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
+TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 ```
 
 **Mock Mode Features:**
@@ -132,7 +129,7 @@ TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
 
 ```bash
 # Clone repository
-git clone https://github.com/traigent/traigent-sdk.git
+git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 
 # Create virtual environment with uv
@@ -148,10 +145,10 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Run all tests
-TRAIGENT_MOCK_LLM=true pytest
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
 
 # Run with coverage
-TRAIGENT_MOCK_LLM=true pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/
@@ -212,7 +209,7 @@ async def test_optimization_basic():
 
 ```bash
 # Make sure package is installed in editable mode
-pip install -e .
+pip install -e ".[recommended]"
 
 # Check installation
 python -c "import traigent; print(traigent.__version__)"

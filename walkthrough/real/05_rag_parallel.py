@@ -24,9 +24,6 @@ except Exception as exc:
         "langchain-openai."
     ) from exc
 
-import traigent
-from traigent.config.parallel import ParallelConfig
-
 from utils.helpers import (
     configure_logging,
     print_cost_estimate,
@@ -37,6 +34,9 @@ from utils.helpers import (
     sanitize_traigent_api_key,
 )
 from utils.scoring import semantic_overlap_score
+
+import traigent
+from traigent.config.parallel import ParallelConfig
 
 require_openai_key("05_rag_parallel.py")
 sanitize_traigent_api_key()

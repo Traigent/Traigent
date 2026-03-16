@@ -10,7 +10,7 @@ Release-ready, minimal install steps for the SDK and examples.
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"           # All integrations, analytics, Bayesian, visualization
+pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
 ```
 
 ### Faster path (uv)
@@ -19,12 +19,12 @@ pip install -e ".[recommended]"           # All integrations, analytics, Bayesia
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 uv venv && source .venv/bin/activate
-uv pip install -e ".[recommended]"        # Same extras, faster resolver
+uv pip install -e ".[recommended]"        # Same recommended bundle, faster resolver
 ```
 
 ### PyPI vs source installs
 
-For the latest changes, install from source (GitHub). If you're on a pinned release, you can use the corresponding PyPI package and extras once available for your environment.
+`0.10.0` release validation uses the source install from this repository. Use a published package only if your team separately validates that artifact for your environment.
 
 ## Extras (from `pyproject.toml`)
 
@@ -35,6 +35,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 | `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
 | `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
+| `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `pip install -e ".[hybrid]"` |
 | `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
 | `test` | pytest + tooling | `pip install -e ".[test]"` |
 | `dev` | Linters + tests | `pip install -e ".[dev]"` |
@@ -49,7 +50,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
   ```bash
   pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
-  python examples/core/hello-world/run.py
+  python examples/core/rag-optimization/run.py
   ```
 
 - **Develop/contribute:**

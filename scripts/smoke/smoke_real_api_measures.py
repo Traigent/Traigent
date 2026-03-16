@@ -106,7 +106,7 @@ async def _run_optimization():
 
 async def _query_db():
     db_url = os.environ.get(
-        "DB_URL", "postgresql://optigen:optigen_local@localhost:5432/optigen"
+        "DB_URL", "postgresql://localhost:5432/optigen"
     )
     if not _ensure_asyncpg():
         print("asyncpg not installed; attempting psql fallback...")

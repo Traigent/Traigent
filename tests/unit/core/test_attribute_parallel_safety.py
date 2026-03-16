@@ -12,7 +12,7 @@ import traigent
 from traigent.utils.exceptions import ConfigurationError
 
 # Use an existing dataset from the workspace
-EVAL_DATASET = "examples/datasets/hello-world/evaluation_set.jsonl"
+EVAL_DATASET = "examples/datasets/rag-optimization/evaluation_set.jsonl"
 
 
 class TestAttributeModeRemoval:

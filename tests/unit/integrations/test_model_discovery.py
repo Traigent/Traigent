@@ -126,6 +126,18 @@ class TestModelCache:
         result = self.cache.get("openai")
         assert result is None
 
+    def test_cache_invalidation_ignores_missing_file_race(self) -> None:
+        """Invalidation should tolerate a cache file disappearing mid-cleanup."""
+        self.cache.set("openai", ["gpt-4"])
+        cache_file = MagicMock()
+        cache_file.unlink.side_effect = FileNotFoundError
+
+        with patch.object(self.cache, "_get_cache_file", return_value=cache_file):
+            self.cache.invalidate("openai")
+
+        cache_file.unlink.assert_called_once_with(missing_ok=True)
+        assert "openai" not in self.cache._cache
+
     def test_cache_force_refresh(self) -> None:
         """Force refresh should bypass cache."""
         self.cache.set("openai", ["gpt-4"])
@@ -681,7 +693,7 @@ class TestCacheEntryDefaults:
 class TestDiscoveryWithMockedSDK:
     """Tests for SDK discovery with mocked SDK clients."""
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_success(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should work with valid API key."""
@@ -699,7 +711,7 @@ class TestDiscoveryWithMockedSDK:
         assert "gpt-3.5-turbo" in result
         assert "gpt-4" in result
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_error(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should handle errors gracefully."""
@@ -710,7 +722,7 @@ class TestDiscoveryWithMockedSDK:
         with pytest.raises(Exception, match="API error"):
             discovery._fetch_models_from_sdk()
 
-    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})  # pragma: allowlist secret
     @patch("google.generativeai.list_models")
     @patch("google.generativeai.configure")
     def test_gemini_sdk_discovery_success(

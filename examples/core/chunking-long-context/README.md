@@ -57,5 +57,5 @@ def _chunk_text(text, chunk_size, overlap):
 
 ## Next Steps
 
-- [hello-world](../hello-world/) - Basic RAG optimization
+- [rag-optimization](../rag-optimization/) - Basic RAG optimization
 - [multi-objective-tradeoff](../multi-objective-tradeoff/) - Balance retrieval cost

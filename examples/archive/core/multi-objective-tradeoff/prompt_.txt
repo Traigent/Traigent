@@ -1,1 +1,0 @@
-You receive a single math expression. Evaluate it exactly, convert any bin(...) to its integer value if present, and output only one line: "Answer: <integer>". Do the computation silently—no steps, explanations, or extra text.
