@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from traigent.tvl.models import BandTarget
 
+# In a multi-objective schema, no single objective may exceed this fraction
+# of the total normalized weight. 0.99 means the smallest objective must
+# contribute at least ~1%; ratios beyond 99:1 are rejected as degenerate.
+MAX_SINGLE_OBJECTIVE_WEIGHT = 0.99
+
 
 class AggregationMode(Enum):
     """Aggregation mode for combining multiple objective scores.
@@ -263,13 +268,14 @@ class ObjectiveSchema:
         if len(objectives) > 1:
             for obj in objectives:
                 nw = weights_normalized[obj.name]
-                if nw > 1.0 - 1e-9:
+                if nw > MAX_SINGLE_OBJECTIVE_WEIGHT:
                     raise ValueError(
-                        f"In a multi-objective schema, no single "
-                        f"objective can have 100% of the weight. "
-                        f"Objective '{obj.name}' has normalized "
-                        f"weight {nw:.6f}. Adjust weights so all "
-                        f"objectives contribute."
+                        f"In a multi-objective schema, no single objective "
+                        f"can exceed {MAX_SINGLE_OBJECTIVE_WEIGHT:.0%} of "
+                        f"the total weight. Objective '{obj.name}' has "
+                        f"normalized weight {nw:.4f} ({nw:.0%}). Ensure the "
+                        f"smallest objective contributes at least "
+                        f"{1 - MAX_SINGLE_OBJECTIVE_WEIGHT:.0%}."
                     )
 
         # Log when weights are re-scaled
@@ -278,7 +284,7 @@ class ObjectiveSchema:
             normed = ", ".join(
                 f"{o.name}={o.weight / weights_sum:.4f}" for o in objectives
             )
-            logger.info(
+            logger.debug(
                 "Objective weights [%s] normalized to [%s] (sum=%.4f -> 1.0)",
                 orig,
                 normed,
