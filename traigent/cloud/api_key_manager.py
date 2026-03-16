@@ -157,16 +157,19 @@ class APIKeyManager:
             )
         except ValueError as e:
             # Only warn once per source to reduce log noise; suppress in offline mode
+            from traigent.config.backend_config import SIGNUP_URL
             from traigent.utils.env_config import is_backend_offline
 
             warn_key = f"{source}:{len(api_key)}"
             if warn_key not in _warned_api_key_sources and not is_backend_offline():
                 logger.warning(
                     "Ignoring invalid API key (length=%d, source=%s): %s. "
-                    "Continuing without cloud authentication in local/dev mode.",
+                    "Continuing without cloud authentication. "
+                    "Get a valid key at %s",
                     len(api_key),
                     source,
                     e,
+                    SIGNUP_URL,
                 )
                 _warned_api_key_sources.add(warn_key)
             else:

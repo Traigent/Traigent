@@ -20,6 +20,8 @@ from traigent.config.types import TraigentConfig
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+
+from traigent.config.backend_config import get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -457,9 +459,9 @@ class BackendSessionManager:
         if not has_api_key:
             # Only warn once; suppress in offline mode to reduce log noise
             if not _warned_no_api_key and not is_backend_offline():
-                logger.debug(
-                    "Skipping backend trial submissions (no API key detected). "
-                    "Results will be saved locally only."
+                logger.warning(
+                    "No API key found — results saved locally only. %s",
+                    get_no_credentials_hint(),
                 )
                 _warned_no_api_key = True
             else:
