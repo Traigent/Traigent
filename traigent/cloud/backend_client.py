@@ -216,6 +216,7 @@ class BackendIntegratedClient:
         self.backend_config.api_base_url = self.api_base_url
 
         self.enable_fallback = enable_fallback
+        self._api_key_fallback = api_key
         self.enable_rate_limiting = enable_rate_limiting
         self.rate_limit_calls = rate_limit_calls
         self.rate_limit_period = rate_limit_period
@@ -455,12 +456,10 @@ class BackendIntegratedClient:
                 headers = await self.auth_manager.auth.get_headers()
             except Exception as exc:
                 logger.warning("Could not get auth headers: %s", exc)
-                headers = {
-                    "Content-Type": _JSON_CONTENT_TYPE,
-                    "User-Agent": _SDK_USER_AGENT,
-                }
+                headers = self._build_session_fallback_headers()
             else:
                 headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+                headers.setdefault("User-Agent", _SDK_USER_AGENT)
 
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -468,6 +467,34 @@ class BackendIntegratedClient:
             )
 
             return cast(AioClientSession, self._session)
+
+    def _build_session_fallback_headers(self) -> dict[str, str]:
+        """Build best-effort headers when auth header generation fails."""
+        headers = {
+            "Content-Type": _JSON_CONTENT_TYPE,
+            "User-Agent": _SDK_USER_AGENT,
+        }
+
+        auth = self.auth_manager.auth
+        api_key_headers_getter = getattr(auth, "_get_api_key_headers", None)
+        if callable(api_key_headers_getter):
+            try:
+                fallback_headers = api_key_headers_getter()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.debug("Could not build API-key fallback headers: %s", exc)
+            else:
+                if isinstance(fallback_headers, dict):
+                    for key, value in fallback_headers.items():
+                        if value:
+                            headers[key] = value
+                    if "X-API-Key" in headers or "Authorization" in headers:
+                        return headers
+
+        if self._api_key_fallback:
+            headers["X-API-Key"] = self._api_key_fallback
+            headers["Authorization"] = f"Bearer {self._api_key_fallback}"
+
+        return headers
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session."""

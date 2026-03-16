@@ -167,6 +167,10 @@ class TestScenario:
         function_return_value: Custom return value for the function
     """
 
+    # Prevent pytest from trying to collect this dataclass when imported into
+    # test modules.
+    __test__ = False
+
     # Identity
     name: str
     description: str

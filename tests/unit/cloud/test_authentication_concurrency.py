@@ -21,7 +21,7 @@ class TestConcurrentSessionCreation:
     @pytest.mark.asyncio
     async def test_concurrent_ensure_session_creates_single_session(self):
         """Test that concurrent calls to _ensure_session only create one session."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track ClientSession creation calls
         session_creation_count = 0
@@ -65,7 +65,7 @@ class TestConcurrentSessionCreation:
     @pytest.mark.asyncio
     async def test_concurrent_http_methods_share_session(self):
         """Test that concurrent HTTP method calls share the same session."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track unique sessions created
         sessions_created = set()
@@ -141,7 +141,7 @@ class TestConcurrentSessionCreation:
         This test was previously marked as xfail but the race condition has been
         fixed with proper async locking in _ensure_session.
         """
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track the order of operations
         operations = []
@@ -198,7 +198,7 @@ class TestConcurrentSessionCreation:
     @pytest.mark.asyncio
     async def test_session_recreation_after_failure(self):
         """Test that session is properly recreated after a failure."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         call_count = 0
 
@@ -255,8 +255,8 @@ class TestConcurrentSessionCreation:
     @pytest.mark.asyncio
     async def test_concurrent_auth_header_updates(self):
         """Test that concurrent requests use the most recent auth headers."""
-        api_key_1 = "tg_" + "a" * 61
-        api_key_2 = "tg_" + "b" * 61
+        api_key_1 = "tg_" + "a" * 61  # pragma: allowlist secret
+        api_key_2 = "tg_" + "b" * 61  # pragma: allowlist secret
 
         # Track headers used in requests
         request_headers = []
@@ -367,7 +367,7 @@ class TestBackendClientConcurrency:
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="test-key", backend_config=config
+                            api_key="test-key", backend_config=config  # pragma: allowlist secret
                         )
                         client.auth = mock_auth_instance
 
@@ -379,7 +379,6 @@ class TestBackendClientConcurrency:
                         assert session_creation_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="BackendClientConfig structure changed - needs update")
     async def test_backend_client_auth_fallback_race_condition(self):
         """Test that auth fallback in BackendIntegratedClient is thread-safe."""
 
@@ -409,14 +408,14 @@ class TestBackendClientConcurrency:
                 with patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"):
                     # Mock failing AuthManager
                     with patch(
-                        "traigent.cloud.backend_client.AuthManager"
+                        "traigent.cloud.backend_components.AuthManager"
                     ) as mock_auth:
                         mock_auth_instance = Mock()
                         mock_auth_instance.get_headers = failing_get_headers
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="fallback-api-key", backend_config=config
+                            api_key="fallback-api-key", backend_config=config  # pragma: allowlist secret
                         )
                         client.auth = mock_auth_instance
 
@@ -439,7 +438,7 @@ class TestSessionLifecycleConcurrency:
     @pytest.mark.asyncio
     async def test_session_cleanup_during_concurrent_requests(self):
         """Test that session cleanup doesn't interfere with ongoing requests."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track ongoing requests
         active_requests = 0
@@ -520,7 +519,7 @@ class TestSessionLifecycleConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_context_manager_usage(self):
         """Test concurrent usage of client as context manager."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Track context manager operations
         enter_count = 0
@@ -590,7 +589,7 @@ class TestHeaderConsistencyUnderLoad:
     @pytest.mark.asyncio
     async def test_headers_consistent_under_high_concurrency(self):
         """Test that headers remain consistent across many concurrent requests."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
         expected_header = f"Bearer {api_key}"
 
         # Track all headers used
@@ -658,7 +657,7 @@ class TestHeaderConsistencyUnderLoad:
     @pytest.mark.asyncio
     async def test_no_header_mutation_during_concurrent_access(self):
         """Test that headers are not mutated during concurrent access."""
-        api_key = "tg_" + "a" * 61
+        api_key = "tg_" + "a" * 61  # pragma: allowlist secret
 
         # Use a mutable header dict to test for mutations
         original_headers = {

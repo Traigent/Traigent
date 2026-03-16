@@ -27,6 +27,7 @@ ls ~/.traigent 2>/dev/null   # Note if this exists (prior state)
 **Environment variables to set for ALL testing:**
 ```bash
 export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_OFFLINE_MODE=true
 export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 ```
 
@@ -38,8 +39,8 @@ export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 
 ```bash
 # Clone and install - follow README EXACTLY
-git clone https://github.com/traigent/traigent-sdk.git
-cd traigent-sdk
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
 
 # Follow README instructions for your preferred method (pip or uv)
 # Document any deviations or errors
@@ -48,7 +49,7 @@ cd traigent-sdk
 **Checklist:**
 - [ ] Clone succeeds without authentication issues
 - [ ] Virtual environment creation works
-- [ ] `pip install -e ".[dev,integrations,analytics,security]"` completes without errors
+- [ ] `pip install -e ".[recommended]"` completes without errors
 - [ ] No deprecation warnings during install (note any that appear)
 - [ ] Total install time: _____ minutes
 
@@ -61,7 +62,7 @@ python -c "import traigent; print(traigent.__version__)"
 ```
 
 **Checklist:**
-- [ ] All three show version `0.9.0`
+- [ ] All three show version `0.10.0`
 - [ ] `traigent info` shows expected features and integrations
 - [ ] No import warnings when loading traigent module
 

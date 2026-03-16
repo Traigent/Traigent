@@ -178,8 +178,12 @@ class ModelCache:
 
             if self._enable_file_cache:
                 cache_file = self._get_cache_file(key)
-                if cache_file.exists():
-                    cache_file.unlink()
+                # Another worker may remove the same shared cache file between
+                # discovery and invalidation; treat that as already invalidated.
+                try:
+                    cache_file.unlink(missing_ok=True)
+                except FileNotFoundError:
+                    pass
 
         logger.debug(f"Invalidated cache for {key}")
 

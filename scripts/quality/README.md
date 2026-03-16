@@ -1,27 +1,25 @@
 # Code Quality Scripts
 
-This directory contains scripts for maintaining code quality standards across the Traigent SDK.
+This directory contains helper scripts for generating repo-local quality reports.
 
 ## Scripts
 
-### check_code_quality.py
+### `generate_quality_report.py`
 
-Performs various code quality checks:
-- **Model name typos**: Ensures no typos like "o4-mini" instead of "gpt-4o-mini"
-- **Debug print statements**: Verifies no debug prints in production code
-- **Hardcoded API keys**: Checks for accidentally committed API keys
-- **Logging imports**: Ensures proper logging setup in files that use logging
-- **Integration detection**: Validates that integration detection works properly
+Generates a Markdown quality report under `reports/code-quality/` using the tooling
+available in the current Python environment. The report currently summarizes:
+
+- `flake8`
+- `ruff`
+- `mypy`
 
 ## Usage
 
-Run the code quality checks:
+Run the report generator from the repository root:
+
 ```bash
-python scripts/quality/check_code_quality.py
+python scripts/quality/generate_quality_report.py
 ```
 
-The script will exit with code 0 if all checks pass, or 1 if any checks fail.
-
-## Integration with CI/CD
-
-These checks should be run as part of the continuous integration pipeline to ensure code quality standards are maintained.
+The script uses the active interpreter, so prefer running it from the checked-in
+`.venv` or another environment with the Traigent dev dependencies installed.
