@@ -56,8 +56,8 @@ export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 
 # Real APIs (set keys you need)
-export ANTHROPIC_API_KEY="your-key"
-export OPENAI_API_KEY="your-key"
+export ANTHROPIC_API_KEY="your-key" # pragma: allowlist secret
+export OPENAI_API_KEY="your-key" # pragma: allowlist secret
 python examples/core/multi-objective-tradeoff/run_openai.py
 ```
 

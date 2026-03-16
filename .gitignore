@@ -430,6 +430,11 @@ paper_experiments/
 .archive/docs-internal/
 .release_review/
 .post_release_recommendation_fixes/
+local/
+CLAUDE.md
+docs/hybrid-mode-integration-guide.pdf
+examples/archive/
+examples/bazak/
 docs/marketing/
 docs/reviews/what_if_*/
 scripts/project_review/
@@ -454,6 +459,7 @@ playground.py
 test_redact*.py
 test_timeout*.py
 nvidia/
+
 
 # Internal maintenance and dev-only directories
 .archive/

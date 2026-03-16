@@ -114,6 +114,11 @@ jobs:
       run: |
         echo "📚 Checking archive directory integrity..."
 
+        if [ ! -d "examples/archive" ]; then
+          echo "ℹ️ Archive directory not present; skipping integrity check"
+          exit 0
+        fi
+
         if [ ! -f "examples/archive/README.md" ]; then
           echo "❌ Archive overview missing"
           exit 1

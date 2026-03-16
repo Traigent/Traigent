@@ -262,8 +262,8 @@ python examples/core/simple-prompt/run.py
 
 ```bash
 # Set your API keys
-export ANTHROPIC_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
+export ANTHROPIC_API_KEY="your-key-here" # pragma: allowlist secret
+export OPENAI_API_KEY="your-key-here" # pragma: allowlist secret
 
 # Run examples with real LLM calls
 python examples/core/multi-objective-tradeoff/run_anthropic.py

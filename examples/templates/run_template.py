@@ -342,7 +342,7 @@ def _define_target(
 
         # Validate API key before proceeding (unless in mock mode)
         if is_mock_mode:
-            api_key = "mock-key"
+            api_key = "mock-key"  # pragma: allowlist secret
         else:
             raw_api_key = os.getenv("ANTHROPIC_API_KEY")
             if not raw_api_key:
@@ -350,7 +350,7 @@ def _define_target(
                 print("🚨 CRITICAL ERROR: No Anthropic API key found!")
                 print("=" * 70)
                 print("Please set ANTHROPIC_API_KEY environment variable.")
-                print("Example: export ANTHROPIC_API_KEY='sk-ant-api03-...'")
+                print("Example: export ANTHROPIC_API_KEY='sk-ant-api03-...'")  # pragma: allowlist secret
                 print("=" * 70 + "\n")
                 raise ValueError(
                     "Missing ANTHROPIC_API_KEY - cannot proceed with Anthropic integration"
