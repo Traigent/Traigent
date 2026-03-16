@@ -6,6 +6,9 @@ Demonstrates how retrieving too little context (small max_tokens budget),
 using CoT instructions that consume the context window, or picking the
 wrong temperature can tank accuracy — and how Traigent finds the sweet spot.
 
+Mock accuracy values are calibrated from a real run of
+walkthrough/real/09_rag_multi_objective.py (random, seed=42, 18 trials).
+
 Usage (run in a terminal from repo root):
     .venv/bin/python walkthrough/mock/09_rag_multi_objective.py
 """
@@ -62,71 +65,69 @@ CONFIG_SPACE = {
     "max_tokens": [50, 100, 200],
 }
 
-# Base accuracy for each model on RAG QA (factual retrieval task).
-# Reflects that even strong models vary widely based on how they use context.
-_RAG_MODEL_BASE = {
-    "gpt-5.1": 0.90,       # Top reasoning, excellent at using context precisely
-    "gpt-5.2": 0.80,       # Strong but less sensitive to instruction style
-    "gpt-4o-mini": 0.75,   # Fast and solid at focused retrieval
-    "gpt-3.5-turbo": 0.72, # Reliable for factual RAG with direct prompts
-    "gpt-4o": 0.68,        # Larger model, but verbose — struggles with tight budgets
-    "gpt-5-nano": 0.00,    # Cannot reliably reason over retrieved context
+# Accuracy values from a real run of walkthrough/real/09_rag_multi_objective.py
+# (algorithm=random, seed=42, 18 trials). Keyed by (model, prompt, temperature,
+# instructions, max_tokens). Trials 17-18 weren't captured (one crashed on
+# max_tokens=50 with a long prompt); those fall back to the formula below.
+_REAL_ACCURACY: dict[tuple, float] = {
+    ("gpt-5.1",       "minimal",   0.0, "direct", 50):  0.180,
+    ("gpt-4o-mini",   "minimal",   0.1, "CoT",    200): 0.771,
+    ("gpt-5.2",       "minimal",   0.0, "CoT",    50):  0.128,
+    ("gpt-4o-mini",   "minimal",   0.8, "CoT",    200): 0.745,
+    ("gpt-5.1",       "role_based",0.3, "direct", 200): 0.811,
+    ("gpt-4o",        "minimal",   0.2, "direct", 100): 0.741,
+    ("gpt-4o",        "minimal",   0.3, "direct", 50):  0.710,
+    ("gpt-3.5-turbo", "role_based",0.1, "direct", 100): 0.874,
+    ("gpt-5-nano",    "role_based",0.0, "direct", 200): 0.050,
+    ("gpt-3.5-turbo", "role_based",0.1, "direct", 200): 0.868,
+    ("gpt-5-nano",    "role_based",0.9, "CoT",    200): 0.000,
+    ("gpt-3.5-turbo", "minimal",   0.3, "direct", 50):  0.776,
+    ("gpt-4o-mini",   "minimal",   0.6, "direct", 100): 0.738,
+    ("gpt-5.1",       "role_based",0.2, "direct", 100): 0.711,
+    ("gpt-4o-mini",   "role_based",0.1, "CoT",    200): 0.864,
+    ("gpt-5.1",       "minimal",   0.2, "direct", 100): 0.335,
 }
 
-# How much CoT hurts each model on this factual RAG task.
-# Strong models are optimised for direct instructions — CoT adds noise
-# and uses up the context budget before the answer is reached.
+# Fallback formula for configs not covered by the real run.
+_RAG_MODEL_BASE = {
+    "gpt-5.1": 0.75, "gpt-5.2": 0.70, "gpt-4o-mini": 0.75,
+    "gpt-3.5-turbo": 0.72, "gpt-4o": 0.68, "gpt-5-nano": 0.03,
+}
 _COT_SENSITIVITY = {
-    "gpt-5.1": 0.27,
-    "gpt-5.2": 0.02,
-    "gpt-4o": 0.05,
-    "gpt-4o-mini": 0.02,
-    "gpt-3.5-turbo": 0.01,
+    "gpt-5.1": 0.27, "gpt-5.2": 0.02, "gpt-4o": 0.05,
+    "gpt-4o-mini": 0.02, "gpt-3.5-turbo": 0.01,
 }
 
 
 def rag_accuracy_scorer(output: str, expected: str, config: dict | None = None, **_) -> float:
-    """Mock scorer for RAG QA.
+    """Mock scorer calibrated from a real experiment run.
 
-    Accuracy degrades when:
-    - The model is too small to reason over retrieved context (gpt-5-nano → 0%)
-    - Temperature is high (factual retrieval needs precision)
-    - CoT is used with a small max_tokens budget
-      (reasoning fills the context window before the answer is written)
-    - Role-based prompt wastes tokens on preamble
-
-    The result is rounded to the nearest 5% to match realistic LLM output variance.
+    Returns accuracy from the real-run lookup table when available.
+    Falls back to a formula for configs not seen in that run.
     """
     if config is None:
         return 0.5
 
     model = config.get("model", DEFAULT_MOCK_MODEL)
-    base = _RAG_MODEL_BASE.get(model, 0.65)
-
-    if base == 0.0:
-        return 0.0
-
+    prompt = config.get("prompt", "minimal")
     temperature = config.get("temperature", 0.5)
     instructions = config.get("instructions", "direct")
     max_tokens = config.get("max_tokens", 100)
-    prompt = config.get("prompt", "minimal")
 
-    # High temperature hurts factual retrieval (more hallucination)
+    key = (model, prompt, temperature, instructions, max_tokens)
+    if key in _REAL_ACCURACY:
+        return _REAL_ACCURACY[key]
+
+    # Fallback for unseen configs
+    base = _RAG_MODEL_BASE.get(model, 0.65)
     temp_penalty = max(0.0, temperature - 0.3) * 0.25
-
-    # CoT penalty: reasoning tokens consume the retrieval budget
-    # Small max_tokens amplifies this — there's no room left for the answer
     cot_penalty = 0.0
     if instructions == "CoT":
         sensitivity = _COT_SENSITIVITY.get(model, 0.03)
         token_factor = 1.0 + max(0.0, (100 - max_tokens) / 200.0)
         cot_penalty = sensitivity * token_factor
-
-    # Role-based prompt adds a preamble that competes with retrieved context
     prompt_penalty = 0.02 if prompt == "role_based" else 0.0
-
     score = base - temp_penalty - cot_penalty - prompt_penalty
-    # Round to nearest 5% — realistic for LLM evaluation variance
     return max(0.0, min(round(score * 20) / 20, 1.0))
 
 
