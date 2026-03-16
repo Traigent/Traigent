@@ -34,12 +34,12 @@ class TestObjectiveDefinition:
 
     def test_negative_weight_validation(self):
         """Test that negative weights are rejected."""
-        with pytest.raises(ValueError, match="Weight must be positive"):
+        with pytest.raises(ValueError, match="finite positive"):
             ObjectiveDefinition(name="cost", orientation="minimize", weight=-0.5)
 
     def test_zero_weight_validation(self):
         """Test that zero weights are rejected."""
-        with pytest.raises(ValueError, match="Weight must be positive"):
+        with pytest.raises(ValueError, match="finite positive"):
             ObjectiveDefinition(name="cost", orientation="minimize", weight=0.0)
 
     def test_invalid_orientation_validation(self):
@@ -48,7 +48,9 @@ class TestObjectiveDefinition:
             ValueError, match="Orientation must be 'maximize', 'minimize', or 'band'"
         ):
             ObjectiveDefinition(
-                name="accuracy", orientation="optimize", weight=1.0  # Invalid
+                name="accuracy",
+                orientation="optimize",
+                weight=1.0,  # Invalid
             )
 
     def test_invalid_bounds_validation(self):
@@ -450,3 +452,83 @@ class TestIntegrationScenarios:
         assert len(loaded_schema.objectives) == 4
         assert loaded_schema.get_normalized_weight("throughput") == 0.4
         assert loaded_schema.objectives[1].bounds == (0, 1000)
+
+
+class TestWeightValidationHardening:
+    """Tests for hardened weight validation."""
+
+    def test_nan_weight_rejected(self):
+        with pytest.raises(ValueError, match="finite positive"):
+            ObjectiveDefinition("x", "maximize", float("nan"))
+
+    def test_inf_weight_rejected(self):
+        with pytest.raises(ValueError, match="finite positive"):
+            ObjectiveDefinition("x", "maximize", float("inf"))
+
+    def test_neg_inf_weight_rejected(self):
+        with pytest.raises(ValueError, match="finite positive"):
+            ObjectiveDefinition("x", "maximize", float("-inf"))
+
+    def test_multi_objective_no_single_dominance(self):
+        """No single objective can have 100% weight in multi-objective."""
+        with pytest.raises(ValueError, match="100% of the weight"):
+            ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition("a", "maximize", 1000000),
+                    ObjectiveDefinition("b", "maximize", 0.0001),
+                ]
+            )
+
+    def test_single_objective_weight_1_allowed(self):
+        """Single objective with weight=1.0 is valid."""
+        schema = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition("a", "maximize", 1.0)]
+        )
+        assert abs(schema.get_normalized_weight("a") - 1.0) < 1e-10
+
+    def test_from_dict_null_weight_defaults(self):
+        """from_dict with null weight uses default 1.0."""
+        obj = ObjectiveDefinition.from_dict(
+            {"name": "x", "orientation": "maximize", "weight": None}
+        )
+        assert abs(obj.weight - 1.0) < 1e-10
+
+    def test_from_dict_zero_weight_rejected(self):
+        """from_dict with weight=0 is rejected."""
+        with pytest.raises(ValueError, match="finite positive"):
+            ObjectiveDefinition.from_dict(
+                {"name": "x", "orientation": "maximize", "weight": 0}
+            )
+
+    def test_arbitrary_positive_weights_normalized(self):
+        """Large weights are accepted and normalized."""
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition("a", "maximize", 100),
+                ObjectiveDefinition("b", "maximize", 50),
+            ]
+        )
+        assert abs(schema.get_normalized_weight("a") - 2 / 3) < 1e-10
+        assert abs(schema.get_normalized_weight("b") - 1 / 3) < 1e-10
+
+    def test_already_normalized_weights_accepted(self):
+        """Weights summing to 1.0 pass through without issue."""
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition("a", "maximize", 0.3),
+                ObjectiveDefinition("b", "maximize", 0.5),
+                ObjectiveDefinition("c", "maximize", 0.2),
+            ]
+        )
+        assert abs(schema.weights_sum - 1.0) < 1e-10
+
+    def test_balanced_multi_objective_accepted(self):
+        """Reasonably balanced multi-objective weights pass."""
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition("a", "maximize", 0.9),
+                ObjectiveDefinition("b", "maximize", 0.1),
+            ]
+        )
+        assert abs(schema.get_normalized_weight("a") - 0.9) < 1e-10
+        assert abs(schema.get_normalized_weight("b") - 0.1) < 1e-10
