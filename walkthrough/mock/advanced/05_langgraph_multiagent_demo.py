@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import TypedDict
 
 from dotenv import load_dotenv
-from langgraph.graph import END, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langgraph.graph import END, StateGraph
 from opentelemetry import trace
 
 import traigent
@@ -512,19 +512,16 @@ def run_rag_workflow(question: str) -> str:
 
 async def main() -> None:
     """Run the LangGraph multi-agent demo with Traigent optimization."""
-    print("=" * 70)
-    print("LangGraph Multi-Agent RAG Workflow with Traigent Optimization")
-    print("=" * 70)
+    print("Traigent Advanced: LangGraph Multi-Agent RAG Workflow")
+    print("=" * 50)
 
     # Check environment
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     api_key = os.environ.get("TRAIGENT_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
 
-    print(f"\nBackend URL: {backend_url}")
-    print(f"Traigent API Key: {'set' if api_key else 'NOT SET'}")
-    print(f"OpenAI API Key: {'set' if openai_key else 'NOT SET'}")
-    print(f"\n*** MODE: {'MOCK (no real API costs)' if MOCK_MODE else f'REAL (using OpenAI {DEFAULT_MODEL})'} ***")
+    mode_label = "MOCK (no real API costs)" if MOCK_MODE else f"REAL (using OpenAI {DEFAULT_MODEL})"
+    print(f"Mode: {mode_label}")
 
     if not MOCK_MODE and not openai_key:
         print("\nERROR: OPENAI_API_KEY not set for real mode.")
@@ -536,53 +533,43 @@ async def main() -> None:
         return
 
     # First, send the workflow graph for visualization
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 1: Sending workflow graph topology to backend...")
-    print("-" * 70)
 
     tracker = WorkflowTracesTracker(
         backend_url=backend_url,
         auth_token=api_key,
     )
 
-    # We'll get the experiment_id after optimization starts
-    # For now, use a placeholder that will be updated
     print("  Graph will be sent during optimization...")
 
     # Run optimization
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 2: Running Traigent optimization...")
-    print("-" * 70)
     print("\nWorkflow structure:")
-    print("  START -> retrieve -> grade_documents --(relevant)--> generate -> END")
-    print("                            |")
-    print("                            +---(not relevant)--> web_search --+")
-    print("                            ^                                   |")
-    print("                            +-----------------------------------+")
+    print("  START -> retrieve -> grade_documents -> generate -> END")
+    print("                            |                ^")
+    print("                            +-> web_search --+")
 
     # Use fewer trials in real mode to save API costs
     max_trials = 4 if MOCK_MODE else 2
     print(f"\nOptimizing parameters ({max_trials} trials)...")
 
     # Set a generous timeout to allow all trials to complete
-    # Each trial takes ~100s with 20 examples, so timeout should be at least max_trials * 120s
-    timeout_seconds = max_trials * 120  # 240s for 2 trials in real mode
-    print(f"  Timeout: {timeout_seconds}s (allowing ~{timeout_seconds // max_trials}s per trial)")
+    timeout_seconds = max_trials * 120
+    print(f"  Timeout: {timeout_seconds}s")
 
     results = await run_rag_workflow.optimize(
         algorithm="grid",
         max_trials=max_trials,
         random_seed=42,
-        timeout=timeout_seconds,  # Explicit timeout to allow all trials to complete
+        timeout=timeout_seconds,
     )
 
     # Send the workflow graph to backend for visualization
-    # Note: The experiment_id comes from the backend session
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 50)
     print("Step 3: Sending workflow graph topology...")
-    print("-" * 70)
 
-    # Get experiment_id and experiment_run_id directly from results metadata
     experiment_id = None
     experiment_run_id = None
     if results.metadata:
@@ -599,27 +586,10 @@ async def main() -> None:
                 print(f"  Detected loops: {len(graph_payload.loops)}")
         else:
             print(f"  Failed to send graph: {response.error}")
-
-        # Note: Per-agent spans are automatically recorded via OpenTelemetry
-        # and exported to the Traigent backend by the OptiGenSpanExporter.
-        # No manual span creation needed - OTEL handles it during workflow execution.
-        print("\n" + "-" * 70)
-        print("Note: Per-agent spans automatically recorded via OpenTelemetry")
-        print("-" * 70)
-        print("  Spans are created during workflow execution with:")
-        print("  - node.id attribute for parameter attribution")
-        print("  - llm.input_tokens, llm.output_tokens for cost tracking")
-        print("  - configuration_run_id for linking to specific trials")
     else:
-        print("\n  Note: Workflow graph visualization requires experiment_id.")
-        print("  Per-agent spans are automatically recorded via OpenTelemetry.")
+        print("  Note: Workflow graph visualization requires experiment_id.")
 
-    # Display results
-    print("\n" + "-" * 70)
-    print("Optimization Results")
-    print("-" * 70)
-
-    print("\nBest Configuration:")
+    print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
 
@@ -627,13 +597,15 @@ async def main() -> None:
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
     print(f"  Cost: ${results.best_metrics.get('total_cost', results.best_metrics.get('cost', 0)):.6f}")
 
-    print("\n" + "=" * 70)
-    print("Check the Traigent frontend to see:")
+    print("\nCheck the Traigent frontend to see:")
     print("  1. Workflow graph visualization (nodes, edges, loops)")
     print("  2. Trial execution traces (spans for each trial)")
     print("  3. Agent performance breakdown")
-    print("=" * 70)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

@@ -122,7 +122,7 @@ fi
 
 # Core examples - main Traigent feature demonstrations
 declare -a CORE_EXAMPLES=(
-    "core/hello-world/run.py"
+    "core/rag-optimization/run.py"
     "core/simple-prompt/run.py"
     "core/few-shot-classification/run.py"
     "core/prompt-style-optimization/run.py"
