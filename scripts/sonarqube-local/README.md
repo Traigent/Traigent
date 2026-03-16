@@ -35,7 +35,7 @@ curl -s http://localhost:9000/api/system/status | python3 -c "import sys,json; p
 
 ```bash
 # From project root
-cd REDACTED_TRAIGENT_ROOT/Traigent
+cd /path/to/Traigent
 
 # Source token
 source .env.local
