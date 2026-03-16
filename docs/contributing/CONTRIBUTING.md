@@ -202,7 +202,11 @@ Traigent/
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache 2.0 License.
+Traigent accepts external contributions only after a signed Contributor License
+Agreement (CLA). Contributions are merged into a project whose open-source
+releases are licensed under AGPLv3, and Traigent may also offer the project
+under separate commercial terms. See
+[`../../CONTRIBUTOR-LICENSING.md`](../../CONTRIBUTOR-LICENSING.md).
 
 ## Thank You
 

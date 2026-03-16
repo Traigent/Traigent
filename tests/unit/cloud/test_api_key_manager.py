@@ -76,14 +76,14 @@ class TestSetToken:
 
         assert manager.api_key_token is not None
         assert manager.api_key_preview is not None
-        assert manager.api_key_source == "test"
+        assert manager.api_key_source == "test"  # pragma: allowlist secret
         assert manager.api_key_last_rotated is not None
 
     def test_set_token_clears_on_empty(self, manager: APIKeyManager) -> None:
         """Test that empty key clears token."""
         # First set a token
         manager._api_key_token = MagicMock()
-        manager._api_key_preview = "preview"
+        manager._api_key_preview = "preview"  # pragma: allowlist secret
 
         # Then clear it with empty key
         manager.set_token("", source="test")
@@ -119,7 +119,7 @@ class TestSetToken:
         manager.set_token("ab", source="test")
 
         # Token should be None, but source should still be set
-        assert manager.api_key_source == "test"
+        assert manager.api_key_source == "test"  # pragma: allowlist secret
 
 
 class TestClearToken:
@@ -159,7 +159,7 @@ class TestHasKey:
     def test_has_key_with_credentials_callback(self, manager: APIKeyManager) -> None:
         """Test has_key checks credentials callback."""
         mock_credentials = MagicMock()
-        mock_credentials.api_key = "some-key"
+        mock_credentials.api_key = "some-key"  # pragma: allowlist secret
         manager.set_callbacks(get_credentials=lambda: mock_credentials)
 
         assert manager.has_key() is True
@@ -177,14 +177,26 @@ class TestGetKeyForInternalUse:
         key = manager.get_key_for_internal_use()
         assert key == valid_api_key
 
-    def test_get_key_from_credentials(self, manager: APIKeyManager) -> None:
+    def test_get_key_from_credentials(
+        self, manager: APIKeyManager, valid_api_key: str
+    ) -> None:
         """Test getting key from credentials callback."""
         mock_credentials = MagicMock()
-        mock_credentials.api_key = "credentials-key"
+        mock_credentials.api_key = valid_api_key
         manager.set_callbacks(get_credentials=lambda: mock_credentials)
 
         key = manager.get_key_for_internal_use()
-        assert key == "credentials-key"
+        assert key == valid_api_key
+
+    def test_get_key_returns_none_for_invalid_credentials_key(
+        self, manager: APIKeyManager
+    ) -> None:
+        """Test malformed credential callback keys are rejected."""
+        mock_credentials = MagicMock()
+        mock_credentials.api_key = "credentials-key"  # pragma: allowlist secret
+        manager.set_callbacks(get_credentials=lambda: mock_credentials)
+
+        assert manager.get_key_for_internal_use() is None
 
     def test_get_key_returns_none_when_nothing_available(
         self, manager: APIKeyManager
@@ -214,7 +226,7 @@ class TestValidateFormat:
     ) -> None:
         """Test validation accepts uk_ keys with mixed alphanumerics."""
         # uk_ (3 chars) + 43 alphanumeric chars = 46 total (backend format)
-        suffix = "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4c"
+        suffix = "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4c"  # pragma: allowlist secret
         key = "uk_" + suffix
         assert len(key) == 46  # Verify length
         assert manager.validate_format(key) is True
@@ -367,7 +379,7 @@ class TestPersistApiKey:
         credentials = AuthCredentials(api_key=valid_api_key, metadata={"source": "cli"})
         manager.persist_api_key(credentials)
 
-        assert manager.api_key_source == "cli"
+        assert manager.api_key_source == "cli"  # pragma: allowlist secret
 
     def test_persist_api_key_no_key(self, manager: APIKeyManager) -> None:
         """Test persist does nothing without key."""
@@ -432,7 +444,7 @@ class TestCallbacks:
     def test_callbacks_used_in_has_key(self, manager: APIKeyManager) -> None:
         """Test that callbacks are used in has_key."""
         mock_creds = MagicMock()
-        mock_creds.api_key = "test-key"
+        mock_creds.api_key = "test-key"  # pragma: allowlist secret
         get_creds = MagicMock(return_value=mock_creds)
 
         manager.set_callbacks(get_credentials=get_creds)

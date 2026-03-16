@@ -1,46 +1,48 @@
 #!/usr/bin/env python
-"""
-Verify Traigent Installation Script
+"""Verify the documented Traigent source installation."""
 
-This script verifies that all Traigent dependencies are installed correctly
-and that the SDK is ready to use.
-"""
+from __future__ import annotations
 
+import importlib
 import os
 import sys
-from pathlib import Path
-
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from importlib import metadata
 
 
-def check_dependency(module_name: str, import_path: str = None) -> bool:
-    """Check if a dependency is installed."""
-    import_name = import_path or module_name
+def check_distribution(distribution_name: str) -> tuple[bool, str | None]:
+    """Return whether a distribution is installed and its version if available."""
     try:
-        __import__(import_name)
+        return True, metadata.version(distribution_name)
+    except metadata.PackageNotFoundError:
+        return False, None
+
+
+def check_import(module_name: str) -> bool:
+    """Return True when a module import succeeds."""
+    try:
+        importlib.import_module(module_name)
         return True
     except ImportError:
         return False
 
 
-def main():
+def main() -> int:
     """Run installation verification checks."""
-    print("🔍 Traigent Installation Verification")
+    print("Traigent Installation Verification")
     print("=" * 50)
+    print('Expected install path: pip install -e ".[recommended]"')
 
     all_ok = True
 
-    # Core Traigent
-    print("\n📦 Core Package:")
-    if check_dependency("traigent"):
-        print("  ✅ traigent")
+    print("\nCore Package:")
+    traigent_installed, traigent_version = check_distribution("traigent")
+    if traigent_installed:
+        print(f"  OK traigent ({traigent_version})")
     else:
-        print("  ❌ traigent - Core package not installed!")
+        print("  FAIL traigent distribution is not installed")
         all_ok = False
 
-    # Required Dependencies
-    print("\n📚 Required Dependencies:")
+    print("\nRecommended Dependencies:")
     required_deps = [
         ("langchain", "langchain"),
         ("langchain-community", "langchain_community"),
@@ -50,97 +52,94 @@ def main():
         ("python-dotenv", "dotenv"),
         ("numpy", "numpy"),
         ("pandas", "pandas"),
-        ("pydantic", "pydantic"),
+        ("plotly", "plotly"),
+        ("httpx", "httpx"),
+        ("mcp", "mcp"),
+        ("pydantic-ai", "pydantic_ai"),
     ]
 
     for package_name, import_name in required_deps:
-        if check_dependency(package_name, import_name):
-            print(f"  ✅ {package_name}")
+        if check_import(import_name):
+            print(f"  OK {package_name}")
         else:
-            print(
-                f"  ❌ {package_name} - Missing! Install with: pip install {package_name}"
-            )
+            print(f"  FAIL {package_name} missing or not importable")
             all_ok = False
 
-    # Optional Dependencies
-    print("\n📋 Optional Dependencies:")
-    optional_deps = [
-        ("mlflow", "mlflow"),
-        ("wandb", "wandb"),
-        ("streamlit", "streamlit"),
-    ]
-
-    for package_name, import_name in optional_deps:
-        if check_dependency(package_name, import_name):
-            print(f"  ✅ {package_name}")
+    print("\nOptional Integrations:")
+    for package_name, import_name in [("mlflow", "mlflow"), ("wandb", "wandb")]:
+        if check_import(import_name):
+            print(f"  OK {package_name}")
         else:
-            print(f"  ⚠️  {package_name} - Optional, not installed")
+            print(f"  WARN {package_name} not importable")
 
-    # Test basic imports
-    print("\n🧪 Testing Basic Imports:")
+    print("\nBasic Import Checks:")
     try:
-        # Import checks only
-        from dotenv import load_dotenv  # noqa: F401 - Import check only
-        from langchain_chroma import Chroma  # noqa: F401 - Import check only
-        from langchain_openai import ChatOpenAI  # noqa: F401 - Import check only
+        from dotenv import load_dotenv  # noqa: F401
+        from langchain_chroma import Chroma  # noqa: F401
+        from langchain_openai import ChatOpenAI  # noqa: F401
 
         import traigent
 
-        print("  ✅ All basic imports work!")
-    except ImportError as e:
-        print(f"  ❌ Import error: {e}")
+        print(
+            f"  OK traigent imported from {traigent.__file__} with version "
+            f"{traigent.get_version_info()['version']}"
+        )
+    except Exception as exc:
+        print(f"  FAIL import check failed: {exc}")
         all_ok = False
 
-    # Check environment variables
-    print("\n🔐 Environment Variables:")
-    env_vars = [
-        "OPENAI_API_KEY",
-        "TRAIGENT_API_KEY",
-        "ANTHROPIC_API_KEY",
-    ]
-
-    for var in env_vars:
+    print("\nEnvironment Variables:")
+    print("  INFO API keys are optional for this verifier; mock/offline mode is used.")
+    for var in ["OPENAI_API_KEY", "TRAIGENT_API_KEY", "ANTHROPIC_API_KEY"]:
         if os.environ.get(var):
-            print(f"  ✅ {var} is set")
+            print(f"  OK {var} is set")
         else:
-            print(f"  ⚠️  {var} not set (may be required for some features)")
+            print(f"  WARN {var} not set")
 
-    # Test mock mode
-    print("\n🎭 Testing Mock Mode:")
+    print("\nMock/Offline Validation:")
+    old_mock = os.environ.get("TRAIGENT_MOCK_LLM")
+    old_offline = os.environ.get("TRAIGENT_OFFLINE_MODE")
     try:
         os.environ["TRAIGENT_MOCK_LLM"] = "true"
+        os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
         import traigent
 
-        # Create a simple test function
         @traigent.optimize(
             configuration_space={"temperature": [0.1, 0.5, 0.9]},
             objectives=["accuracy"],
         )
-        def test_function(input: str) -> str:
-            return f"Test output for: {input}"
+        def test_function(user_input: str) -> str:
+            return f"Test output for: {user_input}"
 
-        print("  ✅ Mock mode setup works!")
-
-        # Clean up
-        del os.environ["TRAIGENT_MOCK_LLM"]
-    except Exception as e:
-        print(f"  ❌ Mock mode error: {e}")
+        result = test_function("hello")
+        print(f"  OK decorated function returned: {result}")
+    except Exception as exc:
+        print(f"  FAIL mock/offline validation failed: {exc}")
         all_ok = False
+    finally:
+        if old_mock is None:
+            os.environ.pop("TRAIGENT_MOCK_LLM", None)
+        else:
+            os.environ["TRAIGENT_MOCK_LLM"] = old_mock
+        if old_offline is None:
+            os.environ.pop("TRAIGENT_OFFLINE_MODE", None)
+        else:
+            os.environ["TRAIGENT_OFFLINE_MODE"] = old_offline
 
-    # Final summary
     print("\n" + "=" * 50)
     if all_ok:
-        print("✅ Installation verified successfully!")
-        print("\n🚀 You're ready to use Traigent!")
+        print("Installation verified successfully.")
         print("\nQuick test command:")
-        print("  TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py")
+        print(
+            "  TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true "
+            "python examples/quickstart/01_simple_qa.py"
+        )
         return 0
-    else:
-        print("❌ Some issues found. Please fix them before proceeding.")
-        print("\nTo install missing dependencies:")
-        print("  pip install -r requirements/requirements-integrations.txt")
-        print("  pip install -e .")
-        return 1
+
+    print("Installation verification failed.")
+    print("\nReinstall the documented source bundle:")
+    print('  pip install -e ".[recommended]"')
+    return 1
 
 
 if __name__ == "__main__":

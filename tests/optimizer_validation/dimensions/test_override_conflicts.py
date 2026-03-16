@@ -25,7 +25,7 @@ class TestTVLOverrideConflicts:
     expected behavior for future implementation.
     """
 
-    @pytest.mark.xfail(reason="TVL feature not yet implemented")
+    @pytest.mark.xfail(reason="TVL feature not yet implemented", strict=True)
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_tvl_override_config_space(
@@ -88,7 +88,7 @@ class TestTVLOverrideConflicts:
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
-    @pytest.mark.xfail(reason="TVL feature not yet implemented")
+    @pytest.mark.xfail(reason="TVL feature not yet implemented", strict=True)
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_tvl_valid_override(
@@ -138,7 +138,7 @@ class TestTVLOverrideConflicts:
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
-    @pytest.mark.xfail(reason="TVL feature not yet implemented")
+    @pytest.mark.xfail(reason="TVL feature not yet implemented", strict=True)
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_tvl_multiple_locks(
