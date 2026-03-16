@@ -175,7 +175,6 @@ docs = [
 ]
 
 # NOTE: playground and examples dependencies moved to TraigentDemo project
-# See: REDACTED_TRAIGENT_ROOT/TraigentDemo/
 
 # Machine Learning bundle (parallel execution, advanced algorithms, multi-objective)
 # This is the recommended bundle for production ML workloads
