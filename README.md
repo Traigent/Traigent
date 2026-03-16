@@ -79,9 +79,8 @@ def my_agent(question: str) -> str:
 
 ---
 
-## 🎬 See Traigent in Action
-
-> Click any demo to play the animated version.
+<details>
+<summary>🎬 See Traigent in Action — click to play demos</summary>
 
 | Demo | |
 |------|-|
@@ -89,11 +88,10 @@ def my_agent(question: str) -> str:
 | **Optimization Callbacks** | [![Callbacks Demo](docs/demos/output/hooks-still.svg)](docs/demos/output/hooks.svg) |
 | **Agent Configuration Hooks** | [![Agent Hooks Demo](docs/demos/output/github-hooks-still.svg)](docs/demos/output/github-hooks.svg) |
 
----
+</details>
 
-## 🏗️ Architecture Overview
-
-**How it works:**
+<details>
+<summary>🏗️ Architecture Overview — how it works</summary>
 
 1. **Suggest** — the optimizer proposes a configuration to test
 2. **Inject** — Traigent overrides your function's parameters with the proposed config
@@ -104,6 +102,8 @@ def my_agent(question: str) -> str:
 ![Architecture Overview](docs/demos/output/architecture.svg)
 
 **[Read the full architecture guide →](docs/architecture/ARCHITECTURE.md)**
+
+</details>
 
 ---
 
@@ -128,36 +128,6 @@ All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 </details>
 
 **[Browse reference examples →](examples/) · [Injection modes →](docs/user-guide/injection_modes.md)**
-
----
-
-## 📦 Installation
-
-Python 3.11+ on Linux, macOS, or Windows. Not on PyPI yet — install from source.
-
-<details>
-<summary>Feature sets and options</summary>
-
-| Feature Set | Description |
-|-------------|-------------|
-| `[recommended]` | All user-facing features (default) |
-| `[integrations]` | LangChain, OpenAI, Anthropic adapters |
-| `[analytics]` | Visualization and analytics |
-| `[bayesian]` | Bayesian optimization (TPE, NSGA-II) |
-| `[all]` | Everything |
-
-</details>
-
-**[Full installation guide →](docs/getting-started/installation.md)**
-
-### Cost Management
-
-| Setting | How |
-|---------|-----|
-| Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
-| Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
-
-Cost estimates are approximations. See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ---
 
@@ -205,7 +175,49 @@ def multi_provider_agent(question: str) -> str:
 
 ---
 
-## 📏 Evaluation
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
+| **Multi-algorithm** | Random, Grid, Bayesian (TPE, NSGA-II, CMA-ES) via Optuna |
+| **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
+| **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
+| **Cost tracking** | Integrated tokencost library with 500+ model pricing |
+| **Parallel execution** | Concurrent trials and example-level parallelism |
+| **Privacy-first** | Local execution mode keeps all data on your machine |
+
+**[TraigentDemo →](https://github.com/Traigent/TraigentDemo)** — Streamlit playground, use cases, and research benchmarks
+
+---
+
+<details>
+<summary>📦 Installation details, execution modes, CLI, and more</summary>
+
+### Installation
+
+Python 3.11+ on Linux, macOS, or Windows. Not on PyPI yet — install from source.
+
+| Feature Set | Description |
+|-------------|-------------|
+| `[recommended]` | All user-facing features (default) |
+| `[integrations]` | LangChain, OpenAI, Anthropic adapters |
+| `[analytics]` | Visualization and analytics |
+| `[bayesian]` | Bayesian optimization (TPE, NSGA-II) |
+| `[all]` | Everything |
+
+**[Full installation guide →](docs/getting-started/installation.md)**
+
+### Cost Management
+
+| Setting | How |
+|---------|-----|
+| Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
+| Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
+
+Cost estimates are approximations. See [DISCLAIMER.md](DISCLAIMER.md) for details.
+
+### Evaluation
 
 Provide a JSONL dataset — Traigent scores outputs using semantic similarity by default:
 
@@ -219,9 +231,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 **[Evaluation guide →](docs/guides/evaluation.md)** — custom evaluators, dataset formats, troubleshooting
 
----
-
-## 🎯 Execution Modes
+### Execution Modes
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
@@ -241,9 +251,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | `algorithm` | `.optimize()` call | `"random"`, `"grid"`, `"bayesian"` |
 | `max_trials` | `.optimize()` call | Number of configurations to test |
 
----
-
-## 🎯 Injection Modes
+### Injection Modes
 
 | Mode | Best for | How |
 |------|----------|-----|
@@ -252,9 +260,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 **[Injection modes guide →](docs/user-guide/injection_modes.md)**
 
----
-
-## 💻 CLI
+### CLI
 
 ```bash
 traigent optimize module.py -a grid -n 10   # Run optimization
@@ -265,21 +271,16 @@ traigent auth login                          # Authenticate with portal
 traigent --help                              # Full command reference
 ```
 
----
+### Troubleshooting
 
-## ✨ Key Features
+| Problem | Fix |
+|---------|-----|
+| `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
+| 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
+| Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
+| Permission errors | Create a fresh venv |
 
-| Feature | Description |
-|---------|-------------|
-| **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
-| **Multi-algorithm** | Random, Grid, Bayesian (TPE, NSGA-II, CMA-ES) via Optuna |
-| **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
-| **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
-| **Cost tracking** | Integrated tokencost library with 500+ model pricing |
-| **Parallel execution** | Concurrent trials and example-level parallelism |
-| **Privacy-first** | Local execution mode keeps all data on your machine |
-
-**[TraigentDemo →](https://github.com/Traigent/TraigentDemo)** — Streamlit playground, use cases, and research benchmarks
+</details>
 
 ---
 
@@ -299,27 +300,8 @@ We welcome bug reports and feature requests via [GitHub Issues](https://github.c
 
 ## 📄 License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — see [LICENSE](LICENSE).
 
 ---
 
-## 🔧 Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
-| 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
-| Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
-| Permission errors | Create a fresh venv |
-
----
-
-## 🌟 Community
-
-- **Discord**: Join our community (coming soon)
-- **[GitHub Issues](https://github.com/Traigent/Traigent/issues)**: Report bugs or request features
-- **[GitHub Discussions](https://github.com/Traigent/Traigent/discussions)**: Ask questions and share ideas
-
----
-
-**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)**
+**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
