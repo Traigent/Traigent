@@ -37,6 +37,10 @@ from __future__ import annotations
 
 import builtins
 import sys
+import warnings
+
+# Suppress noisy FutureWarning from transitive dependencies (e.g. instructor → google.generativeai)
+warnings.filterwarnings("ignore", category=FutureWarning, module=r"instructor\.providers\.gemini")
 
 from traigent._version import get_version
 
