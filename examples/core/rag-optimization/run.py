@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hello World — Real LangChain LLM + RAG (parameter injection)."""
+"""RAG Optimization — LangChain LLM + RAG with parameter injection."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 # Set to True to enable verbose invocation output in the console
 __VERBOSE__ = os.getenv("TRAIGENT_VERBOSE", "").lower() in {"1", "true", "yes"}
 
-DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "hello-world"
+DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "rag-optimization"
 if MOCK:
     # Redirect home to repo-local to avoid sandbox home write
     os.environ.setdefault("HOME", str(BASE))
