@@ -41,9 +41,9 @@ class BackendConfig:
 
     # Default backend URLs (overridable via environment variables)
     _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
-    # RHS resolves to module-level DEFAULT_CLOUD_URL before class binding
-    DEFAULT_CLOUD_URL = DEFAULT_CLOUD_URL
-    DEFAULT_PROD_URL = DEFAULT_CLOUD_URL  # Backward-compatible alias
+    _FALLBACK_CLOUD_URL = DEFAULT_CLOUD_URL
+    DEFAULT_CLOUD_URL = _FALLBACK_CLOUD_URL
+    DEFAULT_PROD_URL = _FALLBACK_CLOUD_URL  # Backward-compatible alias
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
