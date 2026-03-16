@@ -201,12 +201,12 @@ recommended = [
 
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,deepeval,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
+    "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
 enterprise = [
-    "traigent[analytics,bayesian,deepeval,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
+    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]
 
 [project.urls]
