@@ -25,6 +25,7 @@ def answer(question: str) -> str:
     return f"Answer to: {question}"
 
 
-result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
-print(f"Best config: {result.best_config}")
-print(f"Best score:  {result.best_score:.2%}")
+if __name__ == "__main__":
+    result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
+    print(f"Best config: {result.best_config}")
+    print(f"Best score:  {result.best_score:.2%}")
