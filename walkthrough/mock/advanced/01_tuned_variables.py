@@ -28,10 +28,14 @@ os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
+DATASET_PATH = str(
+    (SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve()
+)
 
 # Initialize Traigent in mock mode
-traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
+traigent.initialize(
+    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+)
 
 # Define parameter ranges using factory methods
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
@@ -130,12 +134,19 @@ async def main() -> None:
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
-    temp_val = results.best_config.get('temperature')
-    print(f"  Temperature: {temp_val:.2f}" if isinstance(temp_val, float) else f"  Temperature: {temp_val}")
-    tokens_val = results.best_config.get('max_tokens')
-    print(f"  Max Tokens: {tokens_val}")
-    top_p_val = results.best_config.get('top_p')
-    print(f"  Top P: {top_p_val:.2f}" if isinstance(top_p_val, float) else f"  Top P: {top_p_val}")
+    temp_val = results.best_config.get("temperature")
+    print(
+        f"  Temperature: {temp_val:.2f}"
+        if isinstance(temp_val, float)
+        else f"  Temperature: {temp_val}"
+    )
+    print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
+    top_p_val = results.best_config.get("top_p")
+    print(
+        f"  Top P: {top_p_val:.2f}"
+        if isinstance(top_p_val, float)
+        else f"  Top P: {top_p_val}"
+    )
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
@@ -143,8 +154,8 @@ async def main() -> None:
 
     print("\nTrial Summary (first 5):")
     for i, trial in enumerate(results.trials[:5]):
-        t_temp = trial.config.get('temperature', 0)
-        t_acc = trial.metrics.get('accuracy', 0)
+        t_temp = trial.config.get("temperature", 0)
+        t_acc = trial.metrics.get("accuracy", 0)
         print(
             f"  Trial {i+1}: model={trial.config.get('model', 'N/A')}, "
             f"temp={t_temp:.2f}, "

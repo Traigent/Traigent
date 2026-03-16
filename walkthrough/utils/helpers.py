@@ -20,14 +20,14 @@ if TYPE_CHECKING:
 
 # Estimated times for real examples (in seconds) - from test_all_examples.sh
 EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
-    "01_tuning_qa.py": 94,           # ~1m 34s
-    "02_zero_code_change.py": 78,    # ~1m 18s
-    "03_parameter_mode.py": 76,      # ~1m 16s
-    "04_multi_objective.py": 300,    # ~5m 0s (48 combinations, 6 models)
-    "05_rag_parallel.py": 55,        # ~0m 55s
-    "06_custom_evaluator.py": 73,    # ~1m 13s
-    "07_multi_provider.py": 120,     # ~2m 0s (tests multiple providers)
-    "08_privacy_modes.py": 104,      # ~1m 44s
+    "01_tuning_qa.py": 94,  # ~1m 34s
+    "02_zero_code_change.py": 78,  # ~1m 18s
+    "03_parameter_mode.py": 76,  # ~1m 16s
+    "04_multi_objective.py": 300,  # ~5m 0s (48 combinations, 6 models)
+    "05_rag_parallel.py": 55,  # ~0m 55s
+    "06_custom_evaluator.py": 73,  # ~1m 13s
+    "07_multi_provider.py": 120,  # ~2m 0s (tests multiple providers)
+    "08_privacy_modes.py": 104,  # ~1m 44s
 }
 
 
@@ -367,9 +367,7 @@ def _build_table_row(
     return row_parts
 
 
-def _get_mock_cost_for_trial(
-    trial: Any, task_type: str, dataset_size: int
-) -> float:
+def _get_mock_cost_for_trial(trial: Any, task_type: str, dataset_size: int) -> float:
     """Calculate mock cost for a trial based on model."""
     from utils.mock_answers import get_mock_cost
 
@@ -429,7 +427,9 @@ def print_results_table(
     mock_costs: list[float] = []
     mock_latencies: list[float] = []
     if is_mock and "cost" in metric_names:
-        mock_costs = [_get_mock_cost_for_trial(t, task_type, dataset_size) for t in trials]
+        mock_costs = [
+            _get_mock_cost_for_trial(t, task_type, dataset_size) for t in trials
+        ]
     if is_mock and "latency" in metric_names:
         mock_latencies = [_get_mock_latency_for_trial(t, task_type) for t in trials]
 
@@ -455,7 +455,9 @@ def print_results_table(
                 best_idx = 0
                 best_val = mock_latencies[0]
                 for i, latency in enumerate(mock_latencies[1:], 1):
-                    is_better = latency < best_val if is_minimize else latency > best_val
+                    is_better = (
+                        latency < best_val if is_minimize else latency > best_val
+                    )
                     if is_better:
                         best_val = latency
                         best_idx = i
@@ -499,10 +501,16 @@ def print_results_table(
         if metric == "cost" and mock_costs:
             max_len = max(len(_format_metric_value(metric, c)) for c in mock_costs)
         elif metric == "latency" and mock_latencies:
-            max_len = max(len(_format_metric_value(metric, lat)) for lat in mock_latencies)
+            max_len = max(
+                len(_format_metric_value(metric, lat)) for lat in mock_latencies
+            )
         else:
             max_len = max(
-                len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
+                len(
+                    _format_metric_value(
+                        metric, getattr(t, "metrics", {}).get(metric, 0)
+                    )
+                )
                 for t in trials
             )
         col_widths[metric] = max(len(metric), max_len) + 1
@@ -530,15 +538,21 @@ def print_results_table(
 
     print()
     print(f"{C.BOLD}{TL}{H * total_width}{TR}{C.RESET}")
-    print(f"{C.BOLD}{V}{' ' * padding}{title}{' ' * (total_width - padding - len(title))}{V}{C.RESET}")
+    print(
+        f"{C.BOLD}{V}{' ' * padding}{title}{' ' * (total_width - padding - len(title))}{V}{C.RESET}"
+    )
     print(f"{C.BOLD}{L}{H * total_width}{R}{C.RESET}")
 
     # Column headers
     header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
     header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
-    header_parts.extend(f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names)
+    header_parts.extend(
+        f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
+    )
     # Trailing params after metrics (cyan like other config params)
-    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in trailing_params)
+    header_parts.extend(
+        f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in trailing_params
+    )
     print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
 
     # Separator
@@ -557,8 +571,15 @@ def print_results_table(
             mock_metrics["latency"] = mock_latencies[i]
 
         row_parts = _build_table_row(
-            trial, i, param_names, metric_names, col_widths, best_per_objective,
-            is_overall_best, mock_metrics if mock_metrics else None, trailing_params
+            trial,
+            i,
+            param_names,
+            metric_names,
+            col_widths,
+            best_per_objective,
+            is_overall_best,
+            mock_metrics if mock_metrics else None,
+            trailing_params,
         )
         print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
@@ -571,7 +592,9 @@ def print_results_table(
     print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
 
     if is_mock:
-        print(f"{C.DIM}Note: Mock mode - costs and latencies are estimated based on model characteristics.{C.RESET}")
+        print(
+            f"{C.DIM}Note: Mock mode - costs and latencies are estimated based on model characteristics.{C.RESET}"
+        )
 
 
 def print_cost_estimate(

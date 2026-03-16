@@ -98,7 +98,9 @@ def results_match_score(
     In real mode: Returns 1.0 if expected answer appears in output, else 0.0.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        model = (
+            config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        )
         temperature = config.get("temperature") if config else None
         return get_mock_accuracy(model, "simple_qa", temperature)
     if output is None or expected is None:
@@ -178,9 +180,15 @@ async def main() -> None:
     print("Optimization finished.")
     print("To use this with real API calls:")
     print("  1. Set the required API key(s):")
-    print("     export OPENAI_API_KEY='your-key'      # For GPT models")  # pragma: allowlist secret
-    print("     export ANTHROPIC_API_KEY='your-key'  # For Claude models")  # pragma: allowlist secret
-    print("     export GOOGLE_API_KEY='your-key'     # For Gemini models")  # pragma: allowlist secret
+    print(
+        "     export OPENAI_API_KEY='your-key'      # For GPT models"
+    )  # pragma: allowlist secret
+    print(
+        "     export ANTHROPIC_API_KEY='your-key'  # For Claude models"
+    )  # pragma: allowlist secret
+    print(
+        "     export GOOGLE_API_KEY='your-key'     # For Gemini models"
+    )  # pragma: allowlist secret
     print("  2. Run: python walkthrough/real/07_multi_provider.py")
 
 

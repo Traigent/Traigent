@@ -14,7 +14,9 @@ from contextvars import ContextVar
 DEFAULT_MOCK_MODEL = "gpt-3.5-turbo"
 
 # Context variable for current mock trial model (works with async/parallel execution)
-_current_mock_model: ContextVar[str] = ContextVar("current_mock_model", default=DEFAULT_MOCK_MODEL)
+_current_mock_model: ContextVar[str] = ContextVar(
+    "current_mock_model", default=DEFAULT_MOCK_MODEL
+)
 
 
 def set_mock_model(model: str) -> None:
@@ -46,10 +48,10 @@ MOCK_MODEL_ACCURACY = {
     "gpt-3.5-turbo": 0.75,
     "gpt-4": 0.88,
     "gpt-4-turbo": 0.87,
-    "gpt-4.1-nano": 0.70,       # Released Apr 2025, optimized for speed
-    "gpt-5-nano": 0.73,         # Released Aug 2025, improved over 4.1-nano
-    "gpt-5.1": 0.91,            # Released Nov 2025, strong reasoning
-    "gpt-5.2": 0.93,            # Released Dec 2025, best accuracy
+    "gpt-4.1-nano": 0.70,  # Released Apr 2025, optimized for speed
+    "gpt-5-nano": 0.73,  # Released Aug 2025, improved over 4.1-nano
+    "gpt-5.1": 0.91,  # Released Nov 2025, strong reasoning
+    "gpt-5.2": 0.93,  # Released Dec 2025, best accuracy
     # Anthropic models
     "claude-3-opus-20240229": 0.92,
     "claude-sonnet-4-20250514": 0.88,
@@ -57,9 +59,9 @@ MOCK_MODEL_ACCURACY = {
     "claude-3-sonnet-20240229": 0.85,
     "claude-3-5-haiku-20241022": 0.78,
     # Google Gemini models
-    "gemini-1.5-flash": 0.80,         # Fast and capable
-    "gemini-1.5-pro": 0.89,           # High accuracy model
-    "gemini-2.0-flash-exp": 0.85,     # Experimental next-gen flash
+    "gemini-1.5-flash": 0.80,  # Fast and capable
+    "gemini-1.5-pro": 0.89,  # High accuracy model
+    "gemini-2.0-flash-exp": 0.85,  # Experimental next-gen flash
 }
 
 # Costs per 1K tokens (synced with cost_estimator.py, as of Jan 2026)
@@ -68,9 +70,9 @@ MOCK_MODEL_COSTS = {
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
-    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},   # Released Aug 2025
-    "gpt-5.1": {"input": 0.002, "output": 0.008},         # Released Nov 2025
-    "gpt-5.2": {"input": 0.003, "output": 0.012},         # Released Dec 2025
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Released Aug 2025
+    "gpt-5.1": {"input": 0.002, "output": 0.008},  # Released Nov 2025
+    "gpt-5.2": {"input": 0.003, "output": 0.012},  # Released Dec 2025
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
     # Corrected: 3.5 Haiku pricing ($0.80/$4.00 per 1M tokens)
@@ -83,7 +85,10 @@ MOCK_MODEL_COSTS = {
     # Note: Prices double if context length > 128k tokens
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
-    "gemini-2.0-flash-exp": {"input": 0.000075, "output": 0.0003},  # Often free in AI Studio
+    "gemini-2.0-flash-exp": {
+        "input": 0.000075,
+        "output": 0.0003,
+    },  # Often free in AI Studio
 }
 
 # Average tokens by task type
@@ -98,15 +103,15 @@ MOCK_TASK_TOKENS = {
 # Latency estimates per LLM API call in seconds (based on typical response times)
 MOCK_MODEL_LATENCY = {
     # OpenAI Models (as of Jan 2026)
-    "gpt-4o": 0.45,           # Fast, newer architecture (~0.4-0.5s avg)
-    "gpt-4o-mini": 0.25,      # Extremely fast, comparable to Haiku
-    "gpt-3.5-turbo": 0.35,    # Fast, but 4o-mini is often faster now
-    "gpt-4-turbo": 0.8,       # Slower than 4o ("Turbo" is older tech now)
-    "gpt-4": 1.5,             # Legacy GPT-4 is notoriously slow
-    "gpt-4.1-nano": 0.15,     # Ultra-low latency, released Apr 2025
-    "gpt-5-nano": 0.12,       # Released Aug 2025, faster than 4.1-nano
-    "gpt-5.1": 0.5,           # Released Nov 2025, improved reasoning
-    "gpt-5.2": 0.6,           # Released Dec 2025, complex reasoning model
+    "gpt-4o": 0.45,  # Fast, newer architecture (~0.4-0.5s avg)
+    "gpt-4o-mini": 0.25,  # Extremely fast, comparable to Haiku
+    "gpt-3.5-turbo": 0.35,  # Fast, but 4o-mini is often faster now
+    "gpt-4-turbo": 0.8,  # Slower than 4o ("Turbo" is older tech now)
+    "gpt-4": 1.5,  # Legacy GPT-4 is notoriously slow
+    "gpt-4.1-nano": 0.15,  # Ultra-low latency, released Apr 2025
+    "gpt-5-nano": 0.12,  # Released Aug 2025, faster than 4.1-nano
+    "gpt-5.1": 0.5,  # Released Nov 2025, improved reasoning
+    "gpt-5.2": 0.6,  # Released Dec 2025, complex reasoning model
     # Anthropic Models
     "claude-sonnet-4-20250514": 0.9,  # Slower TTFT than GPT-4o (~1.0s avg)
     "claude-3-5-sonnet-20241022": 0.85,  # Similar to Sonnet 4
@@ -114,9 +119,9 @@ MOCK_MODEL_LATENCY = {
     "claude-3-opus-20240229": 1.8,  # Heavy thinker, very slow start
     "claude-3-5-haiku-20241022": 0.3,  # Very fast
     # Google Gemini Models
-    "gemini-1.5-flash": 0.2,            # Very fast, optimized for speed
-    "gemini-1.5-pro": 0.5,              # Balanced speed and quality
-    "gemini-2.0-flash-exp": 0.15,       # Next-gen fast model
+    "gemini-1.5-flash": 0.2,  # Very fast, optimized for speed
+    "gemini-1.5-pro": 0.5,  # Balanced speed and quality
+    "gemini-2.0-flash-exp": 0.15,  # Next-gen fast model
 }
 
 
@@ -203,8 +208,8 @@ def get_mock_latency(model: str, task_type: str = "simple_qa") -> float:
     # Task-specific latency multipliers (more tokens = more time)
     task_multipliers = {
         "simple_qa": 1.0,
-        "classification": 0.8,   # Short outputs
-        "rag_qa": 2.5,           # Long context
+        "classification": 0.8,  # Short outputs
+        "rag_qa": 2.5,  # Long context
         "code_generation": 3.0,  # Long outputs
         "privacy_test": 1.0,
     }
