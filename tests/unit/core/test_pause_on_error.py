@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from traigent.core.exception_handler import VendorErrorCategory
 from traigent.utils.exceptions import VendorPauseError
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ class TestHandleVendorPause:
         adapter = MockPromptAdapter(vendor_response="resume")
         mock_orchestrator._prompt_adapter = adapter
 
-        exc = VendorPauseError("rate limit", category="rate_limit")
+        exc = VendorPauseError("rate limit", category=VendorErrorCategory.RATE_LIMIT)
         result = await mock_orchestrator._handle_vendor_pause(exc)
 
         assert result == "continue"
@@ -68,7 +69,7 @@ class TestHandleVendorPause:
         adapter = MockPromptAdapter(vendor_response="stop")
         mock_orchestrator._prompt_adapter = adapter
 
-        exc = VendorPauseError("rate limit", category="rate_limit")
+        exc = VendorPauseError("rate limit", category=VendorErrorCategory.RATE_LIMIT)
         result = await mock_orchestrator._handle_vendor_pause(exc)
 
         assert result == "break"
@@ -77,7 +78,7 @@ class TestHandleVendorPause:
     async def test_no_adapter_returns_break(self, mock_orchestrator):
         mock_orchestrator._prompt_adapter = None
 
-        exc = VendorPauseError("rate limit", category="rate_limit")
+        exc = VendorPauseError("rate limit", category=VendorErrorCategory.RATE_LIMIT)
         result = await mock_orchestrator._handle_vendor_pause(exc)
 
         assert result == "break"
@@ -146,13 +147,13 @@ class TestVendorPauseErrorPropagation:
         exc = VendorPauseError(
             "rate limit hit",
             original_error=original,
-            category="rate_limit",
+            category=VendorErrorCategory.RATE_LIMIT,
         )
         assert exc.original_error is original
-        assert exc.category == "rate_limit"
+        assert exc.category == VendorErrorCategory.RATE_LIMIT
         assert "rate limit hit" in str(exc)
 
     def test_vendor_pause_error_default_category(self):
         exc = VendorPauseError("some error")
-        assert exc.category == "unknown"
+        assert exc.category is None
         assert exc.original_error is None

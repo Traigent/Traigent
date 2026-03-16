@@ -192,21 +192,6 @@ class TrialLifecycle:
         if orchestrator.cost_enforcer is not None:
             permit = await orchestrator.cost_enforcer.acquire_permit_async()
             if not permit.is_granted:
-                # Interactive pause: let user raise the budget limit
-                prompt_adapter = getattr(orchestrator, "_prompt_adapter", None)
-                if prompt_adapter is not None:
-                    import asyncio
-
-                    decision = await asyncio.to_thread(
-                        prompt_adapter.prompt_budget_pause,
-                        orchestrator.cost_enforcer.get_status().accumulated_cost_usd,
-                        orchestrator.cost_enforcer.config.limit,
-                    )
-                    if decision.startswith("raise:"):
-                        new_limit = float(decision.split(":")[1])
-                        orchestrator.cost_enforcer.update_limit(new_limit)
-                        return trial_count, "continue"
-
                 logger.info(
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
@@ -464,7 +449,7 @@ class TrialLifecycle:
                 raise VendorPauseError(
                     str(vendor_exc),
                     original_error=vendor_exc,
-                    category=category.value,
+                    category=category,
                 ) from vendor_exc
             # Defensive: if classify returns None, fall through to generic
             logger.exception("Trial %s vendor error not classified", trial_id)

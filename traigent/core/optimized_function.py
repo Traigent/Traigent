@@ -109,8 +109,10 @@ def _resolve_callbacks(
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     if progress_bar is not False:
         has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
-        if not has_progress and sys.stdin.isatty():
-            callbacks.insert(0, ProgressBarCallback())
+        if not has_progress:
+            # True = always inject; None = inject only in interactive terminals
+            if progress_bar is True or sys.stdin.isatty():
+                callbacks.insert(0, ProgressBarCallback())
     return callbacks
 
 
@@ -1152,6 +1154,10 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
+            progress_bar: Controls the live progress bar during optimization.
+                ``True`` forces a progress bar even in non-interactive mode,
+                ``False`` suppresses it, ``None`` (default) auto-enables in
+                interactive terminals (``sys.stdin.isatty()``).
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -1267,6 +1273,8 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
+            progress_bar: ``True`` to force, ``False`` to suppress, ``None``
+                (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
