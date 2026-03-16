@@ -23,13 +23,13 @@ DEFAULT_LOCAL_URL = "http://localhost:5000"
 #: Import this constant instead of repeating the literal string.
 DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
 
-#: Signup/login page — derived from the portal base.
-SIGNUP_URL = f"{DEFAULT_CLOUD_URL}/login"
+#: Portal URL shown in user-facing warnings (register or login).
+SIGNUP_URL = DEFAULT_CLOUD_URL
 
 
 def get_no_credentials_hint() -> str:
     """One-liner appended to missing-credentials warnings."""
-    return f"Sign up at {SIGNUP_URL} or run 'traigent auth login'."
+    return f"Get started at {SIGNUP_URL} or run 'traigent auth login'."
 
 
 class BackendConfig:
