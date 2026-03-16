@@ -270,6 +270,7 @@ class TestTimeoutStopCondition:
             timeout=0.1,
             max_trials=50,
             expected=ExpectedResult(
+                min_trials=0,
                 max_trials=50,
             ),
             gist_template="very-short-timeout -> {trial_count()} | {status()}",

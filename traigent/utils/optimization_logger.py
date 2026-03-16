@@ -177,7 +177,7 @@ def _extract_output_text(output: Any) -> str | None:
     if isinstance(output, str):
         return output
     if isinstance(output, dict):
-        # Bazak-style: {"response": "...", "query": "..."}
+        # Common shape: {"response": "...", "query": "..."}
         for key in ("response", "text", "content", "answer"):
             if key in output:
                 return str(output[key])

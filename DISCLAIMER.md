@@ -162,5 +162,5 @@ https://github.com/Traigent/Traigent/issues
 
 ---
 
-*Last updated: December 2024*
+*Last updated: March 2026*
 *Licensed under Apache License 2.0 - See [LICENSE](LICENSE) for full terms*

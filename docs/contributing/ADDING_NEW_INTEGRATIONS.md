@@ -114,7 +114,7 @@ class YourProviderPlugin(LLMPlugin):
             # Provider-specific parameters
             "provider_specific_param": "sdk_param_name",
             # API configuration
-            "your_api_key": "api_key",
+            "your_api_key": "api_key",  # pragma: allowlist secret
             # Common aliases
             "seed": "random_seed",  # Example: map common 'seed' to provider name
         }
@@ -527,4 +527,6 @@ For reference, study these existing implementations:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same license as the Traigent project.
+By contributing, you agree to follow Traigent's Contributor License Agreement
+(CLA) policy. See
+[`../../CONTRIBUTOR-LICENSING.md`](../../CONTRIBUTOR-LICENSING.md).

@@ -19,3 +19,4 @@ Brief description of changes.
 - [ ] Self-review completed
 - [ ] Documentation updated
 - [ ] No new warnings introduced
+- [ ] If this is an external contribution, I have signed or will sign Traigent's CLA before merge
