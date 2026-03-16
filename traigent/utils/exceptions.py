@@ -306,6 +306,28 @@ class CostLimitExceeded(TraigentError):
         self.limit = limit
 
 
+class VendorPauseError(TraigentError):
+    """Raised when a vendor error is classified as pause-worthy.
+
+    Re-raised from TrialLifecycle._execute_trial_with_tracing to signal the
+    orchestrator that the user should be prompted before continuing.
+
+    Attributes:
+        original_error: The underlying vendor exception.
+        category: Classified vendor error category string.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        original_error: Exception | None = None,
+        category: str = "unknown",
+    ) -> None:
+        super().__init__(message)
+        self.original_error = original_error
+        self.category = category
+
+
 class NetworkError(RetryableError):
     """Network-related error."""
 
