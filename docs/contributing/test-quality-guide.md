@@ -308,7 +308,6 @@ For detailed analysis and methodology:
 - **Meta-Analysis Report**: `tests/optimizer_validation/META_ANALYSIS_REPORT.md`
 - **Independent Analysis**: `tests/optimizer_validation/INDEPENDENT_META_ANALYSIS.md`
 - **Tools README**: `tests/optimizer_validation/tools/README.md`
-- **CLAUDE.md Guidelines**: See "Test Quality Guidelines" section
 
 ## Summary
 

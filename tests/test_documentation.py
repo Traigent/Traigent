@@ -267,7 +267,6 @@ class TestDocumentationConsistency(unittest.TestCase):
                             "examples/advanced/ai-engineering-tasks",  # Template-heavy gallery
                             "examples/docs",  # Generated documentation snippets
                             "examples/templates",  # Authoring templates
-                            "examples/archive",  # Archived artifacts with known issues
                         ]
                         problematic_files = [
                             "setup.py",
