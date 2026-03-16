@@ -1581,7 +1581,34 @@ class OptimizationOrchestrator:
             scheduled_configs, results, scheduled_optuna_ids, session_id, trial_count
         )
 
-        # Phase 9: Checkpoint logging
+        # Phase 9: Check for batch-wide vendor errors (parallel mode)
+        # VendorPauseError is caught inside each trial and converted to a
+        # failed TrialResult. If the entire batch failed with vendor-like
+        # errors, prompt the user before scheduling the next batch.
+        if self._prompt_adapter is not None and results:
+            from traigent.core.exception_handler import classify_vendor_error
+
+            vendor_failures = 0
+            for r in results:
+                trial = getattr(r, "result", r)
+                if (
+                    isinstance(trial, TrialResult)
+                    and trial.status == TrialStatus.FAILED
+                    and trial.error_message
+                    and classify_vendor_error(RuntimeError(trial.error_message))
+                    is not None
+                ):
+                    vendor_failures += 1
+            if vendor_failures > 0 and vendor_failures == len(results):
+                exc = VendorPauseError(
+                    f"All {vendor_failures} parallel trials failed with vendor errors",
+                )
+                decision = await self._handle_vendor_pause(exc)
+                if decision == "break":
+                    self._stop_reason = "vendor_error_user_stop"
+                    return trial_count, "break"
+
+        # Phase 10: Checkpoint logging
         self._maybe_log_checkpoint(trial_count)
 
         return trial_count, "continue"
@@ -1856,16 +1883,20 @@ class OptimizationOrchestrator:
                 trial_count
             )
             if budget_stop:
-                # Interactive pause: let user raise the budget limit
-                if self._prompt_adapter is not None:
-                    decision = await self._handle_budget_limit_pause()
-                    if decision == "continue":
-                        continue
                 if not self._stop_reason:
                     self._stop_reason = budget_stop
                 break
 
             if self._should_stop(trial_count):
+                # Interactive pause on cost limit — let user raise budget
+                if (
+                    self._stop_reason == "cost_limit"
+                    and self._prompt_adapter is not None
+                ):
+                    decision = await self._handle_budget_limit_pause()
+                    if decision == "continue":
+                        self._stop_reason = None
+                        continue
                 break
 
             try:
@@ -1936,7 +1967,11 @@ class OptimizationOrchestrator:
             self.cost_enforcer.config.limit,
         )
         if decision.startswith("raise:"):
-            new_limit = float(decision.split(":")[1])
+            try:
+                new_limit = float(decision.split(":")[1])
+            except (ValueError, IndexError):
+                logger.warning("Malformed budget response: %s", decision)
+                return "break"
             self.cost_enforcer.update_limit(new_limit)
             logger.info("User raised cost limit to $%.2f", new_limit)
             return "continue"

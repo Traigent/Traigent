@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 from traigent.core.exception_handler import (
     TerminalPausePrompt,
     VendorErrorCategory,

@@ -187,6 +187,8 @@ def multi_provider_agent(question: str) -> str:
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
 | **Cost tracking** | Integrated tokencost library with 500+ model pricing |
 | **Parallel execution** | Concurrent trials and example-level parallelism |
+| **Error resilience** | Interactive pause on rate limits and budget caps — resume or stop gracefully |
+| **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
 | **Privacy-first** | Local execution mode keeps all data on your machine |
 
 **[TraigentDemo →](https://github.com/Traigent/TraigentDemo)** — Streamlit playground, use cases, and research benchmarks
@@ -252,6 +254,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | `eval_dataset` | `@traigent.optimize()` | Dataset for evaluation |
 | `algorithm` | `.optimize()` call | `"random"`, `"grid"`, `"bayesian"` |
 | `max_trials` | `.optimize()` call | Number of configurations to test |
+| `progress_bar` | `.optimize()` call | `True` / `False` / `None` (auto) — live progress bar |
 
 ### Injection Modes
 

@@ -314,14 +314,14 @@ class VendorPauseError(TraigentError):
 
     Attributes:
         original_error: The underlying vendor exception.
-        category: Classified vendor error category string.
+        category: The VendorErrorCategory enum value (or None).
     """
 
     def __init__(
         self,
         message: str,
         original_error: Exception | None = None,
-        category: str = "unknown",
+        category: Any = None,
     ) -> None:
         super().__init__(message)
         self.original_error = original_error
