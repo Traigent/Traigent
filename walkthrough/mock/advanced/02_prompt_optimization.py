@@ -11,17 +11,26 @@ Run with: TRAIGENT_MOCK_LLM=true python 02_prompt_optimization.py
 """
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from utils.mock_answers import configure_mock_notice
+
 import traigent
+from traigent import TraigentConfig
 from traigent.api.parameter_ranges import Choices, Range
+
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
 DATASET_PATH = str((SCRIPT_DIR / ".." / ".." / "datasets" / "simple_questions.jsonl").resolve())
 
 # Initialize Traigent in mock mode
-traigent.initialize(execution_mode="edge_analytics")
+traigent.initialize(config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True))
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [
@@ -101,8 +110,9 @@ def qa_agent(question: str) -> str:
 
 
 async def main() -> None:
-    print("Traigent Example: Prompt Optimization")
-    print("=" * 60)
+    print("Traigent Advanced: Prompt Optimization")
+    print("=" * 50)
+    configure_mock_notice("advanced/02_prompt_optimization.py")
 
     print("\nSystem Prompt Variants:")
     for i, prompt in enumerate(SYSTEM_PROMPTS, 1):
@@ -115,11 +125,13 @@ async def main() -> None:
     print("\nRunning optimization to find best prompt + parameters...")
     results = await qa_agent.optimize(algorithm="random", max_trials=16, random_seed=42)
 
-    print("\nBest Configuration:")
+    print("\nBest Configuration Found:")
     best_prompt = results.best_config.get("system_prompt", "N/A")
     print(f"  System Prompt: {best_prompt[:50]}...")
-    print(f"  Temperature: {results.best_config.get('temperature')}")
-    print(f"  Top P: {results.best_config.get('top_p')}")
+    temp_val = results.best_config.get("temperature")
+    print(f"  Temperature: {temp_val:.2f}" if isinstance(temp_val, float) else f"  Temperature: {temp_val}")
+    top_p_val = results.best_config.get("top_p")
+    print(f"  Top P: {top_p_val:.2f}" if isinstance(top_p_val, float) else f"  Top P: {top_p_val}")
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
@@ -142,4 +154,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
