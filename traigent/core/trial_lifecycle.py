@@ -329,12 +329,7 @@ class TrialLifecycle:
 
         try:
             # Phase 3: Execute evaluation within TrialContext
-            # This sets the trial context so get_trial_config() works inside the user's function
-            evaluate_kwargs: dict[str, Any] = {}
-            if progress_callback is not None:
-                evaluate_kwargs["progress_callback"] = progress_callback
-            if lease is not None:
-                evaluate_kwargs["sample_lease"] = lease
+            evaluate_kwargs = self._build_evaluate_kwargs(progress_callback, lease)
 
             async with TrialContext(
                 trial_id=trial_id,
@@ -608,6 +603,18 @@ class TrialLifecycle:
             trial_id=trial_id,
             ceiling=ceiling_value,
         )
+
+    @staticmethod
+    def _build_evaluate_kwargs(
+        progress_callback: Any, lease: SampleBudgetLease | None
+    ) -> dict[str, Any]:
+        """Build keyword arguments for evaluator.evaluate()."""
+        kwargs: dict[str, Any] = {}
+        if progress_callback is not None:
+            kwargs["progress_callback"] = progress_callback
+        if lease is not None:
+            kwargs["sample_lease"] = lease
+        return kwargs
 
     def _finalize_budget_lease(
         self, lease: SampleBudgetLease | None
