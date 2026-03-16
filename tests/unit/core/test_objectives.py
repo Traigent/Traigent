@@ -471,7 +471,7 @@ class TestWeightValidationHardening:
 
     def test_multi_objective_no_single_dominance(self):
         """No single objective can have 100% weight in multi-objective."""
-        with pytest.raises(ValueError, match="100% of the weight"):
+        with pytest.raises(ValueError, match="exceed 99%"):
             ObjectiveSchema.from_objectives(
                 [
                     ObjectiveDefinition("a", "maximize", 1000000),
@@ -493,8 +493,13 @@ class TestWeightValidationHardening:
         )
         assert abs(obj.weight - 1.0) < 1e-10
 
+    def test_from_dict_missing_weight_defaults(self):
+        """from_dict with missing weight key uses default 1.0."""
+        obj = ObjectiveDefinition.from_dict({"name": "x", "orientation": "maximize"})
+        assert abs(obj.weight - 1.0) < 1e-10
+
     def test_from_dict_zero_weight_rejected(self):
-        """from_dict with weight=0 is rejected."""
+        """from_dict with weight=0 is rejected (not silently defaulted)."""
         with pytest.raises(ValueError, match="finite positive"):
             ObjectiveDefinition.from_dict(
                 {"name": "x", "orientation": "maximize", "weight": 0}
@@ -522,8 +527,8 @@ class TestWeightValidationHardening:
         )
         assert abs(schema.weights_sum - 1.0) < 1e-10
 
-    def test_balanced_multi_objective_accepted(self):
-        """Reasonably balanced multi-objective weights pass."""
+    def test_high_ratio_multi_objective_accepted(self):
+        """A 9:1 weight ratio is steep but not degenerate — accepted."""
         schema = ObjectiveSchema.from_objectives(
             [
                 ObjectiveDefinition("a", "maximize", 0.9),
