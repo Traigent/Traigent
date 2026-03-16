@@ -454,6 +454,7 @@ tests/optimizer_validation/viewer/bdd_graph_data.json
 
 # Local discussion notes and experiments
 discussion_*.txt
+discussion_*.md
 DISCUSSIONS_RECOUNT_*.md
 AutoCoder_orders.txt
 old_discussions_*/
