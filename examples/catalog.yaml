@@ -1,17 +1,17 @@
 # Auto-generated metadata for Traigent examples.
 # Update entries as examples evolve; documentation and tooling consume this file.
-- slug: rag-optimization
+- slug: hello-world
   category: core
   title: "Hello World"
   summary: "Optimize a simple sentiment workflow with optional RAG context."
-  run: "core/rag-optimization/run.py"
+  run: "core/hello-world/run.py"
   difficulty: beginner
   est_time: "5 min"
   tags: ["sentiment", "RAG", "intro"]
   datasets:
-    - "datasets/rag-optimization/evaluation_set.jsonl"
-    - "datasets/rag-optimization/context_documents.jsonl"
-  docs: "../core/rag-optimization/index.html"
+    - "datasets/hello-world/evaluation_set.jsonl"
+    - "datasets/hello-world/context_documents.jsonl"
+  docs: "../core/hello-world/index.html"
   docs_sections:
     - label: "Getting Started Guide"
       href: "../../docs/getting-started/GETTING_STARTED.md"

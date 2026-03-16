@@ -28,7 +28,7 @@ from setup import quick_setup, get_example_dataset
 is_mock = quick_setup(Path(__file__).parent)
 
 # Get dataset path
-dataset_path = get_example_dataset("rag-optimization")
+dataset_path = get_example_dataset("hello-world")
 ```
 
 ## Module Reference

@@ -11,7 +11,7 @@ import traigent
 from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
-    eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
+    eval_dataset="examples/datasets/hello-world/evaluation_set.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
 )
@@ -104,7 +104,7 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 - Enable: `TRAIGENT_MOCK_LLM=true` (no API keys needed)
 - Benefits: realistic scores, zero cost, quick iteration
 - Example:
-  - `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py`
+  - `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
   - Or copy a command from the Examples Navigator "Run" icon
 
 ---

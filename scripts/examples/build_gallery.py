@@ -177,7 +177,7 @@ def render_card(entry: dict[str, Any]) -> str:
         # Link to the example directory index if present
         parts = entry["run"].split("/")
         if len(parts) >= 3:
-            # e.g., core/rag-optimization/run.py -> core/rag-optimization/index.html
+            # e.g., core/hello-world/run.py -> core/hello-world/index.html
             primary_link = "/".join(["../..", "examples"] + parts[:2] + ["index.html"])
     button_html = ""
     if primary_link:

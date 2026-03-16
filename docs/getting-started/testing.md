@@ -114,7 +114,7 @@ export TRAIGENT_MOCK_LLM=true
 TRAIGENT_MOCK_LLM=true pytest tests/
 
 # Run specific example in mock mode
-TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
+TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
 ```
 
 **Mock Mode Features:**

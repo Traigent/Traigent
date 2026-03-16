@@ -1,4 +1,4 @@
-# RAG Optimization
+# Hello World (RAG Optimization)
 
 > **Note:** If you are new to Traigent, start with the [Simple Prompt Optimization](../simple-prompt/) example first.
 
@@ -8,7 +8,7 @@ Optimize a RAG-enabled Q&A function to find the best model, temperature, and RAG
 
 ```bash
 export TRAIGENT_MOCK_LLM=true  # Skip API calls
-python examples/core/rag-optimization/run.py
+python examples/core/hello-world/run.py
 ```
 
 ## Configuration Space

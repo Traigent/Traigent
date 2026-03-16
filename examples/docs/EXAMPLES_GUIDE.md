@@ -7,7 +7,7 @@ What lives in `examples/`, how to run it, and where to start.
 examples/
 |- core/                    # Start here
 |  |- simple-prompt/       # Minimal prompt tuning
-|  |- rag-optimization/         # RAG toggle
+|  |- hello-world/         # RAG toggle
 |  |- few-shot-classification/
 |  |- multi-objective-tradeoff/
 |  |- prompt-ab-test/
@@ -35,7 +35,7 @@ examples/
 | Example | Optimizes | Run (mock mode) |
 | --- | --- | --- |
 | simple-prompt | Model, temperature, prompt style | `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py` |
-| rag-optimization         # RAG toggle, model, top_k | `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` |
+| hello-world | RAG toggle, model, top_k | `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py` |
 | few-shot-classification | Example count/strategy | `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py` |
 | multi-objective-tradeoff | Accuracy, cost, latency | `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py` |
 | prompt-ab-test | Prompt variants | `TRAIGENT_MOCK_LLM=true python examples/core/prompt-ab-test/run.py` |

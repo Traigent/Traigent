@@ -42,5 +42,5 @@ Best Configuration: ...
 
 Once you understand this example, check out:
 
-- [rag-optimization](../rag-optimization/) - Adds RAG (Retrieval Augmented Generation) to the mix.
+- [hello-world](../hello-world/) - Adds RAG (Retrieval Augmented Generation) to the mix.
 - [few-shot-classification](../few-shot-classification/) - Optimizes few-shot examples.

@@ -4,7 +4,7 @@
 # 37 examples total.
 
 # Core (12)
-core/rag-optimization/run.py
+core/hello-world/run.py
 core/simple-prompt/run.py
 core/few-shot-classification/run.py
 core/prompt-style-optimization/run.py

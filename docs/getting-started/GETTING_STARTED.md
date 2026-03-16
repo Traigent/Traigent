@@ -20,7 +20,7 @@ import traigent
 from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
-    eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
+    eval_dataset="examples/datasets/hello-world/evaluation_set.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
 )
@@ -71,7 +71,7 @@ def classify(text: str) -> str:
 
 ## 🧪 Mock Mode & Examples
 
-- `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` (no API keys)
+- `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py` (no API keys)
 - Examples Navigator: `python -m http.server -d examples 8000` → http://localhost:8000
 
 ## 🛠️ CLI Snippets
@@ -79,8 +79,8 @@ def classify(text: str) -> str:
 ```bash
 traigent info                                   # Version/features
 traigent algorithms                             # Available strategies
-traigent optimize examples/core/rag-optimization/run.py -a grid -n 5
-traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
+traigent optimize examples/core/hello-world/run.py -a grid -n 5
+traigent validate examples/datasets/hello-world/evaluation_set.jsonl
 traigent plot my_run -p progress
 ```
 

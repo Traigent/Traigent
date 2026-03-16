@@ -54,7 +54,7 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 | Example | Description | Key Concepts | Runtime |
 | ------- | ----------- | ------------ | ------- |
 | **`simple-prompt`** | Basic prompt optimization | Decorator usage, config space, seamless injection | ~1 min |
-| **`rag-optimization`** | Simple Q&A optimization with RAG | Configuration spaces, objectives, parameter injection | ~2 min |
+| **`hello-world`** | Simple Q&A optimization with RAG | Configuration spaces, objectives, parameter injection | ~2 min |
 | **`few-shot-classification`** | Few-shot learning for text classification | Few-shot prompting, example selection | ~3 min |
 | **`multi-objective-tradeoff`** | Balance accuracy, cost, and latency (use `run_anthropic.py` or `run_openai.py`) | Multi-objective optimization, Pareto fronts | ~5 min |
 | **`token-budget-summarization`** | Optimize within strict token budgets | Token constraints, budget management | ~3 min |
@@ -71,7 +71,7 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 
 - **simple-prompt**: The minimal Traigent setup. Shows how to add the `@traigent.optimize` decorator to an existing function and define a configuration space (model, temperature). Great first example.
 
-- **rag-optimization**: Introduces RAG patterns with parameter injection. Learn how Traigent passes optimized parameters (like `k` for retrieval depth) directly into your function.
+- **hello-world**: Introduces RAG patterns with parameter injection. Learn how Traigent passes optimized parameters (like `k` for retrieval depth) directly into your function.
 
 - **few-shot-classification**: Optimize few-shot example selection. Traigent finds which examples improve classification accuracy - useful for prompt engineering without manual trial-and-error.
 
@@ -145,7 +145,7 @@ from pathlib import Path
 
 # Reference datasets from any example
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
-eval_data = DATASETS_ROOT / "rag-optimization" / "evaluation_set.jsonl"
+eval_data = DATASETS_ROOT / "hello-world" / "evaluation_set.jsonl"
 ```
 
 ### Dataset Path Convention
@@ -172,7 +172,7 @@ examples/
 | Dataset | Size | Difficulty Tiers | Evaluation |
 | ------- | ---- | ---------------- | ---------- |
 | `simple-prompt/` | 10 | Mixed | Exact match |
-| `rag-optimization/` | 15 | Easy/Medium/Hard | Exact match |
+| `hello-world/` | 15 | Easy/Medium/Hard | Exact match |
 | `few-shot-classification/` | 20 | Clear/Ambiguous | Exact match |
 | `multi-objective-tradeoff/` | 15 | Mixed | Multi-metric |
 | `token-budget-summarization/` | 10 | Short/Long docs | Token + quality |
@@ -272,7 +272,7 @@ python examples/core/multi-objective-tradeoff/run_anthropic.py
 
 1. **Quickstart:** `quickstart/01_simple_qa.py` (1 min) - README examples that just work
 2. **Basics:** `core/simple-prompt/run.py` (1 min) - The absolute basics
-3. **Learn:** `core/rag-optimization/run.py` (2 min) - RAG & parameter injection
+3. **Learn:** `core/hello-world/run.py` (2 min) - RAG & parameter injection
 4. **Explore:** `core/few-shot-classification/run.py` (3 min) - Few-shot optimization
 5. **Deep Dive:** `core/multi-objective-tradeoff/run_anthropic.py` (5 min) - Real optimization
 6. **Advance:** `advanced/ai-engineering-tasks/` - Specialized patterns

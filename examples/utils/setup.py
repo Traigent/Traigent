@@ -94,7 +94,7 @@ def get_example_dataset(
     """Get the path to a dataset for a specific example.
 
     Args:
-        example_name: Name of the example (e.g., "rag-optimization", "simple-prompt")
+        example_name: Name of the example (e.g., "hello-world", "simple-prompt")
         filename: Name of the dataset file (default: "evaluation_set.jsonl")
 
     Returns:
