@@ -24,7 +24,7 @@ fi
 # See: https://github.com/Traigent/TraigentDemo
 
 scenarios=(
-  "Hello World – RAG tuner"
+  "RAG Optimization – RAG tuner"
   "Prompt A/B tradeoff"
   "Structured JSON extractor"
 )
