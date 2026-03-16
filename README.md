@@ -47,10 +47,10 @@ def my_agent(question: str) -> str:
 ```
 
 <p align="center">
-  <a href="https://docs.traigent.ai">Documentation</a> &middot;
   <a href="https://portal.traigent.ai">Portal</a> &middot;
   <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
-  <a href="examples/">Examples</a>
+  <a href="examples/">Examples</a> &middot;
+  <a href=".agents/skills/traigent/SKILL.md">Skill</a>
 </p>
 
 ---
@@ -305,4 +305,4 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 ---
 
-**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
+**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](.agents/skills/traigent/SKILL.md)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
