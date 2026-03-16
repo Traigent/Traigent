@@ -41,9 +41,7 @@ class BackendConfig:
 
     # Default backend URLs (overridable via environment variables)
     _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
-    _FALLBACK_CLOUD_URL = DEFAULT_CLOUD_URL
-    DEFAULT_CLOUD_URL = _FALLBACK_CLOUD_URL
-    DEFAULT_PROD_URL = _FALLBACK_CLOUD_URL  # Backward-compatible alias
+    DEFAULT_PROD_URL = DEFAULT_CLOUD_URL
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
@@ -177,8 +175,8 @@ class BackendConfig:
         if configured_origin:
             return configured_origin
 
-        logger.debug("Using default cloud URL: %s", cls.DEFAULT_CLOUD_URL)
-        return cls.DEFAULT_CLOUD_URL
+        logger.debug("Using default cloud URL: %s", cls.DEFAULT_PROD_URL)
+        return cls.DEFAULT_PROD_URL
 
     @classmethod
     def _build_api_url(cls, backend_origin: str) -> str:
