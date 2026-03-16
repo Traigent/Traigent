@@ -39,8 +39,12 @@ from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     OptimizationError,
+    QuotaExceededError,
+    RateLimitError,
+    ServiceUnavailableError,
     TrialPrunedError,
     TVLConstraintError,
+    VendorPauseError,
 )
 from traigent.utils.logging import get_logger
 
@@ -188,6 +192,21 @@ class TrialLifecycle:
         if orchestrator.cost_enforcer is not None:
             permit = await orchestrator.cost_enforcer.acquire_permit_async()
             if not permit.is_granted:
+                # Interactive pause: let user raise the budget limit
+                prompt_adapter = getattr(orchestrator, "_prompt_adapter", None)
+                if prompt_adapter is not None:
+                    import asyncio
+
+                    decision = await asyncio.to_thread(
+                        prompt_adapter.prompt_budget_pause,
+                        orchestrator.cost_enforcer.get_status().accumulated_cost_usd,
+                        orchestrator.cost_enforcer.config.limit,
+                    )
+                    if decision.startswith("raise:"):
+                        new_limit = float(decision.split(":")[1])
+                        orchestrator.cost_enforcer.update_limit(new_limit)
+                        return trial_count, "continue"
+
                 logger.info(
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
@@ -430,6 +449,38 @@ class TrialLifecycle:
         except asyncio.CancelledError:
             # SonarQube S7497: CancelledError must always be re-raised
             raise
+
+        except (
+            RateLimitError,
+            QuotaExceededError,
+            ServiceUnavailableError,
+        ) as vendor_exc:
+            # Re-raise as VendorPauseError so the orchestrator can prompt
+            # the user to resume or stop, instead of silently failing.
+            from traigent.core.exception_handler import classify_vendor_error
+
+            category = classify_vendor_error(vendor_exc)
+            if category is not None:
+                raise VendorPauseError(
+                    str(vendor_exc),
+                    original_error=vendor_exc,
+                    category=category.value,
+                ) from vendor_exc
+            # Defensive: if classify returns None, fall through to generic
+            logger.exception("Trial %s vendor error not classified", trial_id)
+            result = self._build_trial_error_result(
+                trial_id,
+                evaluation_config,
+                start_time,
+                lease,
+                progress_state,
+                optuna_trial_id,
+                vendor_exc,
+            )
+            record_trial_result(span, status="failed", error=str(vendor_exc))
+            end_time = time.time()
+            self._collect_workflow_span(trial_id, result, start_time, end_time)
+            return result
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
