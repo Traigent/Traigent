@@ -84,6 +84,38 @@ from traigent.utils.validation import (
 
 logger = get_logger(__name__)
 
+
+def _resolve_callbacks(
+    explicit_callbacks: list[Any] | None,
+    decorator_callbacks: list[Any] | None,
+    progress_bar: bool | None,
+) -> list[Any]:
+    """Resolve callbacks with optional auto-injection of ProgressBarCallback.
+
+    Used by both ``optimize()`` and ``optimize_sync()`` to keep behavior
+    consistent. Auto-enables a progress bar in interactive terminals unless
+    the caller explicitly disables it.
+
+    Args:
+        explicit_callbacks: Callbacks passed directly to optimize().
+        decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
+        progress_bar: ``True`` to force, ``False`` to suppress, ``None`` for auto.
+
+    Returns:
+        Resolved list of callback instances.
+    """
+    from traigent.utils.callbacks import ProgressBarCallback
+
+    callbacks = list(explicit_callbacks or decorator_callbacks or [])
+    if progress_bar is not False:
+        has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
+        if not has_progress:
+            # True = always inject; None = inject only in interactive terminals
+            if progress_bar is True or sys.stdin.isatty():
+                callbacks.insert(0, ProgressBarCallback())
+    return callbacks
+
+
 # Module-level flag to ensure cost warning is emitted only once per process
 _COST_WARNING_EMITTED = False
 
@@ -1102,6 +1134,7 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -1121,6 +1154,10 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
+            progress_bar: Controls the live progress bar during optimization.
+                ``True`` forces a progress bar even in non-interactive mode,
+                ``False`` suppresses it, ``None`` (default) auto-enables in
+                interactive terminals (``sys.stdin.isatty()``).
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -1177,8 +1214,8 @@ class OptimizedFunction:
 
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
-        callbacks = (
-            callbacks if callbacks is not None else getattr(self, "callbacks", None)
+        callbacks = _resolve_callbacks(
+            callbacks, getattr(self, "callbacks", None), progress_bar
         )
 
         try:
@@ -1213,6 +1250,7 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -1235,6 +1273,8 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
+            progress_bar: ``True`` to force, ``False`` to suppress, ``None``
+                (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -1265,6 +1305,7 @@ class OptimizedFunction:
             tvl_spec=tvl_spec,
             tvl_environment=tvl_environment,
             tvl=tvl,
+            progress_bar=progress_bar,
             **algorithm_kwargs,
         )
 
