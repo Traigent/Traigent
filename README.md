@@ -17,7 +17,7 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[recommended]"
 ```
 
