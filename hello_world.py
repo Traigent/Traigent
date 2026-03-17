@@ -1,7 +1,11 @@
 """Find the best model and temperature for your task — in one decorator."""
 import asyncio
+import os
 import sys
 from pathlib import Path
+
+# Hello world runs locally — no backend connection needed.
+os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 sys.path.append(str(Path(__file__).parent / "walkthrough"))
 
