@@ -25,7 +25,7 @@ pip install -e ".[recommended]"
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
-python hello.py
+python hello_world.py
 ```
 
 **One decorator, two parameters, multi-objective optimization:**

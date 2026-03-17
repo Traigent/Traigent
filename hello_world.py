@@ -1,18 +1,24 @@
 """Find the best model and temperature for your task — in one decorator."""
 import asyncio
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent / "walkthrough"))
+
 import traigent
+from utils.helpers import print_results_table
 
 DATASET = str(Path(__file__).parent / "examples" / "datasets" / "quickstart" / "qa_samples.jsonl")
+OBJECTIVES = ["accuracy"]
+CONFIG_SPACE = {
+    "model": ["gpt-4o-mini", "gpt-4o"],
+    "temperature": [0.0, 0.7, 1.0],
+}
 
 
 @traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.7, 1.0],
-    },
-    objectives=["accuracy"],
+    configuration_space=CONFIG_SPACE,
+    objectives=OBJECTIVES,
     eval_dataset=DATASET,
     execution_mode="edge_analytics",
 )
@@ -27,5 +33,4 @@ def answer(question: str) -> str:
 
 if __name__ == "__main__":
     result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
-    print(f"Best config: {result.best_config}")
-    print(f"Best score:  {result.best_score:.2%}")
+    print_results_table(result, CONFIG_SPACE, OBJECTIVES, is_mock=True)
