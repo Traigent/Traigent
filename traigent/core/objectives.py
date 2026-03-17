@@ -12,14 +12,22 @@ Sync: SYNC-OptimizationFlow
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from traigent.tvl.models import BandTarget
+
+# In a multi-objective schema, no single objective may exceed this fraction
+# of the total normalized weight. 0.99 means the smallest objective must
+# contribute at least ~1%; ratios beyond 99:1 are rejected as degenerate.
+MAX_SINGLE_OBJECTIVE_WEIGHT = 0.99
 
 
 class AggregationMode(Enum):
@@ -71,9 +79,10 @@ class ObjectiveDefinition:
     def __post_init__(self) -> None:
         """Validate objective definition after initialization."""
         # Validate weight
-        if self.weight <= 0:
+        if not math.isfinite(self.weight) or self.weight <= 0:
             raise ValueError(
-                f"Weight must be positive, got {self.weight} for objective '{self.name}'"
+                f"Weight must be a finite positive number, "
+                f"got {self.weight} for objective '{self.name}'"
             )
 
         # Validate orientation
@@ -174,7 +183,7 @@ class ObjectiveDefinition:
         return cls(
             name=data["name"],
             orientation=orientation,
-            weight=data.get("weight", 1.0),
+            weight=float(data["weight"]) if data.get("weight") is not None else 1.0,
             normalization=data.get("normalization", "min_max"),
             bounds=bounds,
             unit=data.get("unit"),
@@ -230,6 +239,20 @@ class ObjectiveSchema:
                         f"Expected {expected_normalized}, got {actual_normalized}"
                     )
 
+        # Multi-objective dominance guard: no single objective may dominate
+        if len(self.objectives) > 1:
+            for obj in self.objectives:
+                nw = self.weights_normalized.get(obj.name, 0)
+                if nw > MAX_SINGLE_OBJECTIVE_WEIGHT:
+                    raise ValueError(
+                        f"In a multi-objective schema, no single objective "
+                        f"can exceed {MAX_SINGLE_OBJECTIVE_WEIGHT:.0%} of "
+                        f"the total weight. Objective '{obj.name}' has "
+                        f"normalized weight {nw:.4f} ({nw:.0%}). Ensure the "
+                        f"smallest objective contributes at least "
+                        f"{1 - MAX_SINGLE_OBJECTIVE_WEIGHT:.0%}."
+                    )
+
     @classmethod
     def from_objectives(
         cls, objectives: list[ObjectiveDefinition], schema_version: str = "1.0.0"
@@ -254,6 +277,19 @@ class ObjectiveSchema:
 
         # Calculate normalized weights
         weights_normalized = {obj.name: obj.weight / weights_sum for obj in objectives}
+
+        # Log when weights are re-scaled
+        if abs(weights_sum - 1.0) > 1e-9:
+            orig = ", ".join(f"{o.name}={o.weight}" for o in objectives)
+            normed = ", ".join(
+                f"{o.name}={o.weight / weights_sum:.4f}" for o in objectives
+            )
+            logger.debug(
+                "Objective weights [%s] normalized to [%s] (sum=%.4f -> 1.0)",
+                orig,
+                normed,
+                weights_sum,
+            )
 
         return cls(
             objectives=objectives,
