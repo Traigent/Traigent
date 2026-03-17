@@ -149,6 +149,7 @@ from traigent.utils.exceptions import (
     OptimizationStateError,
     TraigentDeprecationWarning,
     TraigentWarning,
+    VendorPauseError,
 )
 from traigent.utils.importance import ParameterImportanceAnalyzer
 from traigent.utils.multi_objective import MultiObjectiveMetrics, ParetoFrontCalculator
