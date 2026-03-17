@@ -25,7 +25,7 @@ pip install -e ".[recommended]"
 
 ```bash
 export TRAIGENT_MOCK_LLM=true
-python hello.py
+python hello_world.py
 ```
 
 **One decorator, two parameters, multi-objective optimization:**
@@ -51,7 +51,8 @@ def my_agent(question: str) -> str:
   <a href="https://portal.traigent.ai">Portal</a> &middot;
   <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
   <a href="examples/">Examples</a> &middot;
-  <a href="docs/agent-skill.md">Skill</a>
+  <a href="docs/agent-skill.md">Skill</a> &middot;
+  <a href="docs/walkthrough.md">Walkthrough</a>
 </p>
 
 ---
@@ -309,4 +310,4 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 ---
 
-**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](docs/agent-skill.md)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
+**[Get Started →](docs/getting-started/GETTING_STARTED.md)** | **[Examples →](examples/)** | **[Portal →](https://portal.traigent.ai)** | **[Skill →](docs/agent-skill.md)** | **[Walkthrough →](docs/walkthrough.md)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discussions](https://github.com/Traigent/Traigent/discussions)**
