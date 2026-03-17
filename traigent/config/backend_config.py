@@ -163,9 +163,10 @@ class BackendConfig:
         if configured_origin:
             return configured_origin
 
-        default_local = cls._get_default_local_url()
-        logger.debug("Using default local URL: %s", default_local)
-        return default_local
+        # Default to cloud for end-users; SDK devs should set
+        # TRAIGENT_BACKEND_URL=http://localhost:5000 explicitly.
+        logger.debug("Using default cloud URL: %s", cls.DEFAULT_PROD_URL)
+        return cls.DEFAULT_PROD_URL
 
     @classmethod
     def get_cloud_backend_url(cls) -> str:
