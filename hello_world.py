@@ -20,7 +20,7 @@ CONFIG_SPACE = {
     configuration_space=CONFIG_SPACE,
     objectives=OBJECTIVES,
     eval_dataset=DATASET,
-    execution_mode="edge_analytics",
+    execution_mode="local",
 )
 def answer(question: str) -> str:
     """Your LLM call goes here. Mock mode simulates it."""
