@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -166,6 +166,20 @@ release-review-local:  ## Run local v2 release gate and emit canonical verdict
 	python3 .release_review/automation/generate_tracking.py --version "$$version" --release-id "$$release_id" --base-branch "$$base_branch" --no-archive; \
 	python3 .release_review/automation/release_gate_runner.py --release-id "$$release_id" --mode local --strict; \
 	python3 .release_review/automation/build_release_verdict.py --release-id "$$release_id"
+
+release-build:  ## Build wheel/sdist and validate package metadata
+	$(PYTHON) -m build
+	$(PYTHON) -m twine check dist/*
+
+release-example-smoke:  ## Run pre-release mock example smoke
+	bash examples/test_all_examples.sh quickstart
+	bash examples/test_all_examples.sh docs
+	bash examples/test_all_examples.sh core
+
+release-check: release-build release-example-smoke  ## Run build + mock example smoke
+
+release-real-validation:  ## Maintainer-only full example validation against a real backend
+	./run_all_examples.sh --real --verify --report .validation_results/release-validation.json
 
 # SonarQube scanning
 sonar-scan:  ## Run SonarQube scan using local config file
