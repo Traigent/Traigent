@@ -19,6 +19,18 @@ logger = logging.getLogger(__name__)
 #: Import this constant instead of repeating the literal string.
 DEFAULT_LOCAL_URL = "http://localhost:5000"
 
+#: Single source of truth for the default cloud portal URL.
+#: Import this constant instead of repeating the literal string.
+DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
+
+#: Portal URL shown in user-facing warnings (register or login).
+SIGNUP_URL = DEFAULT_CLOUD_URL
+
+
+def get_no_credentials_hint() -> str:
+    """One-liner appended to missing-credentials warnings."""
+    return f"Get started at {SIGNUP_URL} or run 'traigent auth login'."
+
 
 class BackendConfig:
     """Centralized backend configuration management.
@@ -29,8 +41,7 @@ class BackendConfig:
 
     # Default backend URLs (overridable via environment variables)
     _FALLBACK_LOCAL_URL = DEFAULT_LOCAL_URL
-    DEFAULT_CLOUD_URL = "https://portal.traigent.ai"
-    DEFAULT_PROD_URL = DEFAULT_CLOUD_URL  # Backward-compatible alias
+    DEFAULT_PROD_URL = DEFAULT_CLOUD_URL
     _DEFAULT_API_PATH = "/api/v1"
 
     @classmethod
@@ -164,8 +175,8 @@ class BackendConfig:
         if configured_origin:
             return configured_origin
 
-        logger.debug("Using default cloud URL: %s", cls.DEFAULT_CLOUD_URL)
-        return cls.DEFAULT_CLOUD_URL
+        logger.debug("Using default cloud URL: %s", cls.DEFAULT_PROD_URL)
+        return cls.DEFAULT_PROD_URL
 
     @classmethod
     def _build_api_url(cls, backend_origin: str) -> str:
@@ -266,8 +277,8 @@ class BackendConfig:
 
         if not is_backend_offline():
             logger.warning(
-                "⚠️ No API key found (checked TRAIGENT_API_KEY and stored credentials). "
-                "Run `traigent auth login` or export TRAIGENT_API_KEY."
+                "No API key found (checked TRAIGENT_API_KEY and stored credentials). %s",
+                get_no_credentials_hint(),
             )
         return None
 

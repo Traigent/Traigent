@@ -157,16 +157,19 @@ class APIKeyManager:
             )
         except ValueError as e:
             # Only warn once per source to reduce log noise; suppress in offline mode
+            from traigent.config.backend_config import SIGNUP_URL
             from traigent.utils.env_config import is_backend_offline
 
             warn_key = f"{source}:{len(api_key)}"
             if warn_key not in _warned_api_key_sources and not is_backend_offline():
                 logger.warning(
                     "Ignoring invalid API key (length=%d, source=%s): %s. "
-                    "Continuing without cloud authentication in local/dev mode.",
+                    "Continuing without cloud authentication. "
+                    "Get a valid key at %s",
                     len(api_key),
                     source,
                     e,
+                    SIGNUP_URL,
                 )
                 _warned_api_key_sources.add(warn_key)
             else:
@@ -232,6 +235,16 @@ class APIKeyManager:
             credentials is not None and bool(credentials.api_key)
         )
 
+    def _extract_valid_key(self, credentials: Any) -> str | None:
+        """Return api_key from credentials if it passes format validation."""
+        if (
+            credentials
+            and credentials.api_key
+            and self.validate_format(credentials.api_key)
+        ):
+            return credentials.api_key
+        return None
+
     def get_key_for_internal_use(self) -> str | None:
         """Retrieve the API key value for internal operations.
 
@@ -252,30 +265,22 @@ class APIKeyManager:
             except TokenExpiredError:
                 pass
 
-        # Fall back to current credentials if available
-        credentials = self._get_credentials_fn() if self._get_credentials_fn else None
-        if credentials and credentials.api_key:
-            api_key: str | None = credentials.api_key
-            if self.validate_format(api_key):
-                return api_key
+        # Fall back through credential sources
+        for fetch_fn in (
+            self._get_credentials_fn,
+            self._get_provided_credentials_fn,
+        ):
+            if fetch_fn is None:
+                continue
+            key = self._extract_valid_key(fetch_fn())
+            if key:
+                return key
 
-        provided = (
-            self._get_provided_credentials_fn()
-            if self._get_provided_credentials_fn
-            else None
-        )
-        if provided and provided.api_key:
-            provided_key: str | None = provided.api_key
-            if self.validate_format(provided_key):
-                return provided_key
-
-        last_result = (
-            self._get_last_auth_result_fn() if self._get_last_auth_result_fn else None
-        )
-        if last_result and last_result.credentials:
-            result_key: str | None = last_result.credentials.api_key
-            if self.validate_format(result_key):
-                return result_key
+        # Last auth result has an extra .credentials indirection
+        if self._get_last_auth_result_fn:
+            last_result = self._get_last_auth_result_fn()
+            if last_result:
+                return self._extract_valid_key(last_result.credentials)
 
         return None
 

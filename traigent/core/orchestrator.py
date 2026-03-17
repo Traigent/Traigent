@@ -1592,6 +1592,36 @@ class OptimizationOrchestrator:
 
         return trial_count, "continue"
 
+    async def _check_batch_vendor_failures(self, results: list[Any]) -> str | None:
+        """Return ``"break"`` if every trial in the batch hit a vendor error."""
+        if not self._prompt_adapter or not results:
+            return None
+
+        from traigent.core.exception_handler import classify_vendor_error
+
+        vendor_failures = sum(
+            1
+            for r in results
+            if self._is_vendor_failure(getattr(r, "result", r), classify_vendor_error)
+        )
+        if vendor_failures == 0 or vendor_failures < len(results):
+            return None
+
+        exc = VendorPauseError(
+            f"All {vendor_failures} parallel trials failed with vendor errors",
+        )
+        return await self._handle_vendor_pause(exc)
+
+    @staticmethod
+    def _is_vendor_failure(trial: Any, classify_fn: Callable[..., Any]) -> bool:
+        """Check if a single trial result represents a vendor error."""
+        return (
+            isinstance(trial, TrialResult)
+            and trial.status == TrialStatus.FAILED
+            and bool(trial.error_message)
+            and classify_fn(RuntimeError(trial.error_message)) is not None
+        )
+
     async def _submit_usage_analytics(self) -> None:
         """Submit usage analytics if enabled."""
 
@@ -1847,6 +1877,66 @@ class OptimizationOrchestrator:
 
         return remaining, remaining_samples, None
 
+    async def _dispatch_trial(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+        trial_count: int,
+        remaining: float,
+        remaining_samples: float | None,
+    ) -> tuple[int, str]:
+        """Dispatch a single iteration (parallel or sequential)."""
+        if self.parallel_trials > 1:
+            return await self._run_parallel_batch(
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+                function_name=function_identifier,
+                trial_count=trial_count,
+                remaining=remaining,
+                remaining_samples=remaining_samples,
+            )
+        return await self._trial_lifecycle.run_sequential_trial(
+            func=func,
+            dataset=dataset,
+            session_id=session_id,
+            function_name=function_identifier,
+            trial_count=trial_count,
+        )
+
+    async def _maybe_pause_on_cost_limit(self) -> bool:
+        """If stopped for cost_limit, prompt user to raise budget.
+
+        Returns True if the user chose to continue (budget raised).
+        """
+        if self._stop_reason != "cost_limit" or self._prompt_adapter is None:
+            return False
+        decision = await self._handle_budget_limit_pause()
+        if decision == "continue":
+            self._stop_reason = None
+            return True
+        return False
+
+    def _apply_budget_stop(self, budget_stop: str | None) -> bool:
+        """Record a budget stop reason and return True if the loop should break."""
+        if not budget_stop:
+            return False
+        if not self._stop_reason:
+            self._stop_reason = budget_stop
+        return True
+
+    async def _handle_vendor_pause_in_loop(self, exc: VendorPauseError) -> str:
+        """Handle VendorPauseError in the optimization loop.
+
+        Returns ``"break"`` to stop or ``"continue"`` to retry.
+        """
+        decision = await self._handle_vendor_pause(exc)
+        if decision == "break":
+            self._stop_reason = "vendor_error"
+        return decision
+
     async def _run_optimization_loop(
         self,
         func: Callable[..., Any],
@@ -1861,9 +1951,7 @@ class OptimizationOrchestrator:
             remaining, remaining_samples, budget_stop = self._check_budget_limits(
                 trial_count
             )
-            if budget_stop:
-                if not self._stop_reason:
-                    self._stop_reason = budget_stop
+            if self._apply_budget_stop(budget_stop):
                 break
 
             stop_action = await self._check_stop_with_budget_pause(trial_count)
