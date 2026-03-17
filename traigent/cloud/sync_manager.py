@@ -18,7 +18,7 @@ try:
 except ImportError:
     AIOHTTP_AVAILABLE = False
 
-from ..config.backend_config import BackendConfig
+from ..config.backend_config import BackendConfig, get_no_credentials_hint
 from ..config.types import TraigentConfig
 from ..storage.local_storage import LocalStorageManager, OptimizationSession
 from ..utils.exceptions import TraigentStorageError
@@ -318,8 +318,10 @@ class SyncManager:
 
         # Actually sync to cloud
         if not self.api_key:
+            msg = "No API key provided for cloud sync. " + get_no_credentials_hint()
+            logger.warning(msg)
             sync_result["status"] = "error"
-            sync_result["errors"].append("No API key provided for cloud sync")
+            sync_result["errors"].append(msg)
             return sync_result
 
         try:
