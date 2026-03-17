@@ -44,7 +44,10 @@ class BackendClientConfig:
 
     def __post_init__(self) -> None:
         """Populate missing configuration using global backend settings."""
-        from traigent.config.backend_config import BackendConfig
+        from traigent.config.backend_config import (
+            BackendConfig,
+            get_no_credentials_hint,
+        )
 
         backend_env = os.environ.get("TRAIGENT_BACKEND_URL")
         api_env = os.environ.get("TRAIGENT_API_URL")
@@ -72,10 +75,10 @@ class BackendClientConfig:
             and not BackendConfig.has_auth_credentials()
         ):
             logger.warning(
-                "Defaulting to Traigent cloud (%s) but no credentials found. "
-                "Set TRAIGENT_API_KEY, run 'traigent auth login', or set "
-                "TRAIGENT_ENV=development for local mode.",
+                "Defaulting to Traigent cloud (%s) but no credentials found. %s "
+                "Set TRAIGENT_ENV=development for local mode.",
                 self.backend_base_url,
+                get_no_credentials_hint(),
             )
 
         if self.api_base_url is not None:
