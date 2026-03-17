@@ -48,6 +48,8 @@ sanitize_traigent_api_key()
 configure_logging()
 logging.getLogger("tokencost.costs").setLevel(logging.ERROR)
 
+# Ensure mock mode is off — real scripts always use live LLM calls
+os.environ.pop("TRAIGENT_MOCK_LLM", None)
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 traigent.initialize(execution_mode="edge_analytics")
