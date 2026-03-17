@@ -39,8 +39,12 @@ from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     OptimizationError,
+    QuotaExceededError,
+    RateLimitError,
+    ServiceUnavailableError,
     TrialPrunedError,
     TVLConstraintError,
+    VendorPauseError,
 )
 from traigent.utils.logging import get_logger
 
@@ -430,6 +434,23 @@ class TrialLifecycle:
         except asyncio.CancelledError:
             # SonarQube S7497: CancelledError must always be re-raised
             raise
+
+        except (
+            RateLimitError,
+            QuotaExceededError,
+            ServiceUnavailableError,
+        ) as vendor_exc:
+            # Re-raise as VendorPauseError so the orchestrator can prompt
+            # the user to resume or stop, instead of silently failing.
+            # classify_vendor_error is guaranteed to match for these types.
+            from traigent.core.exception_handler import classify_vendor_error
+
+            category = classify_vendor_error(vendor_exc)
+            raise VendorPauseError(
+                str(vendor_exc),
+                original_error=vendor_exc,
+                category=category,
+            ) from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)

@@ -8,6 +8,7 @@ import asyncio
 import copy
 import inspect
 import math
+import sys
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -82,7 +83,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
 from traigent.utils.env_config import is_backend_offline
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import OptimizationError, VendorPauseError
 from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
@@ -207,6 +208,16 @@ class OptimizationOrchestrator:
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
         self._initialize_runtime_state()
+
+        # Interactive pause prompt adapter (None in non-interactive environments)
+        from traigent.core.exception_handler import (
+            PausePromptAdapter,
+            TerminalPausePrompt,
+        )
+
+        self._prompt_adapter: PausePromptAdapter | None = (
+            TerminalPausePrompt() if sys.stdin.isatty() else None
+        )
 
         # Workflow trace manager for span collection and backend submission
         self._workflow_trace_manager = WorkflowTraceManager(
@@ -1554,10 +1565,12 @@ class OptimizationOrchestrator:
         ceilings = self._allocate_trial_ceilings(trial_descriptors)
 
         # Phase 7: Schedule and run trials
-        scheduled_configs, scheduled_optuna_ids, results = (
-            await self._schedule_and_run_parallel_trials(
-                func, trial_descriptors, ceilings, session_id, trial_count
-            )
+        (
+            scheduled_configs,
+            scheduled_optuna_ids,
+            results,
+        ) = await self._schedule_and_run_parallel_trials(
+            func, trial_descriptors, ceilings, session_id, trial_count
         )
 
         if not results:
@@ -1568,7 +1581,13 @@ class OptimizationOrchestrator:
             scheduled_configs, results, scheduled_optuna_ids, session_id, trial_count
         )
 
-        # Phase 9: Checkpoint logging
+        # Phase 9: Check for batch-wide vendor errors (parallel mode)
+        vendor_stop = await self._check_batch_vendor_errors(results)
+        if vendor_stop:
+            self._stop_reason = "vendor_error"
+            return trial_count, "break"
+
+        # Phase 10: Checkpoint logging
         self._maybe_log_checkpoint(trial_count)
 
         return trial_count, "continue"
@@ -1847,11 +1866,61 @@ class OptimizationOrchestrator:
                     self._stop_reason = budget_stop
                 break
 
-            if self._should_stop(trial_count):
+            stop_action = await self._check_stop_with_budget_pause(trial_count)
+            if stop_action == "break":
+                break
+            if stop_action == "continue":
+                continue
+
+            trial_count, action = await self._dispatch_trial(
+                func,
+                dataset,
+                session_id,
+                function_identifier,
+                trial_count,
+                remaining,
+                remaining_samples,
+            )
+
+            if action == "break":
                 break
 
+        return trial_count
+
+    async def _check_stop_with_budget_pause(self, trial_count: int) -> str | None:
+        """Check stop conditions; offer budget pause on cost limit.
+
+        Returns:
+            ``"break"`` to stop, ``"continue"`` to retry after raising limit,
+            ``None`` to proceed normally.
+        """
+        if not self._should_stop(trial_count):
+            return None
+        if self._stop_reason == "cost_limit" and self._prompt_adapter is not None:
+            decision = await self._handle_budget_limit_pause()
+            if decision == "continue":
+                self._stop_reason = None
+                return "continue"
+        return "break"
+
+    async def _dispatch_trial(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+        trial_count: int,
+        remaining: float,
+        remaining_samples: float,
+    ) -> tuple[int, str]:
+        """Run a single trial iteration (sequential or parallel) with vendor pause.
+
+        Returns:
+            ``(trial_count, action)`` where action is ``"continue"`` or ``"break"``.
+        """
+        try:
             if self.parallel_trials > 1:
-                trial_count, action = await self._run_parallel_batch(
+                return await self._run_parallel_batch(
                     func=func,
                     dataset=dataset,
                     session_id=session_id,
@@ -1860,19 +1929,100 @@ class OptimizationOrchestrator:
                     remaining=remaining,
                     remaining_samples=remaining_samples,
                 )
-            else:
-                trial_count, action = await self._trial_lifecycle.run_sequential_trial(
-                    func=func,
-                    dataset=dataset,
-                    session_id=session_id,
-                    function_name=function_identifier,
-                    trial_count=trial_count,
-                )
+            return await self._trial_lifecycle.run_sequential_trial(
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+                function_name=function_identifier,
+                trial_count=trial_count,
+            )
+        except VendorPauseError as e:
+            decision = await self._handle_vendor_pause(e)
+            if decision == "break":
+                self._stop_reason = "vendor_error"
+                return trial_count, "break"
+            return trial_count, "continue"  # User chose to resume
 
-            if action == "break":
-                break
+    async def _handle_vendor_pause(self, exc: VendorPauseError) -> str:
+        """Prompt user to resume or stop after a vendor error.
 
-        return trial_count
+        Returns:
+            ``"continue"`` to retry the trial, ``"break"`` to stop.
+        """
+        if self._prompt_adapter is None:
+            return "break"
+        decision = await asyncio.to_thread(
+            self._prompt_adapter.prompt_vendor_pause,
+            exc.original_error or exc,
+            exc.category,
+        )
+        if decision == "resume":
+            logger.info("User chose to resume after vendor error: %s", exc.category)
+            return "continue"
+        logger.info("User chose to stop after vendor error: %s", exc.category)
+        return "break"
+
+    async def _handle_budget_limit_pause(self) -> str:
+        """Prompt user to raise budget limit or stop.
+
+        Returns:
+            ``"continue"`` to retry with new limit, ``"break"`` to stop.
+        """
+        if self._prompt_adapter is None:
+            return "break"
+        status = self.cost_enforcer.get_status()
+        decision = await asyncio.to_thread(
+            self._prompt_adapter.prompt_budget_pause,
+            status.accumulated_cost_usd,
+            self.cost_enforcer.config.limit,
+        )
+        if decision.startswith("raise:"):
+            try:
+                new_limit = float(decision.split(":")[1])
+            except (ValueError, IndexError):
+                logger.warning("Malformed budget response: %s", decision)
+                return "break"
+            self.cost_enforcer.update_limit(new_limit)
+            logger.info("User raised cost limit to $%.2f", new_limit)
+            return "continue"
+        logger.info("User chose to stop at budget limit")
+        return "break"
+
+    async def _check_batch_vendor_errors(
+        self, results: list[PermittedTrialResult]
+    ) -> bool:
+        """Check if an entire parallel batch failed with vendor errors.
+
+        When all trials in a batch fail with vendor-like errors (rate limit,
+        quota, service unavailable), prompt the user to resume or stop.
+
+        Returns:
+            True if the user chose to stop, False otherwise.
+        """
+        if self._prompt_adapter is None or not results:
+            return False
+
+        from traigent.core.exception_handler import classify_vendor_error
+
+        vendor_failures = 0
+        for r in results:
+            trial = getattr(r, "result", r)
+            if (
+                isinstance(trial, TrialResult)
+                and trial.status == TrialStatus.FAILED
+                and trial.error_message
+                and classify_vendor_error(RuntimeError(trial.error_message)) is not None
+            ):
+                vendor_failures += 1
+
+        if vendor_failures == 0 or vendor_failures < len(results):
+            return False
+
+        exc = VendorPauseError(
+            f"All {vendor_failures} parallel trials failed with vendor errors",
+        )
+        decision = await self._handle_vendor_pause(exc)
+        return decision == "break"
 
     async def _finalize_optimization(
         self,
