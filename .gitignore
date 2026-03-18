@@ -16,7 +16,7 @@ sections/
 # But keep example site sections tracked
 !examples/sections/
 !examples/sections/**
-optigen_schema/
+traigent_schema/
 # C extensions
 *.so
 

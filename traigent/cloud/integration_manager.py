@@ -141,7 +141,7 @@ class IntegrationManager:
             if self.config.mcp_server_args is None:
                 self.config.mcp_server_args = [
                     "-m",
-                    "optigen_backend.mcp.server",
+                    "traigent_backend.mcp.server",
                     "--host",
                     "localhost",
                     "--port",
