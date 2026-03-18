@@ -79,7 +79,7 @@ class TestIntegrationsAvailability:
         """Test workflow traces exports are always available."""
         from traigent.integrations import (
             OTEL_AVAILABLE,
-            OptiGenSpanExporter,
+            TraigentSpanExporter,
             SpanPayload,
             SpanStatus,
             SpanType,

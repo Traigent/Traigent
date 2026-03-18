@@ -16,7 +16,7 @@ def print_integration_summary():
 
     print("\n📋 IMPLEMENTATION OVERVIEW:")
     print("-" * 60)
-    print("✅ Created comprehensive DTOs based on optigen_schemas")
+    print("✅ Created comprehensive DTOs based on traigent_schemas")
     print("✅ Implemented privacy-preserving defaults for Edge Analytics mode")
     print("✅ Updated BackendIntegratedClient to use DTOs")
     print("✅ Added schema validation (optional, non-blocking)")
@@ -109,7 +109,7 @@ def print_integration_summary():
 
     print("\n✅ VALIDATION:")
     print("-" * 60)
-    print("- DTOs can optionally validate against optigen_schemas")
+    print("- DTOs can optionally validate against traigent_schemas")
     print("- Validation is non-blocking (logs warnings only)")
     print("- All DTOs are JSON serializable")
     print("- Privacy constraints are enforced at DTO creation")
@@ -117,8 +117,8 @@ def print_integration_summary():
     print("\n🎯 KEY ACHIEVEMENT:")
     print("-" * 60)
     print("Successfully implemented privacy-preserving backend integration")
-    print("that submits metadata to OptiGen backend while keeping all")
-    print("sensitive data local, using proper DTOs based on optigen_schemas.")
+    print("that submits metadata to Traigent backend while keeping all")
+    print("sensitive data local, using proper DTOs based on traigent_schemas.")
 
     print("\n" + "=" * 60)
 

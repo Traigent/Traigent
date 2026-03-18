@@ -215,13 +215,13 @@ class TestCheckPrivacyRequirements:
     @patch("traigent.config.backend_config.BackendConfig")
     @patch("os.path.exists", return_value=True)
     @patch.dict("os.environ", {}, clear=True)
-    def test_privacy_with_optigen_private_file(
+    def test_privacy_with_traigent_private_file(
         self,
         mock_exists: MagicMock,
         mock_backend_config: MagicMock,
         mock_backend_client: MagicMock,
     ) -> None:
-        """Test privacy requirement detection with .optigen-private file."""
+        """Test privacy requirement detection with .traigent-private file."""
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 

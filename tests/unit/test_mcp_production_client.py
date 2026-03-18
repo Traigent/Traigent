@@ -81,7 +81,7 @@ class TestProductionMCPClientBasics:
 
         self.server_config = MCPServerConfig(
             server_path="python",
-            server_args=["-m", "optigen_backend.mcp.server"],
+            server_args=["-m", "traigent_backend.mcp.server"],
             timeout=30.0,
             max_retries=3,
         )

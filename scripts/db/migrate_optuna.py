@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply Optuna migration scripts to the OptiGen database."""
+"""Apply Optuna migration scripts to the Traigent database."""
 
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply Optuna database migrations")
     parser.add_argument(
         "--database-url",
-        default=os.getenv("OPTIGEN_DATABASE_URL", "sqlite:///:memory:"),
+        default=os.getenv("TRAIGENT_DATABASE_URL", "sqlite:///:memory:"),
         help="Database connection URL",
     )
     parser.add_argument(
         "--migrations-dir",
         type=Path,
-        default=Path("optigen_schema/optuna_migrations"),
+        default=Path("traigent_schema/optuna_migrations"),
         help="Directory containing migration SQL files",
     )
     parser.add_argument(

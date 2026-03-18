@@ -625,7 +625,7 @@ async def main() -> None:
             print(f"  Failed to send graph: {response.error}")
 
         # Note: Per-agent spans are automatically recorded via OpenTelemetry
-        # and exported to the Traigent backend by the OptiGenSpanExporter.
+        # and exported to the Traigent backend by the TraigentSpanExporter.
         # No manual span creation needed - OTEL handles it during workflow execution.
         print("\n" + "-" * 50)
         print("Note: Per-agent spans automatically recorded via OpenTelemetry")
