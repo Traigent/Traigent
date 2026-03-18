@@ -49,7 +49,7 @@ TRAIGENT_MOCK_LLM=true MODE=tune MAX_TRIALS=10 python run.py
 
 ### 3. GitHub Actions
 
-The workflow (`.github/workflows/traigent-ci-gates.yml`) automatically:
+The workflow (`../../../.github/workflows/traigent-ci-gates.yml`) automatically:
 1. Evaluates baseline configuration
 2. Evaluates PR configuration
 3. Runs optimization on PR
@@ -216,7 +216,7 @@ diff saved_config.json <(jq .best_config results-ci/math/tuned.json)
 ## 📚 References
 
 - [Traigent Documentation](https://traigent.ai/docs)
-- [GitHub Actions Workflow](.github/workflows/traigent-ci-gates.yml)
+- [GitHub Actions Workflow](../../../.github/workflows/traigent-ci-gates.yml)
 - [SDK Evaluator API](../../../traigent/evaluators/base.py)
 
 ## 💡 Why This Approach?

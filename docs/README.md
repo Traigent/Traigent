@@ -80,15 +80,23 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 
 - Open: `examples/index.html` (repo copy)
 - Serve locally (avoids file:// fetch restrictions):
-  - `python -m http.server -d examples 8000`
-  - Visit `http://localhost:8000/`
+  - `python -m http.server 8000`
+  - Visit `http://localhost:8000/examples/`
 - Run icon: Each code block has a play button that copies a ready-to-run mock-mode command.
+
+## 🧪 Example Guides
+
+- **[Examples Guide](examples/README.md)** - How the example tree is organized
+- **[Start Here](examples/START_HERE.md)** - Fast path to the right example
+- **[Quick Reference](examples/QUICK_REFERENCE.md)** - Common commands and knobs
+- **[Troubleshooting](examples/TROUBLESHOOTING.md)** - Common example run issues
+- **[API Patterns](examples/API_PATTERNS.md)** - Reusable example implementation patterns
 
 ## 🚀 Next Steps
 
 1. **[Install Traigent](getting-started/installation.md)** - Get set up in minutes
 2. **[Follow the Getting Started Guide](getting-started/GETTING_STARTED.md)** - Your first optimization
-3. **Open the Examples** – `examples/index.html` and try the sections
+3. **Open the Examples** – `examples/index.html` and browse the gallery
 4. **[Explore User Guides](user-guide/)** - Learn advanced features
 5. **[Check API Reference](api-reference/)** - Detailed technical documentation
 

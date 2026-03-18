@@ -131,6 +131,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         keep_alive: bool = True,
         heartbeat_interval: float = 30.0,
         timeout: float = 300.0,
+        evaluation_kwargs: dict[str, str | int | float | bool] | None = None,
         # Auth options
         auth_header: str | None = None,
         # Base evaluator options
@@ -155,6 +156,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             keep_alive: Enable keep-alive for stateful agents.
             heartbeat_interval: Seconds between heartbeats.
             timeout: Request timeout in seconds.
+            evaluation_kwargs: Optional static evaluator kwargs sent to /evaluate.
 
             auth_header: Authorization header for HTTP transport.
 
@@ -176,6 +178,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._batch_parallelism = max(1, batch_parallelism)
         self._keep_alive_enabled = keep_alive
         self._heartbeat_interval = heartbeat_interval
+        self._evaluation_kwargs = (
+            dict(evaluation_kwargs) if evaluation_kwargs is not None else None
+        )
 
         # Initialize transport (may be provided or created on demand)
         self._transport: HybridTransport | None = transport
@@ -622,19 +627,6 @@ class HybridAPIEvaluator(BaseEvaluator):
         transport = await self._get_transport()
         caps = await self._get_capabilities()
 
-        # Ensure benchmark_id is resolved before any batch execution.
-        # In test/mock or partially configured environments, benchmark discovery
-        # can be unavailable; degrade gracefully to a sentinel benchmark id.
-        try:
-            await self._ensure_benchmark_id()
-        except ValueError as exc:
-            logger.warning(
-                "Benchmark discovery unavailable, using fallback benchmark_id='default': %s",
-                exc,
-            )
-            if not self._benchmark_id:
-                self._benchmark_id = "default"
-
         # Initialize lifecycle manager if needed
         await self._ensure_lifecycle_manager()
 
@@ -757,10 +749,8 @@ class HybridAPIEvaluator(BaseEvaluator):
                 }
             )
 
-        benchmark_id = self._benchmark_id or "default"
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
-            benchmark_id=benchmark_id,
             config=config,
             examples=inputs,
             session_id=self._session_id,
@@ -941,14 +931,11 @@ class HybridAPIEvaluator(BaseEvaluator):
             evaluation[target_key] = target_value
             evaluations.append(evaluation)
 
-        # Call evaluate; use a fallback benchmark id when discovery is unavailable.
-        benchmark_id = self._benchmark_id or "default"
         eval_request = HybridEvaluateRequest(
             tunable_id=self._tunable_id or "default",
-            benchmark_id=benchmark_id,
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
-            config=config,
+            kwargs=self._evaluation_kwargs,
             session_id=self._session_id,
             timeout_ms=int(self._timeout * 1000),
         )

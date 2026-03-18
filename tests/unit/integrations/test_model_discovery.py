@@ -693,7 +693,10 @@ class TestCacheEntryDefaults:
 class TestDiscoveryWithMockedSDK:
     """Tests for SDK discovery with mocked SDK clients."""
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_API_KEY": "test-api-key"},  # pragma: allowlist secret
+    )
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_success(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should work with valid API key."""
@@ -711,7 +714,10 @@ class TestDiscoveryWithMockedSDK:
         assert "gpt-3.5-turbo" in result
         assert "gpt-4" in result
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})  # pragma: allowlist secret
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_API_KEY": "test-api-key"},  # pragma: allowlist secret
+    )
     @patch("openai.OpenAI")
     def test_openai_sdk_discovery_error(self, mock_openai_class: MagicMock) -> None:
         """OpenAI SDK discovery should handle errors gracefully."""
@@ -722,7 +728,10 @@ class TestDiscoveryWithMockedSDK:
         with pytest.raises(Exception, match="API error"):
             discovery._fetch_models_from_sdk()
 
-    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})  # pragma: allowlist secret
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_API_KEY": "test-api-key"},  # pragma: allowlist secret
+    )
     @patch("google.generativeai.list_models")
     @patch("google.generativeai.configure")
     def test_gemini_sdk_discovery_success(

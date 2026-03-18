@@ -46,6 +46,7 @@ class TestHybridExportsImportable:
             "HybridEvaluateResponse",
             "ServiceCapabilities",
             "TVARDefinition",
+            "EvaluationKwargDefinition",
             "ConfigSpaceResponse",
             "BenchmarkEntry",
             "BenchmarksResponse",
@@ -108,6 +109,7 @@ class TestHybridAllList:
             "HybridEvaluateResponse",
             "ServiceCapabilities",
             "TVARDefinition",
+            "EvaluationKwargDefinition",
             "ConfigSpaceResponse",
             "BenchmarkEntry",
             "BenchmarksResponse",
@@ -205,6 +207,11 @@ class TestProtocolClasses:
         assert hasattr(hybrid_module, "TVARDefinition")
         assert hybrid_module.TVARDefinition is not None
 
+    def test_evaluation_kwarg_definition_exists(self):
+        """Test EvaluationKwargDefinition DTO exists."""
+        assert hasattr(hybrid_module, "EvaluationKwargDefinition")
+        assert hybrid_module.EvaluationKwargDefinition is not None
+
     def test_config_space_response_exists(self):
         """Test ConfigSpaceResponse DTO exists."""
         assert hasattr(hybrid_module, "ConfigSpaceResponse")
@@ -256,10 +263,7 @@ class TestDirectImports:
 
     def test_direct_import_lifecycle(self):
         """Test direct import of lifecycle classes."""
-        from traigent.hybrid import (  # noqa: F401
-            AgentLifecycleManager,
-            SessionInfo,
-        )
+        from traigent.hybrid import AgentLifecycleManager, SessionInfo  # noqa: F401
 
     def test_direct_import_discovery(self):
         """Test direct import of discovery utilities."""

@@ -163,4 +163,4 @@ https://github.com/Traigent/Traigent/issues
 ---
 
 *Last updated: March 2026*
-*Licensed under Apache License 2.0 - See [LICENSE](LICENSE) for full terms*
+*Licensed under GNU Affero General Public License v3.0 (AGPL-3.0-only) - See [LICENSE](LICENSE) for full terms*

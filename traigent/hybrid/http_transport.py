@@ -377,7 +377,6 @@ class HTTPTransport:
         payload: dict[str, Any] = {
             "request_id": request.request_id,
             "tunable_id": request.tunable_id,
-            "benchmark_id": request.benchmark_id,
             "config": request.config,
             "inputs": legacy_inputs,
         }

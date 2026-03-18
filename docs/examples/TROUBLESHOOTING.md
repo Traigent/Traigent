@@ -18,8 +18,8 @@ pip install -e ".[examples]"
 export TRAIGENT_MOCK_LLM=true
 
 # Real keys
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..." # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..." # pragma: allowlist secret
 ```
 
 ## Common run problems
@@ -48,4 +48,4 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 - Start with small `max_trials`; watch cost/latency metrics.
 - Confirm datasets exist under `examples/datasets/<example>/`.
 
-Still stuck? See `EXAMPLES_GUIDE.md` or open a GitHub issue.
+Still stuck? See [Examples Guide](README.md) or open a GitHub issue.

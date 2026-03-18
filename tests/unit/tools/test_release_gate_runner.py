@@ -9,11 +9,15 @@ from types import ModuleType
 
 import pytest
 
+SKIP_REASON = "release-review automation not available locally"
+
 
 def _load_release_gate_runner_module() -> ModuleType:
     repo_root = Path(__file__).resolve().parents[3]
-    automation_dir = repo_root / ".release_review" / "automation"
+    automation_dir = repo_root / "local" / "release_review" / "automation"
     module_path = automation_dir / "release_gate_runner.py"
+    if not module_path.exists():
+        pytest.skip(SKIP_REASON)
     sys.path.insert(0, str(automation_dir))
     try:
         spec = importlib.util.spec_from_file_location(

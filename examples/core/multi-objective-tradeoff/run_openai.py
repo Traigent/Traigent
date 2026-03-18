@@ -468,7 +468,7 @@ def _dump_example_results(
             "openai/gpt-4o-mini",
             "openai/gpt-4.1-nano",
             # "openai/gpt-3.5-turbo",
-            "openai/gpt-5-nano",
+            # "openai/gpt-5-nano",
         ],
         # "temperature": [0, 0.1, 0.3],  # Multiple values for Bayesian search
         # "max_tokens": [64, 128, 256],  # Multiple values for Bayesian search

@@ -4,6 +4,7 @@ from traigent.hybrid.protocol import (
     BatchOptions,
     ConfigSpaceResponse,
     EstimatedTokensPerExample,
+    EvaluationKwargDefinition,
     HealthCheckResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
@@ -39,13 +40,11 @@ class TestHybridExecuteRequest:
         """Test creating minimal execute request."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"temperature": 0.7},
             examples=[{"example_id": "ex_1", "data": {"query": "test"}}],
         )
 
         assert request.tunable_id == "test_agent"
-        assert request.benchmark_id == "bench_001"
         assert request.config == {"temperature": 0.7}
         assert len(request.examples) == 1
         assert request.request_id  # Auto-generated
@@ -57,7 +56,6 @@ class TestHybridExecuteRequest:
         """Test serialization to dictionary."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "gpt-4"},
             examples=[{"example_id": "1", "data": {}}],
             session_id="sess_123",
@@ -67,7 +65,6 @@ class TestHybridExecuteRequest:
 
         d = request.to_dict()
         assert d["tunable_id"] == "test_agent"
-        assert d["benchmark_id"] == "bench_001"
         assert d["config"] == {"model": "gpt-4"}
         assert d["examples"] == [{"example_id": "1", "data": {}}]
         assert d["session_id"] == "sess_123"
@@ -78,7 +75,6 @@ class TestHybridExecuteRequest:
         """Test minimal serialization excludes None fields."""
         request = HybridExecuteRequest(
             tunable_id="test",
-            benchmark_id="bench_001",
             config={},
             examples=[],
         )
@@ -141,9 +137,8 @@ class TestHybridEvaluateRequest:
 
     def test_minimal_request(self) -> None:
         """Test creating minimal evaluate request."""
-        request = HybridEvaluateRequest(tunable_id="test", benchmark_id="bench_001")
+        request = HybridEvaluateRequest(tunable_id="test")
         assert request.tunable_id == "test"
-        assert request.benchmark_id == "bench_001"
         assert request.request_id  # Auto-generated
         assert request.execution_id is None
         assert request.evaluations is None
@@ -153,22 +148,28 @@ class TestHybridEvaluateRequest:
         """Test serialization to dictionary."""
         request = HybridEvaluateRequest(
             tunable_id="test",
-            benchmark_id="bench_001",
             execution_id="exec_123",
             evaluations=[{"example_id": "1", "output": {}, "target": {}}],
-            config={"setting": "value"},
+            kwargs={"setting": "value"},
             session_id="sess_456",
             timeout_ms=45000,
         )
 
         d = request.to_dict()
         assert d["tunable_id"] == "test"
-        assert d["benchmark_id"] == "bench_001"
         assert d["execution_id"] == "exec_123"
         assert len(d["evaluations"]) == 1
-        assert d["config"] == {"setting": "value"}
+        assert d["kwargs"] == {"setting": "value"}
         assert d["session_id"] == "sess_456"
         assert d["timeout_ms"] == 45000
+
+    def test_to_dict_uses_deprecated_config_when_kwargs_absent(self) -> None:
+        """Deprecated config is only emitted when kwargs are absent."""
+        request = HybridEvaluateRequest(
+            tunable_id="test",
+            config={"setting": "legacy"},
+        )
+        assert request.to_dict()["config"] == {"setting": "legacy"}
 
 
 class TestHybridEvaluateResponse:
@@ -208,6 +209,7 @@ class TestServiceCapabilities:
         caps = ServiceCapabilities(version="1.0")
         assert caps.version == "1.0"
         assert caps.supports_evaluate is True
+        assert caps.supports_evaluation_kwargs is False
         assert caps.supports_keep_alive is False
         assert caps.supports_streaming is False
         assert caps.max_batch_size == 100
@@ -218,6 +220,7 @@ class TestServiceCapabilities:
         data = {
             "version": "2.0",
             "supports_evaluate": False,
+            "supports_evaluation_kwargs": True,
             "supports_keep_alive": True,
             "max_batch_size": 50,
         }
@@ -225,8 +228,28 @@ class TestServiceCapabilities:
         caps = ServiceCapabilities.from_dict(data)
         assert caps.version == "2.0"
         assert caps.supports_evaluate is False
+        assert caps.supports_evaluation_kwargs is True
         assert caps.supports_keep_alive is True
         assert caps.max_batch_size == 50
+
+
+class TestEvaluationKwargDefinition:
+    """Tests for EvaluationKwargDefinition."""
+
+    def test_from_dict(self) -> None:
+        """Evaluate kwarg definitions round-trip from dict."""
+        definition = EvaluationKwargDefinition.from_dict(
+            {
+                "name": "judge_model",
+                "type": "enum",
+                "description": "Judge model",
+                "domain": {"values": ["gpt-4.1-mini", "gemini-2.5-flash"]},
+                "default": "gpt-4.1-mini",
+            }
+        )
+        assert definition.name == "judge_model"
+        assert definition.type == "enum"
+        assert definition.to_dict()["default"] == "gpt-4.1-mini"
 
 
 class TestTVARDefinition:
@@ -346,6 +369,13 @@ class TestConfigSpaceResponse:
             },
             "defaults": {"model": "gpt-4"},
             "measures": ["accuracy", "cost"],
+            "evaluation_kwargs": [
+                {
+                    "name": "judge_model",
+                    "type": "enum",
+                    "domain": {"values": ["gpt-4.1-mini"]},
+                }
+            ],
             "estimated_tokens_per_example": {
                 "input_tokens": 120,
                 "output_tokens": 40,
@@ -361,6 +391,8 @@ class TestConfigSpaceResponse:
         assert response.promotion_policy == data["promotion_policy"]
         assert response.defaults == data["defaults"]
         assert response.measures == data["measures"]
+        assert response.evaluation_kwargs is not None
+        assert response.evaluation_kwargs[0].name == "judge_model"
         assert response.estimated_tokens_per_example == EstimatedTokensPerExample(
             input_tokens=120,
             output_tokens=40,
@@ -386,6 +418,13 @@ class TestConfigSpaceResponse:
             promotion_policy={"dominance": "epsilon_pareto"},
             defaults={"model": "gpt-4"},
             measures=["accuracy"],
+            evaluation_kwargs=[
+                EvaluationKwargDefinition(
+                    name="judge_model",
+                    type="enum",
+                    domain={"values": ["gpt-4.1-mini"]},
+                )
+            ],
             estimated_tokens_per_example=EstimatedTokensPerExample(
                 input_tokens=120,
                 output_tokens=40,
@@ -400,6 +439,13 @@ class TestConfigSpaceResponse:
         assert serialized["promotion_policy"] == {"dominance": "epsilon_pareto"}
         assert serialized["defaults"] == {"model": "gpt-4"}
         assert serialized["measures"] == ["accuracy"]
+        assert serialized["evaluation_kwargs"] == [
+            {
+                "name": "judge_model",
+                "type": "enum",
+                "domain": {"values": ["gpt-4.1-mini"]},
+            }
+        ]
         assert serialized["estimated_tokens_per_example"] == {
             "input_tokens": 120,
             "output_tokens": 40,

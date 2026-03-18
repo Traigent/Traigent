@@ -50,25 +50,16 @@ Note: The phase status below is historical. Validate against current code before
 3. ~~Add missing async methods to cloud_optimizer.py~~ ✅
 
 ### Phase 3: Medium Priority (Next Sprint)
-1. ~~Create contract_extractor.py tool~~ ✅ CREATED
+1. ~~Create contract extraction tooling~~ ✅ handled internally
 2. Add streaming support to invokers
 3. Standardize memory limits
 
-## Contract Extractor Tool
+## Contract Extraction
 
-The `tools/traceability/contract_extractor.py` tool extracts abstract method contracts
-from base classes and verifies implementations comply with them.
-
-```bash
-# Check optimizer implementations
-python tools/traceability/contract_extractor.py --base traigent/optimizers/base.py --impl traigent/optimizers/
-
-# Check evaluator implementations
-python tools/traceability/contract_extractor.py --base traigent/evaluators/base.py --impl traigent/evaluators/
-
-# Scan entire directory for all contracts
-python tools/traceability/contract_extractor.py --scan traigent/ --output contracts.yml
-```
+The contract-extraction tooling referenced in older reviews is not shipped in
+this public repository. Treat the matrices in this directory as historical
+artifacts and regenerate them using your current internal tooling before relying
+on them for release decisions.
 
 ## Usage
 

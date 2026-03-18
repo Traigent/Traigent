@@ -9,10 +9,20 @@ from types import ModuleType
 
 import pytest
 
+SKIP_REASON = "release-review automation not available locally"
+
 
 def _load_generate_tracking_module() -> ModuleType:
     repo_root = Path(__file__).resolve().parents[3]
-    module_path = repo_root / ".release_review" / "automation" / "generate_tracking.py"
+    module_path = (
+        repo_root
+        / "local"
+        / "release_review"
+        / "automation"
+        / "generate_tracking.py"
+    )
+    if not module_path.exists():
+        pytest.skip(SKIP_REASON)
     spec = importlib.util.spec_from_file_location("generate_tracking", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load module from {module_path}")

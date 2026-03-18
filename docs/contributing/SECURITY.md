@@ -186,7 +186,7 @@ store.rotate_credential("DATABASE_PASSWORD", "<NEW_DATABASE_PASSWORD>")
 
 ### For Developers
 
-- [ ] Migrate all uses of `SeamlessParameterProvider` to `SafeSeamlessProvider`
+- [ ] Use the current AST-based `SeamlessParameterProvider` implementation; avoid custom dynamic code execution paths
 - [ ] Never hardcode credentials in source code
 - [ ] Use the credential store for all sensitive data
 - [ ] Enable MFA for user accounts (TOTP or SMS)
@@ -253,8 +253,8 @@ pytest tests/security/ -v
 
 # Run specific security test categories
 pytest tests/security/test_seamless_security.py -v  # AST transformation tests
-pytest tests/security/test_auth_complete.py -v      # Authentication tests
-pytest tests/security/test_credentials.py -v        # Credential management tests
+pytest tests/unit/cloud/test_authentication_security.py -v  # Authentication tests
+pytest tests/unit/security/test_credentials.py -v           # Credential management tests
 ```
 
 All security tests should pass before deployment.

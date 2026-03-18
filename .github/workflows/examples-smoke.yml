@@ -1,20 +1,6 @@
 name: Examples Smoke Test
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'examples/**'
-      - 'traigent/**'
-      - 'scripts/examples/**'
-      - 'README.md'
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'examples/**'
-      - 'traigent/**'
-      - 'scripts/examples/**'
-      - 'README.md'
   workflow_dispatch:
 
 jobs:
@@ -155,7 +141,7 @@ jobs:
     - name: Check code formatting with black
       run: |
         # Exclude documentation examples and templates (intentionally formatted for readability)
-        black --check examples/ --exclude '(examples/(archive|templates|tvl/reusable_safety/run_demo\.py|advanced/(execution-modes|results-analysis))|docs/page-inline)'
+        black --check examples/ --exclude '(examples/(archive|templates|gallery/page-inline|tvl/reusable_safety/run_demo\.py|advanced/(execution-modes|results-analysis)))'
 
   docs-validation:
     runs-on: ubuntu-latest

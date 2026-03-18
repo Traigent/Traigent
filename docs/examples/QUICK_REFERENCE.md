@@ -12,8 +12,8 @@ export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 
 # With real LLMs
-export ANTHROPIC_API_KEY="your-key"
-export OPENAI_API_KEY="your-key"
+export ANTHROPIC_API_KEY="your-key" # pragma: allowlist secret
+export OPENAI_API_KEY="your-key" # pragma: allowlist secret
 python examples/core/multi-objective-tradeoff/run_openai_optuna.py
 ```
 
@@ -47,7 +47,7 @@ examples/
 |- advanced/          # Deep dives and patterns
 |- integrations/      # CI/CD and partner workflows
 |- datasets/          # Shared evaluation data
-`- docs/              # Guides like this one
+`- gallery/           # Browser gallery and inline demo assets
 ```
 
 ## Troubleshooting highlights
@@ -56,4 +56,5 @@ examples/
 - Slow runs -> lower `max_trials` or narrow the configuration space.
 - Empty results -> verify dataset paths in `eval_dataset`.
 
-Need more? See `START_HERE.md`, `EXAMPLES_GUIDE.md`, or `TROUBLESHOOTING.md`.
+Need more? See [Start Here](START_HERE.md), [Examples Guide](README.md), or
+[Troubleshooting](TROUBLESHOOTING.md).

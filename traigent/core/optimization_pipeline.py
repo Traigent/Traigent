@@ -449,6 +449,9 @@ def _create_js_runtime_evaluator(js_config: Any) -> tuple[BaseEvaluator, Any]:
             module_path=js_config.js_module,
             function_name=js_config.js_function,
             trial_timeout=js_config.js_timeout,
+            use_npx=getattr(js_config, "js_use_npx", True),
+            runner_path=getattr(js_config, "js_runner_path", None),
+            node_executable=getattr(js_config, "js_node_executable", "node"),
         )
         process_pool = JSProcessPool(pool_config)
         logger.info(
@@ -461,6 +464,9 @@ def _create_js_runtime_evaluator(js_config: Any) -> tuple[BaseEvaluator, Any]:
             js_module=js_config.js_module,
             js_function=js_config.js_function,
             js_timeout=js_config.js_timeout,
+            js_use_npx=getattr(js_config, "js_use_npx", True),
+            js_runner_path=getattr(js_config, "js_runner_path", None),
+            js_node_executable=getattr(js_config, "js_node_executable", "node"),
             process_pool=process_pool,
         ),
         process_pool,

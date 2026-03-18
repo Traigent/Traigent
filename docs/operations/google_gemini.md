@@ -1,6 +1,7 @@
-# Google Gemini Operations Guide (Experiments)
+# Google Gemini Operations Guide
 
-Run paper experiments against Google AI Studio (Gemini) via a small adapter with mock mode.
+Validate Gemini integration behavior against the current plugin and model
+discovery surfaces shipped in this repository.
 
 ## Environment
 ```bash
@@ -16,20 +17,12 @@ export GOOGLE_API_KEY="<key>"   # or GEMINI_API_KEY
 pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
 ```
 
-## Smoke Tests
+## Validation Checks
 ```bash
-python paper_experiments/case_study_kilt/run_case_study.py \
-  --real-mode on --provider google \
-  --model gemini-1.5-flash \
-  --temperature 0.3 --trials 1 --parallel-trials 1
-
-python paper_experiments/case_study_fever/run_case_study.py \
-  --mock-mode off --provider google \
-  --trials 1 --parallel-trials 1
-
-python paper_experiments/case_study_spider/run_case_study.py \
-  --mock-mode off --provider google \
-  --trials 1 --parallel-trials 1
+pytest -q tests/unit/integrations/test_cloud_plugins.py -o addopts='' -k gemini
+pytest -q tests/unit/integrations/test_model_discovery.py -o addopts='' -k GeminiDiscovery
 ```
 
-Note: use `--provider google` in the experiment scripts above.
+These checks cover provider-specific parameter mappings and Gemini model
+discovery. This repository does not currently ship a standalone Gemini example
+script.

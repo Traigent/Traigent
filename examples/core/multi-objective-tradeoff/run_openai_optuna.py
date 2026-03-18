@@ -226,7 +226,6 @@ if OBJECTIVE_MODE == "cost":
 elif OBJECTIVE_MODE in {"accuracy", "acc"}:
     OPTIMIZATION_OBJECTIVES = ["accuracy"]
 else:
-    print("taking this")
     OPTIMIZATION_OBJECTIVES = ObjectiveSchema.from_objectives(
         [
             ObjectiveDefinition(name="accuracy", orientation="maximize", weight=0.7),

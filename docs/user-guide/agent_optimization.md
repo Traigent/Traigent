@@ -76,7 +76,7 @@ Common objectives include:
 from traigent.cloud.client import TraigentCloudClient
 
 client = TraigentCloudClient(
-    api_key="your-api-key",
+    api_key="your-api-key",  # pragma: allowlist secret
     base_url="http://localhost:5000"
 )
 ```
@@ -547,6 +547,6 @@ logger.setLevel(logging.DEBUG)
 
 ## Next Steps
 
-- See the [examples catalog](../../examples/docs/START_HERE.md) for runnable examples
+- See the [examples catalog](../../docs/examples/START_HERE.md) for runnable examples
 - Review [Execution Modes](../guides/execution-modes.md) for local/cloud/hybrid context
 - Read [Architecture Overview](../architecture/ARCHITECTURE.md) for system design details

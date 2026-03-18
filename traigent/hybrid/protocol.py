@@ -16,6 +16,8 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+ScalarValue = str | int | float | bool
+
 
 @dataclass(slots=True)
 class BatchOptions:
@@ -39,24 +41,20 @@ class HybridExecuteRequest:
     Attributes:
         request_id: Idempotency key for retry safety (UUID)
         tunable_id: Identifier for the tunable to invoke
-        benchmark_id: Benchmark containing the examples to run
         config: Configuration parameters (TVAR values)
         examples: List of examples to process
         session_id: Session ID for stateful agents (echoed from previous response)
         batch_options: Optional batch control settings
         timeout_ms: Request timeout in milliseconds
-        benchmarks_revision: Optional revision token for stale-detection
     """
 
     tunable_id: str
-    benchmark_id: str
     config: dict[str, Any]
     examples: list[dict[str, Any]]
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str | None = None
     batch_options: BatchOptions | None = None
     timeout_ms: int = 30000
-    benchmarks_revision: str | None = None
 
     def __post_init__(self) -> None:
         """Log malformed examples that violate the OpenAPI contract."""
@@ -76,7 +74,6 @@ class HybridExecuteRequest:
         result: dict[str, Any] = {
             "request_id": self.request_id,
             "tunable_id": self.tunable_id,
-            "benchmark_id": self.benchmark_id,
             "config": self.config,
             "examples": self.examples,
             "timeout_ms": self.timeout_ms,
@@ -89,8 +86,6 @@ class HybridExecuteRequest:
                 "fail_fast": self.batch_options.fail_fast,
                 "timeout_per_item_ms": self.batch_options.timeout_per_item_ms,
             }
-        if self.benchmarks_revision is not None:
-            result["benchmarks_revision"] = self.benchmarks_revision
         return result
 
 
@@ -153,44 +148,41 @@ class HybridEvaluateRequest:
     Attributes:
         request_id: Idempotency key for retry safety
         tunable_id: Identifier for the tunable to evaluate
-        benchmark_id: Benchmark containing the examples being evaluated
         execution_id: Reference to previous execute (avoids resending outputs)
         evaluations: List of output+target pairs to evaluate
-        config: Optional config for evaluation-time parameters
+        kwargs: Preferred evaluation-time parameters
+        config: Deprecated alias for kwargs
         session_id: Session ID for stateful agents
         timeout_ms: Optional server-side timeout budget in milliseconds
-        benchmarks_revision: Optional revision token for stale-detection
     """
 
     tunable_id: str
-    benchmark_id: str
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     execution_id: str | None = None
     evaluations: list[dict[str, Any]] | None = None
-    config: dict[str, Any] | None = None
+    kwargs: dict[str, ScalarValue] | None = None
+    config: dict[str, ScalarValue] | None = None
     session_id: str | None = None
     timeout_ms: int | None = None
-    benchmarks_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         result: dict[str, Any] = {
             "request_id": self.request_id,
             "tunable_id": self.tunable_id,
-            "benchmark_id": self.benchmark_id,
         }
         if self.execution_id is not None:
             result["execution_id"] = self.execution_id
         if self.evaluations is not None:
             result["evaluations"] = self.evaluations
-        if self.config is not None:
+        if self.kwargs is not None:
+            result["kwargs"] = self.kwargs
+        elif self.config is not None:
             result["config"] = self.config
         if self.session_id is not None:
             result["session_id"] = self.session_id
         if self.timeout_ms is not None:
             result["timeout_ms"] = self.timeout_ms
-        if self.benchmarks_revision is not None:
-            result["benchmarks_revision"] = self.benchmarks_revision
         return result
 
 
@@ -235,6 +227,7 @@ class ServiceCapabilities:
     Attributes:
         version: API version (e.g., "1.0")
         supports_evaluate: Whether separate evaluate endpoint is available
+        supports_evaluation_kwargs: Whether evaluate accepts request-specific kwargs
         supports_keep_alive: Whether keep-alive heartbeat is supported
         supports_streaming: Whether streaming responses are supported
         max_batch_size: Maximum inputs per execute request
@@ -243,6 +236,7 @@ class ServiceCapabilities:
 
     version: str
     supports_evaluate: bool = True
+    supports_evaluation_kwargs: bool = False
     supports_keep_alive: bool = False
     supports_streaming: bool = False
     max_batch_size: int = 100
@@ -255,12 +249,50 @@ class ServiceCapabilities:
         return cls(
             version=data.get("version", "1.0"),
             supports_evaluate=data.get("supports_evaluate", True),
+            supports_evaluation_kwargs=data.get("supports_evaluation_kwargs", False),
             supports_keep_alive=data.get("supports_keep_alive", False),
             supports_streaming=data.get("supports_streaming", False),
             max_batch_size=data.get("max_batch_size", 100),
             max_payload_bytes=data.get("max_payload_bytes"),
             tunable_ids=data.get("tunable_ids"),
         )
+
+
+@dataclass(slots=True)
+class EvaluationKwargDefinition:
+    """One supported evaluation kwarg definition."""
+
+    name: str
+    type: Literal["bool", "int", "float", "str", "enum"]
+    description: str | None = None
+    domain: dict[str, Any] | None = None
+    default: ScalarValue | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvaluationKwargDefinition:
+        """Create from dictionary (API response)."""
+        domain = data.get("domain")
+        return cls(
+            name=data["name"],
+            type=data["type"],
+            description=data.get("description"),
+            domain=domain if isinstance(domain, dict) else None,
+            default=data.get("default"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        result: dict[str, Any] = {
+            "name": self.name,
+            "type": self.type,
+        }
+        if self.description is not None:
+            result["description"] = self.description
+        if self.domain is not None:
+            result["domain"] = self.domain
+        if self.default is not None:
+            result["default"] = self.default
+        return result
 
 
 @dataclass(slots=True)
@@ -407,6 +439,7 @@ class ConfigSpaceResponse:
         promotion_policy: Optional promotion policy definition
         defaults: Optional default configuration values
         measures: Optional metric names produced by the service
+        evaluation_kwargs: Optional supported evaluate kwargs
         estimated_tokens_per_example: Optional per-example token estimate for
             pre-run approval checks
     """
@@ -420,6 +453,7 @@ class ConfigSpaceResponse:
     promotion_policy: dict[str, Any] | None = None
     defaults: dict[str, Any] | None = None
     measures: list[str] | None = None
+    evaluation_kwargs: list[EvaluationKwargDefinition] | None = None
     estimated_tokens_per_example: EstimatedTokensPerExample | None = None
 
     @classmethod
@@ -433,6 +467,7 @@ class ConfigSpaceResponse:
         tvars = [
             TVARDefinition.from_dict(t) if isinstance(t, dict) else t for t in tvar_data
         ]
+        evaluation_kwarg_data = data.get("evaluation_kwargs")
         estimated_tokens_data = data.get("estimated_tokens_per_example")
         return cls(
             schema_version=data.get("schema_version", "0.9"),
@@ -444,6 +479,15 @@ class ConfigSpaceResponse:
             promotion_policy=data.get("promotion_policy"),
             defaults=data.get("defaults"),
             measures=data.get("measures"),
+            evaluation_kwargs=(
+                [
+                    EvaluationKwargDefinition.from_dict(item)
+                    for item in evaluation_kwarg_data
+                    if isinstance(item, dict)
+                ]
+                if isinstance(evaluation_kwarg_data, list)
+                else None
+            ),
             estimated_tokens_per_example=(
                 EstimatedTokensPerExample.from_dict(estimated_tokens_data)
                 if isinstance(estimated_tokens_data, dict)
@@ -486,6 +530,10 @@ class ConfigSpaceResponse:
             result["defaults"] = self.defaults
         if self.measures is not None:
             result["measures"] = self.measures
+        if self.evaluation_kwargs is not None:
+            result["evaluation_kwargs"] = [
+                definition.to_dict() for definition in self.evaluation_kwargs
+            ]
         if self.estimated_tokens_per_example is not None:
             result["estimated_tokens_per_example"] = (
                 self.estimated_tokens_per_example.to_dict()

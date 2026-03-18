@@ -49,7 +49,6 @@ async def test_handle_execute_propagates_cancelled_error():
     request = {
         "request_id": "req_1",
         "tunable_id": "test_agent",
-        "benchmark_id": "bench_001",
         "config": {},
         "examples": [{"example_id": "ex_0", "data": {"question": "hi"}}],
     }
@@ -77,7 +76,6 @@ async def test_handle_evaluate_propagates_cancelled_error():
     request = {
         "request_id": "req_2",
         "tunable_id": "test_agent",
-        "benchmark_id": "bench_001",
         "config": {},
         "evaluations": [
             {

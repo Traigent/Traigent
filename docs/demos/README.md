@@ -115,4 +115,4 @@ asciinema play docs/demos/output/optimize.cast
 
 ## Reference
 
-See `docs/DEMO_VIDEO_GUIDE.md` for implementation details and customization options.
+See `DEMO_VIDEO_GUIDE.md` for implementation details and customization options.
