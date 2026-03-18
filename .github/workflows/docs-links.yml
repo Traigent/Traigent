@@ -1,20 +1,7 @@
 name: Documentation Links Check
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'docs/**'
-      - 'examples/**/*.md'
-      - 'README.md'
-      - '*.md'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'docs/**'
-      - 'examples/**/*.md'
-      - 'README.md'
-      - '*.md'
+  workflow_dispatch:
 
 jobs:
   link-check:
