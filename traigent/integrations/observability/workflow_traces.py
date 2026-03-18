@@ -23,8 +23,8 @@ Usage:
         # Execute LangGraph workflow
         result = app.invoke(inputs)
 
-For OpenTelemetry integration, use OptiGenSpanExporter:
-    exporter = OptiGenSpanExporter(backend_url, auth_token)
+For OpenTelemetry integration, use TraigentSpanExporter:
+    exporter = TraigentSpanExporter(backend_url, auth_token)
     provider.add_span_processor(BatchSpanProcessor(exporter))
 """
 
@@ -887,7 +887,7 @@ class WorkflowTracesClient:
 
 if OTEL_AVAILABLE:
 
-    class OptiGenSpanExporter(SpanExporter):
+    class TraigentSpanExporter(SpanExporter):
         """OpenTelemetry span exporter that sends traces to the Traigent backend.
 
         This exporter integrates with the OpenTelemetry SDK to automatically
@@ -898,7 +898,7 @@ if OTEL_AVAILABLE:
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
             provider = TracerProvider()
-            exporter = OptiGenSpanExporter(
+            exporter = TraigentSpanExporter(
                 backend_url="http://backend:5000",
                 auth_token="your_token"
             )
@@ -912,7 +912,7 @@ if OTEL_AVAILABLE:
             auth_token: str | None = None,
             configuration_run_id_getter: Any | None = None,
         ) -> None:
-            """Initialize the OptiGen span exporter.
+            """Initialize the Traigent span exporter.
 
             Args:
                 backend_url: Base URL of the backend
@@ -1069,12 +1069,12 @@ if OTEL_AVAILABLE:
 
 else:
     # Stub class when OpenTelemetry is not available
-    class OptiGenSpanExporter:  # type: ignore[no-redef]
-        """Stub for OptiGenSpanExporter when OpenTelemetry is not available."""
+    class TraigentSpanExporter:  # type: ignore[no-redef]
+        """Stub for TraigentSpanExporter when OpenTelemetry is not available."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
-                "OpenTelemetry is required for OptiGenSpanExporter. "
+                "OpenTelemetry is required for TraigentSpanExporter. "
                 "Install with: pip install opentelemetry-sdk"
             )
 
@@ -1499,8 +1499,8 @@ def create_workflow_tracker(
 def setup_workflow_tracing(
     backend_url: str | None = None,
     auth_token: str | None = None,
-) -> OptiGenSpanExporter | None:
-    """Set up OpenTelemetry tracing with the OptiGen exporter.
+) -> TraigentSpanExporter | None:
+    """Set up OpenTelemetry tracing with the Traigent exporter.
 
     This function configures OpenTelemetry to automatically capture
     and export spans to the Traigent backend.
@@ -1510,7 +1510,7 @@ def setup_workflow_tracing(
         auth_token: Auth token (defaults to env var)
 
     Returns:
-        OptiGenSpanExporter instance if OTEL is available, None otherwise
+        TraigentSpanExporter instance if OTEL is available, None otherwise
     """
     if not OTEL_AVAILABLE:
         logger.warning(
@@ -1524,7 +1524,7 @@ def setup_workflow_tracing(
     resolved_url = backend_url or os.environ.get(
         "TRAIGENT_BACKEND_URL", "http://localhost:5000"
     )
-    exporter = OptiGenSpanExporter(
+    exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
     )
@@ -1560,7 +1560,7 @@ __all__ = [
     # Client
     "WorkflowTracesClient",
     # OpenTelemetry
-    "OptiGenSpanExporter",
+    "TraigentSpanExporter",
     "OTEL_AVAILABLE",
     # High-Level API
     "WorkflowTracesTracker",

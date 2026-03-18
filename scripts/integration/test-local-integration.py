@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Local Integration Test Script for Traigent + OptiGen.
+"""Local Integration Test Script for Traigent + Traigent.
 
-This script tests the integration between Traigent SDK and the local OptiGen
+This script tests the integration between Traigent SDK and the local Traigent
 backend environment. It validates the complete flow from SDK configuration
 to data storage and retrieval.
 """
@@ -30,7 +30,7 @@ def print_status(message: str, status: str = "INFO") -> None:
 
 
 def check_backend_health() -> bool:
-    """Check if the local OptiGen backend is healthy and responding."""
+    """Check if the local Traigent backend is healthy and responding."""
     backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     try:
         print_status("Checking backend health...")
@@ -251,7 +251,7 @@ def run_integration_test() -> bool:
 def main():
     """Run all integration tests."""
     print("=" * 60)
-    print("🧪 Traigent + OptiGen Local Integration Test")
+    print("🧪 Traigent + Traigent Local Integration Test")
     print("=" * 60)
     print()
 

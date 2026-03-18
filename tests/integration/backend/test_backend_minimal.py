@@ -46,8 +46,8 @@ async def test_backend_api():
         dataset_size=100,
     )
 
-    # Validate DTO (optional) - skip if optigen_schemas not installed
-    # The validate() method requires optigen_schemas package
+    # Validate DTO (optional) - skip if traigent_schemas not installed
+    # The validate() method requires traigent_schemas package
     # In strict mode (default), it raises DTOSerializationError when unavailable
     import os
 

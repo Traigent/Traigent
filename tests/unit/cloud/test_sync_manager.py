@@ -339,7 +339,7 @@ class TestSyncManager:
     def test_convert_trials_to_results(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
-        """Test conversion of trials to OptiGen results format."""
+        """Test conversion of trials to Traigent results format."""
         results = sync_manager._convert_trials_to_results(sample_session.trials)
 
         assert len(results) == 3

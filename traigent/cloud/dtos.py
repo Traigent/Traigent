@@ -43,14 +43,14 @@ def _warn_if_unknown_status(
         )
 
 
-# Try to import optigen_schemas for validation (optional)
+# Try to import traigent_schemas for validation (optional)
 try:
-    from optigen_schemas.validator import SchemaValidator
+    from traigent_schemas.validator import SchemaValidator
 
     VALIDATOR_AVAILABLE = True
 except ImportError:
     VALIDATOR_AVAILABLE = False
-    logger.debug("optigen_schemas not available, validation disabled")
+    logger.debug("traigent_schemas not available, validation disabled")
 
 
 class ExampleMeasure:
@@ -396,7 +396,7 @@ class ExperimentDTO:
         return result
 
     def validate(self) -> bool:
-        """Validate the DTO against optigen_schemas.
+        """Validate the DTO against traigent_schemas.
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
@@ -416,7 +416,7 @@ class ExperimentDTO:
 
         if not VALIDATOR_AVAILABLE:
             error_msg = (
-                "Schema validator unavailable (optigen_schemas not installed). "
+                "Schema validator unavailable (traigent_schemas not installed). "
                 "Install with: pip install 'traigent[validation]'"
             )
             logger.error(error_msg)

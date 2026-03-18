@@ -1,6 +1,6 @@
 """Unit tests for cloud validation functions.
 
-Tests for OptiGen Backend integration validation according to schema specifications.
+Tests for Traigent Backend integration validation according to schema specifications.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
