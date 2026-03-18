@@ -1,6 +1,7 @@
-# Azure OpenAI Operations Guide (Experiments)
+# Azure OpenAI Operations Guide
 
-Run paper experiments against Azure OpenAI using a small adapter with mock support.
+Validate Azure OpenAI integration behavior against the current plugin and model
+discovery surfaces shipped in this repository.
 
 ## Environment
 ```bash
@@ -21,20 +22,14 @@ export AZURE_OPENAI_API_KEY="<key>"
 pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
 ```
 
-## Smoke Tests
+## Validation Checks
 ```bash
-python paper_experiments/case_study_kilt/run_case_study.py \
-  --real-mode on --provider azure \
-  --model gpt-4o-mini \
-  --temperature 0.3 --trials 1 --parallel-trials 1
-
-python paper_experiments/case_study_fever/run_case_study.py \
-  --mock-mode off --provider azure \
-  --trials 1 --parallel-trials 1
-
-python paper_experiments/case_study_spider/run_case_study.py \
-  --mock-mode off --provider azure \
-  --trials 1 --parallel-trials 1
+pytest -q tests/unit/integrations/test_cloud_plugins.py -o addopts='' -k azure
+pytest -q tests/unit/integrations/test_model_discovery.py -o addopts='' -k AzureOpenAIDiscovery
 ```
 
-Note: In Azure, "model" is treated as the deployment name.
+These checks verify that Azure-specific parameter overrides and model-discovery
+helpers still match the current code. This repository does not currently ship a
+standalone Azure example script.
+
+Note: In Azure OpenAI, `model` is treated as the deployment name.

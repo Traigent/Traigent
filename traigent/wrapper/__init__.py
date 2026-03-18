@@ -25,7 +25,7 @@ Example:
         return {"output": result, "cost_usd": 0.002, "latency_ms": 150}
 
     @app.evaluate
-    async def score(output: dict, target: dict, config: dict) -> dict:
+    async def score(output: dict, target: dict, kwargs: dict) -> dict:
         return {"accuracy": 0.95, "safety": 1.0}
 
     if __name__ == "__main__":
@@ -50,10 +50,16 @@ from traigent.wrapper.errors import (
     ServiceUnavailableError,
     UnauthorizedError,
 )
-from traigent.wrapper.service import ServiceConfig, Session, TraigentService
+from traigent.wrapper.service import (
+    EvaluationContext,
+    ServiceConfig,
+    Session,
+    TraigentService,
+)
 
 __all__ = [
     "TraigentService",
+    "EvaluationContext",
     "ServiceConfig",
     "Session",
     "HybridAPIError",

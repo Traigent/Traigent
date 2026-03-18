@@ -1,109 +1,140 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>10: Prompt A/B Testing - Traigent Examples</title>
-    <link rel="stylesheet" href="/docs/sections/shared-styles.css">
-    <style>
-        .example-page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
-        .breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 14px; color: var(--text-secondary); }
-        .breadcrumb a { color: var(--primary); text-decoration: none; }
-        .breadcrumb a:hover { text-decoration: underline; }
-        .breadcrumb .current { color: var(--text-primary); font-weight: 500; }
-        .example-header { margin-bottom: 32px; }
-        .example-badge { display: inline-block; background: var(--primary); color: white; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 6px; margin-bottom: 12px; }
-        .example-title { font-size: 36px; font-weight: 700; margin-bottom: 12px; color: var(--text-primary); }
-        .example-meta { display: flex; gap: 16px; font-size: 14px; color: var(--text-secondary); }
-        .difficulty-beginner { color: #22c55e; font-weight: 500; }
-        .difficulty-intermediate { color: #fbbf24; font-weight: 500; }
-        .difficulty-advanced { color: #ef4444; font-weight: 500; }
-        .example-nav { display: flex; justify-content: space-between; align-items: center; margin: 48px 0 24px 0; padding: 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; }
-        .nav-button { padding: 10px 16px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; transition: all 0.2s; }
-        .nav-button:hover { background: var(--primary-hover); transform: translateY(-1px); }
-        .nav-button.disabled { opacity: 0.3; pointer-events: none; }
-        .progress { text-align: center; font-size: 14px; color: var(--text-secondary); }
-        .content-section { margin-bottom: 32px; }
-        .content-section h2 { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
-        .content-section p { line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px; }
-        .content-section ul { line-height: 1.8; color: var(--text-secondary); }
-        .code-block { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
-        .code-block code { font-family: 'Courier New', monospace; font-size: 14px; }
-        .action-buttons { display: flex; gap: 12px; margin: 24px 0; }
-        .btn { padding: 12px 24px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background: var(--primary-hover); }
-        .btn-secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-color); }
-        .btn-secondary:hover { background: var(--hover-bg); }
-    </style>
-</head>
-<body>
-    <div class="example-page">
-        <nav class="breadcrumb" aria-label="Breadcrumb">
-            <a href="/docs/index.html">Home</a>
-            <span>›</span>
-            <a href="/docs/index.html#quick-start-path">Quick Start</a>
-            <span>›</span>
-            <span class="current">10: Prompt A/B Testing</span>
-        </nav>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Prompt A/B Test - Traigent Examples</title>
+            <link rel="stylesheet" href="../../gallery/sections/shared-styles.css">
+            <link rel="stylesheet" href="../../gallery/sections/example-detail.css">
+            <script defer src="../../gallery/sections/theme.js"></script>
+        </head>
+        <body>
+            <main class="detail-shell">
+                <nav class="detail-breadcrumb" aria-label="Breadcrumb">
+                    <a href="../../gallery/index.html">Examples</a> <span class="breadcrumb-sep">/</span> <a href="../../gallery/index.html#core">Core</a> <span class="breadcrumb-sep">/</span> <span aria-current="page">Prompt A/B Test</span>
+                </nav>
 
-        <header class="example-header">
-            <span class="example-badge">Example 10</span>
-            <h1 class="example-title">Prompt A/B Testing</h1>
-            <div class="example-meta">
-                <span class="difficulty-advanced">● Advanced</span>
-                <span>⏱️ 20 minutes</span>
-                <span>📦 No API keys required</span>
-            </div>
-        </header>
+                <section class="detail-hero">
+                    <div class="hero-copy">
+                        <div class="hero-kicker">Traigent example</div>
+                        <h1>Prompt A/B Test</h1>
+                        <p class="hero-summary">Compare prompt variants with built-in statistical analysis.</p>
+                        <div class="hero-meta">
+                            <span class="meta-chip meta-chip-category">Core example</span><span class="meta-chip meta-chip-difficulty">Intermediate</span><span class="meta-chip">10 min</span><span class="meta-chip meta-chip-tag">experimentation</span><span class="meta-chip meta-chip-tag">prompting</span>
+                        </div>
+                        <div class="hero-actions">
+                            <a class="hero-button" href="run.py">Open Source</a>
+                            <a class="hero-button secondary" href="../../gallery/index.html#prompt-ab-test">Back to Gallery</a>
 
-        <section class="content-section">
-            <h2>What You'll Learn</h2>
-            <p>Compare and optimize multiple prompt variants systematically using A/B testing methodology. Identify which prompt performs best for your specific use case.</p>
-        </section>
+                        </div>
+                    </div>
+                    <aside class="hero-panel">
+                        <div class="hero-panel-label">Quick Start</div>
+                        <pre class="hero-code"><code>export TRAIGENT_MOCK_LLM=true
+python examples/core/prompt-ab-test/run.py</code></pre>
+                    </aside>
+                </section>
 
-        <section class="content-section">
-            <h2>Key Concepts</h2>
-            <ul>
-                <li>A/B testing</li>
-                <li>Prompt comparison</li>
-                <li>Statistical significance</li>
-                <li>Variant optimization</li>
-            </ul>
-        </section>
-
-        <section class="content-section">
-            <h2>Running This Example</h2>
-            <div class="code-block">
-                <code>TRAIGENT_MOCK_LLM=true python examples/core/prompt-ab-test/run.py</code>
-            </div>
-            <p>
-                This example runs in mock mode by default, so no API keys are needed.
-                Traigent will optimize the configuration space and identify the best parameters for this task.
-            </p>
-        </section>
-
-
-        <section class="content-section" aria-label="Optimization target">
-            <h2>Optimization Target</h2>
-            <p>Traigent tunes the function below when this example runs.</p>
-            <div data-optimize-source="/core/prompt-ab-test/run.py" data-optimize-height="320"></div>
-        </section>
-
-        <div class="action-buttons">
-            <a href="/core/prompt-ab-test/run.py" class="btn">View Source Code</a>
-            <a href="/docs/index.html#prompt-ab-test" class="btn-secondary">Read Documentation</a>
-        </div>
-
-        <nav class="example-nav" aria-label="Example Navigation">
-            <a href="../safety-guardrails/index.html" class="nav-button">← Previous: Safety Guardrails</a>
-            <div class="progress">
-                <strong>10</strong> of <strong>10</strong>
-            </div>
-            <a href="/docs/index.html" class="nav-button">Back to Home →</a>
-        </nav>
+                <div class="detail-layout">
+                    <section class="detail-main">
+                        <section class="detail-section detail-section-intro"><div class="detail-section-body"><p>Compare prompt variants to find the best performing version.</p></div></section>
+                        <section class="detail-section" id="prompt-ab-test-quick-start">
+                    <header class="detail-section-header">
+                        <h2>Quick Start</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <pre class="detail-code"><code class="language-bash">export TRAIGENT_MOCK_LLM=true
+python examples/core/prompt-ab-test/run.py</code></pre>
+                    </div>
+                </section><section class="detail-section" id="prompt-ab-test-configuration-space">
+    <header class="detail-section-header">
+        <h2>Configuration Space</h2>
+    </header>
+    <div class="detail-section-body">
+        <div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Parameter</th><th>Values</th><th>Purpose</th></tr></thead><tbody><tr><td><code>prompt_variant</code></td><td>a, b</td><td>Prompt version to test</td></tr><tr><td><code>model</code></td><td>claude-3-haiku, claude-3-5-sonnet</td><td>Model selection</td></tr><tr><td><code>temperature</code></td><td>0.0, 0.2</td><td>Response variance</td></tr></tbody></table></div>
     </div>
+</section><section class="detail-section" id="prompt-ab-test-what-it-optimizes">
+    <header class="detail-section-header">
+        <h2>What It Optimizes</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li>Compares two prompt versions (A vs B)</li><li>Tests each variant across models and temperatures</li><li>Finds statistically significant winner</li></ul>
+    </div>
+</section><section class="detail-section" id="prompt-ab-test-expected-output">
+                    <header class="detail-section-header">
+                        <h2>Expected Output</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <pre class="detail-code"><code>Best config: {&#x27;prompt_variant&#x27;: &#x27;b&#x27;, &#x27;model&#x27;: &#x27;claude-3-5-sonnet-20241022&#x27;, &#x27;temperature&#x27;: 0.0}
+Best score: 0.88</code></pre>
+                    </div>
+                </section><section class="detail-section" id="prompt-ab-test-key-concepts">
+    <header class="detail-section-header">
+        <h2>Key Concepts</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li><strong>Grid search</strong>: Exhaustive combination testing</li><li><strong>Parallel trials</strong>: Configurable concurrency profiles</li><li><strong>Prompt variants</strong>: External prompt files (prompt_a.txt, prompt_b.txt)</li></ul>
+    </div>
+</section><section class="detail-section" id="prompt-ab-test-files">
+    <header class="detail-section-header">
+        <h2>Files</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li><code>prompt_a.txt</code> - First prompt variant</li><li><code>prompt_b.txt</code> - Second prompt variant</li></ul>
+    </div>
+</section><section class="detail-section" id="prompt-ab-test-next-steps">
+    <header class="detail-section-header">
+        <h2>Next Steps</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li><a href="../prompt-style-optimization/index.html">prompt-style-optimization</a> - Optimize tone and style</li><li><a href="../few-shot-classification/index.html">few-shot-classification</a> - Add examples to prompts</li></ul>
+    </div>
+</section>
+                        <section class="detail-section detail-section-source">
+    <header class="detail-section-header">
+        <h2>Optimization Target</h2>
+        <p>Preview the decorated function that Traigent tunes when this example runs.</p>
+    </header>
+    <div class="detail-section-body">
+        <div data-optimize-source="run.py" data-optimize-height="360"></div>
+    </div>
+</section>
+                    </section>
 
-    <script src="/docs/sections/theme.js"></script>
-    <script type="module" src="/docs/static/js/example-viewer.js"></script>
-</body>
-</html>
+                    <aside class="detail-rail">
+                        <section class="rail-card">
+                            <h2>Datasets</h2>
+                            <ul class="rail-list">
+                                <li><a href="../../datasets/prompt-ab-test/evaluation_set.jsonl"><code>datasets/prompt-ab-test/evaluation_set.jsonl</code></a></li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Project Files</h2>
+                            <ul class="rail-list">
+                                <li><a href="run.py">run.py</a></li><li><a href="prompt_a.txt">prompt_a.txt</a></li><li><a href="prompt_b.txt">prompt_b.txt</a></li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Related Docs</h2>
+                            <ul class="rail-list">
+                                <li><span class="repo-ref">Testing Guide</span></li>
+                            </ul>
+                        </section>
+                        <section class="tour-card">
+    <h2>Example Tour</h2>
+    <p><strong>7</strong> of <strong>11</strong> in the guided core sequence.</p>
+    <div class="tour-actions">
+        <a class="tour-link secondary" href="../prompt-style-optimization/index.html">Previous: Prompt Style Optimization</a>
+        <a class="tour-link" href="../token-budget-summarization/index.html">Next: Token Budget Summarization</a>
+    </div>
+</section>
+                    </aside>
+                </div>
+
+                <footer class="detail-footer">
+                    <p>Built from <code>README.md</code> and <code>examples/catalog.yaml</code> so the gallery stays in sync with runnable code.</p>
+                </footer>
+            </main>
+            <script type="module" src="../../gallery/static/js/example-viewer.js"></script>
+        </body>
+        </html>

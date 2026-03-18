@@ -11,10 +11,7 @@ import sys
 # Add parent directory to path to import the module
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from objectives_metrics import (
-    analyze_tradeoffs,
-    demonstrate_objective_types,
-)
+from objectives_metrics import analyze_tradeoffs, demonstrate_objective_types
 
 
 async def main() -> None:

@@ -69,6 +69,7 @@ class JSProcessPoolConfig:
         acquire_timeout: Timeout for acquiring a worker from the pool.
         shutdown_timeout: Timeout for graceful shutdown.
         use_npx: Whether to use npx to invoke traigent-js.
+        runner_path: Explicit path to the traigent-js CLI runner script.
         node_executable: Path to Node.js executable.
         env: Additional environment variables for workers.
         cwd: Working directory for workers.
@@ -82,6 +83,7 @@ class JSProcessPoolConfig:
     acquire_timeout: float = DEFAULT_ACQUIRE_TIMEOUT_SECONDS
     shutdown_timeout: float = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
     use_npx: bool = True
+    runner_path: str | None = None
     node_executable: str = "node"
     env: dict[str, str] | None = None
     cwd: str | None = None
@@ -148,6 +150,7 @@ class JSProcessPool:
             trial_timeout_seconds=self._config.trial_timeout,
             command_timeout_seconds=self._config.startup_timeout,
             use_npx=self._config.use_npx,
+            runner_path=self._config.runner_path,
             node_executable=self._config.node_executable,
             env=self._config.env,
             cwd=self._config.cwd,

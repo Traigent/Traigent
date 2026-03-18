@@ -222,8 +222,8 @@ For advanced benchmarks like HotpotQA multi-hop QA optimization, see the
 ## Further Reading
 
 - Mock mode: See [examples/README.md](../examples/README.md) ("Run any example in mock mode" section)
-- Example guide: [examples/docs/EXAMPLES_GUIDE.md](../examples/docs/EXAMPLES_GUIDE.md)
-- Getting started: [examples/docs/START_HERE.md](../examples/docs/START_HERE.md)
+- Example guide: [Examples Guide](../docs/examples/README.md)
+- Getting started: [Start Here](../docs/examples/START_HERE.md)
 
 ## Next Steps
 

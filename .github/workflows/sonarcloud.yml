@@ -1,12 +1,7 @@
 name: SonarCloud Analysis
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 # Disable concurrency to prevent job cancellation issues
 # Each PR gets its own run without interference

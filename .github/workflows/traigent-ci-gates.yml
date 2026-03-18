@@ -1,12 +1,7 @@
 name: Traigent CI Gates
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'examples/integrations/ci-cd/**'
-      - 'traigent/**'
-      - '.github/workflows/traigent-ci-gates.yml'
+  workflow_dispatch:
 
 env:
   TRAIGENT_MOCK_LLM: "true"

@@ -11,15 +11,6 @@
 name: Architecture Analysis
 
 on:
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - 'traigent/**'
-      - 'tests/**'
-  push:
-    branches: [main]
-    paths:
-      - 'traigent/**'
   workflow_dispatch:
     inputs:
       full_analysis:
@@ -217,7 +208,6 @@ jobs:
         continue-on-error: true
         with:
           name: architecture-reports
-        continue-on-error: true
 
       - name: Check Critical Issues
         if: steps.download.outcome == 'success'

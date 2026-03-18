@@ -339,14 +339,15 @@ console.error("Debug info");
 Enable verbose logging:
 ```bash
 export TRAIGENT_LOG_LEVEL=DEBUG
-python my_optimization.py
+python examples/js_bridge/optimize_js_agent.py
 ```
 
 ## Best Practices
 
 1. **Build Before Run**: Ensure your TypeScript is compiled before optimization
    ```bash
-   npm run build && python optimize.py
+   export TRAIGENT_JS_MODULE=/abs/path/to/run-trial.js
+   python examples/js_bridge/optimize_js_agent.py
    ```
 
 2. **Use stderr for Logs**: Keep stdout clean for protocol communication
@@ -362,18 +363,21 @@ python my_optimization.py
 A full working example is available in the repository:
 
 **Python orchestration script**: `examples/js_bridge/optimize_js_agent.py`
-**JS trial function**: `traigent-js/demos/agent-app/src/run-trial.ts`
+**JS trial module**: provide a built `run-trial.js` via `TRAIGENT_JS_MODULE`
 
-To run the example:
+This repository does not vendor a built JS demo. To run the example, point
+Traigent at a compiled JS trial module from your own app, from an installed
+`traigent-js` package, or from a sibling checkout of the companion JS repo. If
+you are not using an installed package, set `TRAIGENT_JS_RUNNER` to the local
+CLI runner or keep the companion repo checked out next to this repo so the
+Python example can auto-detect it.
 
 ```bash
-# 1. Build the JS demo
-cd traigent-js/demos/agent-app
-npm install && npm run build
-
-# 2. Run Python orchestration
-cd ../../../
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python examples/js_bridge/optimize_js_agent.py
+export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_OFFLINE_MODE=true
+export TRAIGENT_JS_MODULE=/abs/path/to/run-trial.js
+export TRAIGENT_JS_RUNNER=/abs/path/to/runner.js  # Optional when not using npx
+python examples/js_bridge/optimize_js_agent.py
 ```
 
 The example demonstrates:
@@ -554,12 +558,11 @@ def test_plateau_stop(text: str): pass
 For local testing without API calls:
 
 ```bash
-# Set mock mode
 export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
-
-# Run optimization
-python optimize.py
+export TRAIGENT_JS_MODULE=/abs/path/to/run-trial.js
+export TRAIGENT_JS_RUNNER=/abs/path/to/runner.js  # Optional when not using npx
+python examples/js_bridge/optimize_js_agent.py
 ```
 
 ### Unit Testing Trial Functions
@@ -591,7 +594,7 @@ describe('runTrial', () => {
 ### Integration Testing with Python
 
 ```python
-# tests/integration/test_js_bridge.py
+# tests/integration/bridges/test_js_bridge_e2e.py
 import pytest
 from traigent.bridges.js_bridge import JSBridge, JSBridgeConfig
 

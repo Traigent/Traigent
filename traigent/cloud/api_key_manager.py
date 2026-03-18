@@ -242,7 +242,7 @@ class APIKeyManager:
             and credentials.api_key
             and self.validate_format(credentials.api_key)
         ):
-            return credentials.api_key
+            return str(credentials.api_key)
         return None
 
     def get_key_for_internal_use(self) -> str | None:

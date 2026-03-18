@@ -1,4 +1,6 @@
-# Example Template for Traigent
+# Example Authoring Template
+
+Use this when adding a new runnable example under `examples/`.
 
 ## 📋 Template Structure
 
@@ -68,11 +70,12 @@ MULTI-LINE: Why it's useful, what it teaches
 
 ```
 examples/
-├── quickstart/           # 5-minute basics
-├── core-concepts/        # Fundamental features
-├── advanced-patterns/    # Complex use cases
-├── integrations/         # External service examples
-├── use-cases/           # Real-world applications
-├── shared_utils/        # Common helper code
-└── docs/               # Documentation
+├── quickstart/           # README-aligned onboarding examples
+├── core/                # Core runnable examples
+├── advanced/            # Advanced patterns and playbooks
+├── integrations/        # External platform examples
+├── datasets/            # Shared evaluation data
+├── gallery/             # Browser gallery and inline demo assets
+├── templates/           # Starter files for new examples
+└── utils/               # Shared example helpers
 ```

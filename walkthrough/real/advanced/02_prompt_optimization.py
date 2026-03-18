@@ -19,7 +19,11 @@ from traigent.api.parameter_ranges import Choices, Range
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = str((SCRIPT_DIR / ".." / "simple_questions.jsonl").resolve())
+WALKTHROUGH_ROOT = (SCRIPT_DIR / ".." / "..").resolve()
+DATASET_PATH = str((WALKTHROUGH_ROOT / "datasets" / "simple_questions.jsonl").resolve())
+
+# Allow dataset sandbox to find files under the walkthrough directory
+os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(WALKTHROUGH_ROOT))
 
 # Check for API key before initialization
 if not os.getenv("OPENAI_API_KEY"):
@@ -28,11 +32,11 @@ if not os.getenv("OPENAI_API_KEY"):
     exit(1)
 
 try:
-    from langchain.prompts import ChatPromptTemplate
+    from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
 except ImportError:
     print("Error: LangChain not installed")
-    print("Install with: pip install langchain langchain-openai")
+    print("Install with: pip install langchain-core langchain-openai")
     exit(1)
 
 # Initialize Traigent

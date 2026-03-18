@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Error Handling Example - Traigent Examples</title>
+            <link rel="stylesheet" href="../../gallery/sections/shared-styles.css">
+            <link rel="stylesheet" href="../../gallery/sections/example-detail.css">
+            <script defer src="../../gallery/sections/theme.js"></script>
+        </head>
+        <body>
+            <main class="detail-shell">
+                <nav class="detail-breadcrumb" aria-label="Breadcrumb">
+                    <a href="../../gallery/index.html">Examples</a> <span class="breadcrumb-sep">/</span> <a href="../../gallery/index.html#core">Core</a> <span class="breadcrumb-sep">/</span> <span aria-current="page">Error Handling Example</span>
+                </nav>
+
+                <section class="detail-hero">
+                    <div class="hero-copy">
+                        <div class="hero-kicker">Traigent example</div>
+                        <h1>Error Handling Example</h1>
+                        <p class="hero-summary">Demonstrates graceful failure modes and fallback patterns with Traigent.</p>
+                        <div class="hero-meta">
+                            <span class="meta-chip meta-chip-category">Core example</span>
+                        </div>
+                        <div class="hero-actions">
+                            <a class="hero-button" href="run.py">Open Source</a>
+                            <a class="hero-button secondary" href="../../gallery/index.html#core">Back to Gallery</a>
+
+                        </div>
+                    </div>
+                    <aside class="hero-panel">
+                        <div class="hero-panel-label">Quick Start</div>
+                        <pre class="hero-code"><code># Mock mode (no API key needed)
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python run.py
+
+# Real mode (requires API keys)
+python run.py</code></pre>
+                    </aside>
+                </section>
+
+                <div class="detail-layout">
+                    <section class="detail-main">
+                        <section class="detail-section detail-section-intro"><div class="detail-section-body"><p>Demonstrates graceful failure modes and fallback patterns with Traigent.</p></div></section>
+                        <section class="detail-section" id="error-handling-scenarios">
+    <header class="detail-section-header">
+        <h2>Scenarios</h2>
+    </header>
+    <div class="detail-section-body">
+        <ol class="detail-list"><li><strong>Invalid Configuration Space</strong> — Bad types in <code>configuration_space</code> raise <code>ValueError</code></li><li><strong>Sample-Budget Exceeded</strong> — <code>budget_limit</code>/<code>budget_metric</code> stops optimization when budget is exhausted</li><li><strong>Optimization Timeout</strong> — Short timeout results in <code>stop_reason == &quot;timeout&quot;</code></li><li><strong>Preflight Validation</strong> — Check environment variables before running optimization</li><li><strong>Graceful Fallback</strong> — Fall back to a default configuration on any failure</li></ol>
+    </div>
+</section><section class="detail-section" id="error-handling-run">
+                    <header class="detail-section-header">
+                        <h2>Run</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <pre class="detail-code"><code class="language-bash"># Mock mode (no API key needed)
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python run.py
+
+# Real mode (requires API keys)
+python run.py</code></pre>
+                    </div>
+                </section><section class="detail-section" id="error-handling-key-patterns">
+    <header class="detail-section-header">
+        <h2>Key Patterns</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li>Validate <code>configuration_space</code> types before decoration</li><li>Use <code>budget_limit</code>/<code>budget_metric</code> to cap resource usage</li><li>Check <code>result.stop_reason</code> for timeout detection (not an exception)</li><li>Always have a fallback configuration for production resilience</li></ul>
+    </div>
+</section>
+                        <section class="detail-section detail-section-source">
+    <header class="detail-section-header">
+        <h2>Optimization Target</h2>
+        <p>Preview the decorated function that Traigent tunes when this example runs.</p>
+    </header>
+    <div class="detail-section-body">
+        <div data-optimize-source="run.py" data-optimize-height="360"></div>
+    </div>
+</section>
+                    </section>
+
+                    <aside class="detail-rail">
+                        <section class="rail-card">
+                            <h2>Datasets</h2>
+                            <ul class="rail-list">
+                                <li><a href="../../datasets/error-handling/evaluation_set.jsonl"><code>datasets/error-handling/evaluation_set.jsonl</code></a></li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Project Files</h2>
+                            <ul class="rail-list">
+                                <li><a href="run.py">run.py</a></li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Related Docs</h2>
+                            <ul class="rail-list">
+                                <li><span class="repo-ref">Examples Guide</span></li>
+                            </ul>
+                        </section>
+                        <section class="tour-card">
+    <h2>Example Tour</h2>
+    <p>This page remains available for direct links, but the active tour starts from the gallery.</p>
+    <a class="tour-link" href="../../gallery/index.html#core">Open Core Gallery</a>
+</section>
+                    </aside>
+                </div>
+
+                <footer class="detail-footer">
+                    <p>Built from <code>README.md</code> and <code>examples/catalog.yaml</code> so the gallery stays in sync with runnable code.</p>
+                </footer>
+            </main>
+            <script type="module" src="../../gallery/static/js/example-viewer.js"></script>
+        </body>
+        </html>
