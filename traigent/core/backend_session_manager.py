@@ -300,8 +300,15 @@ class BackendSessionManager:
             if agent_configuration is not None:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
 
+            # Use human-readable name with disambiguating hash suffix
+            # e.g. "answer_question (f282c9de)" instead of the full slug
+            portal_name = function_display_name or function_identifier
+            slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+            if slug_hash:
+                portal_name = f"{portal_name} ({slug_hash})"
+
             session_id = self._backend_client.create_session(
-                function_name=function_slug,
+                function_name=portal_name,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,

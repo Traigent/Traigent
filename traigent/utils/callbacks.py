@@ -201,6 +201,17 @@ class ProgressBarCallback(OptimizationCallback):
         if result.stop_reason and result.stop_reason != "timeout":
             print(f"🛑 Stop reason: {result.stop_reason}")
 
+        if result.run_label:
+            print(f"🔖 Run: {result.run_label}")
+        if result.cloud_url:
+            print(f"🔗 View: {result.cloud_url}")
+        elif (
+            result.run_label
+            and isinstance(result.metadata, dict)
+            and result.metadata.get("offline_mode")
+        ):
+            print("   Run locally — sync to cloud with `traigent sync`")
+
 
 class LoggingCallback(OptimizationCallback):
     """Callback that logs optimization progress."""
@@ -981,6 +992,17 @@ class DetailedProgressCallback(OptimizationCallback):
 
         if result.stop_reason and result.stop_reason != "timeout":
             print(f"🛑 Stop reason: {result.stop_reason}")
+
+        if result.run_label:
+            print(f"🔖 Run: {result.run_label}")
+        if result.cloud_url:
+            print(f"🔗 View: {result.cloud_url}")
+        elif (
+            result.run_label
+            and isinstance(result.metadata, dict)
+            and result.metadata.get("offline_mode")
+        ):
+            print("   Run locally — sync to cloud with `traigent sync`")
 
         print("=" * 60 + "\n")
 
