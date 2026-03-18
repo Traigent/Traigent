@@ -31,10 +31,69 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / ".validation_results"
 SNAPSHOTS_DIR = RESULTS_DIR / "snapshots"
+SNAPSHOT_LABEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def normalize_backend_url(api_url: str) -> str:
+    """Validate and normalize a configured backend base URL."""
+    parsed = urlparse(api_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Backend URL must use http or https")
+    if not parsed.netloc:
+        raise ValueError("Backend URL must include a hostname")
+    if parsed.username or parsed.password:
+        raise ValueError("Backend URL must not embed credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Backend URL must not include query or fragment components")
+    return parsed._replace(
+        path=parsed.path.rstrip("/"),
+        params="",
+        query="",
+        fragment="",
+    ).geturl()
+
+
+def build_backend_url(api_url: str, endpoint: str) -> str:
+    """Build a request URL pinned to the configured backend origin."""
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", endpoint):
+        raise ValueError("Backend endpoint must be a relative path")
+
+    base_url = normalize_backend_url(api_url)
+    url = urljoin(f"{base_url}/", endpoint.lstrip("/"))
+
+    parsed_url = urlparse(url)
+    parsed_base = urlparse(base_url)
+    if (parsed_url.scheme, parsed_url.netloc) != (
+        parsed_base.scheme,
+        parsed_base.netloc,
+    ):
+        raise ValueError("Backend endpoint escaped the configured origin")
+    return url
+
+
+def snapshot_path(label: str) -> Path:
+    """Return a validated snapshot path rooted under SNAPSHOTS_DIR."""
+    if not SNAPSHOT_LABEL_RE.fullmatch(label):
+        raise ValueError(
+            "Snapshot labels may only contain letters, numbers, dots, underscores, and dashes"
+        )
+    base_dir = SNAPSHOTS_DIR.resolve()
+    path = (base_dir / f"{label}.json").resolve()
+    try:
+        path.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(f"Invalid snapshot path for label '{label}'") from exc
+    return path
+
+
+def write_snapshot_json(path: Path, payload: object) -> None:
+    """Write a snapshot payload with stable encoding."""
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
 def get_backend_config() -> tuple[str, str]:
@@ -69,7 +128,11 @@ def query_backend(endpoint: str, api_url: str, api_key: str) -> dict | None:
     import urllib.error
     import urllib.request
 
-    url = f"{api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+    try:
+        url = build_backend_url(api_url, endpoint)
+    except ValueError as e:
+        print(f"  Invalid backend URL configuration: {e}", file=sys.stderr)
+        return None
     req = urllib.request.Request(url)
     req.add_header("X-API-Key", api_key)
     req.add_header("Authorization", f"Bearer {api_key}")
@@ -122,16 +185,20 @@ def snapshot_backend(label: str) -> Path:
         ],
     }
 
-    path = SNAPSHOTS_DIR / f"{label}.json"
-    path.write_text(json.dumps(snapshot, indent=2, default=str))
+    path = snapshot_path(label)
+    write_snapshot_json(path, snapshot)
     print(f"Snapshot '{label}' saved: {len(experiments)} experiments, {len(sessions)} sessions")
     return path
 
 
 def diff_snapshots(before_label: str, after_label: str) -> dict:
     """Compare two backend snapshots and report new/changed experiments."""
-    before_path = SNAPSHOTS_DIR / f"{before_label}.json"
-    after_path = SNAPSHOTS_DIR / f"{after_label}.json"
+    try:
+        before_path = snapshot_path(before_label)
+        after_path = snapshot_path(after_label)
+    except ValueError as e:
+        print(f"Invalid snapshot label: {e}", file=sys.stderr)
+        return {}
 
     if not before_path.exists() or not after_path.exists():
         print(f"Snapshot files not found: {before_path}, {after_path}", file=sys.stderr)
@@ -188,8 +255,8 @@ def diff_snapshots(before_label: str, after_label: str) -> dict:
     }
 
     # Save diff
-    diff_path = SNAPSHOTS_DIR / f"diff_{before_label}_{after_label}.json"
-    diff_path.write_text(json.dumps(result, indent=2, default=str))
+    diff_path = snapshot_path(f"diff_{before_label}_{after_label}")
+    write_snapshot_json(diff_path, result)
 
     # Print summary
     print(f"\n{'='*60}")

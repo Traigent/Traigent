@@ -46,6 +46,17 @@ ASSET_SUFFIXES = {
 DOC_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
 
 
+def build_output_path(output_dir: Path, filename: str) -> Path:
+    """Build a validated child path under the requested output directory."""
+    base_dir = output_dir.resolve()
+    candidate = (base_dir / filename).resolve()
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(f"Invalid output path: {candidate}") from exc
+    return candidate
+
+
 @dataclass
 class CommandRecord:
     doc_path: str
@@ -258,7 +269,8 @@ def resolve_command_ref(
     status = classify_ref(ref)
     if status != "candidate":
         return status, None
-    assert ref is not None
+    if ref is None:
+        return "no-local-ref", None
     if ref in generated_refs or Path(ref).name in {Path(item).name for item in generated_refs}:
         return "generated-in-doc", relativize((cwd_context / ref).resolve())
     candidates = [
@@ -507,12 +519,23 @@ def main() -> int:
 
     docs, assets, commands = build_records()
 
-    write_json(output_dir / "doc_inventory.json", [asdict(doc) for doc in docs])
-    write_csv(output_dir / "doc_inventory.csv", docs)
-    write_json(output_dir / "image_diagram_inventory.json", assets)
-    write_json(output_dir / "command_inventory.json", [asdict(command) for command in commands])
-    write_summary(output_dir / "inventory_summary.md", docs, assets, commands)
-    write_tracking(output_dir / "scan_tracking.md", docs, assets, commands)
+    write_json(
+        build_output_path(output_dir, "doc_inventory.json"),
+        [asdict(doc) for doc in docs],
+    )
+    write_csv(build_output_path(output_dir, "doc_inventory.csv"), docs)
+    write_json(build_output_path(output_dir, "image_diagram_inventory.json"), assets)
+    write_json(
+        build_output_path(output_dir, "command_inventory.json"),
+        [asdict(command) for command in commands],
+    )
+    write_summary(
+        build_output_path(output_dir, "inventory_summary.md"),
+        docs,
+        assets,
+        commands,
+    )
+    write_tracking(build_output_path(output_dir, "scan_tracking.md"), docs, assets, commands)
     return 0
 
 
