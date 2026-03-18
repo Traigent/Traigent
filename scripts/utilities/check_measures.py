@@ -18,7 +18,7 @@ except ImportError:
         try:
             cmd = [
                 "psql",
-                os.environ.get("DB_URL", "postgresql://localhost:5432/optigen"),
+                os.environ.get("DB_URL", "postgresql://localhost:5432/traigent"),
                 "-c",
                 "SELECT id, name, created_at FROM experiments ORDER BY created_at DESC LIMIT 5",
             ]
@@ -29,7 +29,7 @@ except ImportError:
             # Also check configuration runs
             cmd2 = [
                 "psql",
-                os.environ.get("DB_URL", "postgresql://localhost:5432/optigen"),
+                os.environ.get("DB_URL", "postgresql://localhost:5432/traigent"),
                 "-c",
                 "SELECT id, score, jsonb_array_length(measures) as measure_count FROM configuration_runs ORDER BY created_at DESC LIMIT 5",
             ]
@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(0)
 
 # Database connection parameters
-DB_URL = os.environ.get("DB_URL", "postgresql://localhost:5432/optigen")
+DB_URL = os.environ.get("DB_URL", "postgresql://localhost:5432/traigent")
 
 
 async def check_measures():

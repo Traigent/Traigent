@@ -1062,7 +1062,7 @@ class TestUpdateConfigRunMeasuresSuccess:
 
     @pytest.mark.asyncio
     async def test_measures_update_with_all_standard_metrics(self):
-        """Test measures update with all standard OptiGen metrics."""
+        """Test measures update with all standard Traigent metrics."""
         mock_response = AsyncMock()
         mock_response.status = 200
 

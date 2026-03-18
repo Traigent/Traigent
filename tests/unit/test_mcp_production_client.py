@@ -81,7 +81,7 @@ class TestProductionMCPClientBasics:
 
         self.server_config = MCPServerConfig(
             server_path="python",
-            server_args=["-m", "optigen_backend.mcp.server"],
+            server_args=["-m", "traigent_backend.mcp.server"],
             timeout=30.0,
             max_retries=3,
         )
@@ -1160,6 +1160,39 @@ class TestGlobalMCPClientFunctions:
                 client = get_production_mcp_client()
                 assert client is not None
                 assert production_mcp_client._production_client is not None
+                assert client.server_config.server_args is not None
+
+    def test_default_mcp_server_args_prefers_legacy_backend_when_new_missing(self):
+        """Fallback to the legacy backend module during rename transitions."""
+        from traigent.cloud.production_mcp_client import default_mcp_server_args
+
+        def fake_find_spec(name: str):
+            if name == "traigent_backend.mcp.server":
+                return None
+            if name == "optigen_backend.mcp.server":
+                return object()
+            return None
+
+        with patch(
+            "traigent.cloud.production_mcp_client.importlib.util.find_spec",
+            side_effect=fake_find_spec,
+        ):
+            assert default_mcp_server_args()[1] == "optigen_backend.mcp.server"
+
+    def test_default_mcp_server_args_prefers_renamed_backend_when_available(self):
+        """Use the renamed backend package when it is installed."""
+        from traigent.cloud.production_mcp_client import default_mcp_server_args
+
+        def fake_find_spec(name: str):
+            if name == "traigent_backend.mcp.server":
+                return object()
+            return None
+
+        with patch(
+            "traigent.cloud.production_mcp_client.importlib.util.find_spec",
+            side_effect=fake_find_spec,
+        ):
+            assert default_mcp_server_args()[1] == "traigent_backend.mcp.server"
 
     def test_get_production_mcp_client_returns_existing(self):
         """Test get_production_mcp_client returns existing client."""

@@ -9,12 +9,12 @@ import warnings
 
 from traigent.traigent_client import TraigentClient
 
-# Backward compatibility alias
+# Backward compatibility alias (OptiGenClient -> TraigentClient)
 OptiGenClient = TraigentClient
 
 warnings.warn(
-    "traigent.optigen_integration is deprecated. "
-    "Use traigent.traigent_client and TraigentClient instead.",
+    "traigent.traigent_integration is a compatibility shim and is deprecated. "
+    "Import directly from traigent.traigent_client instead.",
     DeprecationWarning,
     stacklevel=2,
 )
