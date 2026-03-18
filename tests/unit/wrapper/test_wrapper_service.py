@@ -1797,3 +1797,304 @@ class TestHandleEvaluateEdgeCases:
         agg = resp["aggregate_metrics"]
         assert "accuracy" in agg
         assert "is_valid" not in agg  # Bool excluded
+
+
+# ---------------------------------------------------------------------------
+# _normalize_evaluation_kwarg_definition tests
+# ---------------------------------------------------------------------------
+class TestNormalizeEvaluationKwargDefinition:
+    """Tests for kwarg definition normalization and validation."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def test_accepts_valid_dict(self) -> None:
+        svc = self._make_svc()
+        result = svc._normalize_evaluation_kwarg_definition(
+            {"name": "mode", "type": "str"}
+        )
+        assert result.name == "mode"
+        assert result.type == "str"
+
+    def test_rejects_non_dict_non_definition(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="dicts or EvaluationKwargDefinition"):
+            svc._normalize_evaluation_kwarg_definition("bad")
+
+    def test_rejects_invalid_identifier_name(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="valid Python identifier"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "123bad", "type": "str"}
+            )
+
+    def test_rejects_non_string_description(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        spec = EKD(name="x", type="str", description=123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="description must be a string"):
+            svc._normalize_evaluation_kwarg_definition(spec)
+
+    def test_rejects_non_dict_domain(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        spec = EKD(name="x", type="str", domain="bad")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="domain must be a dict"):
+            svc._normalize_evaluation_kwarg_definition(spec)
+
+    def test_rejects_non_scalar_default(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="default must be a scalar"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "default": [1, 2]}
+            )
+
+    def test_rejects_unknown_domain_keys(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="unsupported keys"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "int", "domain": {"bogus": True}}
+            )
+
+    def test_rejects_empty_domain_values(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="non-empty list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": []}}
+            )
+
+    def test_rejects_non_list_domain_values(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="non-empty list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": "bad"}}
+            )
+
+    def test_rejects_non_scalar_domain_values_entries(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="scalar values"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": [[1]]}}
+            )
+
+    def test_rejects_bad_range_spec(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="two-item numeric list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"range": [1]}}
+            )
+
+    def test_rejects_bool_in_range(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="two-item numeric list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"range": [True, False]}}
+            )
+
+    def test_rejects_non_numeric_resolution(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="resolution must be numeric"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"resolution": "bad"}}
+            )
+
+    def test_rejects_bool_resolution(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="resolution must be numeric"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"resolution": True}}
+            )
+
+    def test_enum_without_values_raises(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must declare domain.values"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "enum"}
+            )
+
+    def test_valid_range_and_resolution(self) -> None:
+        svc = self._make_svc()
+        result = svc._normalize_evaluation_kwarg_definition(
+            {
+                "name": "temp",
+                "type": "float",
+                "domain": {"range": [0.0, 1.0], "resolution": 0.1},
+            }
+        )
+        assert result.domain == {"range": [0.0, 1.0], "resolution": 0.1}
+
+    def test_default_validated_against_definition(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError):
+            svc._normalize_evaluation_kwarg_definition(
+                {
+                    "name": "temp",
+                    "type": "float",
+                    "domain": {"range": [0.0, 1.0]},
+                    "default": 5.0,
+                }
+            )
+
+
+# ---------------------------------------------------------------------------
+# _validate_evaluation_kwarg_value tests
+# ---------------------------------------------------------------------------
+class TestValidateEvaluationKwargValue:
+    """Tests for individual kwarg value validation."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def _make_def(self, **kwargs):
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        defaults = {"name": "x", "type": "str"}
+        defaults.update(kwargs)
+        return EKD(**defaults)
+
+    def test_bool_type_rejects_int(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be a bool"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="bool"), 1)
+
+    def test_int_type_rejects_bool(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be an int"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="int"), True)
+
+    def test_int_type_rejects_float(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be an int"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="int"), 1.5)
+
+    def test_float_type_rejects_bool(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be numeric"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="float"), True)
+
+    def test_float_type_rejects_string(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be numeric"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="float"), "x")
+
+    def test_str_type_rejects_int(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be a string"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="str"), 42)
+
+    def test_enum_rejects_unlisted_value(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="enum", domain={"values": ["a", "b"]})
+        with pytest.raises(ValueError, match="declared enum values"):
+            svc._validate_evaluation_kwarg_value(defn, "c")
+
+    def test_values_constraint_on_non_enum(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="str", domain={"values": ["a", "b"]})
+        with pytest.raises(ValueError, match="declared values"):
+            svc._validate_evaluation_kwarg_value(defn, "c")
+
+    def test_range_out_of_bounds(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="float", domain={"range": [0.0, 1.0]})
+        with pytest.raises(ValueError, match="within range"):
+            svc._validate_evaluation_kwarg_value(defn, 1.5)
+
+    def test_range_accepts_in_bounds(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="float", domain={"range": [0.0, 1.0]})
+        svc._validate_evaluation_kwarg_value(defn, 0.5)
+
+    def test_rejects_non_scalar(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be scalar"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="str"), [1, 2])
+
+
+# ---------------------------------------------------------------------------
+# _validate_effective_evaluation_kwargs tests
+# ---------------------------------------------------------------------------
+class TestValidateEffectiveEvaluationKwargs:
+    """Tests for full kwargs validation against declared definitions."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def test_empty_kwargs_returns_immediately(self) -> None:
+        svc = self._make_svc()
+        svc._validate_effective_evaluation_kwargs({}, None)
+
+    def test_kwargs_without_declarations_raises(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(BadRequestError, match="does not accept"):
+            svc._validate_effective_evaluation_kwargs({"x": 1}, None)
+
+    def test_invalid_values_raise_bad_request(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        declared = [EKD(name="x", type="int")]
+        with pytest.raises(BadRequestError, match="Invalid evaluation kwargs"):
+            svc._validate_effective_evaluation_kwargs({"x": "not_int"}, declared)
+
+
+# ---------------------------------------------------------------------------
+# _is_scalar_value tests
+# ---------------------------------------------------------------------------
+class TestIsScalarValue:
+    """Tests for scalar value detection."""
+
+    def test_str(self) -> None:
+        assert TraigentService._is_scalar_value("hello") is True
+
+    def test_int(self) -> None:
+        assert TraigentService._is_scalar_value(42) is True
+
+    def test_float(self) -> None:
+        assert TraigentService._is_scalar_value(3.14) is True
+
+    def test_bool(self) -> None:
+        assert TraigentService._is_scalar_value(True) is True
+
+    def test_list_rejected(self) -> None:
+        assert TraigentService._is_scalar_value([1]) is False
+
+    def test_dict_rejected(self) -> None:
+        assert TraigentService._is_scalar_value({"a": 1}) is False
+
+    def test_none_rejected(self) -> None:
+        assert TraigentService._is_scalar_value(None) is False
+
+
+# ---------------------------------------------------------------------------
+# _validate_evaluate_signature edge cases
+# ---------------------------------------------------------------------------
+class TestValidateEvaluateSignatureEdgeCases:
+    """Tests for signature validation of evaluate handlers."""
+
+    def test_rejects_var_keyword(self) -> None:
+        svc = TraigentService()
+        with pytest.raises(ValueError):
+
+            @svc.evaluate
+            def score(output, target, **kwargs):
+                return {"accuracy": 1.0}
+
+    def test_rejects_var_positional(self) -> None:
+        svc = TraigentService()
+        with pytest.raises(ValueError):
+
+            @svc.evaluate
+            def score(output, target, *args):
+                return {"accuracy": 1.0}
+
+    def test_accepts_two_arg_handler(self) -> None:
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target):
+            return {"accuracy": 1.0}
+
+        assert svc._evaluate_handler_arity == 2
