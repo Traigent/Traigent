@@ -26,7 +26,7 @@
   order: 0
   difficulty: beginner
   est_time: "3 min"
-  tags: ["hello-world", "summarization", "intro"]
+  tags: ["quickstart", "summarization", "intro"]
   datasets:
     - "datasets/simple-prompt/evaluation_set.jsonl"
   docs: "../core/simple-prompt/index.html"

@@ -21,19 +21,19 @@ LIST_ITEM_RE = re.compile(r"^([-*])\s+(.*)$")
 ORDERED_ITEM_RE = re.compile(r"^(\d+)\.\s+(.*)$")
 
 LEGACY_PAGE_OVERRIDES: dict[str, dict[str, Any]] = {
-    "hello-world": {
-        "title": "Hello World",
+    "rag-optimization": {
+        "title": "RAG Optimization",
         "summary": (
-            "A legacy starter page for local RAG optimization with retrieval toggles, "
+            "A starter page for local RAG optimization with retrieval toggles, "
             "deterministic mock runs, and a scenario matrix."
         ),
         "difficulty": "beginner",
         "est_time": "5 min",
-        "tags": ["legacy", "RAG", "intro"],
-        "run": "core/hello-world/run.py",
+        "tags": ["RAG", "optimization", "intro"],
+        "run": "core/rag-optimization/run.py",
         "datasets": [
-            "datasets/hello-world/evaluation_set.jsonl",
-            "datasets/hello-world/context_documents.jsonl",
+            "datasets/rag-optimization/evaluation_set.jsonl",
+            "datasets/rag-optimization/context_documents.jsonl",
         ],
         "docs_sections": [
             {"label": "Simple Prompt First", "href": "../core/simple-prompt/index.html"},
