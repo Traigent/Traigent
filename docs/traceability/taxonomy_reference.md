@@ -38,7 +38,7 @@ Use **exactly one** `CONC-Layer-*` tag per file.
 | `CONC-Layer-Core` | Optimization orchestration, objectives, lifecycle controllers. | `traigent/core/orchestrator.py`, `traigent/core/optimized_function.py` | C4 Component responsible for domain logic. |
 | `CONC-Layer-Integration` | External adapters, plugins, telemetry bridges. | `traigent/integrations/*` | C4 Components that connect to other systems. |
 | `CONC-Layer-Infra` | Cloud/hybrid plumbing, storage backends, network clients. | `traigent/cloud/backend_client.py`, `traigent/storage/local_storage.py` | Maps to C4 deployment/process views. |
-| `CONC-Layer-Data` | Schemas, TVL specs, dataset loaders, DTOs. | `traigent/tvl/spec_loader.py`, `optigen_schema/*` | Aligns with TOGAF Data domain. |
+| `CONC-Layer-Data` | Schemas, TVL specs, dataset loaders, DTOs. | `traigent/tvl/spec_loader.py`, `traigent_schema/*` | Aligns with TOGAF Data domain. |
 | `CONC-Layer-Tooling` | Scripts, trace analyzers, dev automation. | `docs/traceability/scripts/*`, `tools/traceability/*` | Tracks supporting software not shipped to end users. |
 | ~~`CONC-Layer-CrossCutting`~~ | **DEPRECATED** — Migrate to Infra (plumbing), Core (domain logic), or Data (metadata). See `taxonomy.yaml`. | — | Use decision tree; avoid catch-all buckets. |
 | ~~`CONC-Layer-Test`~~ | **DEPRECATED** — Tests remain untagged by convention. | `tests/*` | Only tag if explicitly approved. |

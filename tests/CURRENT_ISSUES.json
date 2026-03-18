@@ -1,6 +1,6 @@
 [
   {
-    "file": "tests/unit/test_optigen_integration.py",
+    "file": "tests/unit/test_traigent_integration.py",
     "test_name": "test_optimize_saas_invalid_poll_interval",
     "line": 768,
     "issue_type": "IT-NA"
