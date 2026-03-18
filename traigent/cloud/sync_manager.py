@@ -27,6 +27,15 @@ from ..utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def build_experiment_url(base_url: str, experiment_id: str) -> str:
+    """Build the portal URL for an experiment.
+
+    Single source of truth for experiment URL construction —
+    used by both SyncManager and the orchestrator.
+    """
+    return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
+
+
 class SyncManager:
     """
     Manages synchronization of local optimization data to Traigent backend.
@@ -370,8 +379,8 @@ class SyncManager:
                 sync_result["status"] = "error"  # Complete failure
             elif successful_steps == total_steps:
                 sync_result["status"] = "success"
-                sync_result["cloud_url"] = (
-                    f"{self.base_url}/experiments/{traigent_data['experiment']['id']}"
+                sync_result["cloud_url"] = build_experiment_url(
+                    self.base_url, traigent_data["experiment"]["id"]
                 )
             else:
                 sync_result["status"] = "partial"  # Some steps succeeded

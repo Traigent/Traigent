@@ -517,6 +517,9 @@ class OptimizationResult:
             - "condition": Generic stop condition was triggered
             - "error": Optimization failed due to an exception
             - None: Unknown or not set
+        experiment_id: Backend experiment identifier (None if offline/not synced).
+        cloud_url: Direct link to the experiment on the cloud portal (None if offline).
+        run_label: Human-readable run identifier (e.g. answer_question_20260315_143022_a3f1b2).
     """
 
     trials: list[TrialResult]
@@ -538,6 +541,11 @@ class OptimizationResult:
 
     # Stop reason - why the optimization stopped (see class docstring for values)
     stop_reason: StopReason | None = None
+
+    # Run identification and cloud link
+    experiment_id: str | None = None
+    cloud_url: str | None = None
+    run_label: str | None = None
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
