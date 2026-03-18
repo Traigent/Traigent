@@ -72,7 +72,7 @@ def classify(text: str) -> str:
 ## 🧪 Mock Mode & Examples
 
 - `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` (no API keys)
-- Examples Navigator: `python -m http.server -d examples 8000` → http://localhost:8000
+- Examples Navigator: `python -m http.server 8000` → http://localhost:8000/examples/
 
 ## 🛠️ CLI Snippets
 

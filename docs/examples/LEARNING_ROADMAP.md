@@ -39,4 +39,5 @@ export TRAIGENT_MOCK_LLM=true
 ls examples/datasets/<example-name>
 rg "optimize(" examples
 ```
-If something fails: see `TROUBLESHOOTING.md` or rerun with `TRAIGENT_LOG_LEVEL=DEBUG`.
+If something fails: see [Troubleshooting](TROUBLESHOOTING.md) or rerun with
+`TRAIGENT_LOG_LEVEL=DEBUG`.

@@ -54,12 +54,12 @@ ADVANCED_EXAMPLES=(
 )
 
 DOCS_EXAMPLES=(
-    "examples/docs/page-inline/by-goal/accuracy-optimization/simple.py"
-    "examples/docs/page-inline/by-goal/cost-reduction/simple.py"
-    "examples/docs/page-inline/by-goal/reliability-robustness/simple.py"
-    "examples/docs/page-inline/by-goal/speed-latency/simple.py"
-    "examples/docs/page-inline/cookbook-nlp/sentiment/simple.py"
-    "examples/docs/page-inline/cookbook-data/extraction/simple.py"
+    "examples/gallery/page-inline/by-goal/accuracy-optimization/simple.py"
+    "examples/gallery/page-inline/by-goal/cost-reduction/simple.py"
+    "examples/gallery/page-inline/by-goal/reliability-robustness/simple.py"
+    "examples/gallery/page-inline/by-goal/speed-latency/simple.py"
+    "examples/gallery/page-inline/cookbook-nlp/sentiment/simple.py"
+    "examples/gallery/page-inline/cookbook-data/extraction/simple.py"
 )
 
 # Combine all examples

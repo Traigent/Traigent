@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Engineering Tasks - Traigent Examples</title>
-    <link rel="stylesheet" href="/docs/sections/shared-styles.css">
+    <link rel="stylesheet" href="/examples/gallery/sections/shared-styles.css">
     <style>
         /* Mobile-first responsive design */
         * {
@@ -412,7 +412,7 @@
         }
     </style>
     <!-- Results utils for rendering tables -->
-    <script src="/docs/sections/results-utils.js"></script>
+    <script src="/examples/gallery/sections/results-utils.js"></script>
 </head>
 <body>
     <!-- Mobile Menu Toggle -->
@@ -430,14 +430,14 @@
     <!-- Sidebar Navigation -->
     <nav class="sidebar" id="sidebar">
         <div class="logo">
-            <img src="/docs/static/assets/traigent.png" alt="Traigent" style="width: 24px; height: 24px;">
+            <img src="/examples/gallery/static/assets/traigent.png" alt="Traigent" style="width: 24px; height: 24px;">
             <h1>Traigent</h1>
         </div>
 
         <div class="nav-section">
             <div class="nav-title">Navigation</div>
-            <a href="../index.html" class="nav-item">← Back to Examples</a>
-            <a href="/docs/sections/cookbook.html" class="nav-item">Cookbook</a>
+            <a href="../../gallery/index.html" class="nav-item">← Back to Examples</a>
+            <a href="../../../docs/examples/README.md" class="nav-item">Cookbook</a>
         </div>
 
         <div class="nav-section">
@@ -548,7 +548,7 @@
                         <span class="tech-tag">XML Tags</span>
                         <span class="tech-tag">Pydantic</span>
                     </div>
-                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/docs/page-inline/common-tasks/p0-structured-output/run.py')">
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/gallery/page-inline/common-tasks/p0-structured-output/run.py')">
                         <span>▶️</span> Run Example
                     </button>
                     <div class="code-tabs" id="p0-1-tabs">
@@ -595,7 +595,7 @@
                         <span class="tech-tag">HyDE</span>
                         <span class="tech-tag">Reranking</span>
                     </div>
-                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/docs/page-inline/common-tasks/p0-context-engineering/run.py')">
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/gallery/page-inline/common-tasks/p0-context-engineering/run.py')">
                         <span>▶️</span> Run Example
                     </button>
                     <div class="code-tabs" id="p0-2-tabs">
@@ -642,7 +642,7 @@
                         <span class="tech-tag">Curriculum</span>
                         <span class="tech-tag">Contrastive</span>
                     </div>
-                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/docs/page-inline/common-tasks/p0-few-shot-selection/run.py')">
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_LLM=true python examples/gallery/page-inline/common-tasks/p0-few-shot-selection/run.py')">
                         <span>▶️</span> Run Example
                     </button>
                     <div class="code-tabs" id="p0-3-tabs">
@@ -775,7 +775,7 @@
 
         <!-- Navigation Buttons -->
         <div class="nav-buttons">
-            <a href="../index.html" class="nav-button secondary">
+            <a href="../../gallery/index.html" class="nav-button secondary">
                 <span>←</span> Back to Examples
             </a>
             <a href="README.md" class="nav-button">
@@ -853,19 +853,19 @@
         document.addEventListener('DOMContentLoaded', function() {
             const assets = {
                 p01: {
-                    code: '../docs/page-inline/common-tasks/p0-structured-output/structured_output.py',
-                    eval: '../docs/page-inline/common-tasks/p0-structured-output/records.jsonl',
-                    results: '../docs/page-inline/common-tasks/p0-structured-output/results.json'
+                    code: '../gallery/page-inline/common-tasks/p0-structured-output/structured_output.py',
+                    eval: '../gallery/page-inline/common-tasks/p0-structured-output/records.jsonl',
+                    results: '../gallery/page-inline/common-tasks/p0-structured-output/results.json'
                 },
                 p02: {
-                    code: '../docs/page-inline/common-tasks/p0-context-engineering/context_engineering.py',
-                    eval: '../docs/page-inline/common-tasks/p0-context-engineering/qa_context.jsonl',
-                    results: '../docs/page-inline/common-tasks/p0-context-engineering/results.json'
+                    code: '../gallery/page-inline/common-tasks/p0-context-engineering/context_engineering.py',
+                    eval: '../gallery/page-inline/common-tasks/p0-context-engineering/qa_context.jsonl',
+                    results: '../gallery/page-inline/common-tasks/p0-context-engineering/results.json'
                 },
                 p03: {
-                    code: '../docs/page-inline/common-tasks/p0-few-shot-selection/few_shot_selection.py',
-                    eval: '../docs/page-inline/common-tasks/p0-few-shot-selection/few_shot.jsonl',
-                    results: '../docs/page-inline/common-tasks/p0-few-shot-selection/results.json'
+                    code: '../gallery/page-inline/common-tasks/p0-few-shot-selection/few_shot_selection.py',
+                    eval: '../gallery/page-inline/common-tasks/p0-few-shot-selection/few_shot.jsonl',
+                    results: '../gallery/page-inline/common-tasks/p0-few-shot-selection/results.json'
                 }
             };
 

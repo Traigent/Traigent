@@ -1,6 +1,6 @@
 # Traigent SDK Demo Video Guide
 
-This guide explains how to create terminal demo videos showcasing Traigent's LLM agent optimization capabilities. These animated recordings are ideal for GitHub READMEs and documentation. The core demo assets live in `docs/demos/`; TVL-specific scripts live in `demos/scripts/`.
+This guide explains how to create terminal demo videos showcasing Traigent's LLM agent optimization capabilities. These animated recordings are ideal for GitHub READMEs and documentation. The demo assets shipped in this repository live in `docs/demos/`.
 
 ## Overview
 
@@ -416,4 +416,4 @@ chmod +x record-demos.sh scripts/*.sh
 
 ## Reference
 
-See `docs/demos/README.md` for the demo index and `demos/scripts/TVL_VIDEO_SCRIPTS.md` for the TVL-specific videos.
+See `docs/demos/README.md` for the demo index. TVL-specific video scripts are not shipped in this repository.

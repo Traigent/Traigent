@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from traigent.core.exception_handler import VendorErrorCategory
 
 
 def _traigent_excepthook(exc_type, exc_value, exc_tb):
@@ -321,7 +324,7 @@ class VendorPauseError(TraigentError):
         self,
         message: str,
         original_error: Exception | None = None,
-        category: Any = None,
+        category: VendorErrorCategory | None = None,
     ) -> None:
         super().__init__(message)
         self.original_error = original_error

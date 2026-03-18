@@ -2,6 +2,9 @@
 
 What lives in `examples/`, how to run it, and where to start.
 
+The canonical written guides live in `docs/examples/`. The browser gallery and
+inline demo assets live in `examples/gallery/`.
+
 ## Layout (trimmed to what matters)
 ```text
 examples/
@@ -27,8 +30,8 @@ examples/
 |
 |- integrations/           # CI/CD and Bedrock samples
 |- datasets/               # Shared evaluation data
-|- templates/              # Example boilerplates
-`- docs/                   # Guides like this one
+|- gallery/                # Browser gallery and inline demo assets
+`- templates/              # Example boilerplates
 ```
 
 ## Core examples at a glance
@@ -50,6 +53,10 @@ examples/
 ```bash
 # Install from repo root (includes example deps)
 pip install -e ".[examples]"
+
+# Optional: browse the gallery in a browser
+python -m http.server 8000
+# Open http://localhost:8000/examples/
 
 # Mock mode (recommended)
 export TRAIGENT_MOCK_LLM=true
@@ -84,4 +91,5 @@ def summarize(text: str) -> str:
     return f"Summary for: {text} | model={config['model']}"
 ```
 
-Need a deeper map? Check `START_HERE.md` for sequencing or `LEARNING_ROADMAP.md` for a multi-week path.
+Need a deeper map? Check [Start Here](START_HERE.md) for sequencing or
+[Learning Roadmap](LEARNING_ROADMAP.md) for a multi-week path.

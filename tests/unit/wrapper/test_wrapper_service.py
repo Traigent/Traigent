@@ -7,13 +7,19 @@ and all decorator/handler functionality.
 from __future__ import annotations
 
 import time
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.hybrid.protocol import EstimatedTokensPerExample
 from traigent.wrapper.errors import BadRequestError
-from traigent.wrapper.service import ServiceConfig, Session, TraigentService
+from traigent.wrapper.service import (
+    EvaluationContext,
+    ServiceConfig,
+    Session,
+    TraigentService,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +230,17 @@ class TestDecorators:
 
         assert svc._evaluate_handler is score
 
+    def test_evaluate_accepts_optional_context_signature(self) -> None:
+        """Four-argument evaluate handlers should be accepted."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, kwargs, context):
+            return {"accuracy": 1.0}
+
+        assert svc._evaluate_handler is score
+        assert svc._evaluate_handler_arity == 4
+
     def test_evaluate_returns_original_function(self) -> None:
         """Test that @evaluate returns the original function unchanged."""
         svc = TraigentService()
@@ -233,6 +250,29 @@ class TestDecorators:
             return {"accuracy": 1.0}
 
         assert score(None, None, {}) == {"accuracy": 1.0}
+
+    def test_evaluate_rejects_unsupported_signature(self) -> None:
+        """Evaluate handlers must use one of the supported positional shapes."""
+        svc = TraigentService()
+
+        with pytest.raises(
+            ValueError,
+            match=r"evaluate handlers must have signature",
+        ):
+
+            @svc.evaluate
+            def score(output):
+                return {"accuracy": 1.0}
+
+    def test_evaluation_kwargs_registers_handler(self) -> None:
+        """@evaluation_kwargs registers the declaration handler."""
+        svc = TraigentService()
+
+        @svc.evaluation_kwargs
+        def evaluation_kwargs():
+            return [{"name": "strict_mode", "type": "bool", "default": False}]
+
+        assert svc._evaluation_kwargs_handler is evaluation_kwargs
 
     def test_declarative_spec_decorators_register_handlers(self) -> None:
         """Objective/exploration/policy/defaults/measures decorators register."""
@@ -449,6 +489,35 @@ class TestGetConfigSpace:
             "output_tokens": 50,
         }
 
+    def test_config_space_includes_declared_evaluation_kwargs(self) -> None:
+        """Non-empty evaluation kwargs should be exposed in config-space."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {
+                    "name": "strict_mode",
+                    "type": "bool",
+                    "description": "Use the stricter grading rubric",
+                    "default": False,
+                }
+            ]
+        )
+
+        result = svc.get_config_space()
+        assert result["evaluation_kwargs"] == [
+            {
+                "name": "strict_mode",
+                "type": "bool",
+                "description": "Use the stricter grading rubric",
+                "default": False,
+            }
+        ]
+
+    def test_empty_evaluation_kwargs_are_omitted_from_config_space(self) -> None:
+        """An empty declaration should behave like no evaluation-kwargs support."""
+        svc = TraigentService(evaluation_kwargs=[])
+        result = svc.get_config_space()
+        assert "evaluation_kwargs" not in result
+
     def test_config_space_decorator_sections_override_init_values(self) -> None:
         """Decorator-declared sections override constructor-provided values."""
         svc = TraigentService(
@@ -569,6 +638,20 @@ class TestGetCapabilities:
         caps = svc.get_capabilities()
         assert caps["supports_evaluate"] is True
 
+    def test_capabilities_include_evaluation_kwargs_support(self) -> None:
+        """Capabilities should advertise evaluate kwargs only when declared."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "strict_mode", "type": "bool", "default": False}
+            ]
+        )
+
+        caps = svc.get_capabilities()
+        assert caps["supports_evaluation_kwargs"] is True
+
+        no_kwargs = TraigentService(evaluation_kwargs=[]).get_capabilities()
+        assert no_kwargs["supports_evaluation_kwargs"] is False
+
 
 # ---------------------------------------------------------------------------
 # get_health tests
@@ -619,7 +702,6 @@ class TestHandleExecute:
 
         request = {
             "request_id": "req-1",
-            "benchmark_id": "bench_001",
             "config": {"temperature": 0.5},
             "examples": [
                 {"example_id": "i1", "data": {"query": "hello"}},
@@ -646,7 +728,6 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "a1", "data": {}}],
             }
         )
@@ -665,7 +746,6 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "x1", "data": {}}],
             }
         )
@@ -684,7 +764,6 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "e1", "data": {}}],
             }
         )
@@ -703,7 +782,6 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         )
@@ -724,7 +802,6 @@ class TestHandleExecute:
         request = {
             "request_id": "req-idem-1",
             "tunable_id": "default",
-            "benchmark_id": "bench_001",
             "config": {"temperature": 0.2},
             "examples": [{"example_id": "i1", "data": {}}],
         }
@@ -746,7 +823,6 @@ class TestHandleExecute:
         base_request = {
             "request_id": "req-idem-2",
             "tunable_id": "default",
-            "benchmark_id": "bench_001",
             "config": {"temperature": 0.2},
             "examples": [{"example_id": "i1", "data": {}}],
         }
@@ -757,7 +833,6 @@ class TestHandleExecute:
                 {
                     "request_id": "req-idem-2",
                     "tunable_id": "default",
-                    "benchmark_id": "bench_001",
                     "config": {"temperature": 0.7},
                     "examples": [{"example_id": "i1", "data": {}}],
                 }
@@ -779,7 +854,6 @@ class TestHandleExecute:
                 {
                     "request_id": f"req-{i}",
                     "tunable_id": "default",
-                    "benchmark_id": "bench_001",
                     "examples": [{"example_id": f"i{i}", "data": {}}],
                 }
             )
@@ -792,7 +866,6 @@ class TestHandleExecute:
             {
                 "request_id": "req-3",
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i3", "data": {}}],
             }
         )
@@ -819,7 +892,6 @@ class TestHandleExecute:
         request = {
             "request_id": "req-custom",
             "tunable_id": "default",
-            "benchmark_id": "bench_001",
             "config": {"custom_param": CustomObj()},
             "examples": [{"example_id": "i1", "data": {}}],
         }
@@ -843,7 +915,6 @@ class TestHandleExecute:
         resp = await svc.handle_execute(
             {
                 "session_id": sid,
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         )
@@ -862,7 +933,6 @@ class TestHandleExecute:
         resp = await svc.handle_execute(
             {
                 "session_id": "nonexistent",
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         )
@@ -884,7 +954,6 @@ class TestHandleExecute:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [
                     {"example_id": "i1", "data": {}},
                     {"example_id": "i2", "data": {}},
@@ -904,7 +973,7 @@ class TestHandleExecute:
             return {"output": "ok"}
 
         with pytest.raises(ValueError, match="examples must be a non-empty list"):
-            await svc.handle_execute({"benchmark_id": "bench_001", "examples": []})
+            await svc.handle_execute({"examples": []})
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -914,22 +983,18 @@ class TestHandleExecute:
             {"benchmark_id": "", "examples": [{"example_id": "i1", "data": {}}]},
         ],
     )
-    async def test_missing_benchmark_id_raises_structured_error(
+    async def test_missing_benchmark_id_is_ignored(
         self, payload: dict[str, object]
     ) -> None:
-        """Execute requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        """Execute requests should not require benchmark_id anymore."""
         svc = TraigentService()
 
         @svc.execute
         def run(example_id, data, config):
             return {"output": "ok"}
 
-        with pytest.raises(BadRequestError) as exc_info:
-            await svc.handle_execute(payload)
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
-        assert "benchmark_id" in str(exc_info.value)
+        response = await svc.handle_execute(payload)
+        assert response["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_example_without_example_id_gets_uuid(self) -> None:
@@ -940,9 +1005,7 @@ class TestHandleExecute:
         def run(example_id, data, config):
             return {"output": example_id}
 
-        resp = await svc.handle_execute(
-            {"benchmark_id": "bench_001", "examples": [{"data": {"q": "test"}}]}
-        )
+        resp = await svc.handle_execute({"examples": [{"data": {"q": "test"}}]})
         assert len(resp["outputs"][0]["example_id"]) > 0  # UUID generated
 
     @pytest.mark.asyncio
@@ -957,7 +1020,7 @@ class TestHandleExecute:
             return {"output": "ok"}
 
         inp = {"example_id": "i1", "query": "hello"}
-        await svc.handle_execute({"benchmark_id": "bench_001", "examples": [inp]})
+        await svc.handle_execute({"examples": [inp]})
         # When 'data' key is missing, the entire input dict is passed
         assert received_data["data"] == inp
 
@@ -987,7 +1050,6 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate(
             {
                 "request_id": "eval-1",
-                "benchmark_id": "bench_001",
                 "config": {},
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
@@ -1016,11 +1078,210 @@ class TestHandleEvaluate:
 
         resp = await svc.handle_evaluate(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "a1", "output": "x", "target": "y"}],
             }
         )
         assert resp["results"][0]["metrics"]["f1"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_handler_receives_kwargs_and_execution_context(self) -> None:
+        """Evaluate handlers can receive request kwargs plus cached execute context."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "strict_mode", "type": "bool", "default": False}
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.execute
+        def run(example_id, data, config):
+            return {"output": {"response": "ok"}}
+
+        @svc.evaluate
+        def score(output, target, kwargs, context):
+            captured["kwargs"] = kwargs
+            captured["context"] = context
+            return {"accuracy": 1.0}
+
+        execute_response = await svc.handle_execute(
+            {
+                "session_id": "sess-exec",
+                "config": {"model": "gpt-4o"},
+                "examples": [{"example_id": "e1", "data": {"query": "hello"}}],
+            }
+        )
+
+        await svc.handle_evaluate(
+            {
+                "execution_id": execute_response["execution_id"],
+                "session_id": "sess-eval",
+                "kwargs": {"strict_mode": True},
+                "evaluations": [
+                    {
+                        "example_id": "e1",
+                        "output": {"response": "ok"},
+                        "target": {"expected": "ok"},
+                    }
+                ],
+            }
+        )
+
+        assert captured["kwargs"] == {"strict_mode": True}
+        context = captured["context"]
+        assert isinstance(context, EvaluationContext)
+        assert context.execution_id == execute_response["execution_id"]
+        assert context.execution_config == {"model": "gpt-4o"}
+        assert context.execute_session_id == "sess-exec"
+        assert context.evaluate_session_id == "sess-eval"
+        assert context.tunable_id == "default"
+        with pytest.raises(FrozenInstanceError):
+            context.execution_config = {}  # type: ignore[misc]
+
+    @pytest.mark.asyncio
+    async def test_declared_defaults_applied_when_kwargs_omitted(self) -> None:
+        """Declared kwarg defaults should be merged when the request omits them."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "judge_model", "type": "str", "default": "gpt-4.1-mini"},
+                {"name": "strict", "type": "bool", "default": True},
+                {"name": "no_default", "type": "int"},
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            }
+        )
+        assert captured["kwargs"]["judge_model"] == "gpt-4.1-mini"
+        assert captured["kwargs"]["strict"] is True
+        assert "no_default" not in captured["kwargs"]
+
+    @pytest.mark.asyncio
+    async def test_declared_defaults_do_not_override_explicit_kwargs(self) -> None:
+        """Explicit request kwargs take precedence over declared defaults."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "judge_model", "type": "str", "default": "gpt-4.1-mini"},
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "kwargs": {"judge_model": "claude-opus-4-6"},
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            }
+        )
+        assert captured["kwargs"]["judge_model"] == "claude-opus-4-6"
+
+    @pytest.mark.asyncio
+    async def test_unknown_execution_id_logs_warning_and_context_stays_optional(
+        self,
+    ) -> None:
+        """Missing execution context should warn and continue evaluation."""
+        svc = TraigentService()
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs, context):
+            captured["context"] = context
+            return {"accuracy": 1.0}
+
+        with patch("traigent.wrapper.service.logger") as mock_logger:
+            response = await svc.handle_evaluate(
+                {
+                    "execution_id": "missing-exec-id",
+                    "evaluations": [
+                        {"example_id": "e1", "output": "a", "target": "a"},
+                    ],
+                }
+            )
+
+        assert response["status"] == "completed"
+        context = captured["context"]
+        assert isinstance(context, EvaluationContext)
+        assert context.execution_id == "missing-exec-id"
+        assert context.execution_config is None
+        mock_logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field_name", ["kwargs", "config"])
+    async def test_invalid_evaluation_kwargs_raise_bad_request(
+        self, field_name: str
+    ) -> None:
+        """Both kwargs and deprecated config must follow the same validation path."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "strict_mode", "type": "bool", "default": False}
+            ]
+        )
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(BadRequestError) as exc_info:
+            await svc.handle_evaluate(
+                {
+                    field_name: {"unexpected": "value"},
+                    "evaluations": [
+                        {"example_id": "e1", "output": "a", "target": "a"},
+                    ],
+                }
+            )
+
+        assert exc_info.value.error_code == "INVALID_EVALUATION_KWARGS"
+        assert exc_info.value.details == {
+            "invalid_keys": ["unexpected"],
+            "invalid_values": {},
+            "allowed_keys": ["strict_mode"],
+            "allowed_values": {},
+        }
+
+    @pytest.mark.asyncio
+    async def test_deprecated_config_alias_is_forwarded_as_evaluation_kwargs(
+        self,
+    ) -> None:
+        """Deprecated evaluate.config should still feed the handler as kwargs."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "judge_model", "type": "str", "default": "gpt-4.1-mini"}
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            captured["kwargs"] = kwargs
+            return {"accuracy": 1.0}
+
+        response = await svc.handle_evaluate(
+            {
+                "config": {"judge_model": "gpt-4.1"},
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            }
+        )
+
+        assert response["status"] == "completed"
+        assert captured["kwargs"] == {"judge_model": "gpt-4.1"}
 
     @pytest.mark.asyncio
     async def test_non_dict_result_wrapped(self) -> None:
@@ -1033,7 +1294,6 @@ class TestHandleEvaluate:
 
         resp = await svc.handle_evaluate(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "a1", "output": "x", "target": "y"}],
             }
         )
@@ -1050,7 +1310,6 @@ class TestHandleEvaluate:
 
         resp = await svc.handle_evaluate(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "x", "target": "y"}],
             }
         )
@@ -1073,7 +1332,6 @@ class TestHandleEvaluate:
         await svc.handle_evaluate(
             {
                 "session_id": sid,
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
@@ -1088,9 +1346,7 @@ class TestHandleEvaluate:
         def score(output, target, config):
             return {"accuracy": 1.0}
 
-        resp = await svc.handle_evaluate(
-            {"benchmark_id": "bench_001", "evaluations": []}
-        )
+        resp = await svc.handle_evaluate({"evaluations": []})
         assert resp["results"] == []
         assert resp["aggregate_metrics"] == {}
 
@@ -1108,7 +1364,6 @@ class TestHandleEvaluate:
         request = {
             "request_id": "eval-idem-1",
             "tunable_id": "default",
-            "benchmark_id": "bench_001",
             "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
         }
         first = await svc.handle_evaluate(request)
@@ -1130,7 +1385,6 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-idem-2",
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         )
@@ -1140,7 +1394,6 @@ class TestHandleEvaluate:
                 {
                     "request_id": "eval-idem-2",
                     "tunable_id": "default",
-                    "benchmark_id": "bench_001",
                     "evaluations": [{"example_id": "e1", "output": "a", "target": "b"}],
                 }
             )
@@ -1161,7 +1414,6 @@ class TestHandleEvaluate:
                 {
                     "request_id": f"eval-{i}",
                     "tunable_id": "default",
-                    "benchmark_id": "bench_001",
                     "evaluations": [
                         {"example_id": f"e{i}", "output": "a", "target": "a"}
                     ],
@@ -1176,7 +1428,6 @@ class TestHandleEvaluate:
             {
                 "request_id": "eval-3",
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e3", "output": "a", "target": "a"}],
             }
         )
@@ -1337,6 +1588,12 @@ class TestWrapperExports:
 
         assert SC is ServiceConfig
 
+    def test_exports_evaluation_context(self) -> None:
+        """Test that EvaluationContext is exported."""
+        from traigent.wrapper import EvaluationContext as EC
+
+        assert EC is EvaluationContext
+
     def test_exports_session(self) -> None:
         """Test that Session is exported."""
         from traigent.wrapper import Session as S
@@ -1348,6 +1605,7 @@ class TestWrapperExports:
         import traigent.wrapper as wrapper
 
         assert "TraigentService" in wrapper.__all__
+        assert "EvaluationContext" in wrapper.__all__
         assert "ServiceConfig" in wrapper.__all__
         assert "Session" in wrapper.__all__
 
@@ -1472,9 +1730,7 @@ class TestHandleExecuteEdgeCases:
             received["data"] = data
             return {"output": "ok"}
 
-        resp = await svc.handle_execute(
-            {"benchmark_id": "bench_001", "examples": ["raw_string"]}
-        )
+        resp = await svc.handle_execute({"examples": ["raw_string"]})
         assert resp["status"] == "completed"
         assert len(received["example_id"]) > 0  # UUID generated
 
@@ -1494,7 +1750,6 @@ class TestHandleExecuteEdgeCases:
 
         resp = await svc.handle_execute(
             {
-                "benchmark_id": "bench_001",
                 "examples": [
                     {"example_id": "i1", "data": {}},
                     {"example_id": "i2", "data": {}},
@@ -1521,9 +1776,7 @@ class TestHandleEvaluateEdgeCases:
             return {"accuracy": 1.0}
 
         with pytest.raises(ValueError, match="evaluations must be a list"):
-            await svc.handle_evaluate(
-                {"benchmark_id": "bench_001", "evaluations": "not_a_list"}
-            )
+            await svc.handle_evaluate({"evaluations": "not_a_list"})
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1535,29 +1788,24 @@ class TestHandleEvaluateEdgeCases:
                 ]
             },
             {
-                "benchmark_id": "",
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
                 ],
             },
         ],
     )
-    async def test_missing_benchmark_id_raises_structured_error(
+    async def test_missing_benchmark_id_is_ignored(
         self, payload: dict[str, object]
     ) -> None:
-        """Evaluate requests without a usable benchmark_id should raise INVALID_BENCHMARK_ID."""
+        """Evaluate requests should not require benchmark_id anymore."""
         svc = TraigentService()
 
         @svc.evaluate
         def score(output, target, config):
             return {"accuracy": 1.0}
 
-        with pytest.raises(BadRequestError) as exc_info:
-            await svc.handle_evaluate(payload)
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.error_code == "INVALID_BENCHMARK_ID"
-        assert "benchmark_id" in str(exc_info.value)
+        response = await svc.handle_evaluate(payload)
+        assert response["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_evaluation_with_output_id(self) -> None:
@@ -1572,7 +1820,6 @@ class TestHandleEvaluateEdgeCases:
 
         await svc.handle_evaluate(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [
                     {
                         "example_id": "e1",
@@ -1595,7 +1842,6 @@ class TestHandleEvaluateEdgeCases:
 
         resp = await svc.handle_evaluate(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
                 ],
@@ -1604,3 +1850,304 @@ class TestHandleEvaluateEdgeCases:
         agg = resp["aggregate_metrics"]
         assert "accuracy" in agg
         assert "is_valid" not in agg  # Bool excluded
+
+
+# ---------------------------------------------------------------------------
+# _normalize_evaluation_kwarg_definition tests
+# ---------------------------------------------------------------------------
+class TestNormalizeEvaluationKwargDefinition:
+    """Tests for kwarg definition normalization and validation."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def test_accepts_valid_dict(self) -> None:
+        svc = self._make_svc()
+        result = svc._normalize_evaluation_kwarg_definition(
+            {"name": "mode", "type": "str"}
+        )
+        assert result.name == "mode"
+        assert result.type == "str"
+
+    def test_rejects_non_dict_non_definition(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="dicts or EvaluationKwargDefinition"):
+            svc._normalize_evaluation_kwarg_definition("bad")
+
+    def test_rejects_invalid_identifier_name(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="valid Python identifier"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "123bad", "type": "str"}
+            )
+
+    def test_rejects_non_string_description(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        spec = EKD(name="x", type="str", description=123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="description must be a string"):
+            svc._normalize_evaluation_kwarg_definition(spec)
+
+    def test_rejects_non_dict_domain(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        spec = EKD(name="x", type="str", domain="bad")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="domain must be a dict"):
+            svc._normalize_evaluation_kwarg_definition(spec)
+
+    def test_rejects_non_scalar_default(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="default must be a scalar"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "default": [1, 2]}
+            )
+
+    def test_rejects_unknown_domain_keys(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="unsupported keys"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "int", "domain": {"bogus": True}}
+            )
+
+    def test_rejects_empty_domain_values(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="non-empty list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": []}}
+            )
+
+    def test_rejects_non_list_domain_values(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="non-empty list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": "bad"}}
+            )
+
+    def test_rejects_non_scalar_domain_values_entries(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="scalar values"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "str", "domain": {"values": [[1]]}}
+            )
+
+    def test_rejects_bad_range_spec(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="two-item numeric list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"range": [1]}}
+            )
+
+    def test_rejects_bool_in_range(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="two-item numeric list"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"range": [True, False]}}
+            )
+
+    def test_rejects_non_numeric_resolution(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="resolution must be numeric"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"resolution": "bad"}}
+            )
+
+    def test_rejects_bool_resolution(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="resolution must be numeric"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "float", "domain": {"resolution": True}}
+            )
+
+    def test_enum_without_values_raises(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must declare domain.values"):
+            svc._normalize_evaluation_kwarg_definition(
+                {"name": "x", "type": "enum"}
+            )
+
+    def test_valid_range_and_resolution(self) -> None:
+        svc = self._make_svc()
+        result = svc._normalize_evaluation_kwarg_definition(
+            {
+                "name": "temp",
+                "type": "float",
+                "domain": {"range": [0.0, 1.0], "resolution": 0.1},
+            }
+        )
+        assert result.domain == {"range": [0.0, 1.0], "resolution": 0.1}
+
+    def test_default_validated_against_definition(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError):
+            svc._normalize_evaluation_kwarg_definition(
+                {
+                    "name": "temp",
+                    "type": "float",
+                    "domain": {"range": [0.0, 1.0]},
+                    "default": 5.0,
+                }
+            )
+
+
+# ---------------------------------------------------------------------------
+# _validate_evaluation_kwarg_value tests
+# ---------------------------------------------------------------------------
+class TestValidateEvaluationKwargValue:
+    """Tests for individual kwarg value validation."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def _make_def(self, **kwargs):
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        defaults = {"name": "x", "type": "str"}
+        defaults.update(kwargs)
+        return EKD(**defaults)
+
+    def test_bool_type_rejects_int(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be a bool"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="bool"), 1)
+
+    def test_int_type_rejects_bool(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be an int"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="int"), True)
+
+    def test_int_type_rejects_float(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be an int"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="int"), 1.5)
+
+    def test_float_type_rejects_bool(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be numeric"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="float"), True)
+
+    def test_float_type_rejects_string(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be numeric"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="float"), "x")
+
+    def test_str_type_rejects_int(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be a string"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="str"), 42)
+
+    def test_enum_rejects_unlisted_value(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="enum", domain={"values": ["a", "b"]})
+        with pytest.raises(ValueError, match="declared enum values"):
+            svc._validate_evaluation_kwarg_value(defn, "c")
+
+    def test_values_constraint_on_non_enum(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="str", domain={"values": ["a", "b"]})
+        with pytest.raises(ValueError, match="declared values"):
+            svc._validate_evaluation_kwarg_value(defn, "c")
+
+    def test_range_out_of_bounds(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="float", domain={"range": [0.0, 1.0]})
+        with pytest.raises(ValueError, match="within range"):
+            svc._validate_evaluation_kwarg_value(defn, 1.5)
+
+    def test_range_accepts_in_bounds(self) -> None:
+        svc = self._make_svc()
+        defn = self._make_def(type="float", domain={"range": [0.0, 1.0]})
+        svc._validate_evaluation_kwarg_value(defn, 0.5)
+
+    def test_rejects_non_scalar(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(ValueError, match="must be scalar"):
+            svc._validate_evaluation_kwarg_value(self._make_def(type="str"), [1, 2])
+
+
+# ---------------------------------------------------------------------------
+# _validate_effective_evaluation_kwargs tests
+# ---------------------------------------------------------------------------
+class TestValidateEffectiveEvaluationKwargs:
+    """Tests for full kwargs validation against declared definitions."""
+
+    def _make_svc(self) -> TraigentService:
+        return TraigentService()
+
+    def test_empty_kwargs_returns_immediately(self) -> None:
+        svc = self._make_svc()
+        svc._validate_effective_evaluation_kwargs({}, None)
+
+    def test_kwargs_without_declarations_raises(self) -> None:
+        svc = self._make_svc()
+        with pytest.raises(BadRequestError, match="does not accept"):
+            svc._validate_effective_evaluation_kwargs({"x": 1}, None)
+
+    def test_invalid_values_raise_bad_request(self) -> None:
+        from traigent.hybrid.protocol import EvaluationKwargDefinition as EKD
+
+        svc = self._make_svc()
+        declared = [EKD(name="x", type="int")]
+        with pytest.raises(BadRequestError, match="Invalid evaluation kwargs"):
+            svc._validate_effective_evaluation_kwargs({"x": "not_int"}, declared)
+
+
+# ---------------------------------------------------------------------------
+# _is_scalar_value tests
+# ---------------------------------------------------------------------------
+class TestIsScalarValue:
+    """Tests for scalar value detection."""
+
+    def test_str(self) -> None:
+        assert TraigentService._is_scalar_value("hello") is True
+
+    def test_int(self) -> None:
+        assert TraigentService._is_scalar_value(42) is True
+
+    def test_float(self) -> None:
+        assert TraigentService._is_scalar_value(3.14) is True
+
+    def test_bool(self) -> None:
+        assert TraigentService._is_scalar_value(True) is True
+
+    def test_list_rejected(self) -> None:
+        assert TraigentService._is_scalar_value([1]) is False
+
+    def test_dict_rejected(self) -> None:
+        assert TraigentService._is_scalar_value({"a": 1}) is False
+
+    def test_none_rejected(self) -> None:
+        assert TraigentService._is_scalar_value(None) is False
+
+
+# ---------------------------------------------------------------------------
+# _validate_evaluate_signature edge cases
+# ---------------------------------------------------------------------------
+class TestValidateEvaluateSignatureEdgeCases:
+    """Tests for signature validation of evaluate handlers."""
+
+    def test_rejects_var_keyword(self) -> None:
+        svc = TraigentService()
+        with pytest.raises(ValueError):
+
+            @svc.evaluate
+            def score(output, target, **kwargs):
+                return {"accuracy": 1.0}
+
+    def test_rejects_var_positional(self) -> None:
+        svc = TraigentService()
+        with pytest.raises(ValueError):
+
+            @svc.evaluate
+            def score(output, target, *args):
+                return {"accuracy": 1.0}
+
+    def test_accepts_two_arg_handler(self) -> None:
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target):
+            return {"accuracy": 1.0}
+
+        assert svc._evaluate_handler_arity == 2

@@ -100,12 +100,13 @@ def customer_support_agent(query: str) -> str:
     - Temperature setting
     - Number of retrieved documents (k)
     """
-    # Get current config (in real usage, Traigent injects these)
-    k = 3  # Default, will be overridden by Traigent
+    # Read the tuned config injected by Traigent
+    cfg = traigent.get_config()
+    k = cfg.get("k", 3)
 
     # Retrieve relevant documents
     docs = simple_retriever(query, k=k)
-    _context = "\n".join(docs)  # noqa: F841 - prepared for real LangChain usage
+    context = "\n".join(docs)  # noqa: F841 - used in real LangChain path below
 
     # In real usage with LangChain:
     # from langchain_openai import ChatOpenAI
