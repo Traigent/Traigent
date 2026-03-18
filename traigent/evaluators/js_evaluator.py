@@ -199,6 +199,8 @@ class JSEvaluator(BaseEvaluator):
             remaining = getattr_static(sample_lease, "remaining")
         except AttributeError:
             return 0.0
+        if isinstance(remaining, property):
+            return float(cast(Any, sample_lease).remaining)
         if callable(remaining):
             return float(sample_lease.remaining())
         return float(remaining)

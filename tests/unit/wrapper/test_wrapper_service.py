@@ -1138,6 +1138,59 @@ class TestHandleEvaluate:
             context.execution_config = {}  # type: ignore[misc]
 
     @pytest.mark.asyncio
+    async def test_declared_defaults_applied_when_kwargs_omitted(self) -> None:
+        """Declared kwarg defaults should be merged when the request omits them."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "judge_model", "type": "str", "default": "gpt-4.1-mini"},
+                {"name": "strict", "type": "bool", "default": True},
+                {"name": "no_default", "type": "int"},
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            }
+        )
+        assert captured["kwargs"]["judge_model"] == "gpt-4.1-mini"
+        assert captured["kwargs"]["strict"] is True
+        assert "no_default" not in captured["kwargs"]
+
+    @pytest.mark.asyncio
+    async def test_declared_defaults_do_not_override_explicit_kwargs(self) -> None:
+        """Explicit request kwargs take precedence over declared defaults."""
+        svc = TraigentService(
+            evaluation_kwargs=[
+                {"name": "judge_model", "type": "str", "default": "gpt-4.1-mini"},
+            ]
+        )
+        captured: dict[str, object] = {}
+
+        @svc.evaluate
+        def score(output, target, kwargs):
+            captured["kwargs"] = dict(kwargs)
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "kwargs": {"judge_model": "claude-opus-4-6"},
+                "evaluations": [
+                    {"example_id": "e1", "output": "a", "target": "a"},
+                ],
+            }
+        )
+        assert captured["kwargs"]["judge_model"] == "claude-opus-4-6"
+
+    @pytest.mark.asyncio
     async def test_unknown_execution_id_logs_warning_and_context_stays_optional(
         self,
     ) -> None:

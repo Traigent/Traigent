@@ -59,6 +59,17 @@ class TestLeaseHelpers:
         result = JSEvaluator._lease_remaining(FakeLease())
         assert result == 7.0
 
+    def test_lease_remaining_with_real_property(self):
+        """Test remaining as an actual @property descriptor."""
+
+        class FakeLease:
+            @property
+            def remaining(self):
+                return 9
+
+        result = JSEvaluator._lease_remaining(FakeLease())
+        assert result == 9.0
+
     def test_lease_remaining_missing_attribute(self):
         """Test missing remaining attribute returns 0.0."""
 

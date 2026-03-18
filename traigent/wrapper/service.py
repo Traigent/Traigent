@@ -1138,6 +1138,10 @@ class TraigentService:
         self._validate_effective_evaluation_kwargs(
             effective_kwargs, declared_evaluation_kwargs
         )
+        if declared_evaluation_kwargs:
+            for defn in declared_evaluation_kwargs:
+                if defn.default is not None and defn.name not in effective_kwargs:
+                    effective_kwargs[defn.name] = defn.default
         evaluation_context = self._lookup_execution_context(execution_id, session_id)
 
         results: list[dict[str, Any]] = []
