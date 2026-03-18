@@ -680,15 +680,17 @@ class TestPatchLangChainForMetadataCapture:
             assert result is False
 
     @patch("traigent.utils.langchain_interceptor.logger")
-    def test_patch_logs_warning_when_no_models_patched(
+    def test_patch_logs_debug_when_no_models_patched(
         self, mock_logger: MagicMock
     ) -> None:
-        """Test that patch logs warning when no models can be patched."""
+        """Test that patch logs debug when no models can be patched."""
         with patch.dict(
             "sys.modules", {"langchain_anthropic": None, "langchain_openai": None}
         ):
             patch_langchain_for_metadata_capture()
-            mock_logger.warning.assert_called_once()
+            mock_logger.debug.assert_any_call(
+                "No LangChain models could be patched for metadata capture"
+            )
 
     @patch("traigent.utils.langchain_interceptor.logger")
     def test_patch_handles_import_error_gracefully(

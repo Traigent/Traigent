@@ -367,7 +367,8 @@ class TestBackendClientConcurrency:
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="test-key", backend_config=config  # pragma: allowlist secret
+                            api_key="test-key",  # pragma: allowlist secret
+                            backend_config=config,
                         )
                         client.auth = mock_auth_instance
 
@@ -415,7 +416,8 @@ class TestBackendClientConcurrency:
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="fallback-api-key", backend_config=config  # pragma: allowlist secret
+                            api_key="fallback-api-key",  # pragma: allowlist secret
+                            backend_config=config,
                         )
                         client.auth = mock_auth_instance
 

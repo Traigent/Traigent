@@ -162,10 +162,19 @@ release-review-local:  ## Run local v2 release gate and emit canonical verdict
 	@release_id="$${RELEASE_ID:-local-$$(date -u +%Y%m%d_%H%M%S)}"; \
 	version="$${VERSION:-local}"; \
 	base_branch="$${BASE_BRANCH:-main}"; \
+	automation_dir="local/release_review/automation"; \
+	required_scripts="generate_tracking.py release_gate_runner.py build_release_verdict.py"; \
+	for script in $$required_scripts; do \
+		if [ ! -f "$$automation_dir/$$script" ]; then \
+			echo "Error: missing $$automation_dir/$$script"; \
+			echo "Release-review automation is maintainer-local only. Populate local/release_review/automation/ before running this target."; \
+			exit 1; \
+		fi; \
+	done; \
 	echo "Running release review locally (release_id=$$release_id, version=$$version, base_branch=$$base_branch)"; \
-	python3 .release_review/automation/generate_tracking.py --version "$$version" --release-id "$$release_id" --base-branch "$$base_branch" --no-archive; \
-	python3 .release_review/automation/release_gate_runner.py --release-id "$$release_id" --mode local --strict; \
-	python3 .release_review/automation/build_release_verdict.py --release-id "$$release_id"
+	python3 $$automation_dir/generate_tracking.py --version "$$version" --release-id "$$release_id" --base-branch "$$base_branch" --no-archive; \
+	python3 $$automation_dir/release_gate_runner.py --release-id "$$release_id" --mode local --strict; \
+	python3 $$automation_dir/build_release_verdict.py --release-id "$$release_id"
 
 release-build:  ## Build wheel/sdist and validate package metadata
 	$(PYTHON) -m build

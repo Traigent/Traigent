@@ -479,6 +479,6 @@ examples/bazak/
 .release_review/
 .codesync.yml
 MAINTENANCE.md
-tools/
+/tools/
 manual_validation/
 scripts/project_review/

@@ -896,9 +896,18 @@ class TestMultiClientWorkflows:
 
         # Different client configurations
         client_configs = [
-            {"api_key": "tg_client_alpha_" + "a" * 50, "name": "alpha"},  # pragma: allowlist secret
-            {"api_key": "tg_client_beta_" + "b" * 50, "name": "beta"},  # pragma: allowlist secret
-            {"api_key": "tg_client_gamma_" + "c" * 50, "name": "gamma"},  # pragma: allowlist secret
+            {
+                "api_key": "tg_client_alpha_" + "a" * 50,  # pragma: allowlist secret
+                "name": "alpha",
+            },
+            {
+                "api_key": "tg_client_beta_" + "b" * 50,  # pragma: allowlist secret
+                "name": "beta",
+            },
+            {
+                "api_key": "tg_client_gamma_" + "c" * 50,  # pragma: allowlist secret
+                "name": "gamma",
+            },
         ]
 
         client_requests = {}

@@ -1005,9 +1005,7 @@ class TestHandleExecute:
         def run(example_id, data, config):
             return {"output": example_id}
 
-        resp = await svc.handle_execute(
-            {"examples": [{"data": {"q": "test"}}]}
-        )
+        resp = await svc.handle_execute({"examples": [{"data": {"q": "test"}}]})
         assert len(resp["outputs"][0]["example_id"]) > 0  # UUID generated
 
     @pytest.mark.asyncio
@@ -1204,7 +1202,9 @@ class TestHandleEvaluate:
         }
 
     @pytest.mark.asyncio
-    async def test_deprecated_config_alias_is_forwarded_as_evaluation_kwargs(self) -> None:
+    async def test_deprecated_config_alias_is_forwarded_as_evaluation_kwargs(
+        self,
+    ) -> None:
         """Deprecated evaluate.config should still feed the handler as kwargs."""
         svc = TraigentService(
             evaluation_kwargs=[
@@ -1293,9 +1293,7 @@ class TestHandleEvaluate:
         def score(output, target, config):
             return {"accuracy": 1.0}
 
-        resp = await svc.handle_evaluate(
-            {"evaluations": []}
-        )
+        resp = await svc.handle_evaluate({"evaluations": []})
         assert resp["results"] == []
         assert resp["aggregate_metrics"] == {}
 
@@ -1679,9 +1677,7 @@ class TestHandleExecuteEdgeCases:
             received["data"] = data
             return {"output": "ok"}
 
-        resp = await svc.handle_execute(
-            {"examples": ["raw_string"]}
-        )
+        resp = await svc.handle_execute({"examples": ["raw_string"]})
         assert resp["status"] == "completed"
         assert len(received["example_id"]) > 0  # UUID generated
 
@@ -1727,9 +1723,7 @@ class TestHandleEvaluateEdgeCases:
             return {"accuracy": 1.0}
 
         with pytest.raises(ValueError, match="evaluations must be a list"):
-            await svc.handle_evaluate(
-                {"evaluations": "not_a_list"}
-            )
+            await svc.handle_evaluate({"evaluations": "not_a_list"})
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

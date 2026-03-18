@@ -274,14 +274,20 @@ jobs:
       - name: Detect release-review automation
         id: release_review_tools
         run: |
-          if [ -d ".release_review/automation" ]; then
+          if [ \
+            -f "local/release_review/automation/validate_release_review_consistency.py" \
+          ] && [ \
+            -f "local/release_review/automation/generate_tracking.py" \
+          ] && [ \
+            -f "local/release_review/automation/build_release_verdict.py" \
+          ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Skip missing release-review automation
         if: steps.release_review_tools.outputs.available != 'true'
-        run: echo "Release-review automation is not present in this repository; skipping internal consistency gate."
+        run: echo "Release-review automation is maintainer-local only; skipping internal consistency gate."
       - name: Install release-review tooling
         if: steps.release_review_tools.outputs.available == 'true'
         run: |
@@ -310,7 +316,7 @@ jobs:
 
       - name: Validate release-review consistency
         if: steps.release_review_tools.outputs.available == 'true'
-        run: python3 .release_review/automation/validate_release_review_consistency.py
+        run: python3 local/release_review/automation/validate_release_review_consistency.py
 
       - name: Initialize run workspace
         if: steps.release_review_tools.outputs.available == 'true'
@@ -329,7 +335,7 @@ jobs:
             version="manual"
           fi
 
-          python3 .release_review/automation/generate_tracking.py \
+          python3 local/release_review/automation/generate_tracking.py \
             --version "$version" \
             --release-id "$RELEASE_ID" \
             --base-branch main \
@@ -370,7 +376,7 @@ jobs:
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
           if [ "${{ github.ref_type }}" != "tag" ]; then
             set +e
-            python3 .release_review/automation/build_release_verdict.py \
+            python3 local/release_review/automation/build_release_verdict.py \
               --release-id "${{ steps.release_id.outputs.release_id }}" \
               --run-dir "$run_dir" \
               --checks-file "$run_dir/gate_results/check_results.json"
@@ -380,7 +386,7 @@ jobs:
             fi
             exit 0
           else
-            python3 .release_review/automation/build_release_verdict.py \
+            python3 local/release_review/automation/build_release_verdict.py \
               --release-id "${{ steps.release_id.outputs.release_id }}" \
               --run-dir "$run_dir" \
               --checks-file "$run_dir/gate_results/check_results.json" \
