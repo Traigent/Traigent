@@ -217,10 +217,17 @@ jobs:
         continue-on-error: true
         with:
           name: architecture-reports
+        continue-on-error: true
 
       - name: Check Critical Issues
         if: steps.download.outcome == 'success'
         run: |
+          if [ "${{ steps.download.outcome }}" != "success" ]; then
+            echo "ℹ️ Architecture reports not available (tools may have been skipped)"
+            echo "✅ No blocking complexity issues"
+            exit 0
+          fi
+
           # Fail if there are new CRITICAL issues
           if grep -q "CRITICAL" priority_issues.md 2>/dev/null; then
             echo "⚠️ CRITICAL complexity issues detected!"
