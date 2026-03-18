@@ -35,3 +35,11 @@ def test_snapshot_path_accepts_safe_labels(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(verify_example_results, "SNAPSHOTS_DIR", tmp_path)
     path = verify_example_results.snapshot_path("before-run")
     assert path == (tmp_path / "before-run.json").resolve()
+
+
+def test_write_snapshot_json_rejects_paths_outside_snapshot_dir(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(verify_example_results, "SNAPSHOTS_DIR", tmp_path)
+    with pytest.raises(ValueError, match="Invalid snapshot write path"):
+        verify_example_results.write_snapshot_json(tmp_path.parent / "outside.json", {})

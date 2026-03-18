@@ -93,7 +93,13 @@ def snapshot_path(label: str) -> Path:
 
 def write_snapshot_json(path: Path, payload: object) -> None:
     """Write a snapshot payload with stable encoding."""
-    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    base_dir = SNAPSHOTS_DIR.resolve()
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError(f"Invalid snapshot write path: {resolved_path}") from exc
+    resolved_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
 def get_backend_config() -> tuple[str, str]:
