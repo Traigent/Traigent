@@ -2,21 +2,21 @@
 
 .. deprecated:: 2.0.0
     This module is deprecated. Use :mod:`traigent.traigent_client` instead.
-    The ``TraigentClient`` class has been renamed to ``TraigentClient``.
+    The ``OptiGenClient`` class has been renamed to ``TraigentClient``.
 """
 
 import warnings
 
 from traigent.traigent_client import TraigentClient
 
-# Backward compatibility alias
-TraigentClient = TraigentClient
+# Backward compatibility alias (OptiGenClient -> TraigentClient)
+OptiGenClient = TraigentClient
 
 warnings.warn(
-    "traigent.traigent_integration is deprecated. "
-    "Use traigent.traigent_client and TraigentClient instead.",
+    "traigent.traigent_integration is a compatibility shim and is deprecated. "
+    "Import directly from traigent.traigent_client instead.",
     DeprecationWarning,
     stacklevel=2,
 )
 
-__all__ = ["TraigentClient", "TraigentClient"]
+__all__ = ["OptiGenClient", "TraigentClient"]

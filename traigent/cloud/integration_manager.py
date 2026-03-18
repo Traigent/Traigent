@@ -32,7 +32,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
-from .production_mcp_client import get_production_mcp_client
+from .production_mcp_client import default_mcp_server_args, get_production_mcp_client
 from .sessions import SessionLifecycleManager
 
 lifecycle_manager = SessionLifecycleManager()
@@ -139,14 +139,7 @@ class IntegrationManager:
 
             # Initialize MCP client
             if self.config.mcp_server_args is None:
-                self.config.mcp_server_args = [
-                    "-m",
-                    "traigent_backend.mcp.server",
-                    "--host",
-                    "localhost",
-                    "--port",
-                    "5000",
-                ]
+                self.config.mcp_server_args = default_mcp_server_args()
 
             self._mcp_client = get_production_mcp_client(
                 server_path=self.config.mcp_server_path,
