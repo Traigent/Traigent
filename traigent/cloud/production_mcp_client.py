@@ -866,7 +866,7 @@ def get_production_mcp_client(
         if server_args is None:
             server_args = [
                 "-m",
-                "optigen_backend.mcp.server",
+                "traigent_backend.mcp.server",
                 "--host",
                 "localhost",
                 "--port",
