@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Detect Tunable Variables - Traigent Examples</title>
+            <link rel="stylesheet" href="../../gallery/sections/shared-styles.css">
+            <link rel="stylesheet" href="../../gallery/sections/example-detail.css">
+            <script defer src="../../gallery/sections/theme.js"></script>
+        </head>
+        <body>
+            <main class="detail-shell">
+                <nav class="detail-breadcrumb" aria-label="Breadcrumb">
+                    <a href="../../gallery/index.html">Examples</a> <span class="breadcrumb-sep">/</span> <a href="../../gallery/index.html#core">Core</a> <span class="breadcrumb-sep">/</span> <span aria-current="page">Detect Tunable Variables</span>
+                </nav>
+
+                <section class="detail-hero">
+                    <div class="hero-copy">
+                        <div class="hero-kicker">Traigent example</div>
+                        <h1>Detect Tunable Variables</h1>
+                        <p class="hero-summary">Automatically find tunable parameters in your Python functions using static analysis — no API keys or LLM calls required.</p>
+                        <div class="hero-meta">
+                            <span class="meta-chip meta-chip-category">Core example</span>
+                        </div>
+                        <div class="hero-actions">
+                            <a class="hero-button" href="run.py">Open Source</a>
+                            <a class="hero-button secondary" href="../../gallery/index.html#core">Back to Gallery</a>
+
+                        </div>
+                    </div>
+                    <aside class="hero-panel">
+                        <div class="hero-panel-label">Quick Start</div>
+                        <pre class="hero-code"><code># Programmatic API
+python examples/core/detect-tvars/run.py
+
+# CLI — table output
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py
+
+# CLI — JSON output for tooling
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py --json
+
+# CLI — high confidence only
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py --min-confidence high</code></pre>
+                    </aside>
+                </section>
+
+                <div class="detail-layout">
+                    <section class="detail-main">
+                        <section class="detail-section detail-section-intro"><div class="detail-section-body"><p>Automatically find tunable parameters in your Python functions using static analysis — no API keys or LLM calls required.</p></div></section>
+                        <section class="detail-section" id="detect-tvars-what-this-example-shows">
+    <header class="detail-section-header">
+        <h2>What This Example Shows</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li><strong>AST name-matching</strong>: Detects variables named <code>temperature</code>, <code>model</code>, <code>max_tokens</code>, etc.</li><li><strong>Data-flow slicing</strong>: Traces variables that flow into LLM invocations, retrieval queries, or embedding calls — even when they have non-standard names like <code>t</code> or <code>n</code>.</li><li><strong>Constructor tracing</strong>: Follows parameters through <code>ChatOpenAI(temperature=t)</code> constructors.</li><li><strong>Configuration space generation</strong>: Converts detected candidates into a ready-to-use <code>@traigent.optimize</code> config space.</li><li><strong>Seamless decorator setup</strong>: Demonstrates <code>@traigent.optimize(auto_detect_tvars_mode=&quot;apply&quot;)</code> auto-creating <code>configuration_space</code>.</li></ul>
+    </div>
+</section><section class="detail-section" id="detect-tvars-running-the-example">
+                    <header class="detail-section-header">
+                        <h2>Running the Example</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <pre class="detail-code"><code class="language-bash"># Programmatic API
+python examples/core/detect-tvars/run.py
+
+# CLI — table output
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py
+
+# CLI — JSON output for tooling
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py --json
+
+# CLI — high confidence only
+traigent detect-tvars examples/core/detect-tvars/sample_agent.py --min-confidence high</code></pre>
+<p>No API keys or environment variables needed — detection is purely static analysis.</p>
+<p>The demo script now includes an <code>auto_detect_tvars_mode=&quot;apply&quot;</code> example and prints the decorator-generated <code>configuration_space</code>.</p>
+                    </div>
+                </section><section class="detail-section" id="detect-tvars-key-code-patterns">
+                    <header class="detail-section-header">
+                        <h2>Key Code Patterns</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <h3>Programmatic Detection</h3>
+<pre class="detail-code"><code class="language-python">from traigent.tuned_variables import TunedVariableDetector
+
+detector = TunedVariableDetector()
+results = detector.detect_from_file(&quot;my_agent.py&quot;)
+
+for result in results:
+    for candidate in result.high_confidence:
+        print(f&quot;{candidate.name}: {candidate.suggested_range.to_parameter_range_code()}&quot;)</code></pre>
+<h3>From Detection to Optimization</h3>
+<pre class="detail-code"><code class="language-python">result = detector.detect_from_callable(my_agent)
+config_space = result.to_configuration_space()
+
+@traigent.optimize(**config_space, objectives=[&quot;accuracy&quot;, &quot;cost&quot;])
+def my_agent(query: str) -&gt; str:
+    ...</code></pre>
+                    </div>
+                </section><section class="detail-section" id="detect-tvars-sample-agent">
+                    <header class="detail-section-header">
+                        <h2>Sample Agent</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <p><code>sample_agent.py</code> contains three functions demonstrating different detection patterns:</p>
+<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Function</th><th>Pattern</th><th>What&#x27;s Detected</th></tr></thead><tbody><tr><td><code>answer_question</code></td><td>Direct name match</td><td><code>temperature</code>, <code>model_name</code>, <code>max_tokens</code>, <code>k</code>, <code>chunk_size</code></td></tr><tr><td><code>summarize_document</code></td><td>Constructor tracing</td><td><code>t</code> (flows to ChatOpenAI temperature), <code>n</code> (flows to max_tokens)</td></tr><tr><td><code>multi_step_agent</code></td><td>Transitive chains</td><td><code>base_temp</code> (2 hops), <code>adjusted_temp</code> (1 hop), <code>model</code></td></tr></tbody></table></div>
+                    </div>
+                </section><section class="detail-section" id="detect-tvars-output-interpretation">
+                    <header class="detail-section-header">
+                        <h2>Output Interpretation</h2>
+                    </header>
+                    <div class="detail-section-body">
+                        <p>Each candidate includes:</p>
+<ul class="detail-list"><li><strong>Confidence</strong>: HIGH (direct match or 0-1 hops), MEDIUM (fuzzy match or 2-3 hops), LOW (weak signal)</li><li><strong>Detection source</strong>: <code>ast</code> (name matching), <code>dataflow</code> (program slicing), or <code>combined</code> (both strategies agree)</li><li><strong>Suggested range</strong>: A <code>ParameterRange</code> constructor you can copy into your <code>@traigent.optimize</code> decorator</li></ul>
+                    </div>
+                </section><section class="detail-section" id="detect-tvars-learn-more">
+    <header class="detail-section-header">
+        <h2>Learn More</h2>
+    </header>
+    <div class="detail-section-body">
+        <ul class="detail-list"><li><span class="repo-ref">Tuned Variables Guide</span></li><li><span class="repo-ref">Data-Flow Detection (technical)</span></li></ul>
+    </div>
+</section>
+                        <section class="detail-section detail-section-source">
+    <header class="detail-section-header">
+        <h2>Optimization Target</h2>
+        <p>Preview the decorated function that Traigent tunes when this example runs.</p>
+    </header>
+    <div class="detail-section-body">
+        <div data-optimize-source="run.py" data-optimize-height="360"></div>
+    </div>
+</section>
+                    </section>
+
+                    <aside class="detail-rail">
+                        <section class="rail-card">
+                            <h2>Datasets</h2>
+                            <ul class="rail-list">
+                                <li>No bundled dataset</li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Project Files</h2>
+                            <ul class="rail-list">
+                                <li><a href="run.py">run.py</a></li>
+                            </ul>
+                        </section>
+                        <section class="rail-card">
+                            <h2>Related Docs</h2>
+                            <ul class="rail-list">
+                                <li><span class="repo-ref">Examples Guide</span></li>
+                            </ul>
+                        </section>
+                        <section class="tour-card">
+    <h2>Example Tour</h2>
+    <p>This page remains available for direct links, but the active tour starts from the gallery.</p>
+    <a class="tour-link" href="../../gallery/index.html#core">Open Core Gallery</a>
+</section>
+                    </aside>
+                </div>
+
+                <footer class="detail-footer">
+                    <p>Built from <code>README.md</code> and <code>examples/catalog.yaml</code> so the gallery stays in sync with runnable code.</p>
+                </footer>
+            </main>
+            <script type="module" src="../../gallery/static/js/example-viewer.js"></script>
+        </body>
+        </html>

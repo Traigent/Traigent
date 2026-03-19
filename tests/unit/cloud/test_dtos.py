@@ -1,6 +1,6 @@
 """Comprehensive tests for traigent.cloud.dtos module.
 
-Tests cover all Data Transfer Objects (DTOs) for OptiGen Backend Integration
+Tests cover all Data Transfer Objects (DTOs) for Traigent Backend Integration
 with focus on schema compliance, serialization, and edge cases.
 """
 

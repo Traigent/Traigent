@@ -422,7 +422,6 @@ class TestMCPTransportExecute:
 
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[{"example_id": "1", "data": {}}],
         )
@@ -470,7 +469,6 @@ class TestMCPTransportEvaluate:
 
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[{"example_id": "1", "output": {}, "target": {}}],
         )
         response = await transport.evaluate(request)
@@ -490,7 +488,6 @@ class TestMCPTransportEvaluate:
 
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[],
         )
 

@@ -386,9 +386,9 @@ class TestServiceError:
 
     def test_create_with_service_name(self):
         """Test ServiceError with service name."""
-        error = ServiceError("Failed", service_name="OptiGen Backend")
+        error = ServiceError("Failed", service_name="Traigent Backend")
 
-        assert error.service_name == "OptiGen Backend"
+        assert error.service_name == "Traigent Backend"
 
     def test_create_with_endpoint(self):
         """Test ServiceError with endpoint."""

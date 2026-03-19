@@ -46,7 +46,7 @@ def test_dtos():
     print(f"     - model_parameters_id: {exp.model_parameters_id}")
     print(f"   - Metadata: {exp.metadata}")
 
-    # Validate (optional) - skip if optigen_schemas not installed
+    # Validate (optional) - skip if traigent_schemas not installed
     # Set non-strict mode to avoid exceptions when validator unavailable
     os.environ.setdefault("TRAIGENT_STRICT_VALIDATION", "false")
     if hasattr(exp, "validate"):

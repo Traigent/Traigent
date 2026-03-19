@@ -5,6 +5,7 @@
   title: "RAG Optimization"
   summary: "Optimize a simple sentiment workflow with optional RAG context."
   run: "core/rag-optimization/run.py"
+  order: 1
   difficulty: beginner
   est_time: "5 min"
   tags: ["sentiment", "RAG", "intro"]
@@ -17,11 +18,29 @@
       href: "../../docs/getting-started/GETTING_STARTED.md"
     - label: "Installation & Setup"
       href: "../../docs/getting-started/installation.md"
+- slug: simple-prompt
+  category: core
+  title: "Simple Prompt Optimization"
+  summary: "Start with the smallest Traigent example: tune model, temperature, and prompt style in mock mode."
+  run: "core/simple-prompt/run.py"
+  order: 0
+  difficulty: beginner
+  est_time: "3 min"
+  tags: ["quickstart", "summarization", "intro"]
+  datasets:
+    - "datasets/simple-prompt/evaluation_set.jsonl"
+  docs: "../core/simple-prompt/index.html"
+  docs_sections:
+    - label: "Examples Start Here"
+      href: "../../docs/examples/START_HERE.md"
+    - label: "Installation & Setup"
+      href: "../../docs/getting-started/installation.md"
 - slug: few-shot-classification
   category: core
   title: "Few-Shot Classification"
   summary: "Author guidance prompts for label classification with local evaluation."
   run: "core/few-shot-classification/run.py"
+  order: 2
   difficulty: beginner
   est_time: "8 min"
   tags: ["classification", "prompting"]
@@ -35,23 +54,25 @@
 - slug: multi-objective-tradeoff
   category: core
   title: "Multi-Objective Trade-off"
-  summary: "Compare accuracy, latency, and cost across providers using Optuna searches."
-  run: "core/multi-objective-tradeoff/run_openai_optuna.py"
+  summary: "Compare accuracy, latency, and cost across providers with a user-friendly multi-objective starter run."
+  run: "core/multi-objective-tradeoff/run_openai.py"
+  order: 10
   difficulty: intermediate
   est_time: "15 min"
-  tags: ["optuna", "multi-objective"]
+  tags: ["cost", "multi-objective"]
   datasets:
     - "datasets/multi-objective-tradeoff/evaluation_set.jsonl"
     - "datasets/multi-objective-tradeoff/evaluation_set_100_examples.jsonl"
   docs: "../core/multi-objective-tradeoff/index.html"
   docs_sections:
-    - label: "Optuna Integration Plan"
-      href: "../../docs/plans/optuna_integration_plan.md"
+    - label: "Optuna Integration"
+      href: "../../docs/user-guide/optuna_integration.md"
 - slug: token-budget-summarization
   category: core
   title: "Token Budget Summarization"
   summary: "Enforce strict context budgets while producing consistent summaries."
   run: "core/token-budget-summarization/run.py"
+  order: 7
   difficulty: intermediate
   est_time: "12 min"
   tags: ["summarization", "cost-control"]
@@ -59,13 +80,14 @@
     - "datasets/token-budget-summarization/evaluation_set.jsonl"
   docs: "../core/token-budget-summarization/index.html"
   docs_sections:
-    - label: "TVL Unification Design"
-      href: "../../docs/planned_features/TVL_UNIFICATION_DESIGN_V2.md"
+    - label: "TVL Constraint Expressions"
+      href: "../../docs/tvl/CONSTRAINT_EXPRESSIONS.md"
 - slug: structured-output-json
   category: core
   title: "Structured Output JSON"
   summary: "Generate JSON responses and validate output schemas in evaluation."
   run: "core/structured-output-json/run.py"
+  order: 3
   difficulty: beginner
   est_time: "10 min"
   tags: ["json", "validation"]
@@ -73,13 +95,14 @@
     - "datasets/structured-output-json/evaluation_set.jsonl"
   docs: "../core/structured-output-json/index.html"
   docs_sections:
-    - label: "Code Review Implementation"
-      href: "../../docs/plans/completed/code_review_implementation.md"
+    - label: "Code Review Playbook"
+      href: "../../docs/contributing/code_review_instructions.md"
 - slug: tool-use-calculator
   category: core
   title: "Tool Use Calculator"
   summary: "Demonstrate LangChain tool calling to perform deterministic calculations."
   run: "core/tool-use-calculator/run.py"
+  order: 4
   difficulty: beginner
   est_time: "10 min"
   tags: ["tool-use", "langchain"]
@@ -94,6 +117,7 @@
   title: "Prompt Style Optimization"
   summary: "Iteratively tune prompt tone and guidance to meet qualitative targets."
   run: "core/prompt-style-optimization/run.py"
+  order: 5
   difficulty: intermediate
   est_time: "12 min"
   tags: ["prompting", "qualitative"]
@@ -101,13 +125,14 @@
     - "datasets/prompt-style-optimization/evaluation_set.jsonl"
   docs: "../core/prompt-style-optimization/index.html"
   docs_sections:
-    - label: "Design Cleanup Plan"
-      href: "../../reports/3_documentation_cleanup/DOCUMENTATION_CLEANUP_PLAN_V2.md"
+    - label: "Evaluation Guide"
+      href: "../../docs/guides/evaluation.md"
 - slug: chunking-long-context
   category: core
   title: "Chunking Long Context"
   summary: "Chunk large knowledge bases and stitch responses for long-form prompts."
   run: "core/chunking-long-context/run.py"
+  order: 8
   difficulty: intermediate
   est_time: "15 min"
   tags: ["RAG", "chunking"]
@@ -116,13 +141,14 @@
     - "datasets/chunking-long-context/evaluation_set.jsonl"
   docs: "../core/chunking-long-context/index.html"
   docs_sections:
-    - label: "Local Mode Safeguards"
-      href: "../../docs/plans/completed/local_mode_safeguards_final.md"
+    - label: "Evaluation Guide"
+      href: "../../docs/guides/evaluation.md"
 - slug: safety-guardrails
   category: core
   title: "Safety Guardrails"
   summary: "Configure moderation filters and automated safety scoring."
   run: "core/safety-guardrails/run.py"
+  order: 9
   difficulty: intermediate
   est_time: "12 min"
   tags: ["safety", "moderation"]
@@ -130,24 +156,23 @@
     - "datasets/safety-guardrails/evaluation_set.jsonl"
   docs: "../core/safety-guardrails/index.html"
   docs_sections:
-    - label: "API Key Rotation Assessment"
-      href: "../../reports/3_security/assessments/API_KEY_ROTATION_RECORD.md"
+    - label: "Security Guide"
+      href: "../../docs/contributing/SECURITY.md"
 - slug: prompt-ab-test
   category: core
   title: "Prompt A/B Test"
   summary: "Compare prompt variants with built-in statistical analysis."
   run: "core/prompt-ab-test/run.py"
+  order: 6
   difficulty: intermediate
   est_time: "10 min"
   tags: ["experimentation", "prompting"]
   datasets:
     - "datasets/prompt-ab-test/evaluation_set.jsonl"
-    - "datasets/prompt-ab-test/prompt_a.txt"
-    - "datasets/prompt-ab-test/prompt_b.txt"
   docs: "../core/prompt-ab-test/index.html"
   docs_sections:
-    - label: "Backend Fixes Summary"
-      href: "../../reports/2_development/current/backend_fixes_summary.md"
+    - label: "Testing Guide"
+      href: "../../docs/getting-started/testing.md"
 - slug: ai-engineering-tasks
   category: advanced
   title: "AI Engineering Task Library"
@@ -157,27 +182,39 @@
   est_time: "30+ min"
   tags: ["playbook", "engineering"]
   docs_sections:
-    - label: "Navigation Analysis"
-      href: "../../reports/2_development/problems/EXAMPLES_NAVIGATION_ANALYSIS.md"
+    - label: "Examples Guide"
+      href: "../../docs/examples/README.md"
 - slug: ragas-playgrounds
   category: advanced
+  dir: ragas
   title: "RAG Evaluation Playgrounds"
   summary: "Experiment with RAGAS scoring configurations across deterministic, column-mapped, and LLM-backed pipelines."
-  docs: "../advanced/ragas/README.md"
   difficulty: advanced
   est_time: "25 min"
   tags: ["RAG", "evaluation"]
   docs_sections:
-    - label: "RAG Evaluation Notes"
-      href: "../../reports/1_quality/quality_reports/pylance_issues_analysis.md"
+    - label: "Evaluation Guide"
+      href: "../../docs/guides/evaluation.md"
+- slug: deepeval-optimization
+  category: integrations
+  dir: deepeval
+  title: "DeepEval Integration"
+  summary: "Use DeepEval evaluation metrics (relevancy, faithfulness, etc.) as Traigent optimization objectives."
+  run: "integrations/deepeval/run.py"
+  difficulty: intermediate
+  est_time: "10 min"
+  tags: ["deepeval", "evaluation", "metrics"]
+  datasets:
+    - "datasets/deepeval/evaluation_set.jsonl"
 - slug: ci-cd-quality-gates
   category: integrations
+  dir: ci-cd
   title: "CI/CD Quality Gates"
   summary: "Run Traigent evaluations in CI pipelines with automatic regression checks and approval workflows."
-  docs: "../integrations/ci-cd/README.md"
+  docs: "../integrations/ci-cd/index.html"
   difficulty: advanced
   est_time: "20 min"
   tags: ["CI", "automation"]
   docs_sections:
     - label: "Traigent CI Gates"
-      href: "../../.github/workflows/traigent-ci-gates.yml"
+      href: "../integrations/ci-cd/index.html"

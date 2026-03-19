@@ -462,7 +462,7 @@ class TestLazyImportModules:
             "traigent.agents.specification_generator",
             "traigent.agents.platforms",
             "traigent.optimizers.interactive_optimizer",
-            "traigent.optigen_integration",
+            "traigent.traigent_integration",
         ],
     )
     def test_module_imports_without_cloud(self, module_path: str):
@@ -721,14 +721,14 @@ class TestFeatureNotAvailableErrorGuards:
         from traigent.utils.exceptions import FeatureNotAvailableError
 
         error = FeatureNotAvailableError(
-            "OptiGen cloud integration",
+            "Traigent cloud integration",
             plugin_name="traigent-cloud",
             install_hint="pip install traigent[cloud]",
         )
 
         message = str(error)
         # Should contain the feature name
-        assert "OptiGen cloud integration" in message
+        assert "Traigent cloud integration" in message
         # Should contain install instructions
         assert "pip install" in message
 

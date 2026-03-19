@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Amdocs Demo: AI Quality at Scale with Traigent
+Reusable Safety Demo: AI Quality at Scale with Traigent
 
 This script demonstrates:
 1. Policy inheritance (base_safety.yml → agent specs)
@@ -1472,7 +1472,7 @@ async def submit_to_backend(
                 configuration_space=config_space,
                 objectives=["maximize"],
                 dataset_metadata={
-                    "type": "amdocs_demo",
+                    "type": "safety_demo",
                     "spec_path": result.spec_path,
                     "base_spec": result.base_spec,
                 },
@@ -1624,10 +1624,10 @@ async def run_backend_submission(
 
 
 def main() -> None:
-    """Run the Amdocs demo."""
+    """Run the reusable safety demo."""
     global REAL_LLM_MODE, PARALLEL_WORKERS
 
-    parser = argparse.ArgumentParser(description="Traigent Demo for Amdocs")
+    parser = argparse.ArgumentParser(description="Traigent Reusable Safety Demo")
     parser.add_argument(
         "--no-interactive",
         "-n",
@@ -1848,7 +1848,7 @@ def main() -> None:
                 f"     • Support Agent: {Colors.CYAN}{support_experiment_id}{Colors.END}"
             )
     else:
-        experiment_id = f"amdocs-demo-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        experiment_id = f"safety-demo-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         print(
             f"\n  📊 View results: {Colors.CYAN}https://app.traigent.ai/experiments/{experiment_id}{Colors.END}"
         )

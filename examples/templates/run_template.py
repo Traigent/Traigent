@@ -149,7 +149,7 @@ def _has_key_for_integration(name: str) -> bool:
 
 
 def _dummy_function(question: str, **cfg: Any) -> str:
-    # Deterministic mapping to known answers from the hello_world dataset
+    # Deterministic mapping to known answers from the rag_optimization dataset
     # Uses config to vary behavior for demo purposes
     answers = [
         "Artificial Intelligence",

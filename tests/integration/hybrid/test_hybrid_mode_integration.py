@@ -116,7 +116,6 @@ class TestHybridModeExecution:
         """Test executing a single example."""
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate", "temperature": 0.3},
             examples=[{"example_id": "ex_1", "data": {"query": "test question"}}],
         )
@@ -145,7 +144,6 @@ class TestHybridModeExecution:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "balanced"},
             examples=inputs,
         )
@@ -168,7 +166,6 @@ class TestHybridModeExecution:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[{"example_id": "ex_1", "data": {}}],
             session_id=session_id,
@@ -190,7 +187,6 @@ class TestHybridModeExecution:
         # Fast model - lower cost
         request_fast = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=inputs,
         )
@@ -202,7 +198,6 @@ class TestHybridModeExecution:
         # Accurate model - higher cost
         request_accurate = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate"},
             examples=inputs,
         )
@@ -233,7 +228,6 @@ class TestHybridModeEvaluation:
         """Test evaluating outputs against targets."""
         request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -263,7 +257,6 @@ class TestHybridModeEvaluation:
         # Phase 1: Execute
         exec_request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate", "temperature": 0.2},
             examples=[
                 {"example_id": "ex_1", "data": {"query": "What is 2+2?"}},
@@ -286,7 +279,6 @@ class TestHybridModeEvaluation:
 
         eval_request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             execution_id=exec_response.execution_id,
             evaluations=evaluations,
         )
@@ -345,7 +337,6 @@ class TestHybridModeLifecycle:
         # Execute a request to register session on server
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={},
             examples=[{"example_id": "ex_1", "data": {}}],
             session_id=session_id,
@@ -403,7 +394,6 @@ class TestHybridModeCostControl:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "balanced"},  # 1x cost multiplier
             examples=inputs,
         )
@@ -427,7 +417,6 @@ class TestHybridModeCostControl:
 
             request = HybridExecuteRequest(
                 tunable_id="mock_test_agent",
-                benchmark_id="bench_001",
                 config={"model": "balanced"},
                 examples=inputs,
             )
@@ -445,7 +434,6 @@ class TestHybridModeCostControl:
         """Test extracting per-example costs from response."""
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate"},  # 2x cost
             examples=[
                 {"example_id": "ex_1", "data": {}},
@@ -482,7 +470,6 @@ class TestHybridModeBatchControl:
         for i in range(3):
             request = HybridExecuteRequest(
                 tunable_id="mock_test_agent",
-                benchmark_id="bench_001",
                 config={"model": "fast"},
                 examples=[{"example_id": f"ex_{i}", "data": {}}],
             )
@@ -500,7 +487,6 @@ class TestHybridModeBatchControl:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=inputs,
         )
@@ -523,7 +509,6 @@ class TestHybridModeErrorHandling:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={},
             examples=[{"example_id": "ex_1", "data": {}}],
         )
@@ -541,7 +526,6 @@ class TestHybridModeErrorHandling:
 
         request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             evaluations=[{"example_id": "ex_1", "output": {}, "target": {}}],
         )
 
@@ -637,7 +621,6 @@ class TestHybridModePrivacyPreserving:
         # Request with only example_ids, no data
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate", "temperature": 0.3},
             examples=[
                 {"example_id": "ex_1"},  # No data field
@@ -663,7 +646,6 @@ class TestHybridModePrivacyPreserving:
         """Test that privacy mode returns output_id instead of output content."""
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[{"example_id": "ex_1", "data": {"query": "test"}}],
             session_id="session_123",
@@ -705,7 +687,6 @@ class TestHybridModePrivacyPreserving:
         # Request with only IDs, no content
         request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -742,7 +723,6 @@ class TestHybridModePrivacyPreserving:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "balanced"},
             examples=[{"example_id": "ex_1", "data": {"query": "test question"}}],
         )
@@ -772,7 +752,6 @@ class TestHybridModePrivacyPreserving:
 
         request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -810,7 +789,6 @@ class TestHybridModePrivacyPreserving:
         # Phase 1: Execute with only example_ids
         exec_request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate", "temperature": 0.2},
             examples=[
                 {"example_id": "ex_1"},
@@ -831,7 +809,6 @@ class TestHybridModePrivacyPreserving:
         # Phase 2: Evaluate with output_ids and target_ids
         eval_request = HybridEvaluateRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             execution_id=exec_response.execution_id,
             evaluations=[
                 {
@@ -867,7 +844,6 @@ class TestHybridModePrivacyPreserving:
 
         request = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate"},  # 2x cost
             examples=[
                 {"example_id": "ex_1"},
@@ -892,7 +868,6 @@ class TestHybridModePrivacyPreserving:
         # Same example_id but different sessions
         request1 = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[{"example_id": "shared_input", "data": {"query": "test"}}],
             session_id="session_A",
@@ -900,7 +875,6 @@ class TestHybridModePrivacyPreserving:
 
         request2 = HybridExecuteRequest(
             tunable_id="mock_test_agent",
-            benchmark_id="bench_001",
             config={"model": "accurate"},
             examples=[{"example_id": "shared_input", "data": {"query": "test"}}],
             session_id="session_B",

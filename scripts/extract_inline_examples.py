@@ -4,7 +4,7 @@ Extract inline code examples from an HTML documentation page and write them
 into a structured folder hierarchy with optional eval dataset stubs.
 
 Output structure (per example):
-examples/docs/page-inline/<page-id>/<section-id>/<example-id>/
+examples/gallery/page-inline/<page-id>/<section-id>/<example-id>/
   - <example-id>.py (code)
   - eval/<dataset_name>.jsonl (if referenced)
   - README.txt (short metadata)
@@ -299,7 +299,7 @@ def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
     lang = ex["language"] or "text"
     code = ex["code"]
 
-    # Build folder: examples/docs/page-inline/<page-id>/<section>
+    # Build folder: examples/gallery/page-inline/<page-id>/<section>
     folder = validate_path(base_out / page_id / section, base_out)
     ensure_dir(folder)
 
@@ -398,7 +398,7 @@ def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
 def main() -> int:
     if len(sys.argv) < 3:
         print(
-            "Usage: python scripts/extract_inline_examples.py <html_path> <page_id> [<out_base>=examples/docs/page-inline]",
+            "Usage: python scripts/extract_inline_examples.py <html_path> <page_id> [<out_base>=examples/gallery/page-inline]",
             file=sys.stderr,
         )
         return 2
@@ -406,7 +406,7 @@ def main() -> int:
     html_path = sys.argv[1]
     page_id = sys.argv[2]
     out_base = (
-        sys.argv[3] if len(sys.argv) > 3 else os.path.join("examples", "docs/page-inline")
+        sys.argv[3] if len(sys.argv) > 3 else os.path.join("examples", "gallery/page-inline")
     )
 
     base_dir = Path.cwd()

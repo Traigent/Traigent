@@ -209,6 +209,7 @@ class TestHybridAPIEvaluatorInit:
             keep_alive=True,
             heartbeat_interval=15.0,
             timeout=120.0,
+            evaluation_kwargs={"judge_model": "gpt-4.1-mini"},
             auth_header="Bearer tok",
         )
         assert ev._api_endpoint == "http://example.com"
@@ -220,6 +221,7 @@ class TestHybridAPIEvaluatorInit:
         assert ev._keep_alive_enabled is True
         assert ev._heartbeat_interval == 15.0
         assert ev._timeout == 120.0
+        assert ev._evaluation_kwargs == {"judge_model": "gpt-4.1-mini"}
         assert ev._auth_header == "Bearer tok"
 
     def test_init_batch_size_minimum_clamp(self) -> None:
@@ -1157,7 +1159,35 @@ class TestExecuteBatch:
         assert results[0].metrics == {"accuracy": 0.8}
         mock_transport.evaluate.assert_awaited_once()
         eval_request = mock_transport.evaluate.await_args.args[0]
-        assert eval_request.config == {"model": "gpt-4"}
+        assert eval_request.kwargs is None
+        assert eval_request.config is None
+
+    @pytest.mark.asyncio
+    async def test_two_phase_mode_forwards_static_evaluation_kwargs(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Static evaluator kwargs should be forwarded to /evaluate."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+            evaluation_kwargs={"judge_model": "gpt-4.1-mini"},
+        )
+        exec_response = _make_execute_response(
+            outputs=[{"example_id": "ex_0", "output": "out0"}],
+            quality_metrics=None,
+        )
+        mock_transport.execute = AsyncMock(return_value=exec_response)
+        mock_transport.evaluate = AsyncMock(return_value=_make_evaluate_response())
+        caps = _default_capabilities(supports_evaluate=True)
+
+        dataset = _make_dataset([{"input_data": {"q": "?"}, "expected_output": "a"}])
+        batch = list(dataset)
+
+        await ev._execute_batch(mock_transport, caps, {"model": "gpt-4"}, batch)
+
+        eval_request = mock_transport.evaluate.await_args.args[0]
+        assert eval_request.kwargs == {"judge_model": "gpt-4.1-mini"}
 
     @pytest.mark.asyncio
     async def test_execute_only_mode(self, mock_transport: MagicMock) -> None:
@@ -1355,7 +1385,8 @@ class TestEvaluateOutputs:
         assert results[1].metrics == {"accuracy": 0.5}
         assert results[0].cost_usd == pytest.approx(0.02)  # 0.04 / 2
         eval_request = mock_transport.evaluate.await_args.args[0]
-        assert eval_request.config == config
+        assert eval_request.kwargs is None
+        assert eval_request.config is None
 
     @pytest.mark.asyncio
     async def test_evaluate_outputs_fallback_on_error(
@@ -1443,13 +1474,13 @@ class TestEvaluateOutputs:
 
         eval_request = mock_transport.evaluate.await_args.args[0]
         assert eval_request.timeout_ms == 12500
-        assert eval_request.config == {"judge_model": "gpt-4"}
+        assert eval_request.kwargs is None
 
     @pytest.mark.asyncio
     async def test_evaluate_outputs_preserves_empty_config_dict(
         self, mock_transport: MagicMock
     ) -> None:
-        """Empty config should be forwarded as {} rather than omitted."""
+        """Empty trial config should not leak into /evaluate kwargs."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
             tunable_id="cap",
@@ -1468,7 +1499,8 @@ class TestEvaluateOutputs:
         await ev._evaluate_outputs(mock_transport, {}, batch, inputs, exec_response)
 
         eval_request = mock_transport.evaluate.await_args.args[0]
-        assert eval_request.config == {}
+        assert eval_request.kwargs is None
+        assert eval_request.config is None
 
 
 # ---------------------------------------------------------------------------

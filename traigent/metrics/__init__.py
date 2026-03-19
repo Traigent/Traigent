@@ -9,6 +9,7 @@ _REGISTRY_MODULE = "traigent.metrics.registry"
 _METRIC_REGISTRY_MODULE = "traigent.core.metric_registry"
 _RAGAS_METRICS_MODULE = "traigent.metrics.ragas_metrics"
 
+_DEEPEVAL_METRICS_MODULE = "traigent.metrics.deepeval_metrics"
 _AGENT_METRICS_MODULE = "traigent.metrics.agent_metrics"
 _CONTENT_FEATURES_MODULE = "traigent.metrics.content_features"
 
@@ -44,6 +45,11 @@ _LAZY_IMPORTS = {
     "extract_namespaced_config_for_agent": _AGENT_METRICS_MODULE,
     "validate_agent_id": _AGENT_METRICS_MODULE,
     "validate_agent_metrics": _AGENT_METRICS_MODULE,
+    # From deepeval_metrics
+    "DeepEvalScorer": _DEEPEVAL_METRICS_MODULE,
+    "DEEPEVAL_AVAILABLE": _DEEPEVAL_METRICS_MODULE,
+    "DEEPEVAL_IMPORT_ERROR": _DEEPEVAL_METRICS_MODULE,
+    "DEEPEVAL_METRIC_SHORTCUTS": _DEEPEVAL_METRICS_MODULE,
     # From content_features
     "SimhashFeatureExtractor": _CONTENT_FEATURES_MODULE,
 }
@@ -93,6 +99,11 @@ __all__ = [
     "extract_namespaced_config_for_agent",
     "validate_agent_id",
     "validate_agent_metrics",
+    # DeepEval
+    "DeepEvalScorer",
+    "DEEPEVAL_AVAILABLE",
+    "DEEPEVAL_IMPORT_ERROR",
+    "DEEPEVAL_METRIC_SHORTCUTS",
     # Content features
     "SimhashFeatureExtractor",
 ]

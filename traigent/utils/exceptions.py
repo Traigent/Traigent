@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from traigent.core.exception_handler import VendorErrorCategory
 
 
 def _traigent_excepthook(exc_type, exc_value, exc_tb):
@@ -304,6 +307,28 @@ class CostLimitExceeded(TraigentError):
         super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
         self.accumulated = accumulated
         self.limit = limit
+
+
+class VendorPauseError(TraigentError):
+    """Raised when a vendor error is classified as pause-worthy.
+
+    Re-raised from TrialLifecycle._execute_trial_with_tracing to signal the
+    orchestrator that the user should be prompted before continuing.
+
+    Attributes:
+        original_error: The underlying vendor exception.
+        category: The VendorErrorCategory enum value (or None).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        original_error: Exception | None = None,
+        category: VendorErrorCategory | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.original_error = original_error
+        self.category = category
 
 
 class NetworkError(RetryableError):

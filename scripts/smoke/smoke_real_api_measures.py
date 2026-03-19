@@ -9,7 +9,7 @@ This script:
 Env vars you can set:
 - OPENAI_API_KEY: API key for OpenAI (required for real metrics)
 - TRAIGENT_API_URL: Backend base URL if not default (optional)
-- DB_URL: Postgres URL (e.g., postgresql://user:pass@host:5432/optigen)
+- DB_URL: Postgres URL (e.g., postgresql://user:pass@host:5432/traigent)
 
 Usage:
   python scripts/smoke/smoke_real_api_measures.py
@@ -106,7 +106,7 @@ async def _run_optimization():
 
 async def _query_db():
     db_url = os.environ.get(
-        "DB_URL", "postgresql://localhost:5432/optigen"
+        "DB_URL", "postgresql://localhost:5432/traigent"
     )
     if not _ensure_asyncpg():
         print("asyncpg not installed; attempting psql fallback...")

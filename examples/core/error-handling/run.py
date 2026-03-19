@@ -170,7 +170,7 @@ async def demo_budget_exceeded():
 
     try:
         # Use budget_limit with budget_metric="examples_attempted" to cap samples.
-        # The orchestrator maps "budget" -> "cost_limit" internally (orchestrator.py:2034).
+        # The orchestrator maps "budget" to the internal cost_limit parameter.
         result = await explain_concept.optimize(
             max_trials=20,
             budget_limit=2,
@@ -221,8 +221,8 @@ async def demo_preflight_validation():
 
     # Check for required environment variables
     required_vars = {
-        "OPENAI_API_KEY": "Required for OpenAI models",
-        "ANTHROPIC_API_KEY": "Required for Anthropic models",
+        "OPENAI_API_KEY": "Required for OpenAI models",  # pragma: allowlist secret
+        "ANTHROPIC_API_KEY": "Required for Anthropic models",  # pragma: allowlist secret
     }
 
     missing = []
