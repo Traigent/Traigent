@@ -41,9 +41,9 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
-        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.3),
-        ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
-        ObjectiveDefinition("latency", orientation="minimize", weight=0.5),
+        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
+        ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
+        ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
     ]
 )
 CONFIG_SPACE = {
@@ -51,9 +51,6 @@ CONFIG_SPACE = {
         "gpt-3.5-turbo",
         "gpt-4o-mini",
         "gpt-4o",
-        "gpt-5.2",
-        "gpt-5-nano",
-        "gpt-5.1",
     ],
     "prompt": ["v1", "v2"],
     "temperature": [0.0, 0.3],
@@ -114,7 +111,7 @@ def ai_agent_classify_text_sentiment(text: str) -> str:
 async def main() -> None:
     print("Traigent Example 4: Multi-Objective Optimization")
     print("=" * 50)
-    print("Balancing accuracy (30%), cost (20%), latency (50%).")
+    print("Balancing accuracy (50%), cost (30%), latency (20%).")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],

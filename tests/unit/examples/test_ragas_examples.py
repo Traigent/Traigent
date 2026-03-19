@@ -27,7 +27,7 @@ def test_ragas_basics_dataset_has_required_fields() -> None:
         assert "reference_contexts" in row
 
 
-def test_ragas_with_llm_dataset_has_reference_field() -> None:
+def test_ragas_with_llm_dataset_has_required_fields() -> None:
     path = Path("examples/advanced/ragas/with_llm/evaluation_set.jsonl")
     if not path.exists():
         pytest.skip(
@@ -36,7 +36,8 @@ def test_ragas_with_llm_dataset_has_reference_field() -> None:
     rows = _load_jsonl(path)
     assert len(rows) >= 2
     for row in rows:
-        assert "reference" in row
+        assert "input" in row and "question" in row["input"]
+        assert "output" in row
         assert "retrieved_contexts" in row
         assert "reference_contexts" in row
 
@@ -48,10 +49,12 @@ def test_ragas_column_map_dataset_matches_custom_keys() -> None:
             "Example dataset not generated yet (run examples/advanced/ragas/column_map/run.py)"
         )
     rows = _load_jsonl(path)
-    assert len(rows) == 1
-    row = rows[0]
-    assert "gold_contexts" in row
-    assert "reference_answer" in row
+    assert len(rows) >= 2
+    for row in rows:
+        assert "input" in row and "prompt" in row["input"]
+        assert "output" in row
+        assert "gold_contexts" in row
+        assert "reference_answer" in row
 
 
 def test_ragas_examples_skip_when_metrics_missing() -> None:

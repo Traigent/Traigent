@@ -407,6 +407,12 @@ tests/manual/
 tmp/
 walkthrough/myfiles.md
 scripts/smoke/run_local_real_openrouter_quick_smoke.sh
+.traigent_validation_results/
+.validation_results/
+results-ci/
+REPO_AUDIT.md
+docs/tvl/specification.pdf
+docs/tvl/tvl-website/client/public/docs/specification.pdf
 
 # Presentations (internal/sensitive)
 presentations/
@@ -477,6 +483,6 @@ examples/bazak/
 .release_review/
 .codesync.yml
 MAINTENANCE.md
-tools/
+/tools/
 manual_validation/
 scripts/project_review/

@@ -59,6 +59,8 @@ def _run_tests_safely(test_paths: list, test_name: str, timeout: int = 300):
             "pytest",
             *[str(p) for p in existing_paths],
             "-q",  # Quiet output (less terminal spam)
+            "-o",
+            "addopts=",
             "--tb=short",  # Short tracebacks on failure
             "-x",  # Stop on first failure
         ],
@@ -184,6 +186,8 @@ def test_js_tests_discoverable():
             *[str(p) for p in existing_paths],
             "--collect-only",  # Only collect, don't run
             "-q",
+            "-o",
+            "addopts=",
         ],
         capture_output=True,
         text=True,

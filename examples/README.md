@@ -7,8 +7,8 @@ This directory contains professional, production-ready examples demonstrating th
 Browse all examples visually with the web-based gallery:
 
 ```bash
-python -m http.server -d examples 8000
-# Open http://localhost:8000/index.html
+python -m http.server 8000
+# Open http://localhost:8000/examples/
 ```
 
 The gallery provides:
@@ -27,11 +27,12 @@ The gallery provides:
 | **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
 | **`datasets/`** | Shared evaluation datasets and test data | 9+ datasets |
-| **`docs/`** | Comprehensive documentation, guides, and tutorials | Multiple guides |
+| **`gallery/`** | Browser-friendly example gallery and inline demo assets | Gallery site |
 | **`templates/`** | Boilerplate templates for creating new examples | 2 templates |
 | **`utils/`** | Reusable utility modules shared across examples | Shared utilities |
 | **`tvl/`** | TVL (Traigent Variable Language) specification examples | TVL specs |
-| **`archive/`** | Historical artifacts and legacy examples for reference | Archive |
+
+Canonical example guides now live under [`docs/examples/`](../docs/examples/README.md).
 
 ## ⚡ Quickstart Examples (Start Here!)
 
@@ -317,11 +318,11 @@ Follow these best practices when contributing new examples:
 
 ## 📚 Documentation
 
-- **[START_HERE.md](docs/START_HERE.md)** - Quick navigation guide
-- **[EXAMPLES_GUIDE.md](docs/EXAMPLES_GUIDE.md)** - Comprehensive walkthrough
-- **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command reference
-- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[API_PATTERNS.md](docs/API_PATTERNS.md)** - API usage patterns
+- **[Examples Guide](../docs/examples/README.md)** - Comprehensive walkthrough
+- **[Start Here](../docs/examples/START_HERE.md)** - Quick navigation guide
+- **[Quick Reference](../docs/examples/QUICK_REFERENCE.md)** - Command reference
+- **[Troubleshooting](../docs/examples/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[API Patterns](../docs/examples/API_PATTERNS.md)** - API usage patterns
 
 ## 💡 Tips for Success
 
@@ -357,7 +358,7 @@ Follow these best practices when contributing new examples:
 | `Example doesn't run` | Check example's inline comments for prerequisites |
 | `0.0% accuracy` | Use mock mode or provide valid API keys |
 
-For more help, see [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) or open an issue.
+For more help, see [Troubleshooting](../docs/examples/TROUBLESHOOTING.md) or open an issue.
 
 ## 🤝 Contributing
 
@@ -387,4 +388,4 @@ export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 
-Questions? Check [docs/START_HERE.md](docs/START_HERE.md) for a quick navigation guide!
+Questions? Check [Start Here](../docs/examples/START_HERE.md) for a quick navigation guide!

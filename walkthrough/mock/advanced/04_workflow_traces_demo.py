@@ -4,6 +4,11 @@
 Demonstrates the new workflow traces integration for multi-agent visualization.
 This example simulates a LangGraph-like workflow and sends traces to the backend.
 
+NOTE: This demo requires a running Traigent backend for full functionality
+(sending graph/spans to the backend). The simulation and graph-building logic
+runs without a backend, but actual ingestion calls will fail gracefully if
+no backend is reachable.
+
 Run with: python 04_workflow_traces_demo.py
 
 Uses TRAIGENT_BACKEND_URL from .env (or defaults to http://localhost:5000)
@@ -13,8 +18,14 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-# Load .env file from project root
-from dotenv import load_dotenv
+# Load .env file from project root (python-dotenv is optional)
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional convenience import
+
+    def load_dotenv() -> bool:
+        return False
+
 
 load_dotenv()  # Loads .env from current directory or parent directories
 
@@ -226,6 +237,9 @@ def simulate_workflow_execution(
 
 def main() -> None:
     """Run the workflow traces demo."""
+    # Enable mock LLM mode by default so the demo runs without API keys
+    os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+
     print("Traigent Advanced: Workflow Traces Demo")
     print("=" * 50)
 
@@ -242,10 +256,11 @@ def main() -> None:
         timeout=30.0,
     )
 
-    # Use existing experiment ID (can be overridden via env var)
-    # You can find experiment IDs via: curl -H "X-API-Key: $TRAIGENT_API_KEY" http://localhost:5000/api/v1/experiments
+    # Use experiment ID from env var or generate a placeholder UUID
+    # To use a real experiment, set DEMO_EXPERIMENT_ID to an ID from your backend:
+    #   curl -H "X-API-Key: $TRAIGENT_API_KEY" http://localhost:5000/api/v1/experiments
     experiment_id = os.environ.get(
-        "DEMO_EXPERIMENT_ID", "405e9344666be9eb9b6624b9c5e3d226"
+        "DEMO_EXPERIMENT_ID", uuid.uuid4().hex
     )
     run_id = f"demo-run-{uuid.uuid4().hex[:8]}"
 

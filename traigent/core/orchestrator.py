@@ -1878,35 +1878,6 @@ class OptimizationOrchestrator:
 
         return remaining, remaining_samples, None
 
-    async def _dispatch_trial(
-        self,
-        func: Callable[..., Any],
-        dataset: Dataset,
-        session_id: str | None,
-        function_identifier: str | None,
-        trial_count: int,
-        remaining: float,
-        remaining_samples: float | None,
-    ) -> tuple[int, str]:
-        """Dispatch a single iteration (parallel or sequential)."""
-        if self.parallel_trials > 1:
-            return await self._run_parallel_batch(
-                func=func,
-                dataset=dataset,
-                session_id=session_id,
-                function_name=function_identifier,
-                trial_count=trial_count,
-                remaining=remaining,
-                remaining_samples=remaining_samples,
-            )
-        return await self._trial_lifecycle.run_sequential_trial(
-            func=func,
-            dataset=dataset,
-            session_id=session_id,
-            function_name=function_identifier,
-            trial_count=trial_count,
-        )
-
     async def _maybe_pause_on_cost_limit(self) -> bool:
         """If stopped for cost_limit, prompt user to raise budget.
 
@@ -1920,7 +1891,7 @@ class OptimizationOrchestrator:
             return True
         return False
 
-    def _apply_budget_stop(self, budget_stop: str | None) -> bool:
+    def _apply_budget_stop(self, budget_stop: StopReason | None) -> bool:
         """Record a budget stop reason and return True if the loop should break."""
         if not budget_stop:
             return False
@@ -2000,7 +1971,7 @@ class OptimizationOrchestrator:
         function_identifier: str | None,
         trial_count: int,
         remaining: float,
-        remaining_samples: float,
+        remaining_samples: float | None,
     ) -> tuple[int, str]:
         """Run a single trial iteration (sequential or parallel) with vendor pause.
 
@@ -2038,7 +2009,7 @@ class OptimizationOrchestrator:
         Returns:
             ``"continue"`` to retry the trial, ``"break"`` to stop.
         """
-        if self._prompt_adapter is None:
+        if self._prompt_adapter is None or exc.category is None:
             return "break"
         decision = await asyncio.to_thread(
             self._prompt_adapter.prompt_vendor_pause,

@@ -305,7 +305,6 @@ class TestHTTPTransportMethods:
         ):
             request = HybridExecuteRequest(
                 tunable_id="test_agent",
-                benchmark_id="bench_001",
                 config={"model": "fast"},
                 examples=[{"example_id": "1", "data": {}}],
             )
@@ -731,7 +730,6 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
-                benchmark_id="bench_001",
                 evaluations=[{"example_id": "1", "output": {}, "target": {}}],
             )
             response = await transport.evaluate(request)
@@ -754,7 +752,6 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
-                benchmark_id="bench_001",
                 evaluations=[],
             )
             with pytest.raises(NotImplementedError):
@@ -798,7 +795,6 @@ class TestHTTPTransportAdditionalMethods:
         with patch.object(transport, "_request", mock_request):
             request = HybridExecuteRequest(
                 tunable_id="test_agent",
-                benchmark_id="bench_001",
                 config={},
                 examples=[],
                 timeout_ms=60000,  # 60 seconds
@@ -834,7 +830,6 @@ class TestHTTPTransportAdditionalMethods:
         ):
             request = HybridEvaluateRequest(
                 tunable_id="test_agent",
-                benchmark_id="bench_001",
                 evaluations=[{"example_id": "1", "output": {}, "target": {}}],
                 timeout_ms=45000,
             )

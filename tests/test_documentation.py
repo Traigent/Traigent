@@ -265,7 +265,7 @@ class TestDocumentationConsistency(unittest.TestCase):
                             "spider_eval",
                             "baselines",
                             "examples/advanced/ai-engineering-tasks",  # Template-heavy gallery
-                            "examples/docs",  # Generated documentation snippets
+                            "examples/gallery",  # Gallery snippets and generated example assets
                             "examples/templates",  # Authoring templates
                         ]
                         problematic_files = [

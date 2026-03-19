@@ -165,6 +165,10 @@ class ExecutionOptions(BaseModel):
             Default is "runTrial".
         js_timeout: Timeout for JS trial execution in seconds.
             Default is 300 (5 minutes).
+        js_use_npx: Whether to invoke the JS bridge runner via `npx traigent-js`.
+            Disable this when providing an explicit local runner path.
+        js_runner_path: Explicit path to the `traigent-js` CLI runner script.
+        js_node_executable: Node.js executable to use for explicit runner paths.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -184,6 +188,9 @@ class ExecutionOptions(BaseModel):
     js_function: str = "runTrial"
     js_timeout: float = 300.0
     js_parallel_workers: int = 1
+    js_use_npx: bool = True
+    js_runner_path: str | None = None
+    js_node_executable: str = "node"
     # Hybrid API options
     hybrid_api_endpoint: str | None = None
     tunable_id: str | None = None
@@ -898,6 +905,9 @@ class JSRuntimeConfig:
     js_function: str = "runTrial"
     js_timeout: float = 300.0
     js_parallel_workers: int = 1
+    js_use_npx: bool = True
+    js_runner_path: str | None = None
+    js_node_executable: str = "node"
 
     @property
     def is_js_runtime(self) -> bool:
@@ -972,6 +982,9 @@ def _resolve_execution_bundle_options(
             js_function=execution_bundle.js_function,
             js_timeout=execution_bundle.js_timeout,
             js_parallel_workers=execution_bundle.js_parallel_workers,
+            js_use_npx=execution_bundle.js_use_npx,
+            js_runner_path=execution_bundle.js_runner_path,
+            js_node_executable=execution_bundle.js_node_executable,
         )
     elif execution_bundle.runtime not in ("python", "node"):
         raise ValueError(
