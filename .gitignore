@@ -338,7 +338,11 @@ sonar-project.local.properties
 
 # Traigent generated results and caches
 **/.traigent_results/
+**/.traigent_validation_results/
+**/.validation_results/
+**/results-ci/
 **/.config/mlflow/
+REPO_AUDIT.md
 
 # Generated example/template files
 traigent_example.py
