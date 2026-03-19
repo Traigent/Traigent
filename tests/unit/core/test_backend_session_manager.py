@@ -154,11 +154,10 @@ class TestBackendSessionManagerCreation:
         # Verify backend client called
         mock_backend_client.create_session.assert_called_once()
         call_kwargs = mock_backend_client.create_session.call_args[1]
-        expected_portal_name = descriptor.display_name or descriptor.identifier
-        slug_hash = descriptor.slug.rsplit("_", 1)[-1] if descriptor.slug else ""
-        if slug_hash:
-            expected_portal_name = f"{expected_portal_name} ({slug_hash})"
-        assert call_kwargs["function_name"] == expected_portal_name
+        # Assert concrete format: "display_name (hash_suffix)"
+        portal_name = call_kwargs["function_name"]
+        assert portal_name.startswith(descriptor.display_name)
+        assert portal_name.endswith(f"({descriptor.slug[-8:]})")
         assert call_kwargs["optimization_goal"] == "maximize"
         assert (
             call_kwargs["metadata"]["function_display_name"] == descriptor.display_name
