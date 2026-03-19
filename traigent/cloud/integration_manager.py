@@ -139,9 +139,16 @@ class IntegrationManager:
 
             # Initialize MCP client
             if self.config.mcp_server_args is None:
+                # Prefer traigent_backend; fall back to optigen_backend during rename transition
+                import importlib.util
+                _backend_module = (
+                    "traigent_backend.mcp.server"
+                    if importlib.util.find_spec("traigent_backend") is not None
+                    else "optigen_backend.mcp.server"
+                )
                 self.config.mcp_server_args = [
                     "-m",
-                    "traigent_backend.mcp.server",
+                    _backend_module,
                     "--host",
                     "localhost",
                     "--port",
