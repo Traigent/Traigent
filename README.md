@@ -140,7 +140,7 @@ Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compar
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
-3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`
+3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`  <!-- pragma: allowlist secret -->
 4. **Run** — results appear in the portal automatically
 
 <details>
