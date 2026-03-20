@@ -11,7 +11,7 @@ no backend is reachable.
 
 Run with: python 04_workflow_traces_demo.py
 
-Uses TRAIGENT_BACKEND_URL from .env (or defaults to http://localhost:5000)
+Uses TRAIGENT_BACKEND_URL from .env (or defaults to the configured cloud backend)
 """
 
 import os
@@ -28,6 +28,8 @@ except ImportError:  # pragma: no cover - optional convenience import
 
 
 load_dotenv()  # Loads .env from current directory or parent directories
+
+from traigent.config.backend_config import BackendConfig
 
 # Import workflow traces components
 from traigent.integrations.observability.workflow_traces import (
@@ -244,7 +246,10 @@ def main() -> None:
     print("=" * 50)
 
     # Get backend URL and auth token (uses same env vars as rest of SDK)
-    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    backend_url = (
+        os.environ.get("TRAIGENT_BACKEND_URL")
+        or BackendConfig.get_cloud_backend_url()
+    )
     auth_token = os.environ.get("TRAIGENT_API_KEY")
     print(f"\nBackend URL: {backend_url}")
     print(f"Auth token: {'set' if auth_token else 'NOT SET (will fail with 401)'}")
@@ -258,7 +263,7 @@ def main() -> None:
 
     # Use experiment ID from env var or generate a placeholder UUID
     # To use a real experiment, set DEMO_EXPERIMENT_ID to an ID from your backend:
-    #   curl -H "X-API-Key: $TRAIGENT_API_KEY" http://localhost:5000/api/v1/experiments
+    #   curl -H "X-API-Key: $TRAIGENT_API_KEY" https://portal.traigent.ai/api/v1/experiments
     experiment_id = os.environ.get(
         "DEMO_EXPERIMENT_ID", uuid.uuid4().hex
     )

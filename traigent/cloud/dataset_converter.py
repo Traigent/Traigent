@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from traigent.config.backend_config import DEFAULT_CLOUD_URL
+
 # Optional dependency for HTTP client
 try:
     import aiohttp
@@ -76,14 +78,16 @@ class ExampleSetMetadata:
 class DatasetConverter:
     """Converter between SDK datasets and backend example sets."""
 
-    def __init__(self, backend_base_url: str = "http://localhost:5000") -> None:
+    def __init__(self, backend_base_url: str | None = None) -> None:
         """Initialize dataset converter.
 
         Args:
-            backend_base_url: Backend API base URL. Must use http(s) scheme without
-                embedded credentials, query parameters, or fragments.
+            backend_base_url: Backend API base URL. Defaults to the configured
+                cloud backend. Must use http(s) scheme without embedded
+                credentials, query parameters, or fragments.
         """
-        self.backend_base_url = self._validate_backend_base_url(backend_base_url)
+        resolved_backend_url = backend_base_url or DEFAULT_CLOUD_URL
+        self.backend_base_url = self._validate_backend_base_url(resolved_backend_url)
         self._session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self):

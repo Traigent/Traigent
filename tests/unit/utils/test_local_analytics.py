@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from traigent.api.types import OptimizationStatus
+from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.local_analytics import (
@@ -96,6 +97,7 @@ class TestLocalAnalyticsInitialization:
         analytics = LocalAnalytics(config)
 
         assert analytics.analytics_endpoint == DEFAULT_ANALYTICS_ENDPOINT
+        assert analytics.analytics_endpoint == f"{DEFAULT_CLOUD_URL}/v1/local-usage"
 
     def test_initialization_with_provided_user_id(self, temp_storage_path: str) -> None:
         """Test initialization uses provided anonymous user ID."""
@@ -454,7 +456,7 @@ class TestCollectUsageStats:
                 total_trials=10,
                 completed_trials=10,
                 metadata={
-                    "api_key": "secret-key-123",
+                    "api_key": "secret-key-123",  # pragma: allowlist secret
                     "user_email": "user@example.com",
                 },
             ),

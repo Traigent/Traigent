@@ -439,6 +439,71 @@ class TestOptimizedFunctionIntegration:
 
         assert isinstance(func3, OptimizedFunction)
 
+        # Inline example dicts
+        inline_examples = [
+            {"input": {"question": "What is 2+2?"}, "expected": "4"},
+            {"input": {"question": "Capital of France?"}, "expected": "Paris"},
+        ]
+
+        @optimize(eval_dataset=inline_examples, configuration_space={"x": [1, 2, 3]})
+        def func4(x):
+            return x
+
+        assert isinstance(func4, OptimizedFunction)
+        assert func4.eval_dataset == inline_examples
+
+    def test_evaluation_bundle_accepts_inline_examples(self):
+        """Evaluation bundle should accept inline datasets in both supported forms."""
+        from traigent.api.decorators import EvaluationOptions
+
+        inline_examples = [
+            {"input": {"question": "What is 2+2?"}, "expected": "4"},
+            {"input_data": {"question": "Capital of France?"}, "expected_output": "Paris"},
+        ]
+
+        @optimize(
+            evaluation={"eval_dataset": inline_examples},
+            configuration_space={"x": [1, 2, 3]},
+        )
+        def func_dict_bundle(x):
+            return x
+
+        @optimize(
+            evaluation=EvaluationOptions(eval_dataset=inline_examples),
+            configuration_space={"x": [1, 2, 3]},
+        )
+        def func_model_bundle(x):
+            return x
+
+        assert isinstance(func_dict_bundle, OptimizedFunction)
+        assert isinstance(func_model_bundle, OptimizedFunction)
+        assert func_dict_bundle.eval_dataset == inline_examples
+        assert func_model_bundle.eval_dataset == inline_examples
+
+    def test_mock_and_legacy_parameter_variations(self):
+        """Grouped mock options and legacy bridge inputs should decorate cleanly."""
+        from traigent.api.decorators import LegacyOptimizeArgs, MockModeOptions
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            mock=MockModeOptions(enabled=True, override_evaluator=False),
+            legacy=LegacyOptimizeArgs(objectives=["accuracy"]),
+        )
+        def func_with_models(x):
+            return x
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            legacy={"objectives": ["accuracy"], "algorithm": "grid"},
+        )
+        def func_with_legacy_dict(x):
+            return x
+
+        assert isinstance(func_with_models, OptimizedFunction)
+        assert isinstance(func_with_legacy_dict, OptimizedFunction)
+        assert func_with_models.mock_mode_config["override_evaluator"] is False
+        assert func_with_legacy_dict.algorithm == "grid"
+
     def test_injection_modes(self):
         """Test different injection modes."""
 

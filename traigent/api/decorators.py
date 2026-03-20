@@ -80,7 +80,7 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import OptimizedFunction
-from traigent.evaluators.base import Dataset
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
@@ -95,7 +95,9 @@ class EvaluationOptions(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    eval_dataset: str | list[str] | Dataset | None = None
+    eval_dataset: (
+        str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+    ) = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
@@ -418,7 +420,9 @@ def get_optimize_default(parameter_name: str) -> Any:
 class LegacyOptimizeArgs:
     """Container for legacy optimize() arguments."""
 
-    eval_dataset: str | list[str] | Dataset | None = None
+    eval_dataset: (
+        str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+    ) = None
     objectives: list[str] | ObjectiveSchema | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
@@ -1670,8 +1674,9 @@ def optimize(  # NOSONAR(S107)
             evaluation: Grouped evaluation settings (EvaluationOptions or dict). Use
                 this bundle to supply datasets and evaluators together. When present
                 it replaces the individual arguments historically passed directly.
-            eval_dataset: Dataset input accepted as a JSONL path, list of paths, or
-                Dataset instance with ``input`` and ``expected_output`` columns.
+            eval_dataset: Dataset input accepted as a JSONL path, list of paths,
+                inline example dicts, or a Dataset instance with ``input`` and
+                ``expected_output`` columns.
             custom_evaluator: Callback ``(func, config, example) -> ExampleResult``.
             scoring_function: Evaluator ``(output, expected, llm_metrics)``.
             metric_functions: Mapping of metric name to evaluator functions.
