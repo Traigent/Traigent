@@ -9,7 +9,7 @@ Usage:
     >>> from traigent.analytics import ExampleInsightsClient
     >>>
     >>> # Initialize client (requires backend authentication)
-    >>> client = ExampleInsightsClient(backend_url="http://localhost:5000")
+    >>> client = ExampleInsightsClient(backend_url="https://portal.traigent.ai")
     >>>
     >>> # Trigger scoring computation (async job)
     >>> job_result = await client.compute_scores(experiment_run_id="run_123")

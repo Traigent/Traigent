@@ -61,7 +61,12 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationExample,
+    load_inline_dataset,
+)
 from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
@@ -199,7 +204,9 @@ class OptimizedFunction:
     def __init__(
         self,
         func: Callable[..., Any],
-        eval_dataset: str | list[str] | Dataset | None = None,
+        eval_dataset: (
+            str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+        ) = None,
         objectives: list[str] | ObjectiveSchema | None = None,
         configuration_space: dict[str, Any] | None = None,
         config_space: dict[str, Any] | None = None,  # Backward compatibility
@@ -221,7 +228,7 @@ class OptimizedFunction:
 
         Args:
             func: Original function to optimize
-            eval_dataset: Evaluation dataset path(s) or Dataset object
+            eval_dataset: Evaluation dataset path(s), inline examples, or Dataset object
             objectives: List of objectives to optimize or ObjectiveSchema
             configuration_space: Parameter search space
             default_config: Default configuration values
@@ -784,16 +791,31 @@ class OptimizedFunction:
 
     def _validate_dataset(self) -> None:
         """Validate dataset configuration."""
-        if isinstance(self.eval_dataset, (str, list)):
+        if isinstance(self.eval_dataset, str):
             # Skip dataset validation in tests when the file doesn't exist
             if not (
                 os.environ.get("PYTEST_CURRENT_TEST")
-                or (
-                    isinstance(self.eval_dataset, str)
-                    and self.eval_dataset in ["test.jsonl", "data.jsonl"]
-                )
+                or self.eval_dataset in ["test.jsonl", "data.jsonl"]
             ):
                 validate_dataset_path(self.eval_dataset)
+            return
+
+        if isinstance(self.eval_dataset, list):
+            if all(isinstance(item, str) for item in self.eval_dataset):
+                if not os.environ.get("PYTEST_CURRENT_TEST"):
+                    validate_dataset_path(self.eval_dataset)
+                return
+
+            if all(
+                isinstance(item, (dict, EvaluationExample))
+                for item in self.eval_dataset
+            ):
+                load_inline_dataset(self.eval_dataset)
+                return
+
+            raise ConfigurationError(
+                "eval_dataset list must contain only dataset paths or inline examples"
+            )
 
     def _setup_function_wrapper(self) -> None:
         """Setup function wrapper that uses current configuration."""
@@ -2064,21 +2086,37 @@ class OptimizedFunction:
                 ) from e
 
         elif isinstance(self.eval_dataset, list):
-            # Multiple datasets - combine them
-            all_examples = []
-            for path in self.eval_dataset:
+            if all(isinstance(item, str) for item in self.eval_dataset):
+                # Multiple datasets - combine them
+                all_examples = []
+                for path in self.eval_dataset:
+                    try:
+                        dataset = Dataset.from_jsonl(path)
+                        all_examples.extend(dataset.examples)
+                    except Exception as e:
+                        raise ConfigurationError(
+                            f"Failed to load dataset from {path}: {e}"
+                        ) from e
+
+                return Dataset(
+                    examples=all_examples,
+                    name="combined_dataset",
+                    description=f"Combined dataset from {len(self.eval_dataset)} files",
+                )
+
+            if all(
+                isinstance(item, (dict, EvaluationExample))
+                for item in self.eval_dataset
+            ):
                 try:
-                    dataset = Dataset.from_jsonl(path)
-                    all_examples.extend(dataset.examples)
+                    return load_inline_dataset(self.eval_dataset)
                 except Exception as e:
                     raise ConfigurationError(
-                        f"Failed to load dataset from {path}: {e}"
+                        f"Failed to load inline dataset: {e}"
                     ) from e
 
-            return Dataset(
-                examples=all_examples,
-                name="combined_dataset",
-                description=f"Combined dataset from {len(self.eval_dataset)} files",
+            raise ConfigurationError(
+                "eval_dataset list must contain only dataset paths or inline examples"
             )
 
         else:

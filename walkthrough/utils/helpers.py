@@ -11,6 +11,7 @@ from functools import reduce
 from typing import TYPE_CHECKING
 
 import traigent
+from traigent.config.backend_config import BackendConfig
 
 if TYPE_CHECKING:
     from typing import Any
@@ -57,11 +58,10 @@ def print_estimated_time(example_name: str) -> None:
 
 
 def configure_logging() -> None:
-    """Configure Traigent logging and default local backend for walkthrough/real."""
-    # Walkthrough real scripts are local-first examples; avoid accidental cloud host fallback.
+    """Configure Traigent logging and cloud-first backend defaults for walkthroughs."""
     os.environ.setdefault("TRAIGENT_ENV", "development")
-    os.environ.setdefault("TRAIGENT_BACKEND_URL", "http://localhost:5000")
-    os.environ.setdefault("TRAIGENT_API_URL", "http://localhost:5000")
+    os.environ.setdefault("TRAIGENT_BACKEND_URL", BackendConfig.get_cloud_backend_url())
+    os.environ.setdefault("TRAIGENT_API_URL", BackendConfig.get_cloud_api_url())
 
     log_level = os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper()
     traigent.configure(logging_level=log_level)

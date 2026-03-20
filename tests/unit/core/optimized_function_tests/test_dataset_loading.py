@@ -12,10 +12,7 @@ from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ConfigurationError
 
-from .test_fixtures import (
-    create_dataset_file,
-    create_test_dataset,
-)
+from .test_fixtures import create_dataset_file, create_test_dataset
 
 
 class TestDatasetLoading:
@@ -98,10 +95,10 @@ class TestDatasetLoading:
     def test_load_dataset_from_list(
         self, simple_function, sample_config_space, sample_objectives
     ):
-        """Test error when trying to load dataset from list of dicts (unsupported)."""
+        """Inline example dicts should load as a Dataset."""
         examples = [
-            {"input_data": {"text": "hello"}, "expected_output": "HELLO"},
-            {"input_data": {"text": "world"}, "expected_output": "WORLD"},
+            {"input": {"text": "hello"}, "expected": "HELLO"},
+            {"input": {"text": "world"}, "expected": "WORLD"},
         ]
 
         opt_func = OptimizedFunction(
@@ -111,14 +108,16 @@ class TestDatasetLoading:
             eval_dataset=examples,
         )
 
-        # Should raise ConfigurationError for unsupported list of dicts
-        with pytest.raises(ConfigurationError, match="Failed to load dataset"):
-            opt_func._load_dataset()
+        loaded_dataset = opt_func._load_dataset()
+        assert isinstance(loaded_dataset, Dataset)
+        assert len(loaded_dataset) == 2
+        assert loaded_dataset[0].input_data == {"text": "hello"}
+        assert loaded_dataset[0].expected_output == "HELLO"
 
     def test_load_dataset_from_evaluation_examples(
         self, simple_function, sample_config_space, sample_objectives
     ):
-        """Test error when trying to load dataset from EvaluationExample list (unsupported)."""
+        """EvaluationExample lists should load as a Dataset."""
         examples = [
             EvaluationExample(input_data={"text": "test1"}, expected_output="TEST1"),
             EvaluationExample(input_data={"text": "test2"}, expected_output="TEST2"),
@@ -131,9 +130,11 @@ class TestDatasetLoading:
             eval_dataset=examples,
         )
 
-        # Should raise ConfigurationError for unsupported EvaluationExample list
-        with pytest.raises(ConfigurationError, match="Failed to load dataset"):
-            opt_func._load_dataset()
+        loaded_dataset = opt_func._load_dataset()
+        assert isinstance(loaded_dataset, Dataset)
+        assert len(loaded_dataset) == 2
+        assert loaded_dataset[1].input_data == {"text": "test2"}
+        assert loaded_dataset[1].expected_output == "TEST2"
 
     def test_load_dataset_invalid_type(
         self, simple_function, sample_config_space, sample_objectives

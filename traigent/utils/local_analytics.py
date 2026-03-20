@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from traigent.api.types import OptimizationStatus
+from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 
@@ -32,7 +33,7 @@ except ModuleNotFoundError:
 logger = logging.getLogger(__name__)
 
 # Default analytics endpoint (deprecated - will use backend client instead)
-DEFAULT_ANALYTICS_ENDPOINT = "http://localhost:5000/v1/local-usage"
+DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
 _BACKGROUND_ANALYTICS_TASKS: set[asyncio.Task[Any]] = set()
 
 
