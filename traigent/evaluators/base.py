@@ -413,7 +413,9 @@ def _coerce_dataset_example_mapping(
         input_key = "input_data"
 
     if input_key is None:
-        raise ValidationError(f"Missing 'input' field in {location} in {source}")
+        raise ValidationError(
+            f"Missing 'input' (or 'input_data') field in {location} in {source}"
+        )
 
     expected_key = next(
         (candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item),

@@ -948,10 +948,10 @@ class Validators:
 
                             try:
                                 data = json.loads(line.strip())
-                                if "input" not in data:
+                                if "input" not in data and "input_data" not in data:
                                     result.add_error(
                                         f"dataset:line{line_num}",
-                                        "Missing 'input' field",
+                                        "Missing 'input' or 'input_data' field",
                                         error_code="INVALID_FORMAT",
                                     )
                             except json.JSONDecodeError:

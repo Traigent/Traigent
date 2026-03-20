@@ -109,18 +109,6 @@ class TestParameterValidator:
                 {"input": {"question": "What is 2+2?"}, "expected": "4"},
                 {"input_data": {"question": "Capital of France?"}, "expected_output": "Paris"},
             ],
-            [
-                Dataset(
-                    examples=[
-                        EvaluationExample(
-                            input_data="prompt",
-                            expected_output="response",
-                            metadata={},
-                        )
-                    ],
-                    name="single",
-                )
-            ],
         ]
 
         for dataset_list in valid_lists:
@@ -128,24 +116,20 @@ class TestParameterValidator:
             result = self.validator._validate_dataset(dataset_list)
             assert result is None, "Expected None for valid dataset list"
 
-    def test_validate_dataset_sequence_with_dataset_objects(self):
-        """Dataset iterables can contain Dataset instances."""
-        dataset = Dataset(
-            examples=[
-                EvaluationExample(
-                    input_data="prompt",
-                    expected_output="answer",
-                    metadata={"source": "unit-test"},
-                )
-            ],
-            name="example",
+    def test_validate_dataset_sequence_with_inline_examples(self):
+        """Dataset iterables can contain inline dict and EvaluationExample objects."""
+        inline_example = EvaluationExample(
+            input_data="prompt",
+            expected_output="answer",
+            metadata={"source": "unit-test"},
         )
 
-        # Should accept tuples and mixed entries containing Dataset objects
-        result1 = self.validator._validate_dataset((dataset,))
-        result2 = self.validator._validate_dataset(["path.jsonl", dataset])
-        assert result1 is None, "Expected None for tuple with Dataset"
-        assert result2 is None, "Expected None for mixed list with Dataset"
+        result1 = self.validator._validate_dataset((inline_example,))
+        result2 = self.validator._validate_dataset(
+            [{"input": {"question": "What is 2+2?"}, "expected": "4"}]
+        )
+        assert result1 is None, "Expected None for tuple with EvaluationExample"
+        assert result2 is None, "Expected None for inline example list"
 
     def test_validate_dataset_invalid_list(self):
         """Test validation of invalid dataset lists."""
@@ -153,12 +137,17 @@ class TestParameterValidator:
             [123, "test.jsonl"],  # Mixed types
             [None, "test.jsonl"],  # None in list
             ["test.jsonl", 456],  # Mixed types
+            [
+                "test.jsonl",
+                {"input": {"question": "What is 2+2?"}, "expected": "4"},
+            ],  # Mixed file path + inline example
         ]
 
         for invalid_list in invalid_lists:
             with pytest.raises(ValidationError) as exc_info:
                 self.validator._validate_dataset(invalid_list)
-            assert "inline example dicts" in str(exc_info.value)
+            error_message = str(exc_info.value)
+            assert "inline example" in error_message or "cannot mix file paths" in error_message
 
     def test_validate_objectives_valid(self):
         """Test validation of valid objectives."""

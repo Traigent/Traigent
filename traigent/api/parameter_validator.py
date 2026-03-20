@@ -23,7 +23,7 @@ class OptimizeParameters:
     """Structured representation of optimize decorator parameters."""
 
     eval_dataset: (
-        str | list[str | Dataset | EvaluationExample | dict[str, Any]] | None
+        str | list[str | EvaluationExample | dict[str, Any]] | Dataset | None
     ) = None
     objectives: list[str] | None = None
     configuration_space: dict[str, Any] | None = None
@@ -118,7 +118,7 @@ class ParameterValidator:
     def _validate_dataset(
         self,
         eval_dataset: (
-            str | list[str | Dataset | EvaluationExample | dict[str, Any]] | None
+            str | list[str | EvaluationExample | dict[str, Any]] | Dataset | None
         ),
     ) -> None:
         """Validate evaluation dataset parameter."""
@@ -132,12 +132,9 @@ class ParameterValidator:
             eval_dataset, (str, bytes)
         ):
             invalid_entries = [
-                entry for entry in eval_dataset if not isinstance(entry, (str, Dataset))
-            ]
-            invalid_entries = [
                 entry
-                for entry in invalid_entries
-                if not isinstance(entry, (EvaluationExample, Mapping))
+                for entry in eval_dataset
+                if not isinstance(entry, (str, EvaluationExample, Mapping))
             ]
             if invalid_entries:
                 invalid_types = ", ".join(
@@ -145,8 +142,18 @@ class ParameterValidator:
                 )
                 raise ValidationError(
                     "eval_dataset iterable must contain only string paths, inline example dicts, "
-                    "EvaluationExample objects, or Dataset objects. "
+                    "or EvaluationExample objects. "
                     f"Invalid entries of types: {invalid_types}"
+                )
+
+            has_paths = any(isinstance(entry, str) for entry in eval_dataset)
+            has_inline_examples = any(
+                isinstance(entry, (EvaluationExample, Mapping))
+                for entry in eval_dataset
+            )
+            if has_paths and has_inline_examples:
+                raise ValidationError(
+                    "eval_dataset list cannot mix file paths with inline example objects"
                 )
             return
 
