@@ -118,14 +118,14 @@ class TestBackendConfigStoredBackendUrl:
         ):
             result = BackendConfig.get_backend_url()
 
-        assert result == BackendConfig.get_default_local_url()
+        assert result == BackendConfig.DEFAULT_PROD_URL
 
 
 class TestBackendConfigDefaultBehavior:
     """Verify default URL behavior for different environment configurations."""
 
-    def test_no_env_no_creds_defaults_to_local(self):
-        """Generic backend resolution should stay local when nothing is configured."""
+    def test_no_env_no_creds_defaults_to_cloud(self):
+        """Generic backend resolution should use the cloud URL when nothing is configured."""
         with (
             patch.dict("os.environ", {}, clear=True),
             patch(
@@ -135,7 +135,7 @@ class TestBackendConfigDefaultBehavior:
         ):
             result = BackendConfig.get_backend_url()
 
-        assert result == BackendConfig.get_default_local_url()
+        assert result == BackendConfig.DEFAULT_PROD_URL
 
     def test_cloud_helpers_default_to_cloud(self):
         """Cloud-facing entry points should default to the portal URL."""
@@ -152,8 +152,8 @@ class TestBackendConfigDefaultBehavior:
         assert backend_result == BackendConfig.DEFAULT_PROD_URL
         assert api_result == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
 
-    def test_development_env_defaults_to_local(self):
-        """Internal dev with TRAIGENT_ENV=development should get localhost."""
+    def test_development_env_still_defaults_to_cloud(self):
+        """Development env should not silently override the cloud-first default."""
         with (
             patch.dict(
                 "os.environ",
@@ -167,7 +167,7 @@ class TestBackendConfigDefaultBehavior:
         ):
             result = BackendConfig.get_backend_url()
 
-        assert "localhost" in result or "127.0.0.1" in result
+        assert result == BackendConfig.DEFAULT_PROD_URL
 
     def test_explicit_env_var_overrides_everything(self):
         """TRAIGENT_BACKEND_URL should override all defaults."""
