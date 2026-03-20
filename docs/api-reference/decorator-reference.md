@@ -381,7 +381,7 @@ from traigent.api.decorators import EvaluationOptions
 
 **EvaluationOptions Fields**:
 
-- `eval_dataset`: Dataset path, list of paths, or Dataset instance
+- `eval_dataset`: Dataset path, list of paths, inline example list, or Dataset instance
 - `custom_evaluator`: Custom evaluation function
 - `scoring_function`: Custom scoring function
 - `metric_functions`: Dict of metric name to evaluator functions

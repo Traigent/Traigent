@@ -59,11 +59,11 @@ Set these before running optimizations:
 
 ```bash
 # LLM provider key (at least one required for real optimization)
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..." # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..." # pragma: allowlist secret
 
 # Traigent platform (optional — for tracking results in the portal)
-export TRAIGENT_API_KEY="your-api-key"
+export TRAIGENT_API_KEY="your-api-key" # pragma: allowlist secret
 export TRAIGENT_BACKEND_URL="https://portal.traigent.ai"
 ```
 
@@ -76,6 +76,10 @@ For **mock/dry-run mode** (no LLM calls, no API keys needed), no environment var
 Create `test_traigent.py`:
 
 ```python
+import os
+
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
+
 import traigent
 from traigent import Range, Choices
 
@@ -100,7 +104,7 @@ def answer(query: str) -> str:
     return response.choices[0].message.content
 
 # Mock mode — validates the full pipeline without making LLM calls
-results = answer.optimize(max_trials=3, mock=True)
+results = answer.optimize(max_trials=3)
 print("Best config:", results.best_config)
 ```
 

@@ -7,12 +7,12 @@ Traceability: CONC-Layer-API CONC-Quality-Reliability CONC-Quality-Usability CON
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
 from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
-from traigent.evaluators.base import Dataset
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 class OptimizeParameters:
     """Structured representation of optimize decorator parameters."""
 
-    eval_dataset: str | list[str | Dataset] | None = None
+    eval_dataset: (
+        str | list[str | Dataset | EvaluationExample | dict[str, Any]] | None
+    ) = None
     objectives: list[str] | None = None
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
@@ -113,7 +115,12 @@ class ParameterValidator:
                 f"Must be one of: {[mode.value for mode in self.VALID_INJECTION_MODES]}"
             )
 
-    def _validate_dataset(self, eval_dataset: str | list[str | Dataset] | None) -> None:
+    def _validate_dataset(
+        self,
+        eval_dataset: (
+            str | list[str | Dataset | EvaluationExample | dict[str, Any]] | None
+        ),
+    ) -> None:
         """Validate evaluation dataset parameter."""
         if eval_dataset is None:
             return
@@ -127,18 +134,24 @@ class ParameterValidator:
             invalid_entries = [
                 entry for entry in eval_dataset if not isinstance(entry, (str, Dataset))
             ]
+            invalid_entries = [
+                entry
+                for entry in invalid_entries
+                if not isinstance(entry, (EvaluationExample, Mapping))
+            ]
             if invalid_entries:
                 invalid_types = ", ".join(
                     sorted({type(entry).__name__ for entry in invalid_entries})
                 )
                 raise ValidationError(
-                    "eval_dataset iterable must contain only string paths or Dataset objects. "
+                    "eval_dataset iterable must contain only string paths, inline example dicts, "
+                    "EvaluationExample objects, or Dataset objects. "
                     f"Invalid entries of types: {invalid_types}"
                 )
             return
 
         raise ValidationError(
-            "eval_dataset must be a string path, list of paths, or Dataset object"
+            "eval_dataset must be a string path, list of paths, inline example list, or Dataset object"
         )
 
     def _validate_objectives(self, objectives: list[str] | None) -> None:

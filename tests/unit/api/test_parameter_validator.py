@@ -106,6 +106,10 @@ class TestParameterValidator:
             ["/path/to/data1.jsonl"],
             ["a.json", "b.json", "c.json"],
             [
+                {"input": {"question": "What is 2+2?"}, "expected": "4"},
+                {"input_data": {"question": "Capital of France?"}, "expected_output": "Paris"},
+            ],
+            [
                 Dataset(
                     examples=[
                         EvaluationExample(
@@ -154,7 +158,7 @@ class TestParameterValidator:
         for invalid_list in invalid_lists:
             with pytest.raises(ValidationError) as exc_info:
                 self.validator._validate_dataset(invalid_list)
-            assert "must contain only string paths" in str(exc_info.value)
+            assert "inline example dicts" in str(exc_info.value)
 
     def test_validate_objectives_valid(self):
         """Test validation of valid objectives."""
@@ -575,11 +579,11 @@ class TestDatasetValidationEdgeCases:
         """Test validation of completely invalid dataset type."""
         with pytest.raises(ValidationError) as exc_info:
             self.validator._validate_dataset(123)
-        assert "must be a string path" in str(exc_info.value)
+        assert "inline example list" in str(exc_info.value)
 
         with pytest.raises(ValidationError) as exc_info:
             self.validator._validate_dataset({"key": "value"})
-        assert "must be a string path" in str(exc_info.value)
+        assert "inline example list" in str(exc_info.value)
 
 
 class TestConfigurationSpaceEdgeCases:

@@ -873,7 +873,37 @@ class Validators:
         """Validate dataset file or path."""
         result = ValidationResult()
 
+        from traigent.evaluators.base import (
+            Dataset,
+            EvaluationExample,
+            load_inline_dataset,
+        )
+
+        if isinstance(dataset_path, Dataset):
+            return result
+
         if isinstance(dataset_path, list):
+            if all(
+                isinstance(item, (dict, EvaluationExample)) for item in dataset_path
+            ):
+                try:
+                    load_inline_dataset(dataset_path)
+                except ValidationException as exc:
+                    result.add_error(
+                        "dataset",
+                        str(exc),
+                        error_code="INVALID_FORMAT",
+                    )
+                return result
+
+            if not all(isinstance(item, (str, Path)) for item in dataset_path):
+                result.add_error(
+                    "dataset",
+                    "Dataset list entries must all be file paths or inline example objects",
+                    error_code="TYPE_ERROR",
+                )
+                return result
+
             # Multiple datasets
             for i, path in enumerate(dataset_path):
                 path_result = Validators.validate_path(
@@ -886,7 +916,7 @@ class Validators:
                 )
                 result.errors.extend(path_result.errors)
                 result.warnings.extend(path_result.warnings)
-        else:
+        elif isinstance(dataset_path, (str, Path)):
             # Single dataset
             resolved_dataset_path = Path(dataset_path)
             path_result = Validators.validate_path(
@@ -944,6 +974,12 @@ class Validators:
                         f"Could not read dataset: {str(e)}",
                         error_code="READ_ERROR",
                     )
+        else:
+            result.add_error(
+                "dataset",
+                f"Expected dataset path, inline example list, or Dataset object, got {type(dataset_path).__name__}",
+                error_code="TYPE_ERROR",
+            )
 
         return result
 
