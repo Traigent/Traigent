@@ -91,6 +91,13 @@ ESTIMATION_MODEL_PRICING = {
 
 # Canonical model-name aliases used by estimation and validation code paths.
 # This avoids duplicated alias tables drifting across modules.
+#
+# NOTE: Bare aliases (e.g. "claude-sonnet") are pinned to *dated* model IDs
+# whose pricing is present in litellm's bundled cost map — NOT to the
+# provider-latest pointer.  This is intentional: budget enforcement and cost
+# accounting must resolve to a concrete, priced model ID at runtime.  Update
+# the targets here only after confirming the new dated ID is priced in the
+# litellm version pinned in pyproject.toml.
 MODEL_NAME_ALIASES: dict[str, str] = {
     "gpt-4": "gpt-4-turbo",
     "gpt-4-32k": "gpt-4-turbo",
@@ -98,11 +105,13 @@ MODEL_NAME_ALIASES: dict[str, str] = {
     "claude-haiku": "claude-3-haiku-20240307",
     "claude-3-sonnet": "claude-3-5-sonnet-20241022",
     "claude-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
     "claude-3-opus": "claude-3-opus-20240229",
     "claude-opus": "claude-3-opus-20240229",
     "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+    "claude-3.5-haiku": "claude-3-5-haiku-20241022",
 }
 
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
@@ -588,26 +597,36 @@ def _estimation_cost_from_tokens(
     return 0.0, 0.0
 
 
-def _resolve_builtin_model_alias(model_name: str) -> str:
-    """Resolve a normalized model name through Traigent's built-in alias table."""
-    normalized = _normalize_model_name(model_name)
+def _resolve_builtin_model_alias(normalized: str) -> str:
+    """Resolve through Traigent's built-in alias table.
+
+    Args:
+        normalized: Already-normalized model name (output of ``_normalize_model_name``).
+    """
     return MODEL_NAME_ALIASES.get(normalized.lower(), normalized)
 
 
 def _build_model_candidates(model_name: str) -> list[str]:
-    """Build deduplicated list of model name candidates for pricing lookup."""
+    """Build deduplicated list of model name candidates for pricing lookup.
+
+    Normalization is applied exactly once; all downstream resolvers receive
+    the already-normalized form so that mixed-case provider prefixes like
+    ``OPENAI/GPT-4O`` resolve correctly.
+    """
     normalized = _normalize_model_name(model_name)
-    builtin_alias = _resolve_builtin_model_alias(model_name)
-    alias_resolved = _resolve_litellm_alias(model_name)
-    builtin_alias_resolved = _resolve_litellm_alias(builtin_alias)
+    lowered = normalized.lower()
+    builtin_alias = _resolve_builtin_model_alias(lowered)
+    litellm_alias = _resolve_litellm_alias(lowered)
+    builtin_then_litellm = _resolve_litellm_alias(builtin_alias)
     candidates = [
         c
         for c in [
             model_name,
             normalized,
+            lowered,
             builtin_alias,
-            alias_resolved,
-            builtin_alias_resolved,
+            litellm_alias,
+            builtin_then_litellm,
         ]
         if c
     ]
@@ -746,7 +765,7 @@ class CostCalculator:
         if not model_name:
             return CostBreakdown(calculation_method="no_model_name")
 
-        normalized_model = _normalize_model_name(model_name)
+        normalized_model = _normalize_model_name(model_name).lower()
         builtin_alias = _resolve_builtin_model_alias(normalized_model)
         effective_model = _resolve_litellm_alias(builtin_alias)
 
@@ -848,13 +867,17 @@ class CostCalculator:
 
         This method does not perform fuzzy guessing or implicit family mapping.
         """
-        normalized = _normalize_model_name(model_name) if model_name else model_name
-        builtin_alias = _resolve_builtin_model_alias(model_name) if model_name else None
-        resolved = _resolve_litellm_alias(builtin_alias) if builtin_alias else None
+        normalized = (
+            _normalize_model_name(model_name).lower() if model_name else model_name
+        )
+        resolved = (
+            _resolve_litellm_alias(_resolve_builtin_model_alias(normalized))
+            if normalized
+            else None
+        )
         result = {
             "original": model_name,
             "normalized": normalized,
-            "builtin_alias": builtin_alias,
             "mapped": None,
             "resolved": resolved,
             "available": LITELLM_AVAILABLE,
