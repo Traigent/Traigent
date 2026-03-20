@@ -27,6 +27,14 @@ Each script prints trial results to the console. In mock mode, scores are random
 
 When you're ready for real optimization, remove `TRAIGENT_MOCK_LLM` and set your API keys.
 
+## Optional Extras
+
+These are not part of the core 8-step path, but they complement it:
+
+- `python walkthrough/mock/09_rag_multi_objective.py`
+- `python walkthrough/demo/rag_agent.py` (requires `OPENAI_API_KEY`)
+- `python walkthrough/demo/optimize_rag.py`
+
 ## Browse source
 
 [walkthrough/mock/](../walkthrough/mock/)

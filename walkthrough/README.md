@@ -58,6 +58,7 @@ bash walkthrough/test_all_examples.sh --real
 ```text
 walkthrough/
 ├── README.md              # This file
+├── demo/                  # Optional demo/video support scripts
 ├── mock/                  # No API keys needed, instant results
 ├── real/                  # Requires API keys, real LLM calls
 ├── datasets/              # Pre-built evaluation datasets (20 examples each)
@@ -86,6 +87,15 @@ Each example has **mock** (no API keys) and **real** (actual LLM calls) variants
 
 Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
 appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
+
+## Optional Extras
+
+These are not part of the core 8-step walkthrough or `test_all_examples.sh`, but
+they are useful companion material:
+
+- `walkthrough/mock/09_rag_multi_objective.py`: mock-only RAG tradeoff example
+- `walkthrough/demo/rag_agent.py`: standalone pre-Traigent RAG baseline (requires `OPENAI_API_KEY`)
+- `walkthrough/demo/optimize_rag.py`: replay of a recorded multi-objective run
 
 ### Quick Notes for New Users
 

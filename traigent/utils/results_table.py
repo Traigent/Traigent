@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 # ANSI helpers
 # ---------------------------------------------------------------------------
 
+
 class _Colors:
     """ANSI color codes for terminal output."""
 
@@ -52,6 +53,7 @@ def _check_color_support() -> bool:
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+
 
 def _format_config_value(val: Any) -> str:
     if isinstance(val, bool):
@@ -127,6 +129,7 @@ def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def print_results_table(
     results: OptimizationResult,
     config_space: dict[str, list[Any]],
@@ -163,9 +166,7 @@ def print_results_table(
         weighted = results.calculate_weighted_scores(objective_schema=objectives)
         best_config = weighted.get("best_weighted_config", {})
     except Exception:
-        best_config = getattr(
-            _find_best_trial(trials, metric_names), "config", {}
-        )
+        best_config = getattr(_find_best_trial(trials, metric_names), "config", {})
 
     # Column widths
     col_widths: dict[str, int] = {"#": 4}
@@ -177,11 +178,7 @@ def print_results_table(
         col_widths[param] = max(len(param), max_len) + 1
     for metric in metric_names:
         max_len = max(
-            len(
-                _format_metric_value(
-                    metric, getattr(t, "metrics", {}).get(metric, 0)
-                )
-            )
+            len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
             for t in trials
         )
         col_widths[metric] = max(len(metric), max_len) + 1
@@ -208,9 +205,7 @@ def print_results_table(
 
     # Column headers
     header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
-    header_parts.extend(
-        f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names
-    )
+    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
     header_parts.extend(
         f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names
     )
@@ -233,8 +228,8 @@ def print_results_table(
             row_parts.append(f"{val:^{col_widths[param]}}")
 
         for metric in metric_names:
-            val = metrics.get(metric, 0)
-            formatted = _format_metric_value(metric, val)
+            metric_val = float(metrics.get(metric, 0))
+            formatted = _format_metric_value(metric, metric_val)
             if best_per_objective.get(metric) == i:
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:
@@ -248,7 +243,5 @@ def print_results_table(
 
     # Legend
     legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
-    legend.extend(
-        f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names
-    )
+    legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
     print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
