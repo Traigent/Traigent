@@ -83,6 +83,8 @@ class TestCostFromTokensModelResolution:
             ("claude-3-haiku", "claude-3-haiku-20240307"),
             ("claude-3-sonnet", "claude-3-5-sonnet-20241022"),
             ("claude-3-opus", "claude-3-opus-20240229"),
+            ("claude-3.5-sonnet", "claude-3-5-sonnet-20241022"),
+            ("claude-3.5-haiku", "claude-3-5-haiku-20241022"),
         ],
     )
     def test_builtin_claude_aliases_resolve(self, alias: str, canonical: str) -> None:
@@ -119,6 +121,16 @@ class TestCostFromTokensModelResolution:
         cost_plain = cost_from_tokens(100, 50, "claude-3-haiku-20240307")
         assert cost_prefixed[0] == pytest.approx(cost_plain[0], rel=1e-6)
         assert cost_prefixed[1] == pytest.approx(cost_plain[1], rel=1e-6)
+
+    @pytest.mark.parametrize(
+        "name",
+        ["OPENAI/GPT-4O", "OpenAI/gpt-4o", "Anthropic/claude-3-haiku-20240307"],
+    )
+    def test_mixed_case_provider_prefix(self, name: str) -> None:
+        """Mixed-case provider prefixes must resolve, not raise."""
+        input_cost, output_cost = cost_from_tokens(100, 50, name)
+        assert input_cost > 0
+        assert output_cost > 0
 
 
 class TestCostFromTokensUnknownModels:
