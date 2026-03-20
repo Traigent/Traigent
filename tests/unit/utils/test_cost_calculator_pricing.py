@@ -17,6 +17,21 @@ class TestGetModelTokenPricing:
         assert out > 0
         assert method == "litellm"
 
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("claude-haiku", "claude-3-haiku-20240307"),
+            ("claude-sonnet", "claude-3-5-sonnet-20241022"),
+            ("claude-opus", "claude-3-opus-20240229"),
+        ],
+    )
+    def test_builtin_claude_aliases_resolve(self, alias: str, canonical: str) -> None:
+        alias_pricing = get_model_token_pricing(alias)
+        canonical_pricing = get_model_token_pricing(canonical)
+        assert alias_pricing[0] == pytest.approx(canonical_pricing[0], rel=1e-6)
+        assert alias_pricing[1] == pytest.approx(canonical_pricing[1], rel=1e-6)
+        assert alias_pricing[2] == "litellm"
+
     def test_provider_prefixed_model_resolves(self) -> None:
         prefixed = get_model_token_pricing("openai/gpt-4o")
         plain = get_model_token_pricing("gpt-4o")

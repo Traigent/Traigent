@@ -95,9 +95,12 @@ MODEL_NAME_ALIASES: dict[str, str] = {
     "gpt-4": "gpt-4-turbo",
     "gpt-4-32k": "gpt-4-turbo",
     "claude-3-haiku": "claude-3-haiku-20240307",
+    "claude-haiku": "claude-3-haiku-20240307",
     "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
     "claude-3-opus": "claude-3-opus-20240229",
+    "claude-opus": "claude-3-opus-20240229",
     "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku": "claude-3-5-haiku-20241022",
 }
@@ -585,11 +588,29 @@ def _estimation_cost_from_tokens(
     return 0.0, 0.0
 
 
+def _resolve_builtin_model_alias(model_name: str) -> str:
+    """Resolve a normalized model name through Traigent's built-in alias table."""
+    normalized = _normalize_model_name(model_name)
+    return MODEL_NAME_ALIASES.get(normalized.lower(), normalized)
+
+
 def _build_model_candidates(model_name: str) -> list[str]:
     """Build deduplicated list of model name candidates for pricing lookup."""
     normalized = _normalize_model_name(model_name)
-    alias_resolved = _resolve_litellm_alias(normalized)
-    candidates = [c for c in [model_name, normalized, alias_resolved] if c]
+    builtin_alias = _resolve_builtin_model_alias(model_name)
+    alias_resolved = _resolve_litellm_alias(model_name)
+    builtin_alias_resolved = _resolve_litellm_alias(builtin_alias)
+    candidates = [
+        c
+        for c in [
+            model_name,
+            normalized,
+            builtin_alias,
+            alias_resolved,
+            builtin_alias_resolved,
+        ]
+        if c
+    ]
     return list(dict.fromkeys(candidates))
 
 
@@ -726,7 +747,8 @@ class CostCalculator:
             return CostBreakdown(calculation_method="no_model_name")
 
         normalized_model = _normalize_model_name(model_name)
-        effective_model = _resolve_litellm_alias(normalized_model)
+        builtin_alias = _resolve_builtin_model_alias(normalized_model)
+        effective_model = _resolve_litellm_alias(builtin_alias)
 
         result = CostBreakdown(
             model_used=model_name, mapped_model=effective_model or ""
@@ -827,10 +849,12 @@ class CostCalculator:
         This method does not perform fuzzy guessing or implicit family mapping.
         """
         normalized = _normalize_model_name(model_name) if model_name else model_name
-        resolved = _resolve_litellm_alias(normalized) if model_name else None
+        builtin_alias = _resolve_builtin_model_alias(model_name) if model_name else None
+        resolved = _resolve_litellm_alias(builtin_alias) if builtin_alias else None
         result = {
             "original": model_name,
             "normalized": normalized,
+            "builtin_alias": builtin_alias,
             "mapped": None,
             "resolved": resolved,
             "available": LITELLM_AVAILABLE,
@@ -850,10 +874,7 @@ class CostCalculator:
             result["error"] = "litellm library not available"
             return result
 
-        candidates = [
-            candidate for candidate in [model_name, normalized, resolved] if candidate
-        ]
-        candidates = list(dict.fromkeys(candidates))
+        candidates = _build_model_candidates(model_name)
         for candidate in candidates:
             if _is_model_known_to_litellm(candidate):
                 result["known_to_litellm"] = True
