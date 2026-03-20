@@ -64,6 +64,7 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
     ) from exc
 
 import traigent
+from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
     SpanType,
     WorkflowEdge,
@@ -567,7 +568,10 @@ async def main() -> None:
     print("=" * 50)
 
     # Check environment
-    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    backend_url = (
+        os.environ.get("TRAIGENT_BACKEND_URL")
+        or BackendConfig.get_cloud_backend_url()
+    )
     api_key = os.environ.get("TRAIGENT_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
 

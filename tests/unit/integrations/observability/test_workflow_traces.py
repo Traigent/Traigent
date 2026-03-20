@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.integrations.observability import workflow_traces as wt_module
 from traigent.integrations.observability.workflow_traces import (
     SpanPayload,
@@ -678,6 +679,16 @@ class TestWorkflowTracesTracker:
         assert tracker.backend_url == "http://test:5000"
         assert tracker.auto_send is True
         assert tracker.batch_size == 100
+
+    def test_init_defaults_to_cloud_when_env_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default tracker backend should be cloud-first, not localhost."""
+        monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+
+        tracker = WorkflowTracesTracker()
+
+        assert tracker.backend_url == DEFAULT_CLOUD_URL
 
     def test_init_with_params(self) -> None:
         """Test initialization with custom parameters."""

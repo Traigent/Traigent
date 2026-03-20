@@ -3,6 +3,7 @@
 import pytest
 
 from traigent.cloud.dataset_converter import DatasetConverter
+from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
 
 class TestDatasetConverterValidation:
@@ -22,7 +23,9 @@ class TestDatasetConverterValidation:
             )
 
         with pytest.raises(ValueError):
-            DatasetConverter(backend_base_url="https://user:pass@example.com")
+            DatasetConverter(
+                backend_base_url="https://user:pass@example.com"  # pragma: allowlist secret
+            )
 
         with pytest.raises(ValueError):
             DatasetConverter(backend_base_url="https://api.example.com/../admin")
@@ -34,6 +37,11 @@ class TestDatasetConverterValidation:
         """Valid backend URLs should be normalized."""
         converter = DatasetConverter(backend_base_url="https://api.example.com/base/")
         assert converter.backend_base_url == "https://api.example.com/base"
+
+    def test_backend_base_url_defaults_to_cloud(self):
+        """Default constructor should use the cloud backend, not localhost."""
+        converter = DatasetConverter()
+        assert converter.backend_base_url == DEFAULT_CLOUD_URL
 
     def test_validate_example_set_id_allows_uuid(self):
         """Example set identifiers should accept UUIDs and trim whitespace."""

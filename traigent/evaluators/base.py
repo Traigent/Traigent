@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -289,17 +290,15 @@ def _parse_jsonl_examples(resolved_path: Path, source: str) -> list[EvaluationEx
                         f"Invalid JSON on line {line_num} in {source}: {exc}"
                     ) from exc
 
-                if "input" not in data:
-                    raise ValidationError(
-                        f"Missing 'input' field on line {line_num} in {source}"
-                    )
-
+                input_data, expected_output, metadata = _coerce_dataset_example_mapping(
+                    data,
+                    source=source,
+                    location=f"line {line_num}",
+                )
                 example = EvaluationExample(
-                    input_data=data["input"],
-                    expected_output=data.get("output"),
-                    metadata={
-                        k: v for k, v in data.items() if k not in {"input", "output"}
-                    },
+                    input_data=input_data,
+                    expected_output=expected_output,
+                    metadata=metadata,
                 )
                 examples.append(example)
     except ValidationError:
@@ -359,16 +358,15 @@ def _parse_json_dataset(
         raise ValidationError(f"JSON must be array or object in {source}")
 
     for index, item in iterable:
-        if not isinstance(item, dict):
-            raise ValidationError(f"Example {index} must be an object in {source}")
-        if "input" not in item:
-            raise ValidationError(
-                f"Missing 'input' field in example {index} in {source}"
-            )
+        input_data, expected_output, metadata = _coerce_dataset_example_mapping(
+            item,
+            source=source,
+            location=f"example {index}",
+        )
         example = EvaluationExample(
-            input_data=item["input"],
-            expected_output=item.get("output"),
-            metadata={k: v for k, v in item.items() if k not in {"input", "output"}},
+            input_data=input_data,
+            expected_output=expected_output,
+            metadata=metadata,
         )
         examples.append(example)
 
@@ -386,6 +384,51 @@ class EvaluationExample:
     def __post_init__(self) -> None:
         if self.metadata is None:
             self.metadata: dict[str, Any] = {}
+
+
+_EXPECTED_OUTPUT_FIELDS = (
+    "output",
+    "expected",
+    "expected_output",
+    "answer",
+    "target",
+    "label",
+)
+
+
+def _coerce_dataset_example_mapping(
+    item: Any,
+    *,
+    source: str,
+    location: str,
+) -> tuple[Any, Any | None, dict[str, Any]]:
+    """Normalize a mapping-backed dataset example."""
+    if not isinstance(item, CollectionsMapping):
+        raise ValidationError(f"{location} must be an object in {source}")
+
+    input_key: str | None = None
+    if "input" in item:
+        input_key = "input"
+    elif "input_data" in item:
+        input_key = "input_data"
+
+    if input_key is None:
+        raise ValidationError(
+            f"Missing 'input' (or 'input_data') field in {location} in {source}"
+        )
+
+    expected_key = next(
+        (candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item),
+        None,
+    )
+
+    metadata_keys = {input_key}
+    if expected_key is not None:
+        metadata_keys.add(expected_key)
+
+    metadata = {k: v for k, v in item.items() if k not in metadata_keys}
+    expected_output = item.get(expected_key) if expected_key is not None else None
+    return item[input_key], expected_output, metadata
 
 
 @dataclass
@@ -477,6 +520,37 @@ class Dataset:
         if not isinstance(example, EvaluationExample):
             raise TypeError("Example must be an EvaluationExample instance")
         self.examples.append(example)
+
+
+def load_inline_dataset(
+    examples: Sequence[EvaluationExample | CollectionsMapping[str, Any]],
+) -> Dataset:
+    """Build a Dataset from inline example objects used directly in code."""
+    normalized_examples: list[EvaluationExample] = []
+
+    for index, item in enumerate(examples):
+        if isinstance(item, EvaluationExample):
+            normalized_examples.append(item)
+            continue
+
+        input_data, expected_output, metadata = _coerce_dataset_example_mapping(
+            item,
+            source="inline dataset",
+            location=f"example {index}",
+        )
+        normalized_examples.append(
+            EvaluationExample(
+                input_data=input_data,
+                expected_output=expected_output,
+                metadata=metadata,
+            )
+        )
+
+    return Dataset(
+        examples=normalized_examples,
+        name="inline_dataset",
+        description="Dataset created from inline examples",
+    )
 
 
 @dataclass
