@@ -44,6 +44,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from traigent.config.backend_config import BackendConfig
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1121,13 +1122,16 @@ class WorkflowTracesTracker:
         """Initialize the workflow traces tracker.
 
         Args:
-            backend_url: Base URL of the backend (defaults to env var TRAIGENT_BACKEND_URL)
+            backend_url: Base URL of the backend (defaults to env var
+                TRAIGENT_BACKEND_URL or the configured cloud backend)
             auth_token: Bearer token for authentication (defaults to env var TRAIGENT_API_TOKEN)
             auto_send: Automatically send spans at end of trial context
             batch_size: Number of spans to batch before sending
         """
-        self.backend_url = backend_url or os.environ.get(
-            "TRAIGENT_BACKEND_URL", "http://localhost:5000"
+        self.backend_url = (
+            backend_url
+            or os.environ.get("TRAIGENT_BACKEND_URL")
+            or BackendConfig.get_cloud_backend_url()
         )
         self.auth_token = (
             auth_token
@@ -1521,8 +1525,10 @@ def setup_workflow_tracing(
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    resolved_url = backend_url or os.environ.get(
-        "TRAIGENT_BACKEND_URL", "http://localhost:5000"
+    resolved_url = (
+        backend_url
+        or os.environ.get("TRAIGENT_BACKEND_URL")
+        or BackendConfig.get_cloud_backend_url()
     )
     exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]

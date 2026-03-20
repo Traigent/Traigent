@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - optional convenience import
 
 import traigent
 from traigent import TraigentConfig
+from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
     WorkflowEdge,
     WorkflowGraphPayload,
@@ -447,7 +448,10 @@ async def main() -> None:
     print()
 
     api_key = os.environ.get("TRAIGENT_API_KEY")
-    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    backend_url = (
+        os.environ.get("TRAIGENT_BACKEND_URL")
+        or BackendConfig.get_cloud_backend_url()
+    )
     offline_mode = os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
 
     print(f"Dataset: {DATASET_PATH}")

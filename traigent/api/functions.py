@@ -194,11 +194,11 @@ def initialize(  # noqa: C901
         # Cloud mode with explicit URL
         traigent.initialize(
             api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
-            api_url="http://localhost:5000"
+            api_url="https://portal.traigent.ai"
         )
 
         # Using environment variables (recommended)
-        # export TRAIGENT_BACKEND_URL="http://localhost:5000"
+        # export TRAIGENT_BACKEND_URL="https://portal.traigent.ai"
         # export TRAIGENT_API_KEY="your-key-here"  # pragma: allowlist secret
         traigent.initialize()
     """
