@@ -13,17 +13,36 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from traigent_schema.validator import SchemaValidator
+
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Canonical status strings used by backend DTO payloads.
-# Keep these aligned with cloud.models enums and backend schemas.
+# Canonical persisted status strings used by experiment/configuration run DTOs.
+# Keep these aligned with TraigentSchema, not internal optimizer/runtime states.
 EXPERIMENT_RUN_STATUS_VALUES = frozenset(
-    {"not_started", "pending", "running", "completed", "failed", "cancelled"}
+    {
+        "not_started",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "paused",
+        "partially_deleted",
+    }
 )
 CONFIGURATION_RUN_STATUS_VALUES = frozenset(
-    {"not_started", "pending", "running", "completed", "failed", "cancelled", "pruned"}
+    {
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "paused",
+        "partially_deleted",
+    }
 )
 
 
@@ -41,16 +60,6 @@ def _warn_if_unknown_status(
             status,
             sorted(allowed),
         )
-
-
-# Try to import traigent_schemas for validation (optional)
-try:
-    from traigent_schemas.validator import SchemaValidator
-
-    VALIDATOR_AVAILABLE = True
-except ImportError:
-    VALIDATOR_AVAILABLE = False
-    logger.debug("traigent_schemas not available, validation disabled")
 
 
 class ExampleMeasure:
@@ -396,7 +405,7 @@ class ExperimentDTO:
         return result
 
     def validate(self) -> bool:
-        """Validate the DTO against traigent_schemas.
+        """Validate the DTO against TraigentSchema.
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
@@ -414,24 +423,11 @@ class ExperimentDTO:
         # Check if strict validation is enabled (default: true)
         strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
 
-        if not VALIDATOR_AVAILABLE:
-            error_msg = (
-                "Schema validator unavailable (traigent_schemas not installed). "
-                "Install with: pip install 'traigent[validation]'"
-            )
-            logger.error(error_msg)
-
-            if strict_mode:
-                raise DTOSerializationError(
-                    "Schema validation required but validator unavailable",
-                    dto_class="ExperimentDTO",
-                    dto_id=self.id,
-                )
-            return False
-
         try:
             validator = SchemaValidator()
-            validator.validate_json_by_schema("experiment", self.to_dict())
+            errors = validator.validate_json(self.to_dict(), "experiment")
+            if errors:
+                raise ValueError("; ".join(errors))
             return True
         except Exception as e:
             logger.error(
@@ -462,7 +458,7 @@ class ExperimentRunDTO:
     experiment_id: str
 
     # Lifecycle and status metadata
-    status: str = "pending"
+    status: str = "not_started"
     start_time: str | None = None
     end_time: str | None = None
     summary_stats: dict[str, Any] = field(default_factory=dict)
