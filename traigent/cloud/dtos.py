@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from traigent_schema.validator import SchemaValidator
-
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -44,6 +42,13 @@ CONFIGURATION_RUN_STATUS_VALUES = frozenset(
         "partially_deleted",
     }
 )
+
+
+def _get_schema_validator_class() -> Any:
+    """Load the optional TraigentSchema validator lazily."""
+    from traigent_schema.validator import SchemaValidator
+
+    return SchemaValidator
 
 
 def _warn_if_unknown_status(
@@ -409,6 +414,8 @@ class ExperimentDTO:
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
+        Internal environments that need schema validation should install
+        the optional ``internal_schema`` dependency bundle.
 
         Returns:
             True if validation passed
@@ -424,11 +431,36 @@ class ExperimentDTO:
         strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
 
         try:
-            validator = SchemaValidator()
+            validator = _get_schema_validator_class()()
             errors = validator.validate_json(self.to_dict(), "experiment")
             if errors:
                 raise ValueError("; ".join(errors))
             return True
+        except ImportError as e:
+            message = (
+                "ExperimentDTO validation requires the internal "
+                "'traigent-schema' package. Install Traigent with the "
+                "'internal_schema' extra in internal environments."
+            )
+            logger.warning(
+                "Optional TraigentSchema validator unavailable",
+                extra={
+                    "dto_class": "ExperimentDTO",
+                    "dto_id": self.id,
+                    "error": str(e),
+                    "strict_mode": strict_mode,
+                    "install_hint": "pip install -e '.[internal_schema]'",
+                },
+            )
+
+            if strict_mode:
+                raise DTOSerializationError(
+                    message,
+                    dto_class="ExperimentDTO",
+                    dto_id=self.id,
+                ) from e
+
+            return False
         except Exception as e:
             logger.error(
                 "DTO validation failed",

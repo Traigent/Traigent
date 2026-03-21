@@ -19,6 +19,7 @@ from traigent.cloud.dtos import (
     ExperimentRunDTO,
     InfrastructureDTO,
 )
+from traigent.utils.exceptions import DTOSerializationError
 
 
 class TestInfrastructureDTO:
@@ -614,7 +615,9 @@ class TestConfigurationRunDTO:
                 assert data["id"] == "exp-validate"
                 return []
 
-        monkeypatch.setattr(cloud_dtos, "SchemaValidator", FakeValidator)
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", lambda: FakeValidator
+        )
 
         exp = ExperimentDTO(
             id="exp-validate",
@@ -623,6 +626,49 @@ class TestConfigurationRunDTO:
         )
 
         assert exp.validate() is True
+
+    def test_experiment_validate_returns_false_without_internal_schema(
+        self, monkeypatch
+    ):
+        """Validation should become non-blocking when the optional package is absent."""
+
+        def raise_missing_validator():
+            raise ImportError("No module named 'traigent_schema'")
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", raise_missing_validator
+        )
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", "false")
+
+        exp = ExperimentDTO(
+            id="exp-no-schema",
+            name="Validation Test",
+            description="Missing optional dependency",
+        )
+
+        assert exp.validate() is False
+
+    def test_experiment_validate_raises_helpful_error_without_internal_schema(
+        self, monkeypatch
+    ):
+        """Strict validation should explain how to enable internal schema checks."""
+
+        def raise_missing_validator():
+            raise ImportError("No module named 'traigent_schema'")
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", raise_missing_validator
+        )
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", "true")
+
+        exp = ExperimentDTO(
+            id="exp-no-schema-strict",
+            name="Validation Test",
+            description="Missing optional dependency",
+        )
+
+        with pytest.raises(DTOSerializationError, match="internal_schema"):
+            exp.validate()
 
     def test_trial_number_sequence(self):
         """Test trial numbers in sequence."""
