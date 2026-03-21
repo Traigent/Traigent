@@ -847,9 +847,9 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
-                stat_sig
-            )
+            summary_stats_with_aggregation["metadata"][
+                "statistical_significance"
+            ] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
