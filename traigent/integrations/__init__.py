@@ -366,12 +366,12 @@ except ImportError:
 # Workflow traces integration (always available - graceful degradation for OTEL)
 from .observability.workflow_traces import (
     OTEL_AVAILABLE,
-    TraigentSpanExporter,
     SpanPayload,
     SpanStatus,
     SpanType,
     TraceIngestionRequest,
     TraceIngestionResponse,
+    TraigentSpanExporter,
     WorkflowEdge,
     WorkflowGraphPayload,
     WorkflowLoop,
