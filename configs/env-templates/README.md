@@ -62,7 +62,7 @@ cp configs/env-templates/.env.test.template .env
 # AWS Secrets Manager, HashiCorp Vault, etc.
 
 # Example with envsubst (not recommended for production)
-export TRAIGENT_API_KEY="your-secret-key"
+export TRAIGENT_API_KEY="example-api-key-placeholder"  # pragma: allowlist secret
 envsubst < configs/env-templates/.env.production.template > .env
 ```
 
@@ -150,7 +150,7 @@ To keep secrets out of local files and CI logs:
 ## 📖 Related Documentation
 
 - [Project README](../../README.md)
-- [Security Documentation](../../reports/3_security/)
+- [Security Documentation](../../SECURITY.md)
 - [Development Guide](../../docs/)
 
 ## 🔄 Migration from Old Structure

@@ -380,13 +380,13 @@ chmod +x record-demos.sh scripts/*.sh
 ## See Traigent in Action
 
 ### LLM Agent Optimization
-![Traigent Optimization](docs/demos/output/optimize.svg)
+![Traigent Optimization](output/optimize.svg)
 
 ### Hooks & Callbacks
-![Traigent Hooks](docs/demos/output/hooks.svg)
+![Traigent Hooks](output/hooks.svg)
 
 ### GitHub Hooks & Validation
-![Traigent GitHub Hooks](docs/demos/output/github-hooks.svg)
+![Traigent GitHub Hooks](output/github-hooks.svg)
 ```
 
 ---

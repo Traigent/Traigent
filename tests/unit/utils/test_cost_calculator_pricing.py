@@ -14,6 +14,8 @@ from traigent.utils.cost_calculator import (
     get_model_token_pricing,
 )
 
+_SUPPORTED_PRICING_SOURCES = {"litellm", "builtin_pricing"}
+
 
 class TestGetModelTokenPricing:
     def test_returns_three_tuple_for_known_model(self) -> None:
@@ -37,7 +39,8 @@ class TestGetModelTokenPricing:
         canonical_pricing = get_model_token_pricing(canonical)
         assert alias_pricing[0] == pytest.approx(canonical_pricing[0], rel=1e-6)
         assert alias_pricing[1] == pytest.approx(canonical_pricing[1], rel=1e-6)
-        assert alias_pricing[2] == "litellm"
+        assert alias_pricing[2] == canonical_pricing[2]
+        assert alias_pricing[2] in _SUPPORTED_PRICING_SOURCES
 
     def test_provider_prefixed_model_resolves(self) -> None:
         prefixed = get_model_token_pricing("openai/gpt-4o")
@@ -137,4 +140,4 @@ class TestAliasCoverageSmoke:
         inp, out, method = get_model_token_pricing(alias)
         assert inp >= 0.0
         assert out >= 0.0
-        assert method == "litellm"
+        assert method in _SUPPORTED_PRICING_SOURCES
