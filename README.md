@@ -201,7 +201,7 @@ def multi_provider_agent(question: str) -> str:
 
 ### Installation
 
-Python 3.11+ on Linux, macOS, or Windows. Not on PyPI yet — install from source.
+Python 3.11+ on Linux, macOS, or Windows. For coordinated release validation, install from this repository source tree.
 
 | Feature Set | Description |
 |-------------|-------------|
