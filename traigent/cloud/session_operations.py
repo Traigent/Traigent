@@ -409,6 +409,24 @@ class SessionOperations:
                 detail=detail,
             )
 
+        except Exception as exc:
+            # Last-resort fallback for unexpected errors (e.g. from
+            # session_bridge or event loop machinery).  Ensures SDK
+            # never crashes during session creation.
+            logger.debug(
+                "Unexpected error in create_session for function '%s': %s",
+                function_name,
+                exc,
+            )
+            fallback_id = self._create_local_fallback_session(
+                function_name, search_space, optimization_goal, metadata
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail=str(exc)[:200],
+            )
+
     async def create_hybrid_session(
         self,
         problem_statement: str,
