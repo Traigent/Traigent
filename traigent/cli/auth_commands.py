@@ -94,15 +94,11 @@ class TraigentAuthCLI:
             Storage location string if saved successfully, None if failed
         """
         try:
-            self.credentials_file.parent.mkdir(
-                mode=0o700, parents=True, exist_ok=True
-            )
+            self.credentials_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with open(self.credentials_file, "w") as f:
                 json.dump(credentials, f, indent=2)
             self.credentials_file.chmod(0o600)
-            logger.debug(
-                f"Credentials saved to {self.credentials_file}"
-            )
+            logger.debug(f"Credentials saved to {self.credentials_file}")
             return STORAGE_FILE
         except OSError as e:
             logger.error(f"Failed to save credentials: {e}")
@@ -516,27 +512,7 @@ class TraigentAuthCLI:
 
     def _display_storage_location(self, storage_location: str | None) -> None:
         """Display where credentials are stored."""
-        if storage_location == STORAGE_KEYRING:
-            console.print("\n[bold]Credentials stored in:[/bold] System Keyring")
-            import platform
-
-            system = platform.system()
-            if system == "Darwin":
-                console.print(
-                    "  [dim]View in: Keychain Access app → search 'traigent-sdk'[/dim]"
-                )
-                console.print(
-                    "  [dim]Or run:[/dim] [cyan]security find-generic-password -s traigent-sdk -a default -w | python -m json.tool[/cyan]"
-                )
-            elif system == "Windows":
-                console.print(
-                    "  [dim]View in: Control Panel → Credential Manager → 'traigent-sdk'[/dim]"
-                )
-            else:
-                console.print(
-                    "  [dim]View in: Seahorse/KWallet → search 'traigent-sdk'[/dim]"
-                )
-        elif storage_location == STORAGE_FILE:
+        if storage_location == STORAGE_FILE:
             console.print(
                 f"\n[bold]Credentials stored in:[/bold] [cyan]{self.credentials_file}[/cyan]"
             )
@@ -544,7 +520,7 @@ class TraigentAuthCLI:
                 f"  [dim]View with:[/dim] [cyan]cat {self.credentials_file}[/cyan]"
             )
         else:
-            console.print("\n[yellow]⚠️ Could not save credentials to storage[/yellow]")
+            console.print("\n[yellow]Could not save credentials to storage[/yellow]")
 
     def _offer_env_file_save(self, api_key: str, non_interactive: bool) -> None:
         """Offer to save API key to .env file."""
@@ -866,10 +842,7 @@ class TraigentAuthCLI:
             storage_location = self._save_credentials(credentials)
             if storage_location:
                 console.print("[green]✅ API key stored securely[/green]")
-                if storage_location == STORAGE_KEYRING:
-                    console.print("[dim]Location: System Keyring[/dim]\n")
-                else:
-                    console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
+                console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
             else:
                 console.print("[red]❌ Failed to store API key[/red]\n")
         else:
