@@ -21,7 +21,11 @@ from traigent.config.types import TraigentConfig
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
-from traigent.config.backend_config import get_no_credentials_hint
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
+from traigent.config.backend_config import SIGNUP_URL, get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -33,10 +37,6 @@ from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-# Track warnings that have already been shown to reduce log noise
-_warned_missing_mapping: set[str] = set()
-_warned_no_api_key: bool = False
 
 
 class BackendSessionManager:
@@ -77,6 +77,64 @@ class BackendSessionManager:
         self._optimizer = optimizer
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
+
+        # Run-scoped circuit breaker — once disabled, all backend writes skip
+        self._backend_tracking_enabled: bool = True
+        self._backend_disabled_reason: SessionCreationFailureReason | None = None
+
+    @property
+    def backend_tracking_enabled(self) -> bool:
+        """Whether remote backend tracking is active for this run."""
+        return self._backend_tracking_enabled
+
+    def disable_backend_tracking(self, reason: SessionCreationFailureReason) -> None:
+        """Disable backend tracking for this run. Idempotent — keeps first reason."""
+        if not self._backend_tracking_enabled:
+            return
+        self._backend_tracking_enabled = False
+        self._backend_disabled_reason = reason
+
+    def handle_session_creation_result(self, result: SessionCreationResult) -> str:
+        """Consume a SessionCreationResult: flip breaker, emit warning, return session_id.
+
+        Single place that interprets the structured result — ensures warning text
+        and breaker state cannot diverge across call sites.
+        """
+        if not result.backend_connected:
+            was_enabled = self._backend_tracking_enabled
+            if result.failure_reason is None:
+                raise ValueError(
+                    "SessionCreationResult.failure_reason must be set "
+                    "when backend_connected=False"
+                )
+            reason = result.failure_reason
+            self.disable_backend_tracking(reason)
+
+            if not was_enabled:
+                return result.session_id
+
+            if reason == SessionCreationFailureReason.AUTH:
+                logger.warning(
+                    "Backend authentication failed — results will be saved locally only. "
+                    "Run 'traigent auth login' or get a new key at %s",
+                    SIGNUP_URL,
+                )
+            elif reason == SessionCreationFailureReason.NO_API_KEY:
+                logger.warning(
+                    "No API key found — results saved locally only. %s",
+                    get_no_credentials_hint(),
+                )
+            else:
+                detail = result.failure_detail or "unknown"
+                logger.warning(
+                    "Backend tracking unavailable — results will be saved locally only. "
+                    "reason=%s",
+                    detail[:200],
+                )
+        else:
+            logger.info("Created backend session: %s", result.session_id)
+
+        return result.session_id
 
     @staticmethod
     def create_backend_client(
@@ -176,16 +234,16 @@ class BackendSessionManager:
         """Check if backend-related warnings should be suppressed.
 
         Returns True if:
+        - Backend tracking is disabled (circuit breaker tripped), OR
         - Offline mode is enabled, OR
-        - No API key is configured (user hasn't set up backend access)
-
-        This prevents noisy warnings for users evaluating the SDK without
-        backend access or running in local-only mode.
+        - No API key is configured
         """
+        if not self._backend_tracking_enabled:
+            return True
+
         if is_backend_offline():
             return True
 
-        # Check if backend client has API key configured
         if self._backend_client:
             auth_manager = getattr(self._backend_client, "auth", None)
             has_api_key = bool(
@@ -311,56 +369,36 @@ class BackendSessionManager:
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
 
-            session_id = self._backend_client.create_session(
+            result = self._backend_client.create_session(
                 function_name=portal_name,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
             )
-            logger.info("Created backend session: %s", session_id)
+            session_id = self.handle_session_creation_result(result)
 
-            # Verify that the backend recorded a mapping; absence indicates we fell
-            # back to local storage even though a session identifier was returned.
-            session_mapping = None
-            get_mapping = getattr(self._backend_client, "get_session_mapping", None)
-            if callable(get_mapping):
-                try:
-                    session_mapping = get_mapping(session_id)
-                except Exception as exc:  # pragma: no cover - defensive logging only
-                    logger.debug(
-                        "Unable to resolve backend session mapping for %s: %s",
-                        session_id,
-                        exc,
-                    )
+            # On success, upload dataset features via the session mapping
+            if result.backend_connected:
+                session_mapping = None
+                get_mapping = getattr(self._backend_client, "get_session_mapping", None)
+                if callable(get_mapping):
+                    try:
+                        session_mapping = get_mapping(session_id)
+                    except Exception as exc:
+                        logger.debug(
+                            "Unable to resolve session mapping for %s: %s",
+                            session_id,
+                            exc,
+                        )
 
-            if session_mapping is None:
-                # Only warn once per session; suppress in offline mode (expected)
-                if (
-                    session_id not in _warned_missing_mapping
-                    and not is_backend_offline()
-                ):
-                    logger.debug(
-                        "Backend mapping missing for session %s (%s). "
-                        "This strongly suggests the Traigent API rejected the session "
-                        "creation request and the SDK fell back to local tracking. "
-                        "Trials will remain local unless the session endpoint is reachable.",
-                        session_id,
-                        function_identifier,
+                if session_mapping is not None:
+                    self._upload_dataset_features(
+                        session_id=session_id,
+                        dataset=dataset,
+                        experiment_run_id=getattr(
+                            session_mapping, "experiment_run_id", None
+                        ),
                     )
-                    _warned_missing_mapping.add(session_id)
-                elif is_backend_offline():
-                    logger.debug(
-                        "Backend mapping missing for session %s (offline mode - expected)",
-                        session_id,
-                    )
-            else:
-                self._upload_dataset_features(
-                    session_id=session_id,
-                    dataset=dataset,
-                    experiment_run_id=getattr(
-                        session_mapping, "experiment_run_id", None
-                    ),
-                )
 
         dataset_name = (
             dataset.name if hasattr(dataset, "name") else "default_evaluation"
@@ -403,6 +441,13 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return False
 
+        if not self._backend_tracking_enabled:
+            logger.debug(
+                "Skipping trial submission (backend disabled: %s)",
+                self._backend_disabled_reason,
+            )
+            return False
+
         _ = content_scores
 
         primary_objective = (
@@ -438,6 +483,9 @@ class BackendSessionManager:
         if not self._backend_client or not session_id:
             return
 
+        if not self._backend_tracking_enabled:
+            return
+
         sanitized_score = float(score) if score is not None else None
         metadata_payload = dict(metadata)
         if score is None:
@@ -466,28 +514,19 @@ class BackendSessionManager:
             and hasattr(auth_manager, "has_api_key")
             and auth_manager.has_api_key()
         )
-        global _warned_no_api_key
         if not has_api_key:
-            # Only warn once; suppress in offline mode to reduce log noise
-            if not _warned_no_api_key and not is_backend_offline():
-                logger.warning(
-                    "No API key found — results saved locally only. %s",
-                    get_no_credentials_hint(),
-                )
-                _warned_no_api_key = True
-            else:
-                logger.debug(
-                    "Skipping backend trial submission for session %s trial %s (no API key)",
-                    session_id,
-                    trial_result.trial_id,
-                )
-            return
-        else:
-            logger.info(
-                "✅ API key detected, submitting trial %s for session %s",
-                trial_result.trial_id,
+            logger.debug(
+                "Skipping backend trial submission for session %s trial %s (no API key)",
                 session_id,
+                trial_result.trial_id,
             )
+            return
+
+        logger.debug(
+            "Submitting trial %s for session %s",
+            trial_result.trial_id,
+            session_id,
+        )
 
         # If the backend session was never registered (e.g., API fallback), avoid
         # posting to the SaaS endpoint to prevent 400 errors for unknown sessions.
@@ -621,6 +660,13 @@ class BackendSessionManager:
             Number of trials successfully updated
         """
         if not self._backend_client or session_id is None or len(self._objectives) <= 1:
+            return 0
+
+        if not self._backend_tracking_enabled:
+            logger.debug(
+                "Skipping weighted score updates (backend disabled: %s)",
+                self._backend_disabled_reason,
+            )
             return 0
 
         backend_client = self._backend_client  # Capture for use in nested function
@@ -817,6 +863,7 @@ class BackendSessionManager:
             not self._backend_client
             or session_id is None
             or self._traigent_config.is_edge_analytics_mode()
+            or not self._backend_tracking_enabled
         ):
             return
 
@@ -899,7 +946,11 @@ class BackendSessionManager:
         Returns:
             Session summary metadata (or None if backend disabled)
         """
-        if not self._backend_client or session_id is None:
+        if (
+            not self._backend_client
+            or session_id is None
+            or not self._backend_tracking_enabled
+        ):
             return None
 
         final_status = (

@@ -1779,7 +1779,7 @@ class OptimizationOrchestrator:
                 f"Creating session with max_trials={max_trials_value} (self.max_trials={self.max_trials})"
             )
 
-            session_id: str = self.backend_client.create_session(
+            result = self.backend_client.create_session(
                 function_name=identifier,
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
@@ -1793,7 +1793,9 @@ class OptimizationOrchestrator:
                     "evaluation_set": dataset_name or "default_evaluation",
                 },
             )
-            logger.info(f"Created session: {session_id}")
+            session_id = self.backend_session_manager.handle_session_creation_result(
+                result
+            )
             return session_id
         else:
             # Return a mock session ID if no backend client
@@ -2152,7 +2154,8 @@ class OptimizationOrchestrator:
         await self._submit_usage_analytics()
 
         # Submit collected workflow traces and graph to backend
-        await self._submit_workflow_traces(session_id)
+        if self.backend_session_manager.backend_tracking_enabled:
+            await self._submit_workflow_traces(session_id)
 
         self.callback_manager.on_optimization_complete(result)
 
