@@ -128,7 +128,7 @@
     "@types/babel__traverse": "^7.28.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
-    "@typescript-eslint/parser": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.1",
     "@vitest/coverage-v8": "^1.6.1",
     "ai": "^3.0.0",
     "eslint": "^8.0.0",
