@@ -12,8 +12,8 @@ Tuned variables in Traigent consist of two components:
 ## Installation
 
 ```bash
-# Core tuned variables (included with traigent)
-pip install traigent
+# Core tuned variables (included with the SDK; run from the Traigent repo root)
+pip install -e ".[recommended]"
 
 # Plugin with domain presets and analysis
 pip install traigent-tuned-variables
