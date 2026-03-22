@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -43,3 +44,36 @@ def test_write_snapshot_json_rejects_paths_outside_snapshot_dir(
     monkeypatch.setattr(verify_example_results, "SNAPSHOTS_DIR", tmp_path)
     with pytest.raises(ValueError, match="Invalid snapshot write path"):
         verify_example_results.write_snapshot_json(tmp_path.parent / "outside.json", {})
+
+
+def test_query_backend_disallows_redirects(monkeypatch, capsys) -> None:
+    class FakeOpener:
+        def open(self, req, timeout):
+            raise urllib.error.HTTPError(
+                req.full_url,
+                302,
+                "Found",
+                hdrs=None,
+                fp=None,
+            )
+
+    monkeypatch.setattr(
+        verify_example_results.urllib.request,
+        "build_opener",
+        lambda handler: (
+            isinstance(handler, verify_example_results._NoRedirectHandler)
+            and FakeOpener()
+        ),
+    )
+
+    result = verify_example_results.query_backend(
+        "experiments",
+        "http://localhost:5000/api/v1",
+        "test-api-key",
+    )
+
+    assert result is None
+    assert (
+        "Backend query failed (experiments): HTTP Error 302: Found"
+        in capsys.readouterr().err
+    )
