@@ -230,7 +230,7 @@ sat = "traigent_validation.validators:SATConstraintValidator"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["traigent*", "traigent_validation*"]
-exclude = ["tests*", "demos*", "docs*"]
+exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 
 [tool.setuptools.package-data]
 traigent = ["py.typed"]
