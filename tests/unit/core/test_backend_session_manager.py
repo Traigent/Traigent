@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
+from traigent.cloud.session_types import SessionCreationResult
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.objectives import create_default_objectives
@@ -20,7 +21,9 @@ from traigent.utils.function_identity import resolve_function_descriptor
 def mock_backend_client():
     """Create mock backend client."""
     client = Mock()
-    client.create_session = Mock(return_value="test-session-id")
+    client.create_session = Mock(
+        return_value=SessionCreationResult.connected(session_id="test-session-id")
+    )
     client.get_session_mapping = Mock(
         return_value=MagicMock(experiment_run_id="run_test_123")
     )
@@ -846,31 +849,23 @@ class TestStatisticalSignificanceWiring:
         assert "statistical_significance" not in inner_metadata
 
 
-class TestTrialSkipWarningIncludesSignupUrl:
-    """Verify the no-API-key trial-skip warning includes the signup URL."""
+class TestHandleSessionCreationResult:
+    """Verify handle_session_creation_result emits correct warnings."""
 
-    @pytest.mark.asyncio
-    async def test_log_trial_warns_with_signup_url_when_no_api_key(
+    def test_no_api_key_warning_includes_signup_url(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """_log_trial_to_backend must emit WARNING with signup URL when no key."""
+        """handle_session_creation_result must emit WARNING with signup URL for NO_API_KEY."""
         import logging
-        from unittest.mock import patch
 
-        import traigent.core.backend_session_manager as bsm
+        from traigent.cloud.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
         from traigent.config.backend_config import SIGNUP_URL
 
-        # Reset the once-per-process guard
-        bsm._warned_no_api_key = False
-
-        client = Mock()
-        auth_manager = Mock()
-        auth_manager.has_api_key = Mock(return_value=False)
-        client.auth_manager = auth_manager
-        client.log_trial = AsyncMock()
-
         manager = BackendSessionManager(
-            backend_client=client,
+            backend_client=Mock(),
             traigent_config=traigent_config,
             objectives=["accuracy"],
             objective_schema=objective_schema,
@@ -879,25 +874,122 @@ class TestTrialSkipWarningIncludesSignupUrl:
             optimization_status=OptimizationStatus.RUNNING,
         )
 
-        trial_result = Mock(spec=TrialResult)
-        trial_result.trial_id = "t1"
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.NO_API_KEY,
+            detail="No API key configured",
+        )
 
-        with (
-            patch(
-                "traigent.core.backend_session_manager.is_backend_offline",
-                return_value=False,
-            ),
-            caplog.at_level(
-                logging.WARNING, logger="traigent.core.backend_session_manager"
-            ),
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
         ):
-            await manager._log_trial_to_backend(
-                session_id="s1", trial_result=trial_result, score=0.9, metadata={}
-            )
+            session_id = manager.handle_session_creation_result(result)
 
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
-        # Verify it's WARNING level, not DEBUG
+        assert session_id == "local_test"
+        assert not manager.backend_tracking_enabled
+        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
+            f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
+        )
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) >= 1
+        assert len(warning_records) == 1
+
+    def test_auth_failure_warning(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """handle_session_creation_result must emit WARNING for AUTH failure."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (401)",
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            manager.handle_session_creation_result(result)
+
+        assert not manager.backend_tracking_enabled
+        assert any("authentication failed" in msg.lower() for msg in caplog.messages)
+
+    def test_idempotent_warns_only_once(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Calling handle_session_creation_result twice emits only one warning."""
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.core.backend_session_manager"
+        ):
+            manager.handle_session_creation_result(result)
+            manager.handle_session_creation_result(result)
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_records) == 1, (
+            f"Expected exactly 1 warning, got {len(warning_records)}"
+        )
+
+    def test_success_logs_info(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Successful result logs session ID at INFO level."""
+        import logging
+
+        from traigent.cloud.session_types import SessionCreationResult
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = SessionCreationResult.connected(session_id="real-session-123")
+
+        with caplog.at_level(
+            logging.INFO, logger="traigent.core.backend_session_manager"
+        ):
+            session_id = manager.handle_session_creation_result(result)
+
+        assert session_id == "real-session-123"
+        assert manager.backend_tracking_enabled
+        assert any("real-session-123" in msg for msg in caplog.messages)
