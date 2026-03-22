@@ -113,10 +113,6 @@ from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
 
-# Multi-agent workflow cost tracking (DTO hardening)
-from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
-from traigent.cloud.dtos import MeasuresDict
-
 # Thread context helpers
 from traigent.config.context import copy_context_to_thread, get_trial_context
 
@@ -171,6 +167,44 @@ warnings.filterwarnings(
     "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
 )
 
+
+def _is_missing_optional_module(
+    exc: ModuleNotFoundError, module_prefixes: tuple[str, ...]
+) -> bool:
+    missing_module = getattr(exc, "name", "")
+    return any(
+        missing_module == prefix or missing_module.startswith(f"{prefix}.")
+        for prefix in module_prefixes
+    )
+
+
+_OPTIONAL_EXPORT_ERRORS: dict[str, str] = {}
+
+try:
+    # Multi-agent workflow cost tracking (DTO hardening)
+    from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
+    from traigent.cloud.dtos import MeasuresDict
+except ModuleNotFoundError as exc:
+    if not _is_missing_optional_module(exc, ("traigent.cloud",)):
+        raise
+
+    _OPTIONAL_EXPORT_ERRORS.update(
+        {
+            "AgentCostBreakdown": (
+                "module 'traigent' has no attribute 'AgentCostBreakdown'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+            "WorkflowCostSummary": (
+                "module 'traigent' has no attribute 'WorkflowCostSummary'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+            "MeasuresDict": (
+                "module 'traigent' has no attribute 'MeasuresDict'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+        }
+    )
+
 __all__ = [
     # Main decorator
     "optimize",
@@ -221,10 +255,6 @@ __all__ = [
     "OptimizationState",
     # Thread context helpers
     "copy_context_to_thread",
-    # Multi-agent workflow cost tracking (DTO hardening)
-    "AgentCostBreakdown",
-    "WorkflowCostSummary",
-    "MeasuresDict",
     "TraigentMetadata",
     "is_traigent_metadata",
     # Exceptions and warnings
@@ -268,6 +298,22 @@ __all__ = [
     "OptimizationStatus",
     "StrategyConfig",
 ]
+
+if "AgentCostBreakdown" in globals():
+    __all__.extend(
+        [
+            "AgentCostBreakdown",
+            "WorkflowCostSummary",
+            "MeasuresDict",
+        ]
+    )
+
+
+def __getattr__(name: str):
+    if name in _OPTIONAL_EXPORT_ERRORS:
+        raise AttributeError(_OPTIONAL_EXPORT_ERRORS[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # NOTE: Legacy builtins injection removed in v0.9.0
 # Use explicit imports: `import traigent`

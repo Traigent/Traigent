@@ -9,6 +9,10 @@ flags accurately reflect installed dependencies.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 
@@ -99,6 +103,77 @@ class TestTraigentInit:
         # All items in __all__ should be accessible
         for name in traigent.__all__:
             assert hasattr(traigent, name), f"{name} in __all__ but not accessible"
+
+    def test_main_module_imports_without_optional_cloud_modules(self) -> None:
+        """Test that traigent still imports when cloud-only modules are absent."""
+        script = textwrap.dedent(
+            """
+            import builtins
+
+            real_import = builtins.__import__
+            blocked = {
+                "traigent.cloud.agent_dtos",
+                "traigent.cloud.dtos",
+                "traigent.optimizers.cloud_optimizer",
+                "traigent.optimizers.remote",
+            }
+
+            def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+                if name in blocked or any(
+                    name.startswith(f"{prefix}.") for prefix in blocked
+                ):
+                    exc = ModuleNotFoundError(f"No module named {name!r}")
+                    exc.name = name
+                    raise exc
+                return real_import(name, globals, locals, fromlist, level)
+
+            builtins.__import__ = blocked_import
+
+            import traigent
+            import traigent.optimizers as optimizers
+
+            assert hasattr(traigent, "optimize")
+            assert hasattr(optimizers, "GridSearchOptimizer")
+            assert "AgentCostBreakdown" not in traigent.__all__
+            assert "WorkflowCostSummary" not in traigent.__all__
+            assert "MeasuresDict" not in traigent.__all__
+            assert "CloudOptimizer" not in optimizers.__all__
+            assert "RemoteOptimizer" not in optimizers.__all__
+
+            for module, name, expected in [
+                (
+                    traigent,
+                    "AgentCostBreakdown",
+                    "Cloud workflow DTO exports are unavailable",
+                ),
+                (
+                    optimizers,
+                    "CloudOptimizer",
+                    "Cloud optimizer exports are unavailable",
+                ),
+                (
+                    optimizers,
+                    "RemoteOptimizer",
+                    "Remote optimizer exports are unavailable",
+                ),
+            ]:
+                try:
+                    getattr(module, name)
+                except AttributeError as exc:
+                    assert expected in str(exc)
+                else:
+                    raise AssertionError(f"{name} should be unavailable")
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
 
 
 class TestIntegrationsInit:

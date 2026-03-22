@@ -1053,10 +1053,10 @@ def with_usage(
             )
 
     Multi-Agent Workflows:
-        For multi-agent workflows with per-agent cost tracking, use the
-        AgentCostBreakdown and WorkflowCostSummary DTOs from traigent.cloud.agent_dtos:
+        If the optional cloud workflow DTOs are installed, you can use
+        AgentCostBreakdown and WorkflowCostSummary for per-agent cost tracking:
 
-        >>> from traigent import AgentCostBreakdown, WorkflowCostSummary
+        >>> from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
         >>> agent1 = AgentCostBreakdown(
         ...     agent_id="researcher",
         ...     agent_name="Research Agent",
@@ -1075,6 +1075,9 @@ def with_usage(
         ...     input_tokens=workflow.total_input_tokens,
         ...     output_tokens=workflow.total_output_tokens
         ... )
+
+        In OSS-only builds, compute the aggregate totals directly and pass the
+        numeric values to ``with_usage()`` without importing cloud DTOs.
     """
     # Enforce string type
     if not isinstance(text, str):
