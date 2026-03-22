@@ -1167,7 +1167,8 @@ class WorkflowTracesTracker:
         self.batch_size = batch_size
 
         self.client = WorkflowTracesClient(
-            self.backend_url, self.auth_token  # type: ignore[arg-type]
+            self.backend_url,
+            self.auth_token,  # type: ignore[arg-type]
         )
 
         # ContextVar-based storage for trial context.
