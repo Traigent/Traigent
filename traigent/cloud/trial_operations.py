@@ -20,9 +20,6 @@ from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
-# Track whether we've warned about weighted score update failures
-_warned_weighted_score_failure: bool = False
-
 # HTTP Content-Type header constant
 _JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
 
@@ -902,38 +899,43 @@ class TrialOperations:
                                 # The weighted scores won't be updated but the optimization can continue
                                 return True
                             else:
+                                # Auth failures: instance-scoped dedup at DEBUG
+                                if response.status in (401, 403):
+                                    if not getattr(self, "_auth_error_logged", False):
+                                        logger.debug(
+                                            "Backend auth rejected weighted score update (%s)",
+                                            response.status,
+                                        )
+                                        self._auth_error_logged = True
+                                    return False
                                 logger.error(
                                     f"Failed to update weighted scores: {response.status} - {error_msg[:200]}"
                                 )
                                 return False
                         else:
                             error_msg = await response.text()
+                            # Auth failures: instance-scoped dedup at DEBUG
+                            if response.status in (401, 403):
+                                if not getattr(self, "_auth_error_logged", False):
+                                    logger.debug(
+                                        "Backend auth rejected weighted score update (%s)",
+                                        response.status,
+                                    )
+                                    self._auth_error_logged = True
+                                return False
                             logger.error(
                                 f"Failed to update weighted scores: {response.status} - {error_msg[:100]}"
                             )
                             return False
                 except Exception as exc:
-                    # Handle connection failures to local or misconfigured backends gracefully
+                    # Handle connection failures gracefully
                     if AIOHTTP_AVAILABLE and isinstance(
                         exc, aiohttp.ClientConnectorError
                     ):
-                        global _warned_weighted_score_failure
-                        # Only warn once; suppress warnings in offline mode
-                        if (
-                            not _warned_weighted_score_failure
-                            and not is_backend_offline()
-                        ):
-                            logger.warning(
-                                "Cannot connect to backend while updating weighted score for %s (%s). Skipping.",
-                                trial_id,
-                                self._describe_backend(),
-                            )
-                            _warned_weighted_score_failure = True
-                        else:
-                            logger.debug(
-                                "Cannot connect to backend for weighted score update (trial %s)",
-                                trial_id,
-                            )
+                        logger.debug(
+                            "Cannot connect to backend for weighted score update (trial %s)",
+                            trial_id,
+                        )
                         return False
                     raise
 

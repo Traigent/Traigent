@@ -40,7 +40,7 @@ class TestBackendIntegration:
     @pytest.mark.asyncio
     async def test_create_session(self, backend_client):
         """Test creating a new optimization session."""
-        session_id = backend_client.create_session(
+        result = backend_client.create_session(
             function_name="test_function",
             search_space={
                 "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
@@ -50,9 +50,9 @@ class TestBackendIntegration:
             metadata={"dataset_size": 100, "max_trials": 10, "test_run": True},
         )
 
-        assert session_id is not None
-        assert isinstance(session_id, str)
-        assert len(session_id) > 0
+        assert result.session_id is not None
+        assert isinstance(result.session_id, str)
+        assert len(result.session_id) > 0
 
     @pytest.mark.asyncio
     async def test_submit_trial_result(self, backend_client):
@@ -65,7 +65,7 @@ class TestBackendIntegration:
                 "max_tokens": [100, 150, 200],
             },
             optimization_goal="maximize",
-        )
+        ).session_id
 
         # Submit a trial result
         backend_client.submit_result(
@@ -92,7 +92,7 @@ class TestBackendIntegration:
                 "max_tokens": [100, 150, 200],
             },
             optimization_goal="maximize",
-        )
+        ).session_id
 
         # Submit multiple trials
         trials = [

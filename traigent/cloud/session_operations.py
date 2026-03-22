@@ -15,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import CloudServiceError
 from traigent.cloud.models import (
@@ -23,14 +24,15 @@ from traigent.cloud.models import (
     OptimizationSessionStatus,
     SessionCreationRequest,
 )
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
-
-# Track whether we've warned about backend unavailability to reduce log noise
-_warned_backend_unavailable: set[str] = set()
 
 # Optional aiohttp dependency handling
 try:
@@ -180,17 +182,77 @@ class SessionOperations:
             return f"{excerpt[:197]}..."
         return excerpt
 
+    def _create_local_fallback_session(
+        self,
+        function_name: str,
+        search_space: dict[str, Any],
+        optimization_goal: str,
+        metadata: dict[str, Any] | None,
+    ) -> str:
+        """Create a local-only session after backend failure.
+
+        Returns:
+            Session ID for local tracking.
+        """
+        if self.client.local_storage:
+            try:
+                optimization_config = {
+                    "search_space": search_space,
+                    "optimization_goal": optimization_goal,
+                    "baseline_config": None,
+                }
+                fallback_metadata = dict(metadata or {})
+                fallback_metadata.update(
+                    {
+                        "execution_mode": "local_fallback",
+                        "backend_fallback": True,
+                        "created_with_version": "traigent-local-fallback-1.0.0",
+                    }
+                )
+                session_id = self.client.local_storage.create_session(
+                    function_name=function_name,
+                    optimization_config=optimization_config,
+                    metadata=fallback_metadata,
+                )
+                self.client._register_security_session(
+                    session_id,
+                    (metadata or {}).get("user_id"),
+                    {
+                        "function_name": function_name,
+                        "fallback": True,
+                        "optimization_goal": optimization_goal,
+                    },
+                )
+                logger.debug("Created local fallback session: %s", session_id)
+                return session_id
+            except Exception as storage_e:
+                logger.debug("Local storage fallback failed: %s", storage_e)
+
+        fallback_id = f"local_session_{uuid.uuid4()}"
+        self.client._register_security_session(
+            fallback_id,
+            (metadata or {}).get("user_id"),
+            {
+                "function_name": function_name,
+                "fallback": True,
+                "optimization_goal": optimization_goal,
+                "storage": "ephemeral",
+            },
+        )
+        logger.debug("Using ephemeral session ID: %s", fallback_id)
+        return fallback_id
+
     def create_session(
         self,
         function_name: str,
         search_space: dict[str, Any],
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
-    ) -> str:
-        """Synchronous wrapper for creating a session with backend metadata submission.
+    ) -> SessionCreationResult:
+        """Create a session with backend metadata submission.
 
-        This method creates minimal backend entities for privacy-preserving tracking
-        while keeping sensitive data local.
+        Returns a structured result indicating whether the backend session was
+        created successfully or fell back to local storage.
 
         Args:
             function_name: Name of the function being optimized
@@ -199,7 +261,7 @@ class SessionOperations:
             metadata: Additional metadata
 
         Returns:
-            Session ID for tracking
+            SessionCreationResult with session_id and backend status
         """
         self._validate_non_empty_string(function_name, "function_name")
         self._validate_mapping(search_space, "search_space")
@@ -207,12 +269,25 @@ class SessionOperations:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
 
-        async def _create_session_async() -> str:
-            # Create a minimal optimization request for backend tracking
-            # Create privacy-preserving session request
+        async def _create_session_async() -> SessionCreationResult:
+            # Preflight: check if API key exists before attempting any HTTP call
+            has_key = self.client.auth_manager.has_api_key()
+            if not has_key:
+                logger.debug(
+                    "No API key configured — skipping backend session creation"
+                )
+                fallback_id = self._create_local_fallback_session(
+                    function_name, search_space, optimization_goal, metadata
+                )
+                return SessionCreationResult.fallback(
+                    session_id=fallback_id,
+                    reason=SessionCreationFailureReason.NO_API_KEY,
+                    detail="No API key configured",
+                )
+
             max_trials_from_metadata = metadata.get("max_trials") if metadata else None
             if max_trials_from_metadata is None:
-                logger.warning("max_trials not found in metadata, using default 10")
+                logger.debug("max_trials not found in metadata, using default 10")
                 max_trials_from_metadata = 10
             else:
                 try:
@@ -244,19 +319,15 @@ class SessionOperations:
             )
 
             try:
-                # Always use session endpoints - no fallback to old experiment endpoints
                 logger.info("Creating session via Traigent session endpoints")
-
-                # Use new Traigent session endpoints
                 (
                     session_id,
                     experiment_id,
                     experiment_run_id,
                 ) = await self.client._create_traigent_session_via_api(session_request)
 
-                # Store mapping for later use
                 self.client.session_bridge.create_session_mapping(
-                    session_id=session_id,  # Use the actual session_id
+                    session_id=session_id,
                     experiment_id=experiment_id,
                     experiment_run_id=experiment_run_id,
                     function_name=function_name,
@@ -264,109 +335,52 @@ class SessionOperations:
                     objectives=[optimization_goal],
                 )
 
-                logger.info(
-                    f"Created backend tracking: session={session_id}, experiment={experiment_id}, run={experiment_run_id}"
+                logger.debug(
+                    "Created backend tracking: session=%s, experiment=%s, run=%s",
+                    session_id,
+                    experiment_id,
+                    experiment_run_id,
                 )
-                return session_id  # Return the session_id, not experiment_run_id
+                return SessionCreationResult.connected(session_id=session_id)
 
-            except Exception as e:
+            except ValidationException:
+                raise  # User input errors must propagate
+
+            except AuthenticationError as e:
+                await self._reset_client_session("create_session auth_failure")
+                logger.debug("Backend auth failed for '%s': %s", function_name, e)
+                fallback_id = self._create_local_fallback_session(
+                    function_name, search_space, optimization_goal, metadata
+                )
+                return SessionCreationResult.fallback(
+                    session_id=fallback_id,
+                    reason=SessionCreationFailureReason.AUTH,
+                    detail=str(e)[:200],
+                )
+
+            except (
+                CloudServiceError,
+                OSError,
+                asyncio.TimeoutError,
+            ) as e:
                 await self._reset_client_session("create_session fallback")
-                # Only warn once per function; suppress in offline mode (expected)
-                warn_key = function_name
-                if (
-                    warn_key not in _warned_backend_unavailable
-                    and not is_backend_offline()
-                ):
-                    if isinstance(e, CloudServiceError):
-                        logger.warning(
-                            "Backend tracking unavailable for function '%s' (%s). "
-                            "Results will be saved locally. reason=%s",
-                            function_name,
-                            self._describe_backend(),
-                            str(e),
-                        )
-                    else:
-                        logger.warning(
-                            "Backend tracking unavailable for function '%s' (%s). "
-                            "Results will be saved locally.",
-                            function_name,
-                            self._describe_backend(),
-                        )
-                    _warned_backend_unavailable.add(warn_key)
-                else:
-                    logger.debug(
-                        "Backend tracking unavailable for function '%s': %s",
-                        function_name,
-                        str(e),
-                    )
-                # Fall back to local storage if available
-                if self.client.local_storage:
-                    try:
-                        optimization_config = {
-                            "search_space": search_space,
-                            "optimization_goal": optimization_goal,
-                            "baseline_config": None,
-                        }
-
-                        fallback_metadata = dict(metadata or {})
-                        fallback_metadata.update(
-                            {
-                                "execution_mode": "local_fallback",
-                                "backend_fallback": True,
-                                "created_with_version": "traigent-local-fallback-1.0.0",
-                            }
-                        )
-
-                        session_id = self.client.local_storage.create_session(
-                            function_name=function_name,
-                            optimization_config=optimization_config,
-                            metadata=fallback_metadata,
-                        )
-                        self.client._register_security_session(
-                            session_id,
-                            (metadata or {}).get("user_id"),
-                            {
-                                "function_name": function_name,
-                                "fallback": True,
-                                "optimization_goal": optimization_goal,
-                            },
-                        )
-                        logger.info(f"Created local fallback session: {session_id}")
-                        return session_id
-                    except Exception as storage_e:
-                        logger.error(f"Local storage fallback also failed: {storage_e}")
-
-                # Final fallback: return a local session ID without storage
-                fallback_id = f"local_session_{uuid.uuid4()}"
-                logger.warning(
-                    f"Using temporary session ID (no storage): {fallback_id}"
+                logger.debug("Backend unavailable for '%s': %s", function_name, e)
+                fallback_id = self._create_local_fallback_session(
+                    function_name, search_space, optimization_goal, metadata
                 )
-                self.client._register_security_session(
-                    fallback_id,
-                    (metadata or {}).get("user_id"),
-                    {
-                        "function_name": function_name,
-                        "fallback": True,
-                        "optimization_goal": optimization_goal,
-                        "storage": "ephemeral",
-                    },
+                detail = str(e).split("\n", 1)[0][:200]
+                return SessionCreationResult.fallback(
+                    session_id=fallback_id,
+                    reason=SessionCreationFailureReason.SESSION_FAILED,
+                    detail=detail,
                 )
-                return fallback_id
 
         # Run async method in sync context
         try:
-            # Check if there's already a running event loop
             try:
-                asyncio.get_running_loop()  # Raises RuntimeError if no loop
-                # Loop is running (e.g., in Jupyter, async frameworks)
-                # CRITICAL: run_coroutine_threadsafe().result() DEADLOCKS if called
-                # from the same thread as the running loop, because the loop can't
-                # process the scheduled coroutine while blocked on .result().
-                #
-                # Solution: Run the async code in a separate thread with its own loop.
+                asyncio.get_running_loop()
 
-                def _run_in_new_loop() -> str:
-                    """Run the async function in a new event loop in this thread."""
+                def _run_in_new_loop() -> SessionCreationResult:
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
@@ -374,55 +388,36 @@ class SessionOperations:
                     finally:
                         new_loop.close()
 
-                # Execute in shared thread pool to avoid blocking the running loop
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
-                return future.result(timeout=60)  # 60s timeout for safety
+                return future.result(timeout=60)
 
             except RuntimeError:
-                # No running loop, safe to use asyncio.run()
                 return asyncio.run(_create_session_async())
-        except Exception:
-            logger.exception(
-                "Error in create_session for function '%s' (%s)",
+
+        except ValidationException:
+            raise  # User input errors must propagate
+
+        except (
+            CloudServiceError,
+            AuthenticationError,
+            OSError,
+            asyncio.TimeoutError,
+        ) as exc:
+            logger.debug(
+                "Error in create_session for function '%s': %s",
                 function_name,
-                self._describe_backend(),
+                exc,
             )
-            # Try local storage fallback
-            if self.client.local_storage:
-                try:
-                    optimization_config = {
-                        "search_space": search_space,
-                        "optimization_goal": optimization_goal,
-                        "baseline_config": None,
-                    }
-
-                    fallback_metadata = dict(metadata or {})
-                    fallback_metadata.update(
-                        {
-                            "execution_mode": "local_fallback",
-                            "backend_fallback": True,
-                            "sync_context_fallback": True,
-                            "created_with_version": "traigent-local-fallback-1.0.0",
-                        }
-                    )
-
-                    session_id = self.client.local_storage.create_session(
-                        function_name=function_name,
-                        optimization_config=optimization_config,
-                        metadata=fallback_metadata,
-                    )
-                    logger.info(f"Created local fallback session (sync): {session_id}")
-                    return session_id
-                except Exception as storage_e:
-                    logger.error(
-                        f"Local storage sync fallback also failed: {storage_e}"
-                    )
-
-            # Final fallback
-            fallback_id = f"local_session_sync_{uuid.uuid4()}"
-            logger.warning(f"Using temporary sync session ID: {fallback_id}")
-            return fallback_id
+            fallback_id = self._create_local_fallback_session(
+                function_name, search_space, optimization_goal, metadata
+            )
+            detail = str(exc).split("\n", 1)[0][:200]
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.SESSION_FAILED,
+                detail=detail,
+            )
 
     async def create_hybrid_session(
         self,
