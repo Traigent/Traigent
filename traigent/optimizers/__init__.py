@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from traigent.optimizers.base import BaseOptimizer
-from traigent.optimizers.cloud_optimizer import CloudOptimizer  # noqa: F401
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.optuna_adapter import OptunaAdapter
 from traigent.optimizers.optuna_coordinator import (
@@ -34,7 +33,47 @@ from traigent.optimizers.registry import (
     list_optimizers,
     register_optimizer,
 )
-from traigent.optimizers.remote import RemoteOptimizer  # noqa: F401
+
+
+def _is_missing_optional_module(
+    exc: ModuleNotFoundError, module_prefixes: tuple[str, ...]
+) -> bool:
+    missing_module = getattr(exc, "name", "")
+    return any(
+        missing_module == prefix or missing_module.startswith(f"{prefix}.")
+        for prefix in module_prefixes
+    )
+
+
+_OPTIONAL_EXPORT_ERRORS: dict[str, str] = {}
+
+try:
+    from traigent.optimizers.cloud_optimizer import CloudOptimizer  # noqa: F401
+except ModuleNotFoundError as exc:
+    if not _is_missing_optional_module(
+        exc,
+        (
+            "traigent.optimizers.cloud_optimizer",
+            "traigent.optimizers.remote_services",
+        ),
+    ):
+        raise
+
+    _OPTIONAL_EXPORT_ERRORS["CloudOptimizer"] = (
+        "module 'traigent.optimizers' has no attribute 'CloudOptimizer'. "
+        "Cloud optimizer exports are unavailable in this build."
+    )
+
+try:
+    from traigent.optimizers.remote import RemoteOptimizer  # noqa: F401
+except ModuleNotFoundError as exc:
+    if not _is_missing_optional_module(exc, ("traigent.optimizers.remote",)):
+        raise
+
+    _OPTIONAL_EXPORT_ERRORS["RemoteOptimizer"] = (
+        "module 'traigent.optimizers' has no attribute 'RemoteOptimizer'. "
+        "Remote optimizer exports are unavailable in this build."
+    )
 
 __all__ = [
     "BaseOptimizer",
@@ -54,11 +93,21 @@ __all__ = [
     "get_optimizer",
     "register_optimizer",
     "list_optimizers",
-    "RemoteOptimizer",
-    "CloudOptimizer",
     # Pruners for early stopping
     "CeilingPruner",
     "CeilingPrunerConfig",
     "StatisticalInferiorityPruner",
     "StatisticalInferiorityPrunerConfig",
 ]
+
+if "RemoteOptimizer" in globals():
+    __all__.append("RemoteOptimizer")
+
+if "CloudOptimizer" in globals():
+    __all__.append("CloudOptimizer")
+
+
+def __getattr__(name: str):
+    if name in _OPTIONAL_EXPORT_ERRORS:
+        raise AttributeError(_OPTIONAL_EXPORT_ERRORS[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
