@@ -47,6 +47,7 @@ class TrialOperations:
             client: Parent BackendIntegratedClient instance
         """
         self.client = client
+        self._auth_error_logged: bool = False
 
     def _describe_backend(self) -> str:
         """Return sanitized backend connection context for logging."""
