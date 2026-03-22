@@ -759,6 +759,7 @@ class WorkflowTracesClient:
         self.timeout = timeout
         self._session: aiohttp.ClientSession | None = None  # type: ignore[assignment]
         self._lock = threading.Lock()
+        self._auth_ingestion_error_logged: bool = False
 
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with authentication."""
@@ -816,6 +817,18 @@ class WorkflowTracesClient:
                 headers=self._get_headers(),
                 timeout=self.timeout,
             )
+            # Auth failures: instance-scoped dedup at DEBUG
+            if response.status_code in (401, 403):
+                if not self._auth_ingestion_error_logged:
+                    logger.debug(
+                        "Trace ingestion auth rejected (%s)",
+                        response.status_code,
+                    )
+                    self._auth_ingestion_error_logged = True
+                return TraceIngestionResponse(
+                    success=False,
+                    error=f"Auth failed ({response.status_code})",
+                )
             response.raise_for_status()
             return TraceIngestionResponse.from_dict(response.json())
         except requests.exceptions.RequestException as e:
@@ -874,6 +887,18 @@ class WorkflowTracesClient:
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as response:
+                    # Auth failures: instance-scoped dedup at DEBUG
+                    if response.status in (401, 403):
+                        if not self._auth_ingestion_error_logged:
+                            logger.debug(
+                                "Trace ingestion auth rejected (%s)",
+                                response.status,
+                            )
+                            self._auth_ingestion_error_logged = True
+                        return TraceIngestionResponse(
+                            success=False,
+                            error=f"Auth failed ({response.status})",
+                        )
                     response.raise_for_status()
                     data = await response.json()
                     return TraceIngestionResponse.from_dict(data)

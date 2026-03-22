@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
+from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import CloudServiceError
 from traigent.cloud.models import (
     AgentExecutionRequest,
@@ -63,12 +64,6 @@ except ImportError:
                 raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
     aiohttp = _AiohttpPlaceholder()
-
-# Track whether we've already warned about backend unavailability (per session)
-_backend_unavailable_warned: bool = False
-
-# Common log message for fallback to local optimization
-_LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
 
 # Content-Type header for JSON requests
 _JSON_CONTENT_TYPE = "application/json"
@@ -261,7 +256,7 @@ class ApiOperations:
 
         value = session_request.max_trials
         if value is None:
-            logger.warning("max_trials is None in session_request, using default 10")
+            logger.debug("max_trials is None in session_request, using default 10")
             return 10
         return value
 
@@ -348,96 +343,36 @@ class ApiOperations:
         return session_id, experiment_id, experiment_run_id
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
-        """Log and raise appropriate errors for non-success HTTP responses."""
+        """Raise structured exceptions for non-success HTTP responses.
 
-        if status_code == 500:
-            logger.warning("⚡ Cloud backend returned server error (HTTP 500)")
-            logger.info(
-                "💡 The backend service may be starting up or temporarily unavailable"
-            )
-            logger.info(_LOCAL_FALLBACK_MSG)
-            raise CloudServiceError(
-                "Cloud backend temporarily unavailable (server error) - using local optimization"
-            )
+        All logging is DEBUG — user-facing warnings are emitted by
+        ``BackendSessionManager.handle_session_creation_result()``.
+        """
+        if status_code in (401, 403):
+            logger.debug("Backend auth failed: %s", status_code)
+            raise AuthenticationError(f"Authentication failed ({status_code})")
 
-        if status_code == 503:
-            logger.warning("⚡ Cloud backend service unavailable (HTTP 503)")
-            logger.info(
-                "💡 The backend service is temporarily overloaded or down for maintenance"
-            )
-            logger.info(_LOCAL_FALLBACK_MSG)
-            raise CloudServiceError(
-                "Cloud backend service unavailable - using local optimization"
-            )
+        if status_code in (500, 502, 503, 504):
+            logger.debug("Backend HTTP error: %s", status_code)
+            raise CloudServiceError(f"Backend HTTP {status_code}")
 
-        if status_code in {502, 504}:
-            logger.warning(f"⚡ Cloud backend gateway error (HTTP {status_code})")
-            logger.info("💡 There's a temporary network issue reaching the backend")
-            logger.info(_LOCAL_FALLBACK_MSG)
-            raise CloudServiceError(
-                "Cloud backend gateway error - using local optimization"
-            )
-
-        logger.error(
-            f"Failed to create Traigent session: {status_code} - {error_msg[:200]}"
-        )
-        raise CloudServiceError(
-            f"Failed to create session via /api/v1/sessions endpoint: {status_code} - {error_msg[:200]}"
-        )
+        logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
+        raise CloudServiceError(f"Session creation failed: HTTP {status_code}")
 
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
-        """Handle aiohttp connector errors with contextual logging."""
-        global _backend_unavailable_warned
-
-        # Skip warnings entirely in offline mode (expected behavior)
-        if is_backend_offline():
-            logger.debug(f"Backend connection failed (offline mode): {error}")
-        # Only show full warning once per session to reduce log noise
-        elif not _backend_unavailable_warned:
-            logger.warning(f"⚡ Cloud backend unavailable (connection failed): {error}")
-            if "localhost" in str(error) or "127.0.0.1" in str(error):
-                logger.info(
-                    "💡 This is normal for local development - backend tracking unavailable"
-                )
-                logger.info("   Results will be saved to local storage only")
-            _backend_unavailable_warned = True
-        else:
-            logger.debug(f"Backend connection failed: {error}")
-
-        raise CloudServiceError(
-            "Backend unavailable for tracking - optimization will continue with local storage only"
-        ) from error
+        """Handle aiohttp connector errors — DEBUG only."""
+        logger.debug("Backend connection failed: %s", error)
+        raise CloudServiceError("Backend unavailable (connection failed)") from error
 
     def _handle_client_error(self, error: aiohttp.ClientError) -> None:
-        """Handle generic aiohttp client errors."""
-
-        logger.warning(f"⚡ Network error connecting to cloud backend: {error}")
-        raise CloudServiceError(f"Network error: {error}") from None
+        """Handle generic aiohttp client errors — DEBUG only."""
+        logger.debug("Network error connecting to backend: %s", error)
+        raise CloudServiceError(f"Network error: {error}") from error
 
     def _handle_generic_session_exception(self, error: Exception) -> None:
-        """Handle unexpected exceptions raised during session creation."""
-
-        error_msg = str(error)
-        if "500" in error_msg or "Internal Server Error" in error_msg:
-            logger.warning("⚡ Cloud backend returned server error (HTTP 500)")
-            logger.info(
-                "💡 This typically means the backend service is starting up or temporarily unavailable"
-            )
-            logger.info("   Results will be saved to local storage only")
-            raise CloudServiceError(
-                "Backend temporarily unavailable (server error) - using local storage for tracking"
-            ) from error
-
-        if "Connection refused" in error_msg or "ConnectionRefusedError" in error_msg:
-            logger.warning("⚡ Cloud backend connection refused")
-            logger.info("💡 The backend service may not be running or accessible")
-            logger.info("   Traigent will continue with local optimization")
-            raise CloudServiceError(
-                "Cloud backend service not accessible - using local optimization"
-            ) from error
-
-        logger.error(f"Error creating Traigent session: {error}")
-        raise error
+        """Handle unexpected exceptions during session creation — DEBUG only."""
+        logger.debug("Unexpected error creating session: %s", error)
+        raise CloudServiceError(f"Session creation failed: {error}") from error
 
     async def update_config_run_status(self, config_run_id: str, status: str) -> bool:
         """Update configuration run status in the backend.
