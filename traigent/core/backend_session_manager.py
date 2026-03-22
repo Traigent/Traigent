@@ -25,7 +25,7 @@ from traigent.cloud.session_types import (
     SessionCreationFailureReason,
     SessionCreationResult,
 )
-from traigent.config.backend_config import get_no_credentials_hint
+from traigent.config.backend_config import SIGNUP_URL, get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -112,7 +112,8 @@ class BackendSessionManager:
             if reason == SessionCreationFailureReason.AUTH:
                 logger.warning(
                     "Backend authentication failed — results will be saved locally only. "
-                    "Run 'traigent auth login' or get a new key at https://portal.traigent.ai"
+                    "Run 'traigent auth login' or get a new key at %s",
+                    SIGNUP_URL,
                 )
             elif reason == SessionCreationFailureReason.NO_API_KEY:
                 logger.warning(
@@ -124,7 +125,7 @@ class BackendSessionManager:
                 logger.warning(
                     "Backend tracking unavailable — results will be saved locally only. "
                     "reason=%s",
-                    detail[:200] if len(detail) > 200 else detail,
+                    detail[:200],
                 )
         else:
             logger.info("Created backend session: %s", result.session_id)
