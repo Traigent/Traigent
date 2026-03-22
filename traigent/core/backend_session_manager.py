@@ -94,6 +94,12 @@ class BackendSessionManager:
         Returns:
             BackendIntegratedClient if available, None otherwise
         """
+        if is_backend_offline():
+            logger.debug(
+                "Offline mode — skipping backend client initialization"
+            )
+            return None
+
         # Try to import cloud module - may not be available if cloud plugin not installed
         try:
             from traigent.cloud.backend_client import (
