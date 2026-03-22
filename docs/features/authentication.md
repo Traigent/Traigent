@@ -297,11 +297,7 @@ withCredentials([string(credentialsId: 'traigent-api-key', variable: 'TRAIGENT_A
    - Never commit credentials to code
    - Use secure secret management
 
-4. **Enable Keyring When Possible**
-   - Provides OS-level security
-   - Better than file storage
-
-5. **Monitor Authentication Events**
+4. **Monitor Authentication Events**
    - Check audit logs for suspicious activity
    - Review failed authentication attempts
 
