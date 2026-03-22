@@ -63,5 +63,5 @@ class TestPricingConsistencyLinter:
         """)
         assert any(i.code == "P002" for i in issues)
 
-    def test_allowlist_includes_experimental_paths_by_policy(self) -> None:
-        assert _is_allowlisted("traigent/experimental/simple_cloud/platforms/foo.py")
+    def test_allowlist_does_not_include_removed_experimental_paths(self) -> None:
+        assert not _is_allowlisted("traigent/experimental/simple_cloud/platforms/foo.py")

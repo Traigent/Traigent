@@ -22,6 +22,7 @@ recursive-include traigent *.py
 recursive-include traigent *.json
 recursive-include traigent *.yaml
 include traigent/py.typed
+prune traigent/experimental
 
 # Documentation
 recursive-include docs *.md
