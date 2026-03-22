@@ -28,6 +28,10 @@ export TRAIGENT_MOCK_LLM=true
 python hello_world.py
 ```
 
+---
+
+## Using it in your own code
+
 **One decorator, two parameters, multi-objective optimization:**
 
 ```python
