@@ -7,6 +7,9 @@ Demonstrates a multi-agent RAG workflow with:
 - Workflow trace visualization in the frontend
 - Real LLM mode with OpenAI (gpt-4o-mini) OR mock mode for testing
 
+Optional dependencies for real LLM mode:
+    pip install langchain-core langchain-openai langgraph opentelemetry-api
+
 Run in REAL mode (uses OpenAI API, incurs costs):
     TRAIGENT_API_KEY=<your_key> OPENAI_API_KEY=<your_key> python 05_langgraph_multiagent_demo.py
 
@@ -25,13 +28,43 @@ import random
 from pathlib import Path
 from typing import TypedDict
 
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from langgraph.graph import END, StateGraph
-from opentelemetry import trace
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional convenience import
+
+    def load_dotenv() -> bool:
+        return False
+
+
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+except ImportError as exc:  # pragma: no cover - dependency guidance
+    raise SystemExit(
+        "Missing dependency: langchain-core / langchain-openai. "
+        "Install them with `pip install langchain-core langchain-openai` "
+        "to run this walkthrough, or set TRAIGENT_MOCK_LLM=true to skip real LLM calls."
+    ) from exc
+
+try:
+    from langgraph.graph import END, StateGraph
+except ImportError as exc:  # pragma: no cover - dependency guidance
+    raise SystemExit(
+        "Missing dependency: langgraph. Install it with `pip install langgraph` "
+        "to run this walkthrough."
+    ) from exc
+
+try:
+    from opentelemetry import trace
+except ImportError as exc:  # pragma: no cover - dependency guidance
+    raise SystemExit(
+        "Missing dependency: opentelemetry-api. "
+        "Install it with `pip install opentelemetry-api` "
+        "to run this walkthrough."
+    ) from exc
 
 import traigent
+from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
     SpanType,
     WorkflowEdge,
@@ -53,7 +86,7 @@ SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
 # Model configuration
-DEFAULT_MODEL = "gpt-4.1-nano"
+DEFAULT_MODEL = "gpt-4o-mini"
 
 # NOTE: LangGraphAdapter will auto-instrument workflows when available.
 # This demo shows MANUAL workarounds until LangGraphAdapter is implemented.
@@ -479,7 +512,7 @@ def cost_metric(output: str, expected: str) -> float:
     },
     configuration_space={
         # Generator Agent parameters (namespaced)
-        # Note: In real mode, we use gpt-4.1-nano for speed and low cost
+        # Note: In real mode, we use gpt-4o-mini for speed and low cost
         # These params demonstrate what Traigent CAN optimize
         "generate.model": [DEFAULT_MODEL],  # Fast and cheap model
         "generate.temperature": [0.3, 0.7],  # Reduced options to minimize API calls
@@ -535,7 +568,10 @@ async def main() -> None:
     print("=" * 50)
 
     # Check environment
-    backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    backend_url = (
+        os.environ.get("TRAIGENT_BACKEND_URL")
+        or BackendConfig.get_cloud_backend_url()
+    )
     api_key = os.environ.get("TRAIGENT_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
 
@@ -625,7 +661,7 @@ async def main() -> None:
             print(f"  Failed to send graph: {response.error}")
 
         # Note: Per-agent spans are automatically recorded via OpenTelemetry
-        # and exported to the Traigent backend by the OptiGenSpanExporter.
+        # and exported to the Traigent backend by the TraigentSpanExporter.
         # No manual span creation needed - OTEL handles it during workflow execution.
         print("\n" + "-" * 50)
         print("Note: Per-agent spans automatically recorded via OpenTelemetry")

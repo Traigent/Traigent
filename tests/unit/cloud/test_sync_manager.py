@@ -339,7 +339,7 @@ class TestSyncManager:
     def test_convert_trials_to_results(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
-        """Test conversion of trials to OptiGen results format."""
+        """Test conversion of trials to Traigent results format."""
         results = sync_manager._convert_trials_to_results(sample_session.trials)
 
         assert len(results) == 3
@@ -401,6 +401,10 @@ class TestSyncManager:
 
         assert result["status"] == "error"
         assert "No API key provided" in result["errors"][0]
+        # Verify signup URL is included in the error message
+        from traigent.config.backend_config import SIGNUP_URL
+
+        assert SIGNUP_URL in result["errors"][0]
 
     def test_sync_session_to_cloud_success(
         self, sync_manager: SyncManager, sample_session: OptimizationSession

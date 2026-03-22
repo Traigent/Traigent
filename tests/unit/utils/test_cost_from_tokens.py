@@ -74,6 +74,26 @@ class TestCostFromTokensKnownModels:
 class TestCostFromTokensModelResolution:
     """Tests for model name resolution (normalization + explicit aliases)."""
 
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("claude-haiku", "claude-3-haiku-20240307"),
+            ("claude-sonnet", "claude-3-5-sonnet-20241022"),
+            ("claude-opus", "claude-3-opus-20240229"),
+            ("claude-3-haiku", "claude-3-haiku-20240307"),
+            ("claude-3-sonnet", "claude-3-5-sonnet-20241022"),
+            ("claude-3-opus", "claude-3-opus-20240229"),
+            ("claude-3.5-sonnet", "claude-3-5-sonnet-20241022"),
+            ("claude-3.5-haiku", "claude-3-5-haiku-20241022"),
+        ],
+    )
+    def test_builtin_claude_aliases_resolve(self, alias: str, canonical: str) -> None:
+        """Built-in Claude aliases should resolve through the runtime pricing path."""
+        alias_cost = cost_from_tokens(100, 50, alias)
+        canonical_cost = cost_from_tokens(100, 50, canonical)
+        assert alias_cost[0] == pytest.approx(canonical_cost[0], rel=1e-6)
+        assert alias_cost[1] == pytest.approx(canonical_cost[1], rel=1e-6)
+
     def test_provider_prefixed_model(self) -> None:
         """Provider-prefixed model resolves correctly."""
         cost_prefixed = cost_from_tokens(100, 50, "openai/gpt-4o")
@@ -101,6 +121,16 @@ class TestCostFromTokensModelResolution:
         cost_plain = cost_from_tokens(100, 50, "claude-3-haiku-20240307")
         assert cost_prefixed[0] == pytest.approx(cost_plain[0], rel=1e-6)
         assert cost_prefixed[1] == pytest.approx(cost_plain[1], rel=1e-6)
+
+    @pytest.mark.parametrize(
+        "name",
+        ["OPENAI/GPT-4O", "OpenAI/gpt-4o", "Anthropic/claude-3-haiku-20240307"],
+    )
+    def test_mixed_case_provider_prefix(self, name: str) -> None:
+        """Mixed-case provider prefixes must resolve, not raise."""
+        input_cost, output_cost = cost_from_tokens(100, 50, name)
+        assert input_cost > 0
+        assert output_cost > 0
 
 
 class TestCostFromTokensUnknownModels:

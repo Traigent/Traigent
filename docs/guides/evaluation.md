@@ -65,8 +65,8 @@ results = asyncio.run(qa_agent.optimize(max_trials=4))
 
 What this does:
 
-- `qa_agent.eval_dataset` can be a JSONL path, a list of JSONL paths, or a
-  `Dataset` object.
+- `qa_agent.eval_dataset` can be a JSONL path, a list of JSONL paths, an inline
+  list of example dicts, or a `Dataset` object.
 - Traigent evaluates the dataset outside your function. Your function still accepts
   one example's `input_data` fields as normal arguments.
 - To swap evaluation sets between runs, assign a new value to

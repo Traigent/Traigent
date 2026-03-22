@@ -9,7 +9,7 @@ Usage:
     >>> from traigent.analytics import ExampleInsightsClient
     >>>
     >>> # Initialize client (requires backend authentication)
-    >>> client = ExampleInsightsClient(backend_url="http://localhost:5000")
+    >>> client = ExampleInsightsClient(backend_url="https://portal.traigent.ai")
     >>>
     >>> # Trigger scoring computation (async job)
     >>> job_result = await client.compute_scores(experiment_run_id="run_123")
@@ -78,13 +78,14 @@ class ExampleInsightsClient:
         self.timeout = timeout
 
         # Import here to avoid circular dependency
+        from traigent.config.backend_config import get_no_credentials_hint
         from traigent.utils.env_config import get_api_key
 
         self.api_key = api_key or get_api_key("traigent")
         if not self.api_key:
             logger.warning(
-                "No API key provided. Set TRAIGENT_API_KEY environment variable "
-                "or pass api_key parameter."
+                "No API key found for ExampleInsightsClient. %s",
+                get_no_credentials_hint(),
             )
 
         self._client: httpx.AsyncClient | None = None

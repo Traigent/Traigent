@@ -147,10 +147,6 @@ def create_llm_client(model: str, temperature: float) -> Any:
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
     execution_mode="edge_analytics",
-    # Skip core validation - this example validates upfront and filters invalid
-    # providers for graceful degradation (run with available providers only).
-    # Core validation would fail-fast on any invalid provider instead.
-    validate_providers=False,
 )
 def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.

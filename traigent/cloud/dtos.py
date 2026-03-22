@@ -17,14 +17,38 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Canonical status strings used by backend DTO payloads.
-# Keep these aligned with cloud.models enums and backend schemas.
+# Canonical persisted status strings used by experiment/configuration run DTOs.
+# Keep these aligned with TraigentSchema, not internal optimizer/runtime states.
 EXPERIMENT_RUN_STATUS_VALUES = frozenset(
-    {"not_started", "pending", "running", "completed", "failed", "cancelled"}
+    {
+        "not_started",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "paused",
+        "partially_deleted",
+    }
 )
 CONFIGURATION_RUN_STATUS_VALUES = frozenset(
-    {"not_started", "pending", "running", "completed", "failed", "cancelled", "pruned"}
+    {
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "paused",
+        "partially_deleted",
+    }
 )
+
+
+def _get_schema_validator_class() -> Any:
+    """Load the optional TraigentSchema validator lazily."""
+    from traigent_schema.validator import SchemaValidator
+
+    return SchemaValidator
 
 
 def _warn_if_unknown_status(
@@ -41,16 +65,6 @@ def _warn_if_unknown_status(
             status,
             sorted(allowed),
         )
-
-
-# Try to import optigen_schemas for validation (optional)
-try:
-    from optigen_schemas.validator import SchemaValidator
-
-    VALIDATOR_AVAILABLE = True
-except ImportError:
-    VALIDATOR_AVAILABLE = False
-    logger.debug("optigen_schemas not available, validation disabled")
 
 
 class ExampleMeasure:
@@ -396,10 +410,12 @@ class ExperimentDTO:
         return result
 
     def validate(self) -> bool:
-        """Validate the DTO against optigen_schemas.
+        """Validate the DTO against TraigentSchema.
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
+        Internal environments that need schema validation should install
+        the optional ``internal_schema`` dependency bundle.
 
         Returns:
             True if validation passed
@@ -414,25 +430,37 @@ class ExperimentDTO:
         # Check if strict validation is enabled (default: true)
         strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
 
-        if not VALIDATOR_AVAILABLE:
-            error_msg = (
-                "Schema validator unavailable (optigen_schemas not installed). "
-                "Install with: pip install 'traigent[validation]'"
+        try:
+            validator = _get_schema_validator_class()()
+            errors = validator.validate_json(self.to_dict(), "experiment")
+            if errors:
+                raise ValueError("; ".join(errors))
+            return True
+        except ImportError as e:
+            message = (
+                "ExperimentDTO validation requires the internal "
+                "'traigent-schema' package. Install Traigent with the "
+                "'internal_schema' extra in internal environments."
             )
-            logger.error(error_msg)
+            logger.warning(
+                "Optional TraigentSchema validator unavailable",
+                extra={
+                    "dto_class": "ExperimentDTO",
+                    "dto_id": self.id,
+                    "error": str(e),
+                    "strict_mode": strict_mode,
+                    "install_hint": "pip install -e '.[internal_schema]'",
+                },
+            )
 
             if strict_mode:
                 raise DTOSerializationError(
-                    "Schema validation required but validator unavailable",
+                    message,
                     dto_class="ExperimentDTO",
                     dto_id=self.id,
-                )
-            return False
+                ) from e
 
-        try:
-            validator = SchemaValidator()
-            validator.validate_json_by_schema("experiment", self.to_dict())
-            return True
+            return False
         except Exception as e:
             logger.error(
                 "DTO validation failed",
@@ -462,7 +490,7 @@ class ExperimentRunDTO:
     experiment_id: str
 
     # Lifecycle and status metadata
-    status: str = "pending"
+    status: str = "not_started"
     start_time: str | None = None
     end_time: str | None = None
     summary_stats: dict[str, Any] = field(default_factory=dict)

@@ -520,7 +520,7 @@ class TestBackendClientAuthLifecycle:
                 # But for direct calls in methods, we need to handle differently
                 # This is a workaround for the bug in the implementation
                 return {
-                            "X-API-Key": "fallback-key",  # pragma: allowlist secret
+                    "X-API-Key": "fallback-key",  # pragma: allowlist secret
                     "X-Traigent-Client": "backend-test",
                 }
             else:
@@ -602,7 +602,8 @@ class TestBackendClientAuthLifecycle:
                         mock_auth.return_value = mock_auth_instance
 
                         client = BackendIntegratedClient(
-                            api_key="fallback-key", backend_config=config  # pragma: allowlist secret
+                            api_key="fallback-key",  # pragma: allowlist secret
+                            backend_config=config,
                         )
                         # Set proper nested structure for auth_manager.auth
                         client.auth_manager = Mock()
@@ -716,13 +717,15 @@ class TestBackendClientAuthLifecycle:
                         ]
 
                         client_1 = BackendIntegratedClient(
-                            api_key="key-1", backend_config=config_1  # pragma: allowlist secret
+                            api_key="key-1",  # pragma: allowlist secret
+                            backend_config=config_1,
                         )
                         client_1.auth_manager.auth = mock_auth_instance_1
                         client_1.auth = mock_auth_instance_1
 
                         client_2 = BackendIntegratedClient(
-                            api_key="key-2", backend_config=config_2  # pragma: allowlist secret
+                            api_key="key-2",  # pragma: allowlist secret
+                            backend_config=config_2,
                         )
                         client_2.auth_manager.auth = mock_auth_instance_2
                         client_2.auth = mock_auth_instance_2

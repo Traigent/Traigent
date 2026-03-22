@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Traigent Examples Gallery</title>
+            <link rel="stylesheet" href="sections/shared-styles.css">
+            <script defer src="sections/theme.js"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-vsc-dark-plus.min.css" rel="stylesheet" />
+            <style>
+                .page-container { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
+                .hero { text-align: center; margin-bottom: 48px; }
+                .hero h1 { font-size: 2.75rem; margin-bottom: 16px; }
+                .hero p { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 24px; }
+                .category-nav { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 48px; }
+                .category-nav .nav-link { padding: 8px 16px; border-radius: 999px; border: 1px solid var(--border-color); text-decoration: none; color: var(--text-secondary); }
+                .category-nav .nav-link:hover, .category-nav .nav-link:focus-visible { border-color: var(--primary); color: var(--text-primary); outline: none; }
+                .category-section { margin-bottom: 72px; }
+                .section-header h2 { font-size: 2rem; margin-bottom: 12px; }
+                .section-header p { color: var(--text-secondary); margin-bottom: 24px; }
+                .examples-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+                .example-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+                .example-card:hover { border-color: var(--primary); box-shadow: 0 4px 16px rgba(0,0,0,0.12); transform: translateY(-2px); }
+                .example-title { font-size: 1.2rem; margin: 0; }
+                .example-description { color: var(--text-secondary); margin: 0; flex-grow: 1; }
+                .example-meta, .run-command-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+                .run-label { font-weight: 600; color: var(--text-secondary); }
+                .run-command { background: var(--code-bg); border-radius: 6px; padding: 6px 8px; font-size: 0.95rem; }
+                .run-command.disabled { opacity: 0.6; font-style: italic; }
+                .example-link { align-self: flex-start; padding: 8px 14px; border-radius: 6px; background: var(--primary); color: #fff; text-decoration: none; font-weight: 500; }
+                .example-link:hover { background: var(--primary-hover); }
+                .difficulty-badge { padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+                .difficulty-beginner { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+                .difficulty-intermediate { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+                .difficulty-advanced { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+                .time-badge { background: rgba(59,130,246,0.15); color: var(--primary); padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+                .tag-row { display: flex; gap: 8px; flex-wrap: wrap; }
+                .tag-chip { background: var(--chip-bg); color: var(--text-secondary); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; }
+                .dataset-block ul { margin: 8px 0 0 16px; padding: 0; }
+                .dataset-heading { font-weight: 600; color: var(--text-secondary); }
+                .docs-block ul { margin: 8px 0 0 16px; padding: 0; }
+                .docs-block ul li { margin-bottom: 4px; }
+                .docs-block a { color: var(--primary); text-decoration: none; }
+                .docs-block a:hover { text-decoration: underline; }
+                .docs-heading { font-weight: 600; color: var(--text-secondary); }
+                .repo-ref { color: var(--text-secondary); font-style: italic; }
+.coming-soon .example-card { border-style: dashed; }
+.coming-soon-badge { display: inline-block; background: rgba(96,165,250,0.15); color: #60a5fa; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+.tvl-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-top: 12px; }
+.tvl-card { background: var(--card-bg); border: 1px dashed var(--card-border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.tvl-card ul { margin: 0 0 0 18px; padding: 0; }
+.tvl-card pre { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; font-size: 0.85rem; overflow-x: auto; }
+.tvl-snippet code { white-space: pre; }
+.tvl-footer { margin-top: 24px; color: var(--text-secondary); font-size: 0.95rem; }
+                @media (max-width: 600px) {
+                    .hero h1 { font-size: 2.1rem; }
+                }
+            </style>
+        </head>
+        <body>
+            <main class="page-container">
+                <section class="hero">
+                    <h1>Traigent Examples Gallery</h1>
+                    <p>Explore runnable examples, advanced playbooks, and integration guides. Every entry links directly to the source and includes the CLI command to get started.</p>
+                    <nav class="category-nav" aria-label="Example categories">
+                        <a href="#core" class="nav-link">Core Examples</a>
+<a href="#advanced" class="nav-link">Advanced Playbooks</a>
+<a href="#integrations" class="nav-link">Integrations</a>
+<a href="#tvl" class="nav-link">TVL (Coming Soon)</a>
+                    </nav>
+                </section>
+                <section id="core" class="category-section" aria-labelledby="core-heading">
+                    <div class="section-header">
+                        <h2 id="core-heading">Core Examples</h2>
+                        <p>Hands-on tutorials that introduce key Traigent concepts.</p>
+                    </div>
+                    <div class="examples-grid">
+                        <article class="example-card" id="simple-prompt">
+            <header>
+                <h3 class="example-title">Simple Prompt Optimization</h3>
+                <p class="example-description">Start with the smallest Traigent example: tune model, temperature, and prompt style in mock mode.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-beginner">Beginner</span>
+                <span class="time-badge" aria-label="Estimated time">3 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">quickstart</span><span class="tag-chip">summarization</span><span class="tag-chip">intro</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/simple-prompt/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Examples Start Here</span></li> <li><span class="repo-ref">Installation &amp; Setup</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py</code>
+            </div>
+            <a class="example-link" href="../core/simple-prompt/index.html" aria-label="Open primary documentation for Simple Prompt Optimization">View Example</a>
+        </article>
+<article class="example-card" id="rag-optimization">
+            <header>
+                <h3 class="example-title">RAG Optimization</h3>
+                <p class="example-description">Optimize a simple sentiment workflow with optional RAG context.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-beginner">Beginner</span>
+                <span class="time-badge" aria-label="Estimated time">5 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">sentiment</span><span class="tag-chip">RAG</span><span class="tag-chip">intro</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/rag-optimization/evaluation_set.jsonl</code></li><li><code>datasets/rag-optimization/context_documents.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Getting Started Guide</span></li> <li><span class="repo-ref">Installation &amp; Setup</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py</code>
+            </div>
+            <a class="example-link" href="../core/rag-optimization/index.html" aria-label="Open primary documentation for RAG Optimization">View Example</a>
+        </article>
+<article class="example-card" id="few-shot-classification">
+            <header>
+                <h3 class="example-title">Few-Shot Classification</h3>
+                <p class="example-description">Author guidance prompts for label classification with local evaluation.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-beginner">Beginner</span>
+                <span class="time-badge" aria-label="Estimated time">8 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">classification</span><span class="tag-chip">prompting</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/few-shot-classification/example_set.jsonl</code></li><li><code>datasets/few-shot-classification/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Testing Toolkit</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py</code>
+            </div>
+            <a class="example-link" href="../core/few-shot-classification/index.html" aria-label="Open primary documentation for Few-Shot Classification">View Example</a>
+        </article>
+<article class="example-card" id="structured-output-json">
+            <header>
+                <h3 class="example-title">Structured Output JSON</h3>
+                <p class="example-description">Generate JSON responses and validate output schemas in evaluation.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-beginner">Beginner</span>
+                <span class="time-badge" aria-label="Estimated time">10 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">json</span><span class="tag-chip">validation</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/structured-output-json/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Code Review Playbook</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/structured-output-json/run.py</code>
+            </div>
+            <a class="example-link" href="../core/structured-output-json/index.html" aria-label="Open primary documentation for Structured Output JSON">View Example</a>
+        </article>
+<article class="example-card" id="tool-use-calculator">
+            <header>
+                <h3 class="example-title">Tool Use Calculator</h3>
+                <p class="example-description">Demonstrate LangChain tool calling to perform deterministic calculations.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-beginner">Beginner</span>
+                <span class="time-badge" aria-label="Estimated time">10 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">tool-use</span><span class="tag-chip">langchain</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/tool-use-calculator/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Architectural Overview</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/tool-use-calculator/run.py</code>
+            </div>
+            <a class="example-link" href="../core/tool-use-calculator/index.html" aria-label="Open primary documentation for Tool Use Calculator">View Example</a>
+        </article>
+<article class="example-card" id="prompt-style-optimization">
+            <header>
+                <h3 class="example-title">Prompt Style Optimization</h3>
+                <p class="example-description">Iteratively tune prompt tone and guidance to meet qualitative targets.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">12 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">prompting</span><span class="tag-chip">qualitative</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/prompt-style-optimization/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Evaluation Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/prompt-style-optimization/run.py</code>
+            </div>
+            <a class="example-link" href="../core/prompt-style-optimization/index.html" aria-label="Open primary documentation for Prompt Style Optimization">View Example</a>
+        </article>
+<article class="example-card" id="prompt-ab-test">
+            <header>
+                <h3 class="example-title">Prompt A/B Test</h3>
+                <p class="example-description">Compare prompt variants with built-in statistical analysis.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">10 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">experimentation</span><span class="tag-chip">prompting</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/prompt-ab-test/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Testing Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/prompt-ab-test/run.py</code>
+            </div>
+            <a class="example-link" href="../core/prompt-ab-test/index.html" aria-label="Open primary documentation for Prompt A/B Test">View Example</a>
+        </article>
+<article class="example-card" id="token-budget-summarization">
+            <header>
+                <h3 class="example-title">Token Budget Summarization</h3>
+                <p class="example-description">Enforce strict context budgets while producing consistent summaries.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">12 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">summarization</span><span class="tag-chip">cost-control</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/token-budget-summarization/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">TVL Constraint Expressions</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/token-budget-summarization/run.py</code>
+            </div>
+            <a class="example-link" href="../core/token-budget-summarization/index.html" aria-label="Open primary documentation for Token Budget Summarization">View Example</a>
+        </article>
+<article class="example-card" id="chunking-long-context">
+            <header>
+                <h3 class="example-title">Chunking Long Context</h3>
+                <p class="example-description">Chunk large knowledge bases and stitch responses for long-form prompts.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">15 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">RAG</span><span class="tag-chip">chunking</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/chunking-long-context/context_documents.jsonl</code></li><li><code>datasets/chunking-long-context/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Evaluation Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/chunking-long-context/run.py</code>
+            </div>
+            <a class="example-link" href="../core/chunking-long-context/index.html" aria-label="Open primary documentation for Chunking Long Context">View Example</a>
+        </article>
+<article class="example-card" id="safety-guardrails">
+            <header>
+                <h3 class="example-title">Safety Guardrails</h3>
+                <p class="example-description">Configure moderation filters and automated safety scoring.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">12 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">safety</span><span class="tag-chip">moderation</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/safety-guardrails/evaluation_set.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Security Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/safety-guardrails/run.py</code>
+            </div>
+            <a class="example-link" href="../core/safety-guardrails/index.html" aria-label="Open primary documentation for Safety Guardrails">View Example</a>
+        </article>
+<article class="example-card" id="multi-objective-tradeoff">
+            <header>
+                <h3 class="example-title">Multi-Objective Trade-off</h3>
+                <p class="example-description">Compare accuracy, latency, and cost across providers with a user-friendly multi-objective starter run.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">15 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">cost</span><span class="tag-chip">multi-objective</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/multi-objective-tradeoff/evaluation_set.jsonl</code></li><li><code>datasets/multi-objective-tradeoff/evaluation_set_100_examples.jsonl</code></li></ul>
+</div>
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Optuna Integration</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_openai.py</code>
+            </div>
+            <a class="example-link" href="../core/multi-objective-tradeoff/index.html" aria-label="Open primary documentation for Multi-Objective Trade-off">View Example</a>
+        </article>
+                    </div>
+                </section><section id="advanced" class="category-section" aria-labelledby="advanced-heading">
+                    <div class="section-header">
+                        <h2 id="advanced-heading">Advanced Playbooks</h2>
+                        <p>Scenario-focused guides, deep dives, and experimental workflows.</p>
+                    </div>
+                    <div class="examples-grid">
+                        <article class="example-card" id="ai-engineering-tasks">
+            <header>
+                <h3 class="example-title">AI Engineering Task Library</h3>
+                <p class="example-description">A curated collection of reusable patterns for context engineering, safety guardrails, structured extraction, and more.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-advanced">Advanced</span>
+                <span class="time-badge" aria-label="Estimated time">30+ min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">playbook</span><span class="tag-chip">engineering</span></div>
+
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Examples Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><span class="run-command disabled" aria-disabled="true">No direct run command</span>
+            </div>
+            <a class="example-link" href="../advanced/ai-engineering-tasks/index.html" aria-label="Open primary documentation for AI Engineering Task Library">View Example</a>
+        </article>
+<article class="example-card" id="ragas-playgrounds">
+            <header>
+                <h3 class="example-title">RAG Evaluation Playgrounds</h3>
+                <p class="example-description">Experiment with RAGAS scoring configurations across deterministic, column-mapped, and LLM-backed pipelines.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-advanced">Advanced</span>
+                <span class="time-badge" aria-label="Estimated time">25 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">RAG</span><span class="tag-chip">evaluation</span></div>
+
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><span class="repo-ref">Evaluation Guide</span></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><span class="run-command disabled" aria-disabled="true">No direct run command</span>
+            </div>
+
+        </article>
+                    </div>
+                </section><section id="integrations" class="category-section" aria-labelledby="integrations-heading">
+                    <div class="section-header">
+                        <h2 id="integrations-heading">Integrations</h2>
+                        <p>Examples that wire Traigent into CI/CD, monitoring, or partner tooling.</p>
+                    </div>
+                    <div class="examples-grid">
+                        <article class="example-card" id="deepeval-optimization">
+            <header>
+                <h3 class="example-title">DeepEval Integration</h3>
+                <p class="example-description">Use DeepEval evaluation metrics (relevancy, faithfulness, etc.) as Traigent optimization objectives.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-intermediate">Intermediate</span>
+                <span class="time-badge" aria-label="Estimated time">10 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">deepeval</span><span class="tag-chip">evaluation</span><span class="tag-chip">metrics</span></div>
+            <div class="dataset-block" aria-label="Datasets">
+    <span class="dataset-heading">Datasets</span>
+    <ul><li><code>datasets/deepeval/evaluation_set.jsonl</code></li></ul>
+</div>
+
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><code class="run-command">python examples/integrations/deepeval/run.py</code>
+            </div>
+            <a class="example-link" href="../integrations/deepeval/run.py" aria-label="Open primary documentation for DeepEval Integration">View Example</a>
+        </article>
+<article class="example-card" id="ci-cd-quality-gates">
+            <header>
+                <h3 class="example-title">CI/CD Quality Gates</h3>
+                <p class="example-description">Run Traigent evaluations in CI pipelines with automatic regression checks and approval workflows.</p>
+            </header>
+            <div class="example-meta">
+                <span class="difficulty-badge difficulty-advanced">Advanced</span>
+                <span class="time-badge" aria-label="Estimated time">20 min</span>
+            </div>
+            <div class="tag-row" aria-label="Tags"><span class="tag-chip">CI</span><span class="tag-chip">automation</span></div>
+
+            <div class="docs-block" aria-label="Related docs">
+    <span class="docs-heading">Documentation</span>
+    <ul>
+        <li><a href="../integrations/ci-cd/index.html">Traigent CI Gates</a></li>
+    </ul>
+</div>
+            <div class="run-command-row">
+                <span class="run-label">Run:</span><span class="run-command disabled" aria-disabled="true">No direct run command</span>
+            </div>
+            <a class="example-link" href="../integrations/ci-cd/index.html" aria-label="Open primary documentation for CI/CD Quality Gates">View Example</a>
+        </article>
+                    </div>
+                </section>
+                <section id="tvl" class="category-section coming-soon" aria-labelledby="tvl-heading">
+        <div class="section-header">
+            <h2 id="tvl-heading">Traigent Value Library (Coming Soon)</h2>
+            <p>The Traigent Value Library (TVL) adds a typed configuration language for tuning pipelines, with explicit constraints, objectives, and promotion gates. Here's what to expect when it lands.</p>
+        </div>
+        <div class="tvl-grid">
+            <article class="tvl-card">
+                <header>
+                    <div class="coming-soon-badge">Spec Highlights</div>
+                    <h3 class="example-title">Structured for Safe Launches</h3>
+                </header>
+                <ul>
+                    <li>Typed TVAR domains bound to environment snapshots and workloads.</li>
+                    <li>Structural constraints expressed in DNF and compiled to SAT/SMT solvers.</li>
+                    <li>Objectives with quality/latency bands and chance constraints.</li>
+                    <li>Epsilon-Pareto promotion gate with Benjamini–Hochberg control.</li>
+                </ul>
+            </article>
+            <article class="tvl-card">
+                <header>
+                    <div class="coming-soon-badge">Example Specs</div>
+                    <h3 class="example-title">Preview Scenarios</h3>
+                </header>
+                <p class="example-description">TVL ships with curated specs in <code>spec/examples/</code>:</p>
+                <ul>
+                    <li><strong>rag-support-bot.tvl.yml</strong> — NSGA-II exploration with latency guardrails.</li>
+                    <li><strong>text-to-sql.yml</strong> — semantic correctness bands for SQL generation.</li>
+                    <li><strong>tool-use.yml</strong> — deterministic tool orchestration with safety gates.</li>
+                </ul>
+                <p class="example-description">Validation phase configs demonstrate staged rollout policies.</p>
+            </article>
+            <article class="tvl-card">
+                <header>
+                    <div class="coming-soon-badge">Spec Excerpt</div>
+                    <h3 class="example-title">RAG Support Bot</h3>
+                </header>
+                <pre class="tvl-snippet"><code>tvl:
+  module: corp.support.rag_bot
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "llama3.1"]
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+      resolution: 0.05
+constraints:
+  structural:
+    - when: zero_shot = true
+      then: retriever.k = 0
+objectives:
+  - { name: quality, direction: maximize }
+  - { name: latency_p95_ms, direction: minimize }
+promotion_policy:
+  dominance: epsilon_pareto
+  alpha: 0.05
+  min_effect:
+    quality: 0.5
+    latency_p95_ms: 50</code></pre>
+            </article>
+            <article class="tvl-card">
+                <header>
+                    <div class="coming-soon-badge">Tooling Roadmap</div>
+                    <h3 class="example-title">CLI Surface</h3>
+                </header>
+                <p class="example-description">Lightweight tooling keeps specs auditable from CI:</p>
+                <pre class="tvl-snippet"><code>tvl-parse spec/examples/rag-support-bot.tvl.yml
+tvl-lint  spec/examples/rag-support-bot.tvl.yml
+tvl-validate spec/examples/rag-support-bot.tvl.yml
+tvl-config-validate
+  spec/examples/rag-support-bot.tvl.yml
+  spec/configurations/rag-support-bot.config.yml
+tvl-measure-validate
+  spec/examples/rag-support-bot.tvl.yml
+  spec/configurations/rag-support-bot.config.yml
+  spec/measurements/rag-support-bot.measure.yml</code></pre>
+                <p class="example-description">Optional extras: <code>z3-solver</code> for SMT checks, <code>mkdocs-material</code> for docs builds.</p>
+            </article>
+        </div>
+        <div class="tvl-footer">
+            <p>TVL is under active development. Watch the release notes for availability updates.</p>
+        </div>
+    </section>
+            </main>
+        </body>
+        </html>

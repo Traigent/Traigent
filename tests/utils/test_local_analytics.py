@@ -421,10 +421,10 @@ class TestConvenienceFunctions:
         mock_thread.start.assert_called_once()
 
     @patch("traigent.utils.env_config.is_mock_llm", return_value=False)
-    @patch("traigent.utils.local_analytics.asyncio.ensure_future")
+    @patch("traigent.utils.local_analytics.asyncio.create_task")
     @patch("traigent.utils.local_analytics.asyncio.get_running_loop")
     def test_collect_and_submit_analytics_async_context(
-        self, mock_get_loop, mock_ensure_future, _mock_llm
+        self, mock_get_loop, mock_create_task, _mock_llm
     ):
         """Test convenience function in async context."""
         config = TraigentConfig(
@@ -437,20 +437,20 @@ class TestConvenienceFunctions:
         mock_loop = Mock()
         mock_get_loop.return_value = mock_loop
 
-        # Mock ensure_future to consume the coroutine without warning
-        def mock_ensure_future_impl(coro):
+        # Mock create_task to consume the coroutine without warning
+        def mock_create_task_impl(coro, **_kwargs):
             # Close the coroutine to avoid warning
             coro.close()
             return Mock()
 
-        mock_ensure_future.side_effect = mock_ensure_future_impl
+        mock_create_task.side_effect = mock_create_task_impl
 
         # Should not raise any errors
         collect_and_submit_analytics(config)
 
-        # Verify ensure_future was called to schedule the coroutine
+        # Verify create_task was called to schedule the coroutine
         mock_get_loop.assert_called_once()
-        mock_ensure_future.assert_called_once()
+        mock_create_task.assert_called_once()
 
     def test_get_enhanced_cloud_incentives(self):
         """Test enhanced cloud incentives function."""

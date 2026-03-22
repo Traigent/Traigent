@@ -279,7 +279,6 @@ class TestCreateAppRoutes:
         """Test POST execute endpoint."""
         request_body = json.dumps(
             {
-                "benchmark_id": "bench_001",
                 "config": {"model": "gpt-4"},
                 "examples": [{"example_id": "i1", "data": {"q": "hi"}}],
             }
@@ -301,7 +300,6 @@ class TestCreateAppRoutes:
         """Test POST evaluate endpoint."""
         request_body = json.dumps(
             {
-                "benchmark_id": "bench_001",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         ).encode()
@@ -459,8 +457,8 @@ class TestCreateAppErrorHandling:
         assert "unexpected" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
-    async def test_empty_body_returns_400_benchmark_error(self) -> None:
-        """Empty execute payloads should return a structured 400 benchmark error."""
+    async def test_empty_body_returns_400_examples_error(self) -> None:
+        """Empty execute payloads should fail because examples are missing."""
         svc = TraigentService()
 
         @svc.execute
@@ -475,12 +473,12 @@ class TestCreateAppErrorHandling:
             send,
         )
         assert send.status == 400
-        assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
-        assert "benchmark_id" in send.body_json["error"]["message"]
+        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
+        assert "examples" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
-    async def test_evaluate_missing_benchmark_returns_400(self) -> None:
-        """Evaluate requests without benchmark_id should fail with INVALID_BENCHMARK_ID."""
+    async def test_evaluate_without_benchmark_id_succeeds(self) -> None:
+        """Evaluate requests should not require benchmark_id."""
         svc = TraigentService()
 
         @svc.evaluate
@@ -501,9 +499,8 @@ class TestCreateAppErrorHandling:
             _make_receive(request_body),
             send,
         )
-        assert send.status == 400
-        assert send.body_json["error"]["code"] == "INVALID_BENCHMARK_ID"
-        assert "benchmark_id" in send.body_json["error"]["message"]
+        assert send.status == 200
+        assert send.body_json["status"] == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +717,6 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
@@ -755,7 +751,6 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "timeout_ms": 1000,  # 1 second timeout
                 "examples": [{"example_id": "i1", "data": {}}],
             }
@@ -787,7 +782,6 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
@@ -818,7 +812,6 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "timeout_ms": 1000,  # 1 second timeout
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
@@ -850,7 +843,6 @@ class TestErrorHandling:
         request_body = json.dumps(
             {
                 "tunable_id": "default",
-                "benchmark_id": "bench_001",
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()

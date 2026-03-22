@@ -61,7 +61,12 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationExample,
+    load_inline_dataset,
+)
 from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
@@ -83,6 +88,38 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+
+def _resolve_callbacks(
+    explicit_callbacks: list[Any] | None,
+    decorator_callbacks: list[Any] | None,
+    progress_bar: bool | None,
+) -> list[Any]:
+    """Resolve callbacks with optional auto-injection of ProgressBarCallback.
+
+    Used by both ``optimize()`` and ``optimize_sync()`` to keep behavior
+    consistent. Auto-enables a progress bar in interactive terminals unless
+    the caller explicitly disables it.
+
+    Args:
+        explicit_callbacks: Callbacks passed directly to optimize().
+        decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
+        progress_bar: ``True`` to force, ``False`` to suppress, ``None`` for auto.
+
+    Returns:
+        Resolved list of callback instances.
+    """
+    from traigent.utils.callbacks import ProgressBarCallback
+
+    callbacks = list(explicit_callbacks or decorator_callbacks or [])
+    if progress_bar is not False:
+        has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
+        if not has_progress:
+            # True = always inject; None = inject only in interactive terminals
+            if progress_bar is True or sys.stdin.isatty():
+                callbacks.insert(0, ProgressBarCallback())
+    return callbacks
+
 
 # Module-level flag to ensure cost warning is emitted only once per process
 _COST_WARNING_EMITTED = False
@@ -167,7 +204,9 @@ class OptimizedFunction:
     def __init__(
         self,
         func: Callable[..., Any],
-        eval_dataset: str | list[str] | Dataset | None = None,
+        eval_dataset: (
+            str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
+        ) = None,
         objectives: list[str] | ObjectiveSchema | None = None,
         configuration_space: dict[str, Any] | None = None,
         config_space: dict[str, Any] | None = None,  # Backward compatibility
@@ -189,7 +228,7 @@ class OptimizedFunction:
 
         Args:
             func: Original function to optimize
-            eval_dataset: Evaluation dataset path(s) or Dataset object
+            eval_dataset: Evaluation dataset path(s), inline examples, or Dataset object
             objectives: List of objectives to optimize or ObjectiveSchema
             configuration_space: Parameter search space
             default_config: Default configuration values
@@ -752,16 +791,31 @@ class OptimizedFunction:
 
     def _validate_dataset(self) -> None:
         """Validate dataset configuration."""
-        if isinstance(self.eval_dataset, (str, list)):
+        if isinstance(self.eval_dataset, str):
             # Skip dataset validation in tests when the file doesn't exist
             if not (
                 os.environ.get("PYTEST_CURRENT_TEST")
-                or (
-                    isinstance(self.eval_dataset, str)
-                    and self.eval_dataset in ["test.jsonl", "data.jsonl"]
-                )
+                or self.eval_dataset in ["test.jsonl", "data.jsonl"]
             ):
                 validate_dataset_path(self.eval_dataset)
+            return
+
+        if isinstance(self.eval_dataset, list):
+            if all(isinstance(item, str) for item in self.eval_dataset):
+                if not os.environ.get("PYTEST_CURRENT_TEST"):
+                    validate_dataset_path(self.eval_dataset)
+                return
+
+            if all(
+                isinstance(item, (dict, EvaluationExample))
+                for item in self.eval_dataset
+            ):
+                load_inline_dataset(self.eval_dataset)
+                return
+
+            raise ConfigurationError(
+                "eval_dataset list must contain only dataset paths or inline examples"
+            )
 
     def _setup_function_wrapper(self) -> None:
         """Setup function wrapper that uses current configuration."""
@@ -1102,6 +1156,7 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -1121,6 +1176,10 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
+            progress_bar: Controls the live progress bar during optimization.
+                ``True`` forces a progress bar even in non-interactive mode,
+                ``False`` suppresses it, ``None`` (default) auto-enables in
+                interactive terminals (``sys.stdin.isatty()``).
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -1177,8 +1236,8 @@ class OptimizedFunction:
 
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
-        callbacks = (
-            callbacks if callbacks is not None else getattr(self, "callbacks", None)
+        callbacks = _resolve_callbacks(
+            callbacks, getattr(self, "callbacks", None), progress_bar
         )
 
         try:
@@ -1213,6 +1272,7 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -1235,6 +1295,8 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
+            progress_bar: ``True`` to force, ``False`` to suppress, ``None``
+                (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -1265,6 +1327,7 @@ class OptimizedFunction:
             tvl_spec=tvl_spec,
             tvl_environment=tvl_environment,
             tvl=tvl,
+            progress_bar=progress_bar,
             **algorithm_kwargs,
         )
 
@@ -2023,21 +2086,37 @@ class OptimizedFunction:
                 ) from e
 
         elif isinstance(self.eval_dataset, list):
-            # Multiple datasets - combine them
-            all_examples = []
-            for path in self.eval_dataset:
+            if all(isinstance(item, str) for item in self.eval_dataset):
+                # Multiple datasets - combine them
+                all_examples = []
+                for path in self.eval_dataset:
+                    try:
+                        dataset = Dataset.from_jsonl(path)
+                        all_examples.extend(dataset.examples)
+                    except Exception as e:
+                        raise ConfigurationError(
+                            f"Failed to load dataset from {path}: {e}"
+                        ) from e
+
+                return Dataset(
+                    examples=all_examples,
+                    name="combined_dataset",
+                    description=f"Combined dataset from {len(self.eval_dataset)} files",
+                )
+
+            if all(
+                isinstance(item, (dict, EvaluationExample))
+                for item in self.eval_dataset
+            ):
                 try:
-                    dataset = Dataset.from_jsonl(path)
-                    all_examples.extend(dataset.examples)
+                    return load_inline_dataset(self.eval_dataset)
                 except Exception as e:
                     raise ConfigurationError(
-                        f"Failed to load dataset from {path}: {e}"
+                        f"Failed to load inline dataset: {e}"
                     ) from e
 
-            return Dataset(
-                examples=all_examples,
-                name="combined_dataset",
-                description=f"Combined dataset from {len(self.eval_dataset)} files",
+            raise ConfigurationError(
+                "eval_dataset list must contain only dataset paths or inline examples"
             )
 
         else:

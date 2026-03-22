@@ -218,7 +218,7 @@ class TestSyncManager:
             sync_manager._session.post = original_post
 
     def test_convert_trials_to_results(self):
-        """Test converting local trials to OptiGen configuration_run format."""
+        """Test converting local trials to Traigent configuration_run format."""
         self.test_session = self._create_test_session()
         trials = self.test_session.trials
         results = self.sync_manager._convert_trials_to_results(trials)

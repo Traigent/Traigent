@@ -1,5 +1,6 @@
 """Tests for validation utilities."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,27 @@ class TestValidatePath:
 
         assert not result.is_valid
         assert any(error.error_code == "SECURITY_ERROR" for error in result.errors)
+
+
+class TestValidateDataset:
+    """Tests for Validators.validate_dataset."""
+
+    def test_validate_dataset_accepts_jsonl_input_data_alias(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        dataset_path = tmp_path / "inline_alias.jsonl"
+        dataset_path.write_text(
+            json.dumps(
+                {"input_data": {"question": "What is 2+2?"}, "expected_output": "4"}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+
+        result = Validators.validate_dataset(str(dataset_path))
+
+        assert result.is_valid
 
     def test_validate_path_symlink_escaping_base(self, tmp_path: Path) -> None:
         allowed_base = tmp_path / "workspace"

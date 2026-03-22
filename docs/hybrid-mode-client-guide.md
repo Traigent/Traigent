@@ -137,7 +137,7 @@ See the [API Contract](./hybrid-mode-api-contract.md) for detailed specification
 The SDK provides a decorator-based wrapper for building services:
 
 ```python
-from traigent.wrapper import TraigentService
+from traigent.wrapper import EvaluationContext, TraigentService
 
 app = TraigentService(tunable_id="my_agent")
 
@@ -157,16 +157,41 @@ async def generate_response(example_id: str, data: dict, config: dict) -> dict:
         "metrics": {"accuracy_hint": 0.92}  # Custom quality metrics (combined mode)
     }
 
+@app.evaluation_kwargs
+def evaluation_parameters():
+    return [
+        {
+            "name": "strict_mode",
+            "type": "bool",
+            "description": "Use the stricter grading rubric",
+            "default": False,
+        }
+    ]
+
 @app.evaluate
-async def score_output(output: dict, target: dict, config: dict) -> dict:
+async def score_output(
+    output: dict,
+    target: dict,
+    kwargs: dict,
+    context: EvaluationContext,
+) -> dict:
+    accuracy = compute_accuracy(output, target)
+    if kwargs.get("strict_mode") and context.execution_config:
+        if context.execution_config.get("model") == "gpt-4":
+            accuracy = min(accuracy, 0.95)
     return {
-        "accuracy": compute_accuracy(output, target),
+        "accuracy": accuracy,
         "safety_score": check_safety(output),  # Custom quality metrics
     }
 
 if __name__ == "__main__":
     app.run(port=8080)
 ```
+
+`config` is execute-time trial state. Optional evaluator controls belong in
+`/traigent/v1/evaluate.kwargs`, and wrapper callbacks receive them as `kwargs`.
+If you need to branch evaluation logic on the executed trial config, use the
+optional `EvaluationContext.execution_config` populated from `execution_id`.
 
 ---
 
@@ -479,6 +504,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
   -d '{
     "request_id": "660e8400-e29b-41d4-a716-446655440001",
     "tunable_id": "my_agent",
+    "kwargs": {"strict_mode": true},
     "evaluations": [
       {
         "example_id": "ex_001",

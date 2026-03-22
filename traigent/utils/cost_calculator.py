@@ -1,7 +1,8 @@
 """LLM cost calculation utilities.
 
 Cost resolution is intentionally fail-fast:
-- Runtime and pre-estimation pricing use litellm first.
+- Runtime pricing uses litellm first, then Traigent's curated fallback pricing
+  for built-in supported models that litellm does not currently price.
 - Unknown models raise with actionable remediation by default.
 - Users can provide explicit custom pricing for private/unsupported models.
 """
@@ -91,15 +92,26 @@ ESTIMATION_MODEL_PRICING = {
 
 # Canonical model-name aliases used by estimation and validation code paths.
 # This avoids duplicated alias tables drifting across modules.
+#
+# NOTE: Bare aliases (e.g. "claude-sonnet") are pinned to *dated* model IDs
+# so budget enforcement and cost accounting resolve to concrete model versions
+# at runtime instead of provider-latest pointers. Update the targets here only
+# after confirming the dated ID has an entry in Traigent's canonical pricing
+# table and, ideally, the pinned litellm cost map as well.
 MODEL_NAME_ALIASES: dict[str, str] = {
     "gpt-4": "gpt-4-turbo",
     "gpt-4-32k": "gpt-4-turbo",
     "claude-3-haiku": "claude-3-haiku-20240307",
+    "claude-haiku": "claude-3-haiku-20240307",
     "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
     "claude-3-opus": "claude-3-opus-20240229",
+    "claude-opus": "claude-3-opus-20240229",
     "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+    "claude-3.5-haiku": "claude-3-5-haiku-20241022",
 }
 
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
@@ -540,6 +552,35 @@ def _find_fallback_pricing(
     return pricing, matched_key
 
 
+def _try_builtin_per_token_rates(
+    candidates: list[str],
+) -> tuple[float, float, str] | None:
+    """Try Traigent's curated pricing table for exact candidate matches.
+
+    Runtime accounting stays fail-fast here: only exact normalized matches are
+    accepted. Prefix/fuzzy fallback remains reserved for explicit estimation
+    helpers such as ``_estimation_cost_from_tokens()``.
+    """
+    pricing_index = {
+        model.lower(): (model, pricing)
+        for model, pricing in ESTIMATION_MODEL_PRICING.items()
+    }
+
+    for candidate in candidates:
+        normalized = _normalize_model_for_fallback(candidate)
+        match = pricing_index.get(normalized)
+        if match is None:
+            continue
+        matched_key, pricing = match
+        return (
+            float(pricing["input_cost_per_token"]),
+            float(pricing["output_cost_per_token"]),
+            matched_key,
+        )
+
+    return None
+
+
 def _estimation_cost_from_tokens(
     model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
@@ -585,11 +626,39 @@ def _estimation_cost_from_tokens(
     return 0.0, 0.0
 
 
+def _resolve_builtin_model_alias(normalized: str) -> str:
+    """Resolve through Traigent's built-in alias table.
+
+    Args:
+        normalized: Already-normalized model name (output of ``_normalize_model_name``).
+    """
+    return MODEL_NAME_ALIASES.get(normalized.lower(), normalized)
+
+
 def _build_model_candidates(model_name: str) -> list[str]:
-    """Build deduplicated list of model name candidates for pricing lookup."""
+    """Build deduplicated list of model name candidates for pricing lookup.
+
+    Normalization is applied exactly once; all downstream resolvers receive
+    the already-normalized form so that mixed-case provider prefixes like
+    ``OPENAI/GPT-4O`` resolve correctly.
+    """
     normalized = _normalize_model_name(model_name)
-    alias_resolved = _resolve_litellm_alias(normalized)
-    candidates = [c for c in [model_name, normalized, alias_resolved] if c]
+    lowered = normalized.lower()
+    builtin_alias = _resolve_builtin_model_alias(lowered)
+    litellm_alias = _resolve_litellm_alias(lowered)
+    builtin_then_litellm = _resolve_litellm_alias(builtin_alias)
+    candidates = [
+        c
+        for c in [
+            model_name,
+            normalized,
+            lowered,
+            builtin_alias,
+            litellm_alias,
+            builtin_then_litellm,
+        ]
+        if c
+    ]
     return list(dict.fromkeys(candidates))
 
 
@@ -625,6 +694,7 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     Resolution order:
     1. litellm pricing database
     2. explicit custom pricing overrides (env/file)
+    3. Traigent built-in fallback pricing for supported models
 
     Unknown models raise ``UnknownModelError`` with remediation instructions.
 
@@ -647,6 +717,11 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     if custom_pricing is not None:
         input_cost, output_cost = custom_pricing
         return float(input_cost), float(output_cost), "custom_pricing"
+
+    builtin_rates = _try_builtin_per_token_rates(candidates)
+    if builtin_rates is not None:
+        input_cost, output_cost, _matched_key = builtin_rates
+        return input_cost, output_cost, "builtin_pricing"
 
     raise UnknownModelError(_unknown_model_resolution_message(model_name))
 
@@ -725,8 +800,9 @@ class CostCalculator:
         if not model_name:
             return CostBreakdown(calculation_method="no_model_name")
 
-        normalized_model = _normalize_model_name(model_name)
-        effective_model = _resolve_litellm_alias(normalized_model)
+        normalized_model = _normalize_model_name(model_name).lower()
+        builtin_alias = _resolve_builtin_model_alias(normalized_model)
+        effective_model = _resolve_litellm_alias(builtin_alias)
 
         result = CostBreakdown(
             model_used=model_name, mapped_model=effective_model or ""
@@ -826,8 +902,14 @@ class CostCalculator:
 
         This method does not perform fuzzy guessing or implicit family mapping.
         """
-        normalized = _normalize_model_name(model_name) if model_name else model_name
-        resolved = _resolve_litellm_alias(normalized) if model_name else None
+        normalized = (
+            _normalize_model_name(model_name).lower() if model_name else model_name
+        )
+        resolved = (
+            _resolve_litellm_alias(_resolve_builtin_model_alias(normalized))
+            if normalized
+            else None
+        )
         result = {
             "original": model_name,
             "normalized": normalized,
@@ -836,6 +918,7 @@ class CostCalculator:
             "available": LITELLM_AVAILABLE,
             "known_to_litellm": False,
             "custom_pricing": False,
+            "builtin_pricing": False,
             "exact_match": False,
             "fuzzy_match": False,
             "family_match": False,
@@ -850,10 +933,7 @@ class CostCalculator:
             result["error"] = "litellm library not available"
             return result
 
-        candidates = [
-            candidate for candidate in [model_name, normalized, resolved] if candidate
-        ]
-        candidates = list(dict.fromkeys(candidates))
+        candidates = _build_model_candidates(model_name)
         for candidate in candidates:
             if _is_model_known_to_litellm(candidate):
                 result["known_to_litellm"] = True
@@ -871,6 +951,14 @@ class CostCalculator:
         if custom_pricing is not None:
             result["custom_pricing"] = True
             result["mapped"] = resolved or normalized or model_name
+            result["not_found"] = False
+            return result
+
+        builtin_rates = _try_builtin_per_token_rates(candidates)
+        if builtin_rates is not None:
+            _input_cost, _output_cost, matched_key = builtin_rates
+            result["builtin_pricing"] = True
+            result["mapped"] = matched_key
             result["not_found"] = False
             return result
 
@@ -982,6 +1070,15 @@ def cost_from_tokens(
             float(output_tokens * output_rate),
         )
 
+    # Step 4: Traigent built-in fallback pricing for supported models.
+    builtin_rates = _try_builtin_per_token_rates(candidates)
+    if builtin_rates is not None:
+        input_rate, output_rate, _matched_key = builtin_rates
+        return (
+            float(input_tokens * input_rate),
+            float(output_tokens * output_rate),
+        )
+
     if strict:
         raise UnknownModelError(_unknown_model_resolution_message(model))
 
@@ -1041,8 +1138,8 @@ def get_model_pricing_per_1k(model_name: str) -> tuple[float, float]:
     """Get model pricing rates in USD per 1K tokens.
 
     Returns a tuple ``(input_per_1k, output_per_1k)`` via the canonical cost
-    pipeline (litellm first, then explicit custom pricing). Unknown models
-    return ``(0.0, 0.0)``.
+    pipeline (litellm first, then explicit custom pricing, then built-in
+    fallback pricing). Unknown models return ``(0.0, 0.0)``.
 
     This is a query function (not budget-enforcement), so it uses
     strict=False to avoid raising on unknown models.

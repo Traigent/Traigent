@@ -58,6 +58,7 @@ bash walkthrough/test_all_examples.sh --real
 ```text
 walkthrough/
 ├── README.md              # This file
+├── demo/                  # Optional demo/video support scripts
 ├── mock/                  # No API keys needed, instant results
 ├── real/                  # Requires API keys, real LLM calls
 ├── datasets/              # Pre-built evaluation datasets (20 examples each)
@@ -86,6 +87,15 @@ Each example has **mock** (no API keys) and **real** (actual LLM calls) variants
 
 Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
 appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
+
+## Optional Extras
+
+These are not part of the core 8-step walkthrough or `test_all_examples.sh`, but
+they are useful companion material:
+
+- `walkthrough/mock/09_rag_multi_objective.py`: mock-only RAG tradeoff example
+- `walkthrough/demo/rag_agent.py`: standalone pre-Traigent RAG baseline (requires `OPENAI_API_KEY`)
+- `walkthrough/demo/optimize_rag.py`: replay of a recorded multi-objective run
 
 ### Quick Notes for New Users
 
@@ -222,8 +232,8 @@ For advanced benchmarks like HotpotQA multi-hop QA optimization, see the
 ## Further Reading
 
 - Mock mode: See [examples/README.md](../examples/README.md) ("Run any example in mock mode" section)
-- Example guide: [examples/docs/EXAMPLES_GUIDE.md](../examples/docs/EXAMPLES_GUIDE.md)
-- Getting started: [examples/docs/START_HERE.md](../examples/docs/START_HERE.md)
+- Example guide: [Examples Guide](../docs/examples/README.md)
+- Getting started: [Start Here](../docs/examples/START_HERE.md)
 
 ## Next Steps
 

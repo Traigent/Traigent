@@ -39,8 +39,12 @@ from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     OptimizationError,
+    QuotaExceededError,
+    RateLimitError,
+    ServiceUnavailableError,
     TrialPrunedError,
     TVLConstraintError,
+    VendorPauseError,
 )
 from traigent.utils.logging import get_logger
 
@@ -325,12 +329,7 @@ class TrialLifecycle:
 
         try:
             # Phase 3: Execute evaluation within TrialContext
-            # This sets the trial context so get_trial_config() works inside the user's function
-            evaluate_kwargs: dict[str, Any] = {}
-            if progress_callback is not None:
-                evaluate_kwargs["progress_callback"] = progress_callback
-            if lease is not None:
-                evaluate_kwargs["sample_lease"] = lease
+            evaluate_kwargs = self._build_evaluate_kwargs(progress_callback, lease)
 
             async with TrialContext(
                 trial_id=trial_id,
@@ -430,6 +429,23 @@ class TrialLifecycle:
         except asyncio.CancelledError:
             # SonarQube S7497: CancelledError must always be re-raised
             raise
+
+        except (
+            RateLimitError,
+            QuotaExceededError,
+            ServiceUnavailableError,
+        ) as vendor_exc:
+            # Re-raise as VendorPauseError so the orchestrator can prompt
+            # the user to resume or stop, instead of silently failing.
+            # classify_vendor_error is guaranteed to match for these types.
+            from traigent.core.exception_handler import classify_vendor_error
+
+            category = classify_vendor_error(vendor_exc)
+            raise VendorPauseError(
+                str(vendor_exc),
+                original_error=vendor_exc,
+                category=category,
+            ) from vendor_exc
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
@@ -587,6 +603,18 @@ class TrialLifecycle:
             trial_id=trial_id,
             ceiling=ceiling_value,
         )
+
+    @staticmethod
+    def _build_evaluate_kwargs(
+        progress_callback: Any, lease: SampleBudgetLease | None
+    ) -> dict[str, Any]:
+        """Build keyword arguments for evaluator.evaluate()."""
+        kwargs: dict[str, Any] = {}
+        if progress_callback is not None:
+            kwargs["progress_callback"] = progress_callback
+        if lease is not None:
+            kwargs["sample_lease"] = lease
+        return kwargs
 
     def _finalize_budget_lease(
         self, lease: SampleBudgetLease | None

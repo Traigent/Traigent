@@ -39,12 +39,12 @@ except ImportError:
 # Workflow traces integration
 from traigent.integrations.observability.workflow_traces import (
     OTEL_AVAILABLE,
-    OptiGenSpanExporter,
     SpanPayload,
     SpanStatus,
     SpanType,
     TraceIngestionRequest,
     TraceIngestionResponse,
+    TraigentSpanExporter,
     WorkflowEdge,
     WorkflowGraphPayload,
     WorkflowLoop,
@@ -87,7 +87,7 @@ __all__ = [
     "TraceIngestionRequest",
     "TraceIngestionResponse",
     "WorkflowTracesClient",
-    "OptiGenSpanExporter",
+    "TraigentSpanExporter",
     "WorkflowTracesTracker",
     "create_workflow_tracker",
     "setup_workflow_tracing",

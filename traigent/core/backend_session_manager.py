@@ -20,6 +20,8 @@ from traigent.config.types import TraigentConfig
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+
+from traigent.config.backend_config import get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -298,8 +300,15 @@ class BackendSessionManager:
             if agent_configuration is not None:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
 
+            # Use human-readable name with disambiguating hash suffix
+            # e.g. "answer_question (f282c9de)" instead of the full slug
+            portal_name = function_display_name or function_identifier
+            slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+            if slug_hash:
+                portal_name = f"{portal_name} ({slug_hash})"
+
             session_id = self._backend_client.create_session(
-                function_name=function_slug,
+                function_name=portal_name,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
@@ -457,9 +466,9 @@ class BackendSessionManager:
         if not has_api_key:
             # Only warn once; suppress in offline mode to reduce log noise
             if not _warned_no_api_key and not is_backend_offline():
-                logger.debug(
-                    "Skipping backend trial submissions (no API key detected). "
-                    "Results will be saved locally only."
+                logger.warning(
+                    "No API key found — results saved locally only. %s",
+                    get_no_credentials_hint(),
                 )
                 _warned_no_api_key = True
             else:

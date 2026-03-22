@@ -1,1 +1,1 @@
-"""Code analysis tooling for OptiGenBackend."""
+"""Code analysis tooling for TraigentBackend."""

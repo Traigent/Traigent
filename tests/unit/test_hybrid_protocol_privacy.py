@@ -23,7 +23,6 @@ class TestInputItemPrivacy:
         """Test standard mode: input with data field."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[
                 {"example_id": "ex_1", "data": {"query": "What is AI?"}},
@@ -38,7 +37,6 @@ class TestInputItemPrivacy:
         """Test privacy-preserving mode: input with only example_id."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[
                 {"example_id": "ex_1"},  # No data field
@@ -56,7 +54,6 @@ class TestInputItemPrivacy:
         """Test mixed mode: some inputs with data, some without."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "balanced"},
             examples=[
                 {"example_id": "ex_1", "data": {"query": "test"}},  # With data
@@ -143,7 +140,6 @@ class TestEvaluationItemPrivacy:
         """Test standard mode: evaluation with full output and target content."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -162,7 +158,6 @@ class TestEvaluationItemPrivacy:
         """Test privacy-preserving mode: evaluation with output_id and target_id."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -183,7 +178,6 @@ class TestEvaluationItemPrivacy:
         """Test mixed mode: output content with target_id."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {
                     "example_id": "ex_1",
@@ -236,7 +230,6 @@ class TestSessionIdScoping:
         """Test that session_id is included in execute request."""
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={"model": "fast"},
             examples=[{"example_id": "ex_1"}],
             session_id="session_abc123",
@@ -249,7 +242,6 @@ class TestSessionIdScoping:
         """Test that session_id is included in evaluate request."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 {"example_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}
             ],
@@ -282,7 +274,6 @@ class TestPrivacyModeDocumentation:
         # This should work without data field
         request = HybridExecuteRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             config={},
             examples=[{"example_id": "required_only"}],
         )
@@ -320,7 +311,6 @@ class TestPrivacyModeDocumentation:
         """Verify EvaluationItem accepts both content and IDs."""
         request = HybridEvaluateRequest(
             tunable_id="test_agent",
-            benchmark_id="bench_001",
             evaluations=[
                 # All content
                 {"example_id": "ex_1", "output": {}, "target": {}},

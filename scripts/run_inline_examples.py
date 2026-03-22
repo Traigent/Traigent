@@ -4,7 +4,7 @@ Execute extracted inline examples (best-effort) and write/update results.json
 in each example folder.
 
 Usage:
-  python scripts/run_inline_examples.py examples/docs/page-inline/configuration-management
+  python scripts/run_inline_examples.py examples/gallery/page-inline/configuration-management
 """
 from __future__ import annotations
 

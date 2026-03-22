@@ -18,13 +18,22 @@ try:
 except ImportError:
     AIOHTTP_AVAILABLE = False
 
-from ..config.backend_config import BackendConfig
+from ..config.backend_config import BackendConfig, get_no_credentials_hint
 from ..config.types import TraigentConfig
 from ..storage.local_storage import LocalStorageManager, OptimizationSession
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def build_experiment_url(base_url: str, experiment_id: str) -> str:
+    """Build the portal URL for an experiment.
+
+    Single source of truth for experiment URL construction —
+    used by both SyncManager and the orchestrator.
+    """
+    return f"{base_url.rstrip('/')}/experiments/{experiment_id}"
 
 
 class SyncManager:
@@ -318,8 +327,10 @@ class SyncManager:
 
         # Actually sync to cloud
         if not self.api_key:
+            msg = "No API key provided for cloud sync. " + get_no_credentials_hint()
+            logger.warning(msg)
             sync_result["status"] = "error"
-            sync_result["errors"].append("No API key provided for cloud sync")
+            sync_result["errors"].append(msg)
             return sync_result
 
         try:
@@ -368,8 +379,8 @@ class SyncManager:
                 sync_result["status"] = "error"  # Complete failure
             elif successful_steps == total_steps:
                 sync_result["status"] = "success"
-                sync_result["cloud_url"] = (
-                    f"{self.base_url}/experiments/{traigent_data['experiment']['id']}"
+                sync_result["cloud_url"] = build_experiment_url(
+                    self.base_url, traigent_data["experiment"]["id"]
                 )
             else:
                 sync_result["status"] = "partial"  # Some steps succeeded

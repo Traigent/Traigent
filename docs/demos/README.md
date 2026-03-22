@@ -68,13 +68,13 @@ docs/demos/
 ## See Traigent in Action
 
 ### LLM Agent Optimization
-![Traigent Optimization](docs/demos/output/optimize.svg)
+![Traigent Optimization](output/optimize.svg)
 
 ### Optimization Callbacks
-![Traigent Callbacks](docs/demos/output/hooks.svg)
+![Traigent Callbacks](output/hooks.svg)
 
 ### GitHub Hooks & CI/CD
-![Traigent GitHub Hooks](docs/demos/output/github-hooks.svg)
+![Traigent GitHub Hooks](output/github-hooks.svg)
 ```
 
 ## Key Messages
@@ -115,4 +115,4 @@ asciinema play docs/demos/output/optimize.cast
 
 ## Reference
 
-See `docs/DEMO_VIDEO_GUIDE.md` for implementation details and customization options.
+See `DEMO_VIDEO_GUIDE.md` for implementation details and customization options.

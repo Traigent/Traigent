@@ -1,9 +1,11 @@
-"""Hash generation utilities for deterministic ID creation."""
+"""Hash generation utilities for deterministic ID and label creation."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Maintainability FUNC-ANALYTICS FUNC-STORAGE REQ-ANLY-011 REQ-STOR-007 SYNC-StorageLogging
 
 import hashlib
 import json
+import re
+from datetime import datetime
 from typing import Any
 
 from traigent.utils.numpy_compat import convert_numpy_value, is_numpy_type
@@ -167,3 +169,37 @@ def generate_benchmark_hash(
 
     # Return with readable prefix
     return f"bench_{hash_value}"
+
+
+_RUN_LABEL_MAX_NAME_LEN = 40
+_RUN_LABEL_SANITIZE_RE = re.compile(r"[^a-z0-9_]")
+
+
+def generate_run_label(
+    function_name: str,
+    optimization_id: str,
+    timestamp: datetime,
+) -> str:
+    """Generate a human-readable label for an optimization run.
+
+    Combines a sanitized function name, UTC timestamp, and a short hash
+    of the optimization ID into a compact, unique-enough label for
+    human identification (not a primary key).
+
+    Args:
+        function_name: Name of the optimized function
+        optimization_id: UUID of the optimization run
+        timestamp: When the optimization completed (should be UTC)
+
+    Returns:
+        Label like ``answer_question_20260315_143022_a3f1b2``
+    """
+    # Sanitize: lowercase, replace non-alnum/underscore, collapse runs of _
+    slug = _RUN_LABEL_SANITIZE_RE.sub("_", function_name.lower()).strip("_")
+    slug = re.sub(r"_+", "_", slug)
+    slug = slug[:_RUN_LABEL_MAX_NAME_LEN].rstrip("_") or "run"
+
+    ts = timestamp.strftime("%Y%m%d_%H%M%S")
+    short_hash = hashlib.sha256(optimization_id.encode()).hexdigest()[:6]
+
+    return f"{slug}_{ts}_{short_hash}"

@@ -1,6 +1,6 @@
 """Comprehensive tests for traigent.cloud.dtos module.
 
-Tests cover all Data Transfer Objects (DTOs) for OptiGen Backend Integration
+Tests cover all Data Transfer Objects (DTOs) for Traigent Backend Integration
 with focus on schema compliance, serialization, and edge cases.
 """
 
@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import traigent.cloud.dtos as cloud_dtos
 from traigent.cloud.dtos import (
     ConfigurationRunDTO,
     ConfigurationsDTO,
@@ -18,6 +19,7 @@ from traigent.cloud.dtos import (
     ExperimentRunDTO,
     InfrastructureDTO,
 )
+from traigent.utils.exceptions import DTOSerializationError
 
 
 class TestInfrastructureDTO:
@@ -372,7 +374,7 @@ class TestExperimentRunDTO:
             experiment_id="exp-002",
         )
 
-        assert run.status == "pending"
+        assert run.status == "not_started"
         assert run.start_time is None
         assert run.end_time is None
         assert run.summary_stats == {}
@@ -428,7 +430,15 @@ class TestExperimentRunDTO:
 
     def test_run_lifecycle_statuses(self):
         """Test run through different lifecycle statuses."""
-        statuses = ["pending", "running", "completed", "failed", "cancelled"]
+        statuses = [
+            "not_started",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "paused",
+            "partially_deleted",
+        ]
 
         for status in statuses:
             run = ExperimentRunDTO(
@@ -576,7 +586,16 @@ class TestConfigurationRunDTO:
 
     def test_trial_statuses(self):
         """Test various trial status values."""
-        statuses = ["pending", "running", "completed", "failed", "skipped"]
+        statuses = [
+            "not_started",
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "paused",
+            "partially_deleted",
+        ]
 
         for idx, status in enumerate(statuses, 1):
             config_run = ConfigurationRunDTO(
@@ -586,6 +605,70 @@ class TestConfigurationRunDTO:
                 status=status,
             )
             assert config_run.status == status
+
+    def test_experiment_validate_uses_canonical_validator_api(self, monkeypatch):
+        """ExperimentDTO.validate should use the TraigentSchema validator API."""
+
+        class FakeValidator:
+            def validate_json(self, data, schema_name):
+                assert schema_name == "experiment"
+                assert data["id"] == "exp-validate"
+                return []
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", lambda: FakeValidator
+        )
+
+        exp = ExperimentDTO(
+            id="exp-validate",
+            name="Validation Test",
+            description="Validation path test",
+        )
+
+        assert exp.validate() is True
+
+    def test_experiment_validate_returns_false_without_internal_schema(
+        self, monkeypatch
+    ):
+        """Validation should become non-blocking when the optional package is absent."""
+
+        def raise_missing_validator():
+            raise ImportError("No module named 'traigent_schema'")
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", raise_missing_validator
+        )
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", "false")
+
+        exp = ExperimentDTO(
+            id="exp-no-schema",
+            name="Validation Test",
+            description="Missing optional dependency",
+        )
+
+        assert exp.validate() is False
+
+    def test_experiment_validate_raises_helpful_error_without_internal_schema(
+        self, monkeypatch
+    ):
+        """Strict validation should explain how to enable internal schema checks."""
+
+        def raise_missing_validator():
+            raise ImportError("No module named 'traigent_schema'")
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", raise_missing_validator
+        )
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", "true")
+
+        exp = ExperimentDTO(
+            id="exp-no-schema-strict",
+            name="Validation Test",
+            description="Missing optional dependency",
+        )
+
+        with pytest.raises(DTOSerializationError, match="internal_schema"):
+            exp.validate()
 
     def test_trial_number_sequence(self):
         """Test trial numbers in sequence."""

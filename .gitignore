@@ -16,7 +16,7 @@ sections/
 # But keep example site sections tracked
 !examples/sections/
 !examples/sections/**
-optigen_schema/
+traigent_schema/
 # C extensions
 *.so
 
@@ -338,7 +338,11 @@ sonar-project.local.properties
 
 # Traigent generated results and caches
 **/.traigent_results/
+**/.traigent_validation_results/
+**/.validation_results/
+**/results-ci/
 **/.config/mlflow/
+REPO_AUDIT.md
 
 # Generated example/template files
 traigent_example.py
@@ -403,6 +407,12 @@ tests/manual/
 tmp/
 walkthrough/myfiles.md
 scripts/smoke/run_local_real_openrouter_quick_smoke.sh
+.traigent_validation_results/
+.validation_results/
+results-ci/
+REPO_AUDIT.md
+docs/tvl/specification.pdf
+docs/tvl/tvl-website/client/public/docs/specification.pdf
 
 # Presentations (internal/sensitive)
 presentations/
@@ -459,12 +469,20 @@ playground.py
 test_redact*.py
 test_timeout*.py
 nvidia/
+
+# Client-specific examples (not part of SDK)
+examples/bazak/
+
+# LaTeX build artifacts
+*.aux
+*.out
+
 # Internal maintenance and dev-only directories
 .archive/
 .post_release_recommendation_fixes/
 .release_review/
 .codesync.yml
 MAINTENANCE.md
-tools/
+/tools/
 manual_validation/
 scripts/project_review/

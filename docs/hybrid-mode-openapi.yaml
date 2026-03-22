@@ -56,6 +56,7 @@ paths:
               example:
                 version: '1.0'
                 supports_evaluate: true
+                supports_evaluation_kwargs: true
                 supports_keep_alive: false
                 supports_streaming: false
                 max_batch_size: 100
@@ -126,6 +127,11 @@ paths:
                         - 2
                       resolution: 0.1
                     default: 0.7
+                evaluation_kwargs:
+                  - name: strict_mode
+                    type: bool
+                    description: Use the stricter grading rubric
+                    default: false
         '401':
           description: Unauthorized (missing or invalid bearer token)
           content:
@@ -173,7 +179,6 @@ paths:
             example:
               request_id: 550e8400-e29b-41d4-a716-446655440000
               tunable_id: my_agent
-              benchmark_id: spider_dev_v1
               config:
                 model: gpt-4o
                 temperature: 0.5
@@ -204,18 +209,12 @@ paths:
                   tokens_output: 450
                 quality_metrics: null
         '400':
-          description: Invalid request (e.g., missing benchmark_id, empty examples, tunable mismatch)
+          description: Invalid request (e.g., empty examples, malformed payload, tunable mismatch)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
-                missing-benchmark-id:
-                  summary: Missing benchmark_id
-                  value:
-                    error:
-                      code: INVALID_BENCHMARK_ID
-                      message: Missing required field 'benchmark_id' in execute request
                 invalid-request:
                   summary: Wrapper-level request validation failure
                   value:
@@ -270,6 +269,10 @@ paths:
       description: |
         Evaluate outputs against expected targets to measure quality.
         This endpoint is optional - only implement if supports_evaluate is true in capabilities.
+        Request-level `kwargs` are evaluator-time controls only; they do not replace
+        or override the tunable configuration sent in `/traigent/v1/execute.config`.
+        `execution_id` is the correlation hook for implementations that want
+        execute-time context during evaluation without re-sending execute config.
 
         **Server implementation (privacy-preserving mode):**
         1. For each evaluation item, use `output_id` to look up stored output locally
@@ -290,8 +293,9 @@ paths:
             example:
               request_id: 660e8400-e29b-41d4-a716-446655440001
               tunable_id: my_agent
-              benchmark_id: spider_dev_v1
               execution_id: exec_123456
+              kwargs:
+                strict_mode: true
               evaluations:
                 - example_id: case_001
                   output_id: out_001_run_abc
@@ -347,24 +351,24 @@ paths:
                         std: 0.04
                         'n': 5
         '400':
-          description: Invalid request (e.g., missing benchmark_id or malformed evaluations payload)
+          description: Invalid request (e.g., malformed evaluations payload or invalid evaluation kwargs)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
-                missing-benchmark-id:
-                  summary: Missing benchmark_id
-                  value:
-                    error:
-                      code: INVALID_BENCHMARK_ID
-                      message: Missing required field 'benchmark_id' in evaluate request
                 invalid-request:
                   summary: Wrapper-level request validation failure
                   value:
                     error:
                       code: INVALID_REQUEST
                       message: evaluations must be a list
+                invalid-evaluation-kwargs:
+                  summary: Unsupported evaluator parameter
+                  value:
+                    error:
+                      code: INVALID_EVALUATION_KWARGS
+                      message: Invalid evaluation kwargs provided for this service
         '401':
           description: Unauthorized
           content:
@@ -592,6 +596,14 @@ components:
           description: Whether separate evaluate endpoint is available
           default: true
           example: true
+        supports_evaluation_kwargs:
+          type: boolean
+          description: |
+            Whether `/traigent/v1/evaluate` accepts request-specific `kwargs`.
+            If true, `/traigent/v1/config-space` must include a non-empty
+            `evaluation_kwargs` array describing the accepted keys.
+          default: false
+          example: false
         supports_keep_alive:
           type: boolean
           description: Whether keep-alive heartbeat is supported
@@ -735,6 +747,45 @@ components:
             maxLength: 512
           example:
             - requires model == gpt-4
+    EvaluationKwargDefinition:
+      type: object
+      description: |
+        Definition of an optional request-specific evaluator parameter accepted by
+        `/traigent/v1/evaluate.kwargs`.
+      additionalProperties: false
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+          description: Evaluation kwarg name
+          pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+          maxLength: 128
+          example: strict_mode
+        type:
+          type: string
+          description: Evaluation kwarg type
+          enum:
+            - bool
+            - int
+            - float
+            - str
+            - enum
+          example: bool
+        description:
+          type: string
+          description: Optional human-readable description
+          maxLength: 512
+          nullable: true
+          example: Use the stricter grading rubric
+        domain:
+          description: Optional allowed-values or numeric-range definition
+          nullable: true
+          $ref: '#/components/schemas/TunableDomain'
+        default:
+          description: Optional default value when the kwarg is omitted
+          nullable: true
     TypedConstraints:
       type: object
       description: Typed TVL 0.9 constraints section
@@ -1035,6 +1086,16 @@ components:
           items:
             type: string
             maxLength: 128
+        evaluation_kwargs:
+          type: array
+          description: |
+            Optional request-specific evaluator parameters accepted by
+            `/traigent/v1/evaluate.kwargs`. This field must be omitted when the
+            service does not support evaluation kwargs.
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/EvaluationKwargDefinition'
     ExampleItem:
       type: object
       description: |
@@ -1091,7 +1152,6 @@ components:
       required:
         - request_id
         - tunable_id
-        - benchmark_id
         - config
         - examples
       properties:
@@ -1105,11 +1165,6 @@ components:
           description: Identifier for the agent tunable to invoke
           maxLength: 256
           example: my_agent
-        benchmark_id:
-          type: string
-          description: Benchmark containing the examples to run. Must match a benchmark_id from the /benchmarks endpoint.
-          maxLength: 256
-          example: spider_dev_v1
         config:
           type: object
           description: Configuration parameters (tunable values matching config-space definitions)
@@ -1136,11 +1191,6 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
-        benchmarks_revision:
-          type: string
-          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
-          maxLength: 256
-          nullable: true
     OutputItem:
       type: object
       description: |
@@ -1373,7 +1423,6 @@ components:
       required:
         - request_id
         - tunable_id
-        - benchmark_id
         - evaluations
       properties:
         request_id:
@@ -1386,14 +1435,11 @@ components:
           description: Identifier for the evaluation tunable
           maxLength: 256
           example: my_agent
-        benchmark_id:
-          type: string
-          description: Benchmark containing the examples being evaluated. Must match a benchmark_id from the /benchmarks endpoint.
-          maxLength: 256
-          example: spider_dev_v1
         execution_id:
           type: string
-          description: Reference to previous execute (for caching/correlation)
+          description: |
+            Reference to a previous execute call for correlation. Implementations
+            may use this to recover execute-time context during evaluation.
           maxLength: 256
           nullable: true
           example: exec_20240115_001
@@ -1403,11 +1449,19 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/EvaluationItem'
-        config:
+        kwargs:
           type: object
-          description: Optional config for evaluation parameters
+          description: |
+            Optional evaluator-specific request parameters. These are evaluate-time
+            controls only and do not replace or override `/execute.config`.
           additionalProperties: true
           nullable: true
+        config:
+          type: object
+          description: Deprecated alias for `kwargs`
+          additionalProperties: true
+          nullable: true
+          deprecated: true
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1420,11 +1474,6 @@ components:
           minimum: 1000
           maximum: 600000
           example: 30000
-        benchmarks_revision:
-          type: string
-          description: Optional revision token for stale-detection. Obtained from the /benchmarks endpoint.
-          maxLength: 256
-          nullable: true
     EvaluationResult:
       type: object
       description: Evaluation result for a single example

@@ -10,6 +10,7 @@ and agent management.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import time
 import uuid
@@ -58,6 +59,39 @@ logger = get_logger(__name__)
 
 # Error message constants
 _MCP_SESSION_UNAVAILABLE = "Connected to MCP server but session is unavailable"
+_DEFAULT_MCP_SERVER_CANDIDATES = (
+    "traigent_backend.mcp.server",
+    "optigen_backend.mcp.server",
+)
+
+
+def resolve_default_mcp_server_module() -> str:
+    """Return the preferred backend MCP server module path.
+
+    Prefer the renamed backend package when available, but fall back to the
+    legacy package name during migration windows so SDK updates remain
+    compatible with older backend deployments.
+    """
+    for module_name in _DEFAULT_MCP_SERVER_CANDIDATES:
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            spec = None
+        if spec is not None:
+            return module_name
+    return _DEFAULT_MCP_SERVER_CANDIDATES[0]
+
+
+def default_mcp_server_args() -> list[str]:
+    """Return default command-line args for the backend MCP server."""
+    return [
+        "-m",
+        resolve_default_mcp_server_module(),
+        "--host",
+        "localhost",
+        "--port",
+        "5000",
+    ]
 
 
 @dataclass
@@ -864,14 +898,7 @@ def get_production_mcp_client(
     if _production_client is None:
         # Default server args for Traigent Backend MCP
         if server_args is None:
-            server_args = [
-                "-m",
-                "optigen_backend.mcp.server",
-                "--host",
-                "localhost",
-                "--port",
-                "5000",
-            ]
+            server_args = default_mcp_server_args()
 
         server_config = MCPServerConfig(
             server_path=server_path, server_args=server_args, **kwargs
