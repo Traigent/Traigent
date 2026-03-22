@@ -72,7 +72,7 @@
     "smoke:examples": "npm run build:sdk && bash examples/test_all_examples.sh",
     "smoke:walkthrough": "npm run build:sdk && bash walkthrough/test_all_examples.sh",
     "test": "vitest run",
-    "test:cross-sdk": "vitest run tests/cross-sdk/**/*.test.ts",
+    "test:cross-sdk": "vitest run tests/cross-sdk/*.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",

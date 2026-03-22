@@ -885,6 +885,9 @@ describe('native optimize()', () => {
       },
     })(async (trialConfig) => {
       invocationCount += 1;
+      if (invocationCount === 2) {
+        controller.abort();
+      }
       await delay(invocationCount === 1 ? 5 : 250);
       return {
         metrics: {
@@ -897,7 +900,6 @@ describe('native optimize()', () => {
     });
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 25);
 
     const partial = await wrapped.optimize({
       algorithm: 'grid',

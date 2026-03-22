@@ -1,5 +1,7 @@
 # Installation
 
+Published package install:
+
 ```bash
 npm install @traigent/sdk
 ```

@@ -69,3 +69,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:package-smoke
+
+  cross-sdk-parity:
+    runs-on: ubuntu-latest
+    name: cross-sdk-parity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:cross-sdk

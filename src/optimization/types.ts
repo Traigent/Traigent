@@ -329,14 +329,7 @@ export type OptimizationSessionLifecycleStatus =
   | 'paused'
   | 'completed'
   | 'failed'
-  | 'cancelled'
-  | 'PENDING'
-  | 'CREATED'
-  | 'ACTIVE'
-  | 'PAUSED'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED';
+  | 'cancelled';
 
 export interface OptimizationSessionCreationResponse {
   sessionId: string;

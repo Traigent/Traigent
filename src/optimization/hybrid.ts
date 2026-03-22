@@ -1548,6 +1548,29 @@ function normalizeServiceStatusResponse(
   };
 }
 
+function normalizeOptimizationSessionLifecycleStatus(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case 'pending':
+    case 'queued':
+    case 'created':
+    case 'active':
+    case 'paused':
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+    case 'expired':
+      return normalized;
+    default:
+      return value;
+  }
+}
+
 function normalizeSessionStatusResponse(
   sessionId: string,
   payload: HybridSessionStatusPayload | HybridSuccessEnvelope<HybridSessionStatusPayload>
@@ -1596,6 +1619,7 @@ function normalizeSessionStatusResponse(
       typeof source['session_id'] === 'string' && source['session_id'].length > 0
         ? source['session_id']
         : sessionId,
+    status: normalizeOptimizationSessionLifecycleStatus(source['status']),
     progress: normalizeSessionProgress(source['progress']),
     createdAt:
       typeof createdAt === 'string' || typeof createdAt === 'number' ? createdAt : undefined,
@@ -1620,7 +1644,7 @@ function normalizeSessionCreationResponse(
   return {
     ...source,
     sessionId,
-    status: typeof source['status'] === 'string' ? source['status'] : undefined,
+    status: normalizeOptimizationSessionLifecycleStatus(source['status']),
     optimizationStrategy: isPlainObject(source['optimization_strategy'])
       ? (source['optimization_strategy'] as Record<string, unknown>)
       : undefined,
@@ -1716,12 +1740,20 @@ function normalizeNextTrialResponse(
         : typeof source['stopReason'] === 'string' || source['stopReason'] === null
           ? (source['stopReason'] as string | null)
           : undefined,
-    sessionStatus:
+    session_status: normalizeOptimizationSessionLifecycleStatus(
       typeof source['session_status'] === 'string'
         ? source['session_status']
         : typeof source['sessionStatus'] === 'string'
           ? source['sessionStatus']
-          : undefined,
+          : undefined
+    ),
+    sessionStatus: normalizeOptimizationSessionLifecycleStatus(
+      typeof source['session_status'] === 'string'
+        ? source['session_status']
+        : typeof source['sessionStatus'] === 'string'
+          ? source['sessionStatus']
+          : undefined
+    ),
     metadata: isPlainObject(source['metadata'])
       ? (source['metadata'] as Record<string, unknown>)
       : undefined,

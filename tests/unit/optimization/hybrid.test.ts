@@ -99,7 +99,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-status',
       sessionId: 'session-status',
-      status: 'ACTIVE',
+      status: 'active',
       progress: {
         completed: 2,
         total: 5,
@@ -204,7 +204,7 @@ describe('hybrid optimize()', () => {
 
     expect(result).toEqual({
       sessionId: 'session-fallback',
-      status: 'ACTIVE',
+      status: 'active',
       progress: {
         completed: 1,
         total: 3,
@@ -247,7 +247,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-progress',
       sessionId: 'session-progress',
-      status: 'ACTIVE',
+      status: 'active',
       progress: {
         total: 4,
         stage: 'running',
@@ -291,7 +291,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-envelope',
       sessionId: 'session-envelope',
-      status: 'COMPLETED',
+      status: 'completed',
       progress: {
         completed: 4,
         total: 4,
@@ -338,7 +338,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-detailed',
       sessionId: 'session-detailed',
-      status: 'COMPLETED',
+      status: 'completed',
       created_at: '2026-03-12T01:02:03Z',
       function_name: 'detailed_agent',
       dataset_size: 12,
@@ -376,10 +376,17 @@ describe('hybrid optimize()', () => {
 
     expect(result).toEqual({
       success: true,
-      status: 'ACTIVE',
+      status: 'active',
       message: 'Session status fetched',
       data: null,
       sessionId: 'session-envelope-null',
+      createdAt: undefined,
+      functionName: undefined,
+      datasetSize: undefined,
+      objectives: undefined,
+      experimentId: undefined,
+      experimentRunId: undefined,
+      progress: undefined,
       metadata: undefined,
     });
   });
@@ -417,7 +424,7 @@ describe('hybrid optimize()', () => {
         {
           session_id: 'session-1',
           sessionId: 'session-1',
-          status: 'ACTIVE',
+          status: 'active',
           createdAt: undefined,
           functionName: undefined,
           datasetSize: undefined,
@@ -430,7 +437,7 @@ describe('hybrid optimize()', () => {
         {
           session_id: 'session-2',
           sessionId: 'session-2',
-          status: 'COMPLETED',
+          status: 'completed',
           createdAt: undefined,
           functionName: undefined,
           datasetSize: undefined,
@@ -481,7 +488,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-create',
       sessionId: 'session-create',
-      status: 'CREATED',
+      status: 'created',
       optimization_strategy: { algorithm: 'optuna' },
       optimizationStrategy: { algorithm: 'optuna' },
       metadata: { owner: 'js' },
@@ -558,7 +565,7 @@ describe('hybrid optimize()', () => {
     expect(result).toEqual({
       session_id: 'session-envelope',
       sessionId: 'session-envelope',
-      status: 'ACTIVE',
+      status: 'active',
       estimated_duration: 12.5,
       optimizationStrategy: undefined,
       estimatedDuration: 12.5,
@@ -650,8 +657,8 @@ describe('hybrid optimize()', () => {
       reason: null,
       stop_reason: null,
       stopReason: null,
-      session_status: 'ACTIVE',
-      sessionStatus: 'ACTIVE',
+      session_status: 'active',
+      sessionStatus: 'active',
       metadata: { remaining_trials: 3 },
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -700,8 +707,8 @@ describe('hybrid optimize()', () => {
       reason: 'budget exhausted',
       stop_reason: 'budget_exhausted',
       stopReason: 'budget_exhausted',
-      session_status: 'COMPLETED',
-      sessionStatus: 'COMPLETED',
+      session_status: 'completed',
+      sessionStatus: 'completed',
       metadata: undefined,
     });
   });
@@ -794,7 +801,7 @@ describe('hybrid optimize()', () => {
         {
           session_id: 'session-envelope',
           sessionId: 'session-envelope',
-          status: 'ACTIVE',
+          status: 'active',
           createdAt: undefined,
           functionName: undefined,
           datasetSize: undefined,
@@ -835,13 +842,14 @@ describe('hybrid optimize()', () => {
       {
         session_id: 'session-valid',
         sessionId: 'session-valid',
-        status: 'ACTIVE',
+        status: 'active',
         createdAt: undefined,
         functionName: undefined,
         datasetSize: undefined,
         objectives: undefined,
         experimentId: undefined,
         experimentRunId: undefined,
+        progress: undefined,
         metadata: undefined,
       },
     ]);
@@ -879,7 +887,7 @@ describe('hybrid optimize()', () => {
         {
           session_id: 'session-detail-list',
           sessionId: 'session-detail-list',
-          status: 'COMPLETED',
+          status: 'completed',
           created_at: '2026-03-12T01:02:03Z',
           function_name: 'listed_agent',
           dataset_size: 9,

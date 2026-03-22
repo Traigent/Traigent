@@ -1,0 +1,462 @@
+{
+  "benchmark_spec": {
+    "algorithm": "random",
+    "case": "async_scheduler",
+    "concurrencyLevels": [1, 2, 4, 8],
+    "configs": [
+      {
+        "lane": "d",
+        "slot": 3
+      },
+      {
+        "lane": "d",
+        "slot": 1
+      },
+      {
+        "lane": "b",
+        "slot": 3
+      },
+      {
+        "lane": "b",
+        "slot": 0
+      },
+      {
+        "lane": "d",
+        "slot": 2
+      },
+      {
+        "lane": "a",
+        "slot": 3
+      },
+      {
+        "lane": "a",
+        "slot": 0
+      },
+      {
+        "lane": "b",
+        "slot": 1
+      },
+      {
+        "lane": "c",
+        "slot": 3
+      },
+      {
+        "lane": "d",
+        "slot": 0
+      },
+      {
+        "lane": "c",
+        "slot": 2
+      },
+      {
+        "lane": "b",
+        "slot": 2
+      },
+      {
+        "lane": "a",
+        "slot": 2
+      },
+      {
+        "lane": "c",
+        "slot": 0
+      },
+      {
+        "lane": "a",
+        "slot": 1
+      },
+      {
+        "lane": "c",
+        "slot": 1
+      }
+    ],
+    "configurationSpace": {
+      "lane": {
+        "type": "enum",
+        "values": ["a", "b", "c", "d"]
+      },
+      "slot": {
+        "max": 3,
+        "min": 0,
+        "type": "int"
+      }
+    },
+    "maxTrials": 16,
+    "measuredRuns": 10,
+    "randomSeed": 11,
+    "sleepScheduleMs": {
+      "a": 8,
+      "b": 12,
+      "c": 16,
+      "d": 20
+    },
+    "warmupRuns": 3
+  },
+  "fixtures": [
+    {
+      "best_config": {
+        "alpha": 2,
+        "beta": 30
+      },
+      "best_metrics": {
+        "accuracy": 2.3
+      },
+      "case": "grid_3x3",
+      "configs": [
+        {
+          "alpha": 0,
+          "beta": 10
+        },
+        {
+          "alpha": 0,
+          "beta": 20
+        },
+        {
+          "alpha": 0,
+          "beta": 30
+        },
+        {
+          "alpha": 1,
+          "beta": 10
+        },
+        {
+          "alpha": 1,
+          "beta": 20
+        },
+        {
+          "alpha": 1,
+          "beta": 30
+        },
+        {
+          "alpha": 2,
+          "beta": 10
+        },
+        {
+          "alpha": 2,
+          "beta": 20
+        },
+        {
+          "alpha": 2,
+          "beta": 30
+        }
+      ],
+      "normalized_stop_reason": "completed",
+      "reason": null,
+      "spec": {
+        "configurationSpace": {
+          "alpha": {
+            "type": "enum",
+            "values": [0, 1, 2]
+          },
+          "beta": {
+            "type": "enum",
+            "values": [10, 20, 30]
+          }
+        },
+        "objectives": ["accuracy"]
+      },
+      "supported": true,
+      "total_cost_usd": null,
+      "trial_count": 9
+    },
+    {
+      "best_config": null,
+      "best_metrics": null,
+      "case": "random_seed_42",
+      "configs": [
+        {
+          "model": "a",
+          "retries": 0
+        },
+        {
+          "model": "b",
+          "retries": 2
+        },
+        {
+          "model": "b",
+          "retries": 1
+        },
+        {
+          "model": "e",
+          "retries": 0
+        },
+        {
+          "model": "a",
+          "retries": 3
+        },
+        {
+          "model": "e",
+          "retries": 4
+        },
+        {
+          "model": "e",
+          "retries": 1
+        },
+        {
+          "model": "b",
+          "retries": 3
+        },
+        {
+          "model": "e",
+          "retries": 3
+        },
+        {
+          "model": "a",
+          "retries": 2
+        },
+        {
+          "model": "d",
+          "retries": 1
+        },
+        {
+          "model": "c",
+          "retries": 2
+        },
+        {
+          "model": "d",
+          "retries": 0
+        },
+        {
+          "model": "c",
+          "retries": 0
+        },
+        {
+          "model": "e",
+          "retries": 2
+        },
+        {
+          "model": "a",
+          "retries": 1
+        },
+        {
+          "model": "b",
+          "retries": 0
+        },
+        {
+          "model": "c",
+          "retries": 3
+        },
+        {
+          "model": "c",
+          "retries": 1
+        },
+        {
+          "model": "b",
+          "retries": 4
+        }
+      ],
+      "normalized_stop_reason": "maxTrials",
+      "reason": null,
+      "spec": {
+        "configurationSpace": {
+          "model": {
+            "type": "enum",
+            "values": ["a", "b", "c", "d", "e"]
+          },
+          "retries": {
+            "max": 4,
+            "min": 0,
+            "type": "int"
+          }
+        },
+        "objectives": ["accuracy"]
+      },
+      "supported": true,
+      "total_cost_usd": null,
+      "trial_count": 20
+    },
+    {
+      "best_config": {
+        "max_tokens": 768,
+        "model": "gpt-4",
+        "temperature": 0.3
+      },
+      "best_metrics": {
+        "accuracy": 0.768
+      },
+      "case": "conditional_grid",
+      "configs": [
+        {
+          "max_tokens": 512,
+          "model": "gpt-3.5",
+          "temperature": 0.1
+        },
+        {
+          "max_tokens": 512,
+          "model": "gpt-3.5",
+          "temperature": 0.3
+        },
+        {
+          "max_tokens": 512,
+          "model": "gpt-3.5",
+          "temperature": 0.5
+        },
+        {
+          "max_tokens": 256,
+          "model": "gpt-4",
+          "temperature": 0.3
+        },
+        {
+          "max_tokens": 512,
+          "model": "gpt-4",
+          "temperature": 0.3
+        },
+        {
+          "max_tokens": 768,
+          "model": "gpt-4",
+          "temperature": 0.3
+        }
+      ],
+      "normalized_stop_reason": "completed",
+      "reason": null,
+      "spec": {
+        "configurationSpace": {
+          "max_tokens": {
+            "conditions": {
+              "model": "gpt-4"
+            },
+            "default": 512,
+            "max": 768,
+            "min": 256,
+            "step": 256,
+            "type": "int"
+          },
+          "model": {
+            "type": "enum",
+            "values": ["gpt-3.5", "gpt-4"]
+          },
+          "temperature": {
+            "conditions": {
+              "model": "gpt-3.5"
+            },
+            "default": 0.3,
+            "max": 0.5,
+            "min": 0.1,
+            "step": 0.2,
+            "type": "float"
+          }
+        },
+        "objectives": ["accuracy"]
+      },
+      "supported": true,
+      "total_cost_usd": null,
+      "trial_count": 6
+    },
+    {
+      "best_config": null,
+      "best_metrics": null,
+      "case": "conditional_random_seed_7",
+      "configs": [
+        {
+          "max_tokens": 256,
+          "model": "gpt-4"
+        },
+        {
+          "max_tokens": 768,
+          "model": "gpt-4"
+        },
+        {
+          "max_tokens": 512,
+          "model": "gpt-3.5"
+        },
+        {
+          "max_tokens": 512,
+          "model": "gpt-4"
+        }
+      ],
+      "normalized_stop_reason": "completed",
+      "reason": null,
+      "spec": {
+        "configurationSpace": {
+          "max_tokens": {
+            "conditions": {
+              "model": "gpt-4"
+            },
+            "default": 512,
+            "max": 768,
+            "min": 256,
+            "step": 256,
+            "type": "int"
+          },
+          "model": {
+            "type": "enum",
+            "values": ["gpt-3.5", "gpt-4"]
+          }
+        },
+        "objectives": ["accuracy"]
+      },
+      "supported": true,
+      "total_cost_usd": null,
+      "trial_count": 4
+    },
+    {
+      "best_config": {
+        "model": "a"
+      },
+      "best_metrics": {
+        "cost": 0.1
+      },
+      "case": "budget_cutoff",
+      "configs": [
+        {
+          "model": "a"
+        },
+        {
+          "model": "b"
+        },
+        {
+          "model": "c"
+        }
+      ],
+      "normalized_stop_reason": "budget",
+      "reason": null,
+      "spec": {
+        "budget": {
+          "maxCostUsd": 0.45
+        },
+        "configurationSpace": {
+          "model": {
+            "type": "enum",
+            "values": ["a", "b", "c", "d"]
+          }
+        },
+        "objectives": ["cost"]
+      },
+      "supported": true,
+      "total_cost_usd": 0.45,
+      "trial_count": 3
+    },
+    {
+      "best_config": null,
+      "best_metrics": null,
+      "case": "bayesian_branin",
+      "configs": null,
+      "normalized_stop_reason": "maxTrials",
+      "reason": "Optional Python Bayesian environment is not available in this exporter.",
+      "spec": {
+        "configurationSpace": {
+          "x": {
+            "max": 10.0,
+            "min": -5.0,
+            "type": "float"
+          },
+          "y": {
+            "max": 15.0,
+            "min": 0.0,
+            "type": "float"
+          }
+        },
+        "objectives": [
+          {
+            "direction": "maximize",
+            "metric": "score"
+          }
+        ]
+      },
+      "supported": false,
+      "total_cost_usd": null,
+      "trial_count": null
+    }
+  ],
+  "generated_at": "2026-03-20T19:41:55+00:00",
+  "python_version": "3.12.3"
+}

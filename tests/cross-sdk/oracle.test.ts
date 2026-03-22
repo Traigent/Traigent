@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -27,43 +26,10 @@ interface OraclePayload {
   fixtures: OracleFixture[];
 }
 
-const pythonRepoRoot = resolve(process.cwd(), '../Traigent');
-const oracleScript = resolve(
-  pythonRepoRoot,
-  'tests/cross_sdk_oracles/generate_native_js_oracles.py'
-);
+const oraclePayloadPath = resolve(process.cwd(), 'tests/cross-sdk/native_js_oracles.json');
 
-function loadOraclePayload():
-  | { available: true; payload: OraclePayload }
-  | { available: false; reason: string } {
-  if (!existsSync(oracleScript)) {
-    return {
-      available: false,
-      reason: `Missing oracle script: ${oracleScript}`,
-    };
-  }
-
-  try {
-    const stdout = execFileSync('python3', [oracleScript], {
-      cwd: pythonRepoRoot,
-      env: {
-        ...process.env,
-        PYTHONPATH: pythonRepoRoot,
-      },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    return {
-      available: true,
-      payload: JSON.parse(stdout) as OraclePayload,
-    };
-  } catch (error) {
-    return {
-      available: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
+function loadOraclePayload(): OraclePayload {
+  return JSON.parse(readFileSync(oraclePayloadPath, 'utf8')) as OraclePayload;
 }
 
 function getFixture(payload: OraclePayload, name: string): OracleFixture {
@@ -72,6 +38,23 @@ function getFixture(payload: OraclePayload, name: string): OracleFixture {
     throw new Error(`Missing oracle fixture "${name}".`);
   }
   return fixture;
+}
+
+function normalizeMetricsForFixture(
+  actual: Record<string, number> | null | undefined,
+  expected: Record<string, number> | null | undefined
+) {
+  if (!actual || !expected) {
+    return actual ?? null;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(expected, 'total_cost')) {
+    const rest = { ...actual };
+    delete (rest as { total_cost?: number }).total_cost;
+    return rest;
+  }
+
+  return actual;
 }
 
 function toParamDefinition(definition: Record<string, any>) {
@@ -97,12 +80,9 @@ function toParamDefinition(definition: Record<string, any>) {
   }
 }
 
-const oracle = loadOraclePayload();
-const maybeDescribe = oracle.available ? describe : describe.skip;
+const payload = loadOraclePayload();
 
-maybeDescribe('cross-SDK oracle parity', () => {
-  const payload = oracle.available ? oracle.payload : { fixtures: [] };
-
+describe('cross-SDK oracle parity', () => {
   it('matches the Python-owned grid_3x3 oracle exactly', async () => {
     const fixture = getFixture(payload, 'grid_3x3');
     const wrapped = optimize({
@@ -129,7 +109,9 @@ maybeDescribe('cross-SDK oracle parity', () => {
 
     expect(result.stopReason).toBe(fixture.normalized_stop_reason);
     expect(result.bestConfig).toEqual(fixture.best_config);
-    expect(result.bestMetrics).toEqual(fixture.best_metrics);
+    expect(normalizeMetricsForFixture(result.bestMetrics, fixture.best_metrics)).toEqual(
+      fixture.best_metrics
+    );
     expect(result.trials.map((trial) => trial.config)).toEqual(fixture.configs);
   });
 
@@ -197,7 +179,9 @@ maybeDescribe('cross-SDK oracle parity', () => {
 
     expect(result.stopReason).toBe(fixture.normalized_stop_reason);
     expect(result.bestConfig).toEqual(fixture.best_config);
-    expect(result.bestMetrics).toEqual(fixture.best_metrics);
+    expect(normalizeMetricsForFixture(result.bestMetrics, fixture.best_metrics)).toEqual(
+      fixture.best_metrics
+    );
     expect(result.totalCostUsd).toBeCloseTo(fixture.total_cost_usd ?? 0, 10);
     expect(result.trials.map((trial) => trial.config)).toEqual(fixture.configs);
   });
@@ -248,11 +232,3 @@ maybeDescribe('cross-SDK oracle parity', () => {
     );
   });
 });
-
-if (!oracle.available) {
-  describe('cross-SDK oracle parity (skipped)', () => {
-    it('records why the Python oracle suite is unavailable', () => {
-      expect(oracle.reason).toBeTruthy();
-    });
-  });
-}

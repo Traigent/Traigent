@@ -14,6 +14,8 @@ This checkout is native-first. It supports hybrid spec authoring via
 
 ## Installation
 
+Published package install:
+
 ```bash
 npm install @traigent/sdk
 ```
