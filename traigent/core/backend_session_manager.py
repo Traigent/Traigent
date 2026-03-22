@@ -102,7 +102,11 @@ class BackendSessionManager:
         """
         if not result.backend_connected:
             was_enabled = self._backend_tracking_enabled
-            assert result.failure_reason is not None  # enforced by dataclass invariant
+            if result.failure_reason is None:
+                raise ValueError(
+                    "SessionCreationResult.failure_reason must be set "
+                    "when backend_connected=False"
+                )
             reason = result.failure_reason
             self.disable_backend_tracking(reason)
 
