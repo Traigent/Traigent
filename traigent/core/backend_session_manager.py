@@ -94,6 +94,10 @@ class BackendSessionManager:
         Returns:
             BackendIntegratedClient if available, None otherwise
         """
+        if is_backend_offline():
+            logger.debug("Offline mode - skipping backend client initialization")
+            return None
+
         # Try to import cloud module - may not be available if cloud plugin not installed
         try:
             from traigent.cloud.backend_client import (
@@ -847,9 +851,9 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"][
-                "statistical_significance"
-            ] = stat_sig
+            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
+                stat_sig
+            )
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
