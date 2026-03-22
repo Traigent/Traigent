@@ -81,6 +81,13 @@ class TraigentAuthCLI:
                     return dict(data)
             except (json.JSONDecodeError, OSError) as e:
                 logger.debug(f"Failed to load credentials file: {e}")
+        elif self.config_dir.exists():
+            # Config dir exists but no credentials file - user may have
+            # authenticated when keyring was the primary store.
+            logger.info(
+                "No credentials file found. If you previously authenticated, "
+                "please run 'traigent auth login' again."
+            )
 
         return None
 
@@ -95,9 +102,15 @@ class TraigentAuthCLI:
         """
         try:
             self.credentials_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with open(self.credentials_file, "w") as f:
+            # Use os.open with explicit mode to avoid a window where the
+            # file is world-readable between creation and chmod.
+            fd = os.open(
+                str(self.credentials_file),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            with os.fdopen(fd, "w") as f:
                 json.dump(credentials, f, indent=2)
-            self.credentials_file.chmod(0o600)
             logger.debug(f"Credentials saved to {self.credentials_file}")
             return STORAGE_FILE
         except OSError as e:
