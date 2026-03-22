@@ -902,7 +902,7 @@ class TrialOperations:
                             else:
                                 # Auth failures: instance-scoped dedup at DEBUG
                                 if response.status in (401, 403):
-                                    if not getattr(self, "_auth_error_logged", False):
+                                    if not self._auth_error_logged:
                                         logger.debug(
                                             "Backend auth rejected weighted score update (%s)",
                                             response.status,
@@ -917,7 +917,7 @@ class TrialOperations:
                             error_msg = await response.text()
                             # Auth failures: instance-scoped dedup at DEBUG
                             if response.status in (401, 403):
-                                if not getattr(self, "_auth_error_logged", False):
+                                if not self._auth_error_logged:
                                     logger.debug(
                                         "Backend auth rejected weighted score update (%s)",
                                         response.status,
