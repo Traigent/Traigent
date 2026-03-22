@@ -16,7 +16,7 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 **Quick Install:**
 
 ```bash
-git clone -b release/0.10.0-polish https://github.com/Traigent/Traigent.git && cd Traigent
+git clone https://github.com/Traigent/Traigent.git && cd Traigent
 python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[recommended]"
 ```
