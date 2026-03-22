@@ -29,7 +29,6 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -358,11 +357,7 @@ class SessionOperations:
                     detail=str(e)[:200],
                 )
 
-            except (
-                CloudServiceError,
-                OSError,
-                asyncio.TimeoutError,
-            ) as e:
+            except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
                 logger.debug("Backend unavailable for '%s': %s", function_name, e)
                 fallback_id = self._create_local_fallback_session(
@@ -398,12 +393,7 @@ class SessionOperations:
         except ValidationException:
             raise  # User input errors must propagate
 
-        except (
-            CloudServiceError,
-            AuthenticationError,
-            OSError,
-            asyncio.TimeoutError,
-        ) as exc:
+        except (TimeoutError, CloudServiceError, AuthenticationError, OSError) as exc:
             logger.debug(
                 "Error in create_session for function '%s': %s",
                 function_name,
