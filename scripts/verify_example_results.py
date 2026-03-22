@@ -29,6 +29,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -37,6 +39,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / ".validation_results"
 SNAPSHOTS_DIR = RESULTS_DIR / "snapshots"
 SNAPSHOT_LABEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Block redirects so backend verification requests stay on the pinned origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            "Redirects are not allowed for backend verification requests",
+            headers,
+            fp,
+        )
 
 
 def normalize_backend_url(api_url: str) -> str:
@@ -99,7 +114,9 @@ def write_snapshot_json(path: Path, payload: object) -> None:
         resolved_path.relative_to(base_dir)
     except ValueError as exc:
         raise ValueError(f"Invalid snapshot write path: {resolved_path}") from exc
-    resolved_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    resolved_path.write_text(
+        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+    )
 
 
 def get_backend_config() -> tuple[str, str]:
@@ -131,9 +148,6 @@ def get_backend_config() -> tuple[str, str]:
 
 def query_backend(endpoint: str, api_url: str, api_key: str) -> dict | None:
     """Query a backend endpoint, return parsed JSON or None on failure."""
-    import urllib.error
-    import urllib.request
-
     try:
         url = build_backend_url(api_url, endpoint)
     except ValueError as e:
@@ -145,7 +159,8 @@ def query_backend(endpoint: str, api_url: str, api_key: str) -> dict | None:
     req.add_header("X-Client-Version", "2.0.0")
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=10) as resp:
             return json.loads(resp.read())
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
         print(f"  Backend query failed ({endpoint}): {e}", file=sys.stderr)
@@ -193,7 +208,9 @@ def snapshot_backend(label: str) -> Path:
 
     path = snapshot_path(label)
     write_snapshot_json(path, snapshot)
-    print(f"Snapshot '{label}' saved: {len(experiments)} experiments, {len(sessions)} sessions")
+    print(
+        f"Snapshot '{label}' saved: {len(experiments)} experiments, {len(sessions)} sessions"
+    )
     return path
 
 
@@ -217,9 +234,7 @@ def diff_snapshots(before_label: str, after_label: str) -> dict:
     after_ids = {e["experiment_id"] for e in after["experiments"]}
 
     new_ids = after_ids - before_ids
-    new_experiments = [
-        e for e in after["experiments"] if e["experiment_id"] in new_ids
-    ]
+    new_experiments = [e for e in after["experiments"] if e["experiment_id"] in new_ids]
 
     # Check for status changes in existing experiments
     before_map = {e["experiment_id"]: e for e in before["experiments"]}
@@ -228,18 +243,19 @@ def diff_snapshots(before_label: str, after_label: str) -> dict:
         eid = e["experiment_id"]
         if eid in before_map:
             old = before_map[eid]
-            if (
-                e.get("status") != old.get("status")
-                or e.get("configuration_runs_count") != old.get("configuration_runs_count")
-            ):
-                changed.append({
-                    "experiment_id": eid,
-                    "name": e.get("name"),
-                    "status_before": old.get("status"),
-                    "status_after": e.get("status"),
-                    "runs_before": old.get("configuration_runs_count"),
-                    "runs_after": e.get("configuration_runs_count"),
-                })
+            if e.get("status") != old.get("status") or e.get(
+                "configuration_runs_count"
+            ) != old.get("configuration_runs_count"):
+                changed.append(
+                    {
+                        "experiment_id": eid,
+                        "name": e.get("name"),
+                        "status_before": old.get("status"),
+                        "status_after": e.get("status"),
+                        "runs_before": old.get("configuration_runs_count"),
+                        "runs_after": e.get("configuration_runs_count"),
+                    }
+                )
 
     result = {
         "new_experiments": len(new_experiments),
@@ -270,19 +286,25 @@ def diff_snapshots(before_label: str, after_label: str) -> dict:
     print(f"{'='*60}")
     print(f"  New experiments:     {result['new_experiments']}")
     print(f"  Changed experiments: {result['changed_experiments']}")
-    print(f"  Sessions:            {result['before_session_count']} → {result['after_session_count']}")
+    print(
+        f"  Sessions:            {result['before_session_count']} → {result['after_session_count']}"
+    )
 
     if new_experiments:
         print(f"\n  New experiments:")
         for e in result["new"]:
             status_icon = "✓" if e["status"] == "COMPLETED" else "✗"
-            print(f"    {status_icon} {e['agent_id']}: {e['status']} ({e['runs']} runs)")
+            print(
+                f"    {status_icon} {e['agent_id']}: {e['status']} ({e['runs']} runs)"
+            )
 
     if changed:
         print(f"\n  Changed experiments:")
         for c in changed:
-            print(f"    {c['name']}: {c['status_before']}→{c['status_after']} "
-                  f"(runs: {c['runs_before']}→{c['runs_after']})")
+            print(
+                f"    {c['name']}: {c['status_before']}→{c['status_after']} "
+                f"(runs: {c['runs_before']}→{c['runs_after']})"
+            )
 
     # Verify all new experiments completed
     failed_new = [e for e in result["new"] if e["status"] != "COMPLETED"]
@@ -321,7 +343,9 @@ def verify_example_output(example: str, output: str, exit_code: int) -> dict:
 
         if "best score" in lower or "best_score" in lower:
             checks["has_best_score"] = True
-            match = re.search(r"(\d+\.?\d*)%?", line.split(":")[-1] if ":" in line else line)
+            match = re.search(
+                r"(\d+\.?\d*)%?", line.split(":")[-1] if ":" in line else line
+            )
             if match:
                 checks["best_score"] = float(match.group(1))
 
@@ -404,12 +428,24 @@ def verify_from_report(report_path: str) -> list[dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Verify Traigent example results against backend")
+    parser = argparse.ArgumentParser(
+        description="Verify Traigent example results against backend"
+    )
     parser.add_argument("example", nargs="?", help="Path to example to run and verify")
-    parser.add_argument("--from-report", help="Verify from a run_all_examples.sh JSON report")
-    parser.add_argument("--snapshot", metavar="LABEL", help="Take a backend snapshot (e.g., 'before', 'after')")
-    parser.add_argument("--diff", nargs=2, metavar=("BEFORE", "AFTER"), help="Diff two snapshots")
-    parser.add_argument("--timeout", type=int, default=300, help="Per-example timeout (default: 300s)")
+    parser.add_argument(
+        "--from-report", help="Verify from a run_all_examples.sh JSON report"
+    )
+    parser.add_argument(
+        "--snapshot",
+        metavar="LABEL",
+        help="Take a backend snapshot (e.g., 'before', 'after')",
+    )
+    parser.add_argument(
+        "--diff", nargs=2, metavar=("BEFORE", "AFTER"), help="Diff two snapshots"
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=300, help="Per-example timeout (default: 300s)"
+    )
     parser.add_argument("--output", help="Write verification results to JSON file")
 
     args = parser.parse_args()

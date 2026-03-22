@@ -1,7 +1,7 @@
 name: Publish to PyPI
 
 on:
-    workflow_dispatch:
+  workflow_dispatch:
     inputs:
       environment:
         description: 'Environment to publish to'
@@ -20,7 +20,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event.inputs.confirm_publish == 'true'
+    if: github.event.inputs.confirm_publish == 'true'
     environment: ${{ github.event.inputs.environment || 'pypi' }}
     permissions:
       id-token: write  # For trusted publishing
