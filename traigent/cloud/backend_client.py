@@ -50,6 +50,7 @@ from traigent.cloud.models import (
 # Import refactored sub-modules
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
 from traigent.config.backend_config import BackendConfig
@@ -637,7 +638,7 @@ class BackendIntegratedClient:
         search_space: dict[str, Any],
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module."""
         return self._session_ops.create_session(

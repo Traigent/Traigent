@@ -6,7 +6,6 @@ import pytest
 
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
-    _LOCAL_FALLBACK_MSG,
     AIOHTTP_AVAILABLE,
     ApiOperations,
 )
@@ -357,29 +356,43 @@ class TestHandleSessionError:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
+    def test_401_raises_authentication_error(self):
+        """Test 401 error raises AuthenticationError."""
+        from traigent.cloud.auth import AuthenticationError
+
+        with pytest.raises(AuthenticationError, match="Authentication failed"):
+            self.ops._handle_session_error(401, "Unauthorized")
+
+    def test_403_raises_authentication_error(self):
+        """Test 403 error raises AuthenticationError."""
+        from traigent.cloud.auth import AuthenticationError
+
+        with pytest.raises(AuthenticationError, match="Authentication failed"):
+            self.ops._handle_session_error(403, "Forbidden")
+
     def test_500_error_raises_cloud_service_error(self):
         """Test 500 error raises CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="server error"):
+        with pytest.raises(CloudServiceError, match="Backend HTTP 500"):
             self.ops._handle_session_error(500, "Internal Server Error")
 
     def test_503_error_raises_cloud_service_error(self):
         """Test 503 error raises CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="service unavailable"):
+        with pytest.raises(CloudServiceError, match="Backend HTTP 503"):
             self.ops._handle_session_error(503, "Service Unavailable")
 
     def test_502_error_raises_cloud_service_error(self):
         """Test 502 error raises CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="gateway error"):
+        with pytest.raises(CloudServiceError, match="Backend HTTP 502"):
             self.ops._handle_session_error(502, "Bad Gateway")
 
     def test_504_error_raises_cloud_service_error(self):
         """Test 504 error raises CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="gateway error"):
+        with pytest.raises(CloudServiceError, match="Backend HTTP 504"):
             self.ops._handle_session_error(504, "Gateway Timeout")
 
     def test_other_error_raises_cloud_service_error(self):
         """Test other errors raise CloudServiceError."""
-        with pytest.raises(CloudServiceError, match="Failed to create session"):
+        with pytest.raises(CloudServiceError, match="Session creation failed"):
             self.ops._handle_session_error(400, "Bad Request")
 
 
@@ -393,10 +406,9 @@ class TestHandleClientError:
 
     def test_raises_cloud_service_error(self):
         """Test raises CloudServiceError with network error message."""
-        mock_error = Mock()
-        mock_error.__str__ = Mock(return_value="Connection failed")
+        error = OSError("Connection failed")
         with pytest.raises(CloudServiceError, match="Network error"):
-            self.ops._handle_client_error(mock_error)
+            self.ops._handle_client_error(error)
 
 
 class TestHandleGenericSessionException:
@@ -407,24 +419,16 @@ class TestHandleGenericSessionException:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_500_in_message_raises_specific_error(self):
-        """Test 500 in message raises specific CloudServiceError."""
+    def test_any_error_raises_cloud_service_error(self):
+        """Test any error raises CloudServiceError (no string matching)."""
         error = Exception("HTTP 500 Internal Server Error")
-        with pytest.raises(CloudServiceError, match="Backend temporarily unavailable"):
+        with pytest.raises(CloudServiceError, match="Session creation failed"):
             self.ops._handle_generic_session_exception(error)
 
-    def test_connection_refused_raises_specific_error(self):
-        """Test connection refused raises specific CloudServiceError."""
+    def test_connection_error_raises_cloud_service_error(self):
+        """Test connection errors raise CloudServiceError."""
         error = Exception("Connection refused by server")
-        with pytest.raises(
-            CloudServiceError, match="Cloud backend service not accessible"
-        ):
-            self.ops._handle_generic_session_exception(error)
-
-    def test_generic_error_is_reraised(self):
-        """Test generic errors are re-raised."""
-        error = ValueError("Some other error")
-        with pytest.raises(ValueError, match="Some other error"):
+        with pytest.raises(CloudServiceError, match="Session creation failed"):
             self.ops._handle_generic_session_exception(error)
 
 
@@ -676,10 +680,6 @@ class TestConstants:
         """Test JSON content type constant."""
         assert _JSON_CONTENT_TYPE == "application/json"
 
-    def test_local_fallback_msg(self):
-        """Test local fallback message constant."""
-        assert "fall back" in _LOCAL_FALLBACK_MSG.lower()
-
 
 class TestAiohttpNotAvailable:
     """Test behavior when aiohttp is not available."""
@@ -726,66 +726,26 @@ class TestHandleConnectorError:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_offline_mode_logs_debug(self):
-        """Test offline mode logs debug message."""
-        import traigent.cloud.api_operations as api_ops
+    def test_raises_cloud_service_error(self):
+        """Test connector error raises CloudServiceError."""
+        error = OSError("Connection failed")
+        with pytest.raises(CloudServiceError, match="Backend unavailable"):
+            self.ops._handle_connector_error(error)
 
-        api_ops._backend_unavailable_warned = False
-        with patch(
-            "traigent.cloud.api_operations.is_backend_offline", return_value=True
+    def test_logs_at_debug_only(self, caplog):
+        """Test connector error logs at DEBUG, not WARNING."""
+        import logging
+
+        error = OSError("Connection failed to api.example.com")
+        with (
+            caplog.at_level(logging.DEBUG),
+            pytest.raises(CloudServiceError),
         ):
-            error = RuntimeError("Connection failed")
-            with pytest.raises(CloudServiceError, match="Backend unavailable"):
-                self.ops._handle_connector_error(error)
+            self.ops._handle_connector_error(error)
 
-    def test_first_warning_shows_full_message(self):
-        """Test first warning shows full message."""
-        import traigent.cloud.api_operations as api_ops
-
-        api_ops._backend_unavailable_warned = False
-        with patch(
-            "traigent.cloud.api_operations.is_backend_offline", return_value=False
-        ):
-            error = RuntimeError("Connection failed to api.example.com")
-            with pytest.raises(CloudServiceError, match="Backend unavailable"):
-                self.ops._handle_connector_error(error)
-            assert api_ops._backend_unavailable_warned is True
-
-    def test_localhost_shows_development_hint(self):
-        """Test localhost error shows development hint."""
-        import traigent.cloud.api_operations as api_ops
-
-        api_ops._backend_unavailable_warned = False
-        with patch(
-            "traigent.cloud.api_operations.is_backend_offline", return_value=False
-        ):
-            error = RuntimeError("Connection failed to localhost:8000")
-            with pytest.raises(CloudServiceError, match="Backend unavailable"):
-                self.ops._handle_connector_error(error)
-
-    def test_127_0_0_1_shows_development_hint(self):
-        """Test 127.0.0.1 error shows development hint."""
-        import traigent.cloud.api_operations as api_ops
-
-        api_ops._backend_unavailable_warned = False
-        with patch(
-            "traigent.cloud.api_operations.is_backend_offline", return_value=False
-        ):
-            error = RuntimeError("Connection failed to 127.0.0.1:8000")
-            with pytest.raises(CloudServiceError, match="Backend unavailable"):
-                self.ops._handle_connector_error(error)
-
-    def test_second_warning_logs_debug_only(self):
-        """Test subsequent warnings only log debug."""
-        import traigent.cloud.api_operations as api_ops
-
-        api_ops._backend_unavailable_warned = True
-        with patch(
-            "traigent.cloud.api_operations.is_backend_offline", return_value=False
-        ):
-            error = RuntimeError("Connection failed again")
-            with pytest.raises(CloudServiceError, match="Backend unavailable"):
-                self.ops._handle_connector_error(error)
+        # Should only have DEBUG records, no WARNING
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_records) == 0
 
 
 class TestPostSessionCreation:
