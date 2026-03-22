@@ -1,7 +1,8 @@
 """LLM cost calculation utilities.
 
 Cost resolution is intentionally fail-fast:
-- Runtime and pre-estimation pricing use litellm first.
+- Runtime pricing uses litellm first, then Traigent's curated fallback pricing
+  for built-in supported models that litellm does not currently price.
 - Unknown models raise with actionable remediation by default.
 - Users can provide explicit custom pricing for private/unsupported models.
 """
@@ -93,11 +94,10 @@ ESTIMATION_MODEL_PRICING = {
 # This avoids duplicated alias tables drifting across modules.
 #
 # NOTE: Bare aliases (e.g. "claude-sonnet") are pinned to *dated* model IDs
-# whose pricing is present in litellm's bundled cost map — NOT to the
-# provider-latest pointer.  This is intentional: budget enforcement and cost
-# accounting must resolve to a concrete, priced model ID at runtime.  Update
-# the targets here only after confirming the new dated ID is priced in the
-# litellm version pinned in pyproject.toml.
+# so budget enforcement and cost accounting resolve to concrete model versions
+# at runtime instead of provider-latest pointers. Update the targets here only
+# after confirming the dated ID has an entry in Traigent's canonical pricing
+# table and, ideally, the pinned litellm cost map as well.
 MODEL_NAME_ALIASES: dict[str, str] = {
     "gpt-4": "gpt-4-turbo",
     "gpt-4-32k": "gpt-4-turbo",
@@ -552,6 +552,35 @@ def _find_fallback_pricing(
     return pricing, matched_key
 
 
+def _try_builtin_per_token_rates(
+    candidates: list[str],
+) -> tuple[float, float, str] | None:
+    """Try Traigent's curated pricing table for exact candidate matches.
+
+    Runtime accounting stays fail-fast here: only exact normalized matches are
+    accepted. Prefix/fuzzy fallback remains reserved for explicit estimation
+    helpers such as ``_estimation_cost_from_tokens()``.
+    """
+    pricing_index = {
+        model.lower(): (model, pricing)
+        for model, pricing in ESTIMATION_MODEL_PRICING.items()
+    }
+
+    for candidate in candidates:
+        normalized = _normalize_model_for_fallback(candidate)
+        match = pricing_index.get(normalized)
+        if match is None:
+            continue
+        matched_key, pricing = match
+        return (
+            float(pricing["input_cost_per_token"]),
+            float(pricing["output_cost_per_token"]),
+            matched_key,
+        )
+
+    return None
+
+
 def _estimation_cost_from_tokens(
     model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
@@ -665,6 +694,7 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     Resolution order:
     1. litellm pricing database
     2. explicit custom pricing overrides (env/file)
+    3. Traigent built-in fallback pricing for supported models
 
     Unknown models raise ``UnknownModelError`` with remediation instructions.
 
@@ -687,6 +717,11 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
     if custom_pricing is not None:
         input_cost, output_cost = custom_pricing
         return float(input_cost), float(output_cost), "custom_pricing"
+
+    builtin_rates = _try_builtin_per_token_rates(candidates)
+    if builtin_rates is not None:
+        input_cost, output_cost, _matched_key = builtin_rates
+        return input_cost, output_cost, "builtin_pricing"
 
     raise UnknownModelError(_unknown_model_resolution_message(model_name))
 
@@ -883,6 +918,7 @@ class CostCalculator:
             "available": LITELLM_AVAILABLE,
             "known_to_litellm": False,
             "custom_pricing": False,
+            "builtin_pricing": False,
             "exact_match": False,
             "fuzzy_match": False,
             "family_match": False,
@@ -915,6 +951,14 @@ class CostCalculator:
         if custom_pricing is not None:
             result["custom_pricing"] = True
             result["mapped"] = resolved or normalized or model_name
+            result["not_found"] = False
+            return result
+
+        builtin_rates = _try_builtin_per_token_rates(candidates)
+        if builtin_rates is not None:
+            _input_cost, _output_cost, matched_key = builtin_rates
+            result["builtin_pricing"] = True
+            result["mapped"] = matched_key
             result["not_found"] = False
             return result
 
@@ -1026,6 +1070,15 @@ def cost_from_tokens(
             float(output_tokens * output_rate),
         )
 
+    # Step 4: Traigent built-in fallback pricing for supported models.
+    builtin_rates = _try_builtin_per_token_rates(candidates)
+    if builtin_rates is not None:
+        input_rate, output_rate, _matched_key = builtin_rates
+        return (
+            float(input_tokens * input_rate),
+            float(output_tokens * output_rate),
+        )
+
     if strict:
         raise UnknownModelError(_unknown_model_resolution_message(model))
 
@@ -1085,8 +1138,8 @@ def get_model_pricing_per_1k(model_name: str) -> tuple[float, float]:
     """Get model pricing rates in USD per 1K tokens.
 
     Returns a tuple ``(input_per_1k, output_per_1k)`` via the canonical cost
-    pipeline (litellm first, then explicit custom pricing). Unknown models
-    return ``(0.0, 0.0)``.
+    pipeline (litellm first, then explicit custom pricing, then built-in
+    fallback pricing). Unknown models return ``(0.0, 0.0)``.
 
     This is a query function (not budget-enforcement), so it uses
     strict=False to avoid raising on unknown models.
