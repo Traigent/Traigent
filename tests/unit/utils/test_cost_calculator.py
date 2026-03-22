@@ -184,6 +184,13 @@ class TestCustomPricingAndValidation:
         assert result["custom_pricing"] is True
         assert result["not_found"] is False
 
+    def test_validate_model_name_builtin_pricing_fallback(self) -> None:
+        calculator = CostCalculator()
+        result = calculator.validate_model_name("claude-sonnet")
+        assert result["builtin_pricing"] is True
+        assert result["mapped"] == "claude-3-5-sonnet-20241022"
+        assert result["not_found"] is False
+
     def test_validate_model_name_unknown(self) -> None:
         calculator = CostCalculator()
         result = calculator.validate_model_name("missing-model-zzz")
