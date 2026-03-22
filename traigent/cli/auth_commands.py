@@ -17,15 +17,6 @@ from typing import Any
 import click
 from rich.console import Console
 
-# Try to import keyring, but make it optional
-try:
-    import keyring
-
-    KEYRING_AVAILABLE = True
-except ImportError:
-    keyring = None
-    KEYRING_AVAILABLE = False
-
 # Try to import aiohttp for exception handling
 try:
     import aiohttp
@@ -53,12 +44,9 @@ logger = get_logger(__name__)
 # Constants
 TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
-KEYRING_SERVICE = "traigent-sdk"
-KEYRING_ACCOUNT = "default"
 BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 
-# Storage location identifiers
-STORAGE_KEYRING = "keyring"
+# Storage location identifier
 STORAGE_FILE = "file"
 
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
@@ -81,21 +69,11 @@ class TraigentAuthCLI:
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _load_stored_credentials(self) -> dict[str, Any] | None:
-        """Load stored credentials from secure storage.
+        """Load stored credentials from local file.
 
         Returns:
             Stored credentials or None if not found
         """
-        # First try keyring (most secure) if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                stored_data = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                if stored_data:
-                    return dict(json.loads(stored_data))
-            except Exception as e:
-                logger.debug(f"Keyring access failed: {e}")
-
-        # Fallback to encrypted file
         if self.credentials_file.exists():
             try:
                 with open(self.credentials_file) as f:
@@ -107,7 +85,7 @@ class TraigentAuthCLI:
         return None
 
     def _save_credentials(self, credentials: dict[str, Any]) -> str | None:
-        """Save credentials securely.
+        """Save credentials to local file with restricted permissions.
 
         Args:
             credentials: Credentials to save
@@ -115,28 +93,16 @@ class TraigentAuthCLI:
         Returns:
             Storage location string if saved successfully, None if failed
         """
-        # Try keyring first (most secure) if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                keyring.set_password(
-                    KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials)
-                )
-                logger.debug("Credentials saved to keyring")
-                return STORAGE_KEYRING
-            except Exception as e:
-                logger.debug(f"Keyring save failed, using file: {e}")
-
-        # Fallback to file with restricted permissions
         try:
-            self.credentials_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-
-            # Write with restricted permissions
+            self.credentials_file.parent.mkdir(
+                mode=0o700, parents=True, exist_ok=True
+            )
             with open(self.credentials_file, "w") as f:
                 json.dump(credentials, f, indent=2)
-
-            # Ensure file has restricted permissions
             self.credentials_file.chmod(0o600)
-            logger.debug(f"Credentials saved to {self.credentials_file}")
+            logger.debug(
+                f"Credentials saved to {self.credentials_file}"
+            )
             return STORAGE_FILE
         except OSError as e:
             logger.error(f"Failed to save credentials: {e}")
@@ -276,17 +242,6 @@ class TraigentAuthCLI:
         """
         success = True
 
-        # Clear from keyring if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                logger.debug("Cleared credentials from keyring")
-            except Exception as e:
-                logger.debug(
-                    f"Could not clear keyring credentials (may not exist): {e}"
-                )
-
-        # Clear file
         if self.credentials_file.exists():
             try:
                 self.credentials_file.unlink()

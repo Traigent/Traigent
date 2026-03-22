@@ -17,13 +17,6 @@ from typing import Any, cast
 
 from traigent.config.backend_config import BackendConfig
 
-# Try to import keyring, but make it optional
-try:
-    import keyring
-
-    KEYRING_AVAILABLE = True
-except ImportError:
-    KEYRING_AVAILABLE = False
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -31,8 +24,6 @@ logger = get_logger(__name__)
 # Constants matching CLI auth
 TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
-KEYRING_SERVICE = "traigent-sdk"
-KEYRING_ACCOUNT = "default"
 
 
 class CredentialManager:
@@ -111,19 +102,13 @@ class CredentialManager:
     def _load_cli_credentials(cls) -> dict[str, Any] | None:
         """Load credentials stored by CLI auth command.
 
+        Reads from the local credentials file only. Keyring is not used
+        by the SDK to avoid triggering OS credential prompts (e.g. macOS
+        Keychain) during normal library usage.
+
         Returns:
             Stored credentials or None
         """
-        # Try keyring first (most secure) if available
-        if KEYRING_AVAILABLE:
-            try:
-                stored_data = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                if stored_data:
-                    return cast(dict[str, Any], json.loads(stored_data))
-            except Exception as e:
-                logger.debug(f"Keyring access failed: {e}")
-
-        # Fallback to file
         if CREDENTIALS_FILE.exists():
             try:
                 with open(CREDENTIALS_FILE) as f:
@@ -213,16 +198,6 @@ class CredentialManager:
         """
         success = True
 
-        # Clear from keyring if available
-        if KEYRING_AVAILABLE:
-            try:
-                keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-            except Exception as e:
-                logger.debug(
-                    f"Could not clear keyring credentials (may not exist): {e}"
-                )
-
-        # Clear file
         if CREDENTIALS_FILE.exists():
             try:
                 CREDENTIALS_FILE.unlink()

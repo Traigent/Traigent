@@ -119,27 +119,21 @@ Unified authentication leverages the shared `CredentialManager` to look for cred
 
 The discovery order is:
 - System environment variable (`TRAIGENT_API_KEY`)
-- CLI-managed credentials saved via `traigent auth login` (keyring or encrypted file)
+- CLI-managed credentials saved via `traigent auth login` (local credentials file)
 - Development defaults only when explicit test flags are enabled
 
 If nothing is found, the CLI will prompt you during `traigent auth login`; the SDK expects explicit configuration or environment variables.
 
 ## Credential Storage
 
-Credentials are stored securely using multiple layers:
+Credentials are stored using file-based storage with restricted permissions:
 
-### 1. System Keyring (Most Secure)
-- Uses OS-native credential storage
-- macOS: Keychain
-- Windows: Credential Manager
-- Linux: Secret Service/KWallet
-
-### 2. Local File (Fallback)
+### 1. Local File
 - Location: `~/.traigent/credentials.json`
 - Permissions: 0600 (user read/write only)
-- Contents are JSON-encoded (no additional encryption)
+- Contents are JSON-encoded
 
-### 3. Environment Variables
+### 2. Environment Variables
 - `TRAIGENT_API_KEY`
 - Useful for CI/CD environments
 
@@ -253,16 +247,6 @@ traigent auth refresh
 Or switch to API keys (recommended):
 ```bash
 traigent auth login  # Generates API key automatically
-```
-
-### No Keyring Available
-
-If keyring is not available, credentials are stored in:
-- `~/.traigent/credentials.json` (with 0600 permissions)
-
-To install keyring support:
-```bash
-pip install keyring
 ```
 
 ## CI/CD Integration

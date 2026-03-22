@@ -37,7 +37,7 @@ actions:
         fields:
           - name: location
             type: "str"
-    description: "Encrypt and store credentials in keyring or secure files; mask values in logs."
+    description: "Store credentials in secure files with restricted permissions; mask values in logs."
   - name: enforce_rate_limit
     inputs:
       - name: identity
