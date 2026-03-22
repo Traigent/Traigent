@@ -17,15 +17,6 @@ from typing import Any
 import click
 from rich.console import Console
 
-# Try to import keyring, but make it optional
-try:
-    import keyring
-
-    KEYRING_AVAILABLE = True
-except ImportError:
-    keyring = None
-    KEYRING_AVAILABLE = False
-
 # Try to import aiohttp for exception handling
 try:
     import aiohttp
@@ -53,12 +44,9 @@ logger = get_logger(__name__)
 # Constants
 TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
-KEYRING_SERVICE = "traigent-sdk"
-KEYRING_ACCOUNT = "default"
 BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 
-# Storage location identifiers
-STORAGE_KEYRING = "keyring"
+# Storage location identifier
 STORAGE_FILE = "file"
 
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
@@ -81,21 +69,11 @@ class TraigentAuthCLI:
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _load_stored_credentials(self) -> dict[str, Any] | None:
-        """Load stored credentials from secure storage.
+        """Load stored credentials from local file.
 
         Returns:
             Stored credentials or None if not found
         """
-        # First try keyring (most secure) if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                stored_data = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                if stored_data:
-                    return dict(json.loads(stored_data))
-            except Exception as e:
-                logger.debug(f"Keyring access failed: {e}")
-
-        # Fallback to encrypted file
         if self.credentials_file.exists():
             try:
                 with open(self.credentials_file) as f:
@@ -103,11 +81,18 @@ class TraigentAuthCLI:
                     return dict(data)
             except (json.JSONDecodeError, OSError) as e:
                 logger.debug(f"Failed to load credentials file: {e}")
+        elif self.config_dir.exists():
+            # Config dir exists but no credentials file - user may have
+            # authenticated when keyring was the primary store.
+            logger.info(
+                "No credentials file found. If you previously authenticated, "
+                "please run 'traigent auth login' again."
+            )
 
         return None
 
     def _save_credentials(self, credentials: dict[str, Any]) -> str | None:
-        """Save credentials securely.
+        """Save credentials to local file with restricted permissions.
 
         Args:
             credentials: Credentials to save
@@ -115,27 +100,17 @@ class TraigentAuthCLI:
         Returns:
             Storage location string if saved successfully, None if failed
         """
-        # Try keyring first (most secure) if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                keyring.set_password(
-                    KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials)
-                )
-                logger.debug("Credentials saved to keyring")
-                return STORAGE_KEYRING
-            except Exception as e:
-                logger.debug(f"Keyring save failed, using file: {e}")
-
-        # Fallback to file with restricted permissions
         try:
             self.credentials_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-
-            # Write with restricted permissions
-            with open(self.credentials_file, "w") as f:
+            # Use os.open with explicit mode to avoid a window where the
+            # file is world-readable between creation and chmod.
+            fd = os.open(
+                str(self.credentials_file),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            with os.fdopen(fd, "w") as f:
                 json.dump(credentials, f, indent=2)
-
-            # Ensure file has restricted permissions
-            self.credentials_file.chmod(0o600)
             logger.debug(f"Credentials saved to {self.credentials_file}")
             return STORAGE_FILE
         except OSError as e:
@@ -276,17 +251,6 @@ class TraigentAuthCLI:
         """
         success = True
 
-        # Clear from keyring if available
-        if KEYRING_AVAILABLE and keyring is not None:
-            try:
-                keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                logger.debug("Cleared credentials from keyring")
-            except Exception as e:
-                logger.debug(
-                    f"Could not clear keyring credentials (may not exist): {e}"
-                )
-
-        # Clear file
         if self.credentials_file.exists():
             try:
                 self.credentials_file.unlink()
@@ -561,27 +525,7 @@ class TraigentAuthCLI:
 
     def _display_storage_location(self, storage_location: str | None) -> None:
         """Display where credentials are stored."""
-        if storage_location == STORAGE_KEYRING:
-            console.print("\n[bold]Credentials stored in:[/bold] System Keyring")
-            import platform
-
-            system = platform.system()
-            if system == "Darwin":
-                console.print(
-                    "  [dim]View in: Keychain Access app → search 'traigent-sdk'[/dim]"
-                )
-                console.print(
-                    "  [dim]Or run:[/dim] [cyan]security find-generic-password -s traigent-sdk -a default -w | python -m json.tool[/cyan]"
-                )
-            elif system == "Windows":
-                console.print(
-                    "  [dim]View in: Control Panel → Credential Manager → 'traigent-sdk'[/dim]"
-                )
-            else:
-                console.print(
-                    "  [dim]View in: Seahorse/KWallet → search 'traigent-sdk'[/dim]"
-                )
-        elif storage_location == STORAGE_FILE:
+        if storage_location == STORAGE_FILE:
             console.print(
                 f"\n[bold]Credentials stored in:[/bold] [cyan]{self.credentials_file}[/cyan]"
             )
@@ -589,7 +533,7 @@ class TraigentAuthCLI:
                 f"  [dim]View with:[/dim] [cyan]cat {self.credentials_file}[/cyan]"
             )
         else:
-            console.print("\n[yellow]⚠️ Could not save credentials to storage[/yellow]")
+            console.print("\n[yellow]Could not save credentials to storage[/yellow]")
 
     def _offer_env_file_save(self, api_key: str, non_interactive: bool) -> None:
         """Offer to save API key to .env file."""
@@ -911,10 +855,7 @@ class TraigentAuthCLI:
             storage_location = self._save_credentials(credentials)
             if storage_location:
                 console.print("[green]✅ API key stored securely[/green]")
-                if storage_location == STORAGE_KEYRING:
-                    console.print("[dim]Location: System Keyring[/dim]\n")
-                else:
-                    console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
+                console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
             else:
                 console.print("[red]❌ Failed to store API key[/red]\n")
         else:
