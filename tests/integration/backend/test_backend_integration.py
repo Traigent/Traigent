@@ -76,9 +76,9 @@ class TestBackendIntegration:
         )
 
         # Verify session is still valid after submission
-        assert (
-            session_id is not None
-        ), "Session ID should remain valid after trial submission"
+        assert session_id is not None, (
+            "Session ID should remain valid after trial submission"
+        )
         assert isinstance(session_id, str), "Session ID should be a string"
 
     @pytest.mark.asyncio
@@ -112,12 +112,12 @@ class TestBackendIntegration:
             submitted_count += 1
 
         # Verify all trials were submitted
-        assert submitted_count == len(
-            trials
-        ), f"Expected {len(trials)} trials submitted, got {submitted_count}"
-        assert (
-            session_id is not None
-        ), "Session ID should remain valid after multiple submissions"
+        assert submitted_count == len(trials), (
+            f"Expected {len(trials)} trials submitted, got {submitted_count}"
+        )
+        assert session_id is not None, (
+            "Session ID should remain valid after multiple submissions"
+        )
 
     @pytest.mark.asyncio
     async def test_backend_fallback_mode(self, backend_config):
