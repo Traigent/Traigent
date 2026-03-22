@@ -142,7 +142,7 @@
     Provide secure credential storage, encryption utilities, JWT validation, rate limiting,
     audit logging, tenant isolation, and security headers suitable for enterprise use.
   acceptance_criteria:
-    - Credentials encrypted or stored in OS keyrings; secure comparison avoids leaks.
+    - Credentials stored in permission-restricted local files; secure comparison avoids leaks.
     - JWT validator enforces issuer/audience/expiry and derives defaults safely.
     - Rate limiters and audit loggers can be configured per deployment mode/tenant.
   tags: [security, auth, compliance]
