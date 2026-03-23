@@ -41,6 +41,72 @@ pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
 sys.setrecursionlimit(2000)
 
 
+@pytest.fixture(autouse=True)
+def add_doctest_namespace(doctest_namespace):
+    """Expose common Traigent symbols to package doctests."""
+    import traigent
+    from traigent import (
+        Choices,
+        ConfigSpace,
+        IntRange,
+        LogRange,
+        Range,
+        TraigentConfig,
+        configure,
+        get_config,
+        get_current_config,
+        get_optimization_insights,
+        get_trial_config,
+        get_version_info,
+        initialize,
+        optimize,
+        override_config,
+        set_strategy,
+    )
+    from traigent.api.constraints import (
+        AndCondition,
+        BoolExpr,
+        Condition,
+        Constraint,
+        NotCondition,
+        OrCondition,
+        WhenBuilder,
+        implies,
+        require,
+        when,
+    )
+
+    doctest_namespace["traigent"] = traigent
+    doctest_namespace["Range"] = Range
+    doctest_namespace["IntRange"] = IntRange
+    doctest_namespace["LogRange"] = LogRange
+    doctest_namespace["Choices"] = Choices
+    doctest_namespace["ConfigSpace"] = ConfigSpace
+    doctest_namespace["TraigentConfig"] = TraigentConfig
+
+    doctest_namespace["Constraint"] = Constraint
+    doctest_namespace["Condition"] = Condition
+    doctest_namespace["AndCondition"] = AndCondition
+    doctest_namespace["OrCondition"] = OrCondition
+    doctest_namespace["NotCondition"] = NotCondition
+    doctest_namespace["BoolExpr"] = BoolExpr
+    doctest_namespace["WhenBuilder"] = WhenBuilder
+    doctest_namespace["when"] = when
+    doctest_namespace["require"] = require
+    doctest_namespace["implies"] = implies
+
+    doctest_namespace["optimize"] = optimize
+    doctest_namespace["configure"] = configure
+    doctest_namespace["initialize"] = initialize
+    doctest_namespace["get_config"] = get_config
+    doctest_namespace["get_current_config"] = get_current_config
+    doctest_namespace["get_trial_config"] = get_trial_config
+    doctest_namespace["get_version_info"] = get_version_info
+    doctest_namespace["get_optimization_insights"] = get_optimization_insights
+    doctest_namespace["override_config"] = override_config
+    doctest_namespace["set_strategy"] = set_strategy
+
+
 def pytest_addoption(parser):
     """Add shared test suite options."""
     parser.addoption(

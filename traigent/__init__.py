@@ -31,6 +31,8 @@ Example:
     >>> best_config = my_function.get_best_config()
 """
 
+# ruff: noqa: E402
+
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
 from __future__ import annotations
@@ -38,6 +40,11 @@ from __future__ import annotations
 import builtins
 import sys
 import warnings
+
+# Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
+)
 
 from traigent._version import get_version
 
@@ -162,10 +169,43 @@ from traigent.utils.validation import (
 )
 from traigent.visualization.plots import PlotGenerator, create_quick_plot
 
-# Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
-warnings.filterwarnings(
-    "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
-)
+
+def _is_missing_optional_module(
+    exc: ModuleNotFoundError, module_prefixes: tuple[str, ...]
+) -> bool:
+    missing_module = getattr(exc, "name", "")
+    return any(
+        missing_module == prefix or missing_module.startswith(f"{prefix}.")
+        for prefix in module_prefixes
+    )
+
+
+_OPTIONAL_EXPORT_ERRORS: dict[str, str] = {}
+
+try:
+    # Multi-agent workflow cost tracking (DTO hardening)
+    from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
+    from traigent.cloud.dtos import MeasuresDict
+except ModuleNotFoundError as exc:
+    if not _is_missing_optional_module(exc, ("traigent.cloud",)):
+        raise
+
+    _OPTIONAL_EXPORT_ERRORS.update(
+        {
+            "AgentCostBreakdown": (
+                "module 'traigent' has no attribute 'AgentCostBreakdown'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+            "WorkflowCostSummary": (
+                "module 'traigent' has no attribute 'WorkflowCostSummary'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+            "MeasuresDict": (
+                "module 'traigent' has no attribute 'MeasuresDict'. "
+                "Cloud workflow DTO exports are unavailable in this build."
+            ),
+        }
+    )
 
 
 def _is_missing_optional_module(
