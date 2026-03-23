@@ -27,35 +27,37 @@ python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\act
 pip install -e ".[recommended]"
 ```
 
-**Try it now:**
+**Try it now — no API keys needed:**
 
 ```bash
-export TRAIGENT_MOCK_LLM=true
 python hello_world.py
 ```
 
----
-
-## Using it in your own code
-
-**One decorator, two parameters, multi-objective optimization:**
+**Here's what `hello_world.py` does — one decorator, automatic optimization:**
 
 ```python
 import traigent
 from langchain_openai import ChatOpenAI
 
+DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": (0.0, 1.0),
+        "temperature": [0.0, 0.7, 1.0],
     },
-    objectives=["accuracy", "cost"],
-    eval_dataset="my_data.jsonl",
+    objectives=["accuracy"],
+    eval_dataset=DATASET,
 )
-def my_agent(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+def answer(question: str) -> str:
+    cfg = traigent.get_config()
+    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
     return llm.invoke(question).content
 ```
+
+---
+
+## Using it in your own code
 
 <p align="center">
   <a href="https://portal.traigent.ai">Portal</a> &middot;
