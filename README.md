@@ -1,4 +1,10 @@
-<h4 align="center">Optimize any LLM agent with one decorator</h4>
+# Traigent
+
+**Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
+
+**Our mission:** Anything you can measure, we can improve. Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
+
+
 
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
@@ -16,7 +22,7 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 **Quick Install:**
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git && cd Traigent
+git clone -b develop https://github.com/Traigent/Traigent.git && cd Traigent
 python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[recommended]"
 ```
