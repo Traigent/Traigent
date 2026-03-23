@@ -138,7 +138,7 @@ class WorkflowTraceManager:
                     # Auth rejections are expected in local/edge mode — log at DEBUG only
                     if response.error and "Auth failed" in response.error:
                         logger.debug(
-                            "Trace ingestion auth rejected for config_run %s", config_run_id
+                            f"Trace ingestion auth rejected for config_run {config_run_id}"
                         )
                     else:
                         logger.warning(
