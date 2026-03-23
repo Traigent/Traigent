@@ -138,6 +138,26 @@ class TestSubmitTraces:
         assert mgr._collected_spans == []
 
     @pytest.mark.asyncio
+    async def test_auth_rejection_logs_at_debug_not_warning(self, caplog) -> None:
+        import logging
+
+        tracker = MagicMock()
+        tracker.ingest_traces_async = AsyncMock(
+            return_value=_FakeIngestResponse(success=False, error="Auth failed (401)")
+        )
+        mgr = _make_manager(tracker=tracker)
+        mgr._collected_spans = [_FakeSpan()]
+
+        with caplog.at_level(logging.DEBUG), patch(
+            "traigent.core.workflow_trace_manager.is_backend_offline",
+            return_value=False,
+        ):
+            await mgr.submit_traces(session_id="real-session")
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+        assert any("auth rejected" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_handles_failed_ingestion(self) -> None:
         tracker = MagicMock()
         tracker.ingest_traces_async = AsyncMock(
