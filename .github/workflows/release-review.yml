@@ -154,7 +154,6 @@ jobs:
           python -m pip install bandit pip-audit
       - name: Security checks
         id: security_run
-        continue-on-error: true
         run: make security-check
       - name: Capture security status
         id: security_status
@@ -182,7 +181,6 @@ jobs:
       - name: PR dependency review
         id: dependency_review_pr
         if: github.event_name == 'pull_request'
-        continue-on-error: true
         uses: actions/dependency-review-action@v4
       - uses: actions/setup-python@v5
         if: github.event_name != 'pull_request'
@@ -191,7 +189,6 @@ jobs:
       - name: Tag/manual dependency review
         id: dependency_review_cli
         if: github.event_name != 'pull_request'
-        continue-on-error: true
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-audit
