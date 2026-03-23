@@ -14,7 +14,7 @@ Usage:
 
 Environment variables:
     TRAIGENT_API_KEY - API key for Traigent backend (required for FE visibility)
-    TRAIGENT_API_URL - Backend URL (default: http://localhost:5000/api/v1)
+    TRAIGENT_API_URL - Backend URL (default: https://api.traigent.ai/api/v1)
 """
 
 import asyncio
@@ -36,7 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 
-SERVER_URL = "http://localhost:8080"
+SERVER_URL = os.environ.get("HYBRID_SERVER_URL", "http://localhost:8080")
 STARTUP_TIMEOUT = 10
 REQUEST_HEADERS = {"User-Agent": "Traigent-SDK/1.0"}
 
@@ -235,7 +235,7 @@ async def run_optimization() -> None:
 
         # Step 6: Report backend status
         api_key = os.environ.get("TRAIGENT_API_KEY")
-        backend_url = os.environ.get("TRAIGENT_API_URL", "http://localhost:5000/api/v1")
+        backend_url = os.environ.get("TRAIGENT_API_URL", "https://api.traigent.ai/api/v1")
 
         if api_key:
             print("\n5. Backend Integration")
@@ -260,7 +260,7 @@ async def main() -> None:
     # Check for environment variables
     print("Environment:")
     api_key = os.environ.get("TRAIGENT_API_KEY")
-    backend_url = os.environ.get("TRAIGENT_API_URL", "http://localhost:5000/api/v1")
+    backend_url = os.environ.get("TRAIGENT_API_URL", "https://api.traigent.ai/api/v1")
     print(f"  TRAIGENT_API_URL: {backend_url}")
     print(f"  TRAIGENT_API_KEY: {'***' + api_key[-4:] if api_key else 'Not set'}")
 
