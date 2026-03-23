@@ -466,6 +466,7 @@ coverage_observability_modules.xml
 RELIABILITY_SWEEP_*.md
 PR[0-9]*.md
 playground.py
+playground/
 test_redact*.py
 test_timeout*.py
 nvidia/
