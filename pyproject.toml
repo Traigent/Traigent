@@ -39,6 +39,7 @@ dependencies = [
     "aiohttp>=3.8.0",
     "requests>=2.28.0",  # Required by Langfuse integration sync fallback
     "jsonschema>=4.0.0",
+    "traigent-schema>=3.2.0",
     "cryptography>=46.0.5",  # CVE-2026-26007 fix
     "backoff>=2.2.0",
     "litellm>=1.0.0",
@@ -49,10 +50,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Internal-only schema validation contracts
-internal_schema = [
-    "traigent-schema>=3.2.0",
-]
+# Backward-compatible alias: TraigentSchema is now required at runtime.
+internal_schema = []
 
 # Analytics and intelligence features (Sprint 8)
 analytics = [
@@ -230,7 +229,7 @@ sat = "traigent_validation.validators:SATConstraintValidator"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["traigent*", "traigent_validation*"]
-exclude = ["tests*", "demos*", "docs*"]
+exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 
 [tool.setuptools.package-data]
 traigent = ["py.typed"]

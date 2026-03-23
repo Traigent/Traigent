@@ -66,7 +66,7 @@ ALLOWLISTED_FILES = {
 
 # Path segments that exclude entire subtrees.
 # Matched as exact directory components (not substrings).
-ALLOWLISTED_PATH_SEGMENTS = {"tests", "experimental"}
+ALLOWLISTED_PATH_SEGMENTS = {"tests"}
 
 # --- Detection patterns ---
 _PRICING_KEYS = {
