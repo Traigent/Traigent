@@ -194,6 +194,31 @@ def patch_langchain_for_metadata_capture() -> bool:
                 self: Any, *args: Any, **kwargs: Any
             ) -> Any:
                 """Wrapped invoke method that captures response with timing."""
+                # Check if mock mode is enabled — return mock response without API call
+                from traigent.integrations.utils.mock_adapter import MockAdapter
+
+                if MockAdapter.is_mock_enabled("anthropic"):
+                    from langchain_core.messages import AIMessage
+
+                    model_name = getattr(self, "model", "mock-model")
+                    mock_data = MockAdapter.get_mock_response("anthropic", model=model_name)
+                    content = mock_data["content"][0]["text"]
+                    response = AIMessage(
+                        content=content,
+                        response_metadata={
+                            "model_name": mock_data["model"],
+                            "stop_reason": mock_data["stop_reason"],
+                            "response_time_ms": 0.0,
+                        },
+                        usage_metadata={
+                            "input_tokens": mock_data["usage"]["input_tokens"],
+                            "output_tokens": mock_data["usage"]["output_tokens"],
+                            "total_tokens": mock_data["usage"]["input_tokens"] + mock_data["usage"]["output_tokens"],
+                        },
+                    )
+                    capture_langchain_response(response)
+                    return response
+
                 start_time = time.perf_counter()
                 response = original_invoke(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -252,6 +277,31 @@ def patch_langchain_for_metadata_capture() -> bool:
 
             def invoke_with_capture_openai(self: Any, *args: Any, **kwargs: Any) -> Any:
                 """Wrapped invoke method that captures response with timing."""
+                # Check if mock mode is enabled — return mock response without API call
+                from traigent.integrations.utils.mock_adapter import MockAdapter
+
+                if MockAdapter.is_mock_enabled("openai"):
+                    from langchain_core.messages import AIMessage
+
+                    model_name = getattr(self, "model_name", None) or getattr(self, "model", "mock-model")
+                    mock_data = MockAdapter.get_mock_response("openai", model=model_name)
+                    content = mock_data["choices"][0]["message"]["content"]
+                    response = AIMessage(
+                        content=content,
+                        response_metadata={
+                            "model_name": mock_data["model"],
+                            "finish_reason": mock_data["choices"][0]["finish_reason"],
+                            "response_time_ms": 0.0,
+                        },
+                        usage_metadata={
+                            "input_tokens": mock_data["usage"]["prompt_tokens"],
+                            "output_tokens": mock_data["usage"]["completion_tokens"],
+                            "total_tokens": mock_data["usage"]["total_tokens"],
+                        },
+                    )
+                    capture_langchain_response(response)
+                    return response
+
                 start_time = time.perf_counter()
                 response = original_invoke_openai(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000

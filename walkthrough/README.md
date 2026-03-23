@@ -201,11 +201,11 @@ In mock mode, Example 06 uses a lightweight heuristic scorer (function signature
 
 ## Execution Modes & Privacy
 
-These walkthrough examples use **local execution mode** (`edge_analytics`), which keeps all data on your machine. This is the recommended starting point for learning Traigent.
+These walkthrough examples use **local execution mode** (`edge_analytics`), which keeps LLM calls and optimization on your machine. This is the recommended starting point for learning Traigent.
 
 - **Local / Edge Analytics**: LLM calls and optimization run locally. Results stay on your machine. Optionally send anonymized analytics without sharing prompts/responses.
 
-Example 08 demonstrates privacy-first local execution with local result storage.
+Example 08 demonstrates a fully local, privacy-first path with `TRAIGENT_OFFLINE_MODE=true`, local result storage, and no backend communication.
 
 ### Local Results Folder (Example 08)
 

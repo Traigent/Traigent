@@ -23,9 +23,14 @@ import traigent
 from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 traigent.initialize(
-    config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
+    config=TraigentConfig(
+        execution_mode="edge_analytics",
+        minimal_logging=True,
+        enable_usage_analytics=False,
+    )
 )
 
 # Dataset path relative to this file
@@ -66,7 +71,7 @@ def results_match_score(
     mock_mode_config=MOCK_MODE_CONFIG,
 )
 def local_mode(question: str) -> str:
-    """Local mode - all data stays on your machine."""
+    """Local mode - all data stays on your machine and backend calls are disabled."""
     config = traigent.get_config()
     set_mock_model(config.get("model", DEFAULT_MOCK_MODEL))
     return ANSWERS.get(normalize_text(question), "I don't know")

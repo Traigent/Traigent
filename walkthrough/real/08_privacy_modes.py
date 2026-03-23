@@ -25,11 +25,21 @@ from utils.helpers import (
 from utils.scoring import token_match_score
 
 import traigent
+from traigent import TraigentConfig
 
 require_openai_key("08_privacy_modes.py")
 configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+
+traigent.initialize(
+    config=TraigentConfig(
+        execution_mode="edge_analytics",
+        minimal_logging=True,
+        enable_usage_analytics=False,
+    )
+)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
@@ -51,7 +61,7 @@ CONFIG_SPACE = {
     local_storage_path=RESULTS_DIR,
 )
 def local_mode(question: str) -> str:
-    """Local mode - all data stays on your machine."""
+    """Local mode - all data stays on your machine and backend calls are disabled."""
     config = traigent.get_config()
     llm = ChatOpenAI(
         model=config.get("model"),
