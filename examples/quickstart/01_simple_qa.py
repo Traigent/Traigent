@@ -11,8 +11,9 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure mock mode for testing without API keys
-os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+# Enable mock mode only when no API key is available
+if not os.environ.get("OPENAI_API_KEY"):
+    os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Set results folder to local directory
 os.environ.setdefault(
@@ -54,21 +55,24 @@ def simple_qa_agent(question: str) -> str:
     """Simple Q&A agent with Tuned Variables.
 
     In mock mode, this returns a simulated response.
-    With real API keys, it would call the actual LLM.
+    With real API keys, it calls the actual LLM.
     """
-    # In real usage, you would use:
-    # from langchain_openai import ChatOpenAI
-    # llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-    # response = llm.invoke(f"Question: {question}\nAnswer:")
-    # return response.content
+    if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
+        mock_answers = {
+            "What is the capital of France?": "Paris",
+            "What is 2 + 2?": "4",
+            "Who wrote Romeo and Juliet?": "William Shakespeare",
+        }
+        return mock_answers.get(question, "I don't know")
 
-    # For this demo, we return a mock response
-    mock_answers = {
-        "What is the capital of France?": "Paris",
-        "What is 2 + 2?": "4",
-        "Who wrote Romeo and Juliet?": "William Shakespeare",
-    }
-    return mock_answers.get(question, "I don't know")
+    from langchain_openai import ChatOpenAI
+    config = traigent.get_config()
+    llm = ChatOpenAI(
+        model=config.get("model", "gpt-3.5-turbo"),
+        temperature=config.get("temperature", 0.7),
+    )
+    response = llm.invoke(f"Question: {question}\nAnswer:")
+    return response.content
 
 
 async def main():
