@@ -17,6 +17,7 @@ python hello_world.py
 2) Here's what it does — one decorator, automatic optimization:
 
 ```python
+import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
 
@@ -34,7 +35,6 @@ def answer(question: str) -> str:
     return llm.invoke(question).content
 
 # Run optimization
-import asyncio
 result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
 print(f"Best config: {result.best_config}")
 print(f"Best score:  {result.best_score:.2%}")

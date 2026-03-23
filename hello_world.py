@@ -11,6 +11,8 @@ from pathlib import Path
 
 # Mock mode: simulates LLM calls so you don't need API keys.
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+# Provide a dummy key so ChatOpenAI can be constructed in mock mode.
+os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
 # Offline mode: no Traigent backend connection needed.
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
