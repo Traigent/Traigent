@@ -36,7 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 
-SERVER_URL = os.environ.get("HYBRID_SERVER_URL", "http://localhost:8080")
+SERVER_URL = "http://localhost:8080"
 STARTUP_TIMEOUT = 10
 REQUEST_HEADERS = {"User-Agent": "Traigent-SDK/1.0"}
 

@@ -11,7 +11,6 @@ Usage:
     python run_demo.py
 """
 
-import os
 import subprocess
 import sys
 import time
@@ -21,7 +20,7 @@ import requests
 
 # Get the directory containing this script
 SCRIPT_DIR = Path(__file__).parent.absolute()
-SERVER_URL = os.environ.get("HYBRID_SERVER_URL", "http://localhost:8080")
+SERVER_URL = "http://localhost:8080"
 STARTUP_TIMEOUT = 10  # seconds
 REQUEST_HEADERS = {"User-Agent": "Traigent-SDK/1.0"}
 
