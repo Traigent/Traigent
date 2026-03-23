@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.helpers import print_optimization_config, print_results_table
 from utils.mock_answers import (
@@ -29,13 +29,16 @@ import traigent
 from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+os.environ.setdefault(
+    "TRAIGENT_DATASET_ROOT", str(Path(__file__).resolve().parent.parent)
+)
 
 traigent.initialize(
     config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
 )
 
 # Dataset path relative to this file
-DATASETS = Path(__file__).parent.parent / "datasets"
+DATASETS = Path(__file__).resolve().parent.parent / "datasets"
 SIMULATED_BEST = {"model": "gpt-4o", "temperature": 0.1, "accuracy": 0.80}
 MOCK_MODE_CONFIG = {
     "base_accuracy": SIMULATED_BEST["accuracy"],
