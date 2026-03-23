@@ -4,36 +4,40 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 
 ## 🚀 Quick Start
 
-1) Install from source (recommended for examples):
+1) Install and run — no API keys needed:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"        # All integrations, analytics, Bayesian, visualization
-export TRAIGENT_MOCK_LLM=true          # Run examples without API keys
-python walkthrough/mock/01_tuning_qa.py
+pip install -e ".[recommended]"
+python hello_world.py
 ```
 
-2) Wrap your existing function:
+`hello_world.py` runs in mock mode by default — it simulates LLM calls so you can see the full optimization flow instantly.
+
+2) Here's what it does — one decorator, automatic optimization:
 
 ```python
+import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
-    eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
-    objectives=["accuracy", "cost"],
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.7, 1.0],
+    },
+    objectives=["accuracy"],
+    eval_dataset="examples/datasets/quickstart/qa_samples.jsonl",
 )
-def answer_question(question: str) -> str:
-    cfg = traigent.get_config()  # Active trial/applied config
-    llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
-    return str(llm.invoke(question).content)
+def answer(question: str) -> str:
+    cfg = traigent.get_config()
+    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
+    return llm.invoke(question).content
 
-# Async-safe in Traigent - use asyncio.run in sync contexts
-if __name__ == "__main__":
-    import asyncio
-    results = asyncio.run(answer_question.optimize(max_trials=5, algorithm="grid"))
-    print({"best_config": results.best_config, "best_score": results.best_score})
+# Run optimization
+result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
+print(f"Best config: {result.best_config}")
+print(f"Best score:  {result.best_score:.2%}")
 ```
 
 ## 📋 Config Access Lifecycle
