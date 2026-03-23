@@ -32,6 +32,12 @@ def answer(question: str) -> str:
     cfg = traigent.get_config()
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
     return llm.invoke(question).content
+
+# Run optimization
+import asyncio
+result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
+print(f"Best config: {result.best_config}")
+print(f"Best score:  {result.best_score:.2%}")
 ```
 
 ## 📋 Config Access Lifecycle
