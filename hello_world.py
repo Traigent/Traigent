@@ -1,8 +1,8 @@
 """Find the best model and temperature for your task — in one decorator.
 
-Run with:  TRAIGENT_MOCK_LLM=true python hello_world.py
-No API keys needed — mock mode simulates LLM responses so you can
-see the optimization flow instantly.
+No API keys needed — mock mode is on by default and simulates LLM
+responses so you can see the optimization flow instantly.
+To use real LLMs: TRAIGENT_MOCK_LLM=false python hello_world.py
 """
 import asyncio
 import os
@@ -43,4 +43,5 @@ def answer(question: str) -> str:
 
 if __name__ == "__main__":
     result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
-    print_results_table(result, CONFIG_SPACE, OBJECTIVES, is_mock=True)
+    is_mock = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes")
+    print_results_table(result, CONFIG_SPACE, OBJECTIVES, is_mock=is_mock)
