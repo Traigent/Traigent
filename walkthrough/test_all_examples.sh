@@ -184,7 +184,8 @@ case "$MODE" in
 
     --real)
         print_header "REAL"
-        echo "Real mode: makes actual API calls (requires OPENAI_API_KEY for these examples)"
+        echo "Real mode: uses provider API keys when set; otherwise examples fall back to mock"
+        echo "Set TRAIGENT_REQUIRE_REAL=1 to make missing provider keys a hard error."
         echo ""
 
         # Check for API key
@@ -195,21 +196,33 @@ case "$MODE" in
             set +a
         fi
 
-        if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo -e "${RED}ERROR: OPENAI_API_KEY not set${NC}"
-            echo ""
-            echo "Set it via environment variable or create real/.env with:"
-            echo "  OPENAI_API_KEY=your-key-here"
-            echo "  # Optional safety controls (not required to run):"
-            echo "  TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
-            echo "  TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
-            echo ""
-            echo "If you're not using real/.env, export in your terminal:"
-            echo "  export OPENAI_API_KEY=your-key-here"
-            echo "  # Optional safety controls (not required to run):"
-            echo "  export TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
-            echo "  export TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
-            exit 1
+        if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${GOOGLE_API_KEY:-}" ]; then
+            if [ "${TRAIGENT_REQUIRE_REAL:-}" = "1" ] || [ "${TRAIGENT_REQUIRE_REAL:-}" = "true" ]; then
+                echo -e "${RED}ERROR: TRAIGENT_REQUIRE_REAL=1 but no provider API keys are set${NC}"
+                echo ""
+                echo "Set provider keys to use real LLM calls:"
+                echo "  OPENAI_API_KEY=your-key-here"
+                echo "  ANTHROPIC_API_KEY=your-key-here"
+                echo "  GOOGLE_API_KEY=your-key-here"
+                echo ""
+                echo "Optional safety controls:"
+                echo "  TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
+                echo "  TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
+                exit 1
+            else
+                echo -e "${YELLOW}WARNING: No provider API keys set${NC}"
+                echo ""
+                echo "Examples will print a warning and run their matching mock walkthroughs."
+                echo "Set provider keys to use real LLM calls:"
+                echo "  OPENAI_API_KEY=your-key-here"
+                echo "  ANTHROPIC_API_KEY=your-key-here"
+                echo "  GOOGLE_API_KEY=your-key-here"
+                echo ""
+                echo "Optional safety controls when you do use real keys:"
+                echo "  TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
+                echo "  TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
+                echo ""
+            fi
         fi
 
         # Optional safety controls (skip prompts + set a soft spend cap)

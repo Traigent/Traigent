@@ -4,6 +4,9 @@
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
     .venv/bin/python walkthrough/real/05_rag_parallel.py
+
+If OPENAI_API_KEY is missing, this script shows a warning and runs the matching
+mock walkthrough instead.
 """
 
 import asyncio
@@ -13,6 +16,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from utils.helpers import maybe_run_mock_example
+
+maybe_run_mock_example(__file__)
 
 try:
     from langchain_community.vectorstores import FAISS
@@ -30,7 +37,6 @@ from utils.helpers import (
     print_estimated_time,
     print_optimization_config,
     print_results_table,
-    require_openai_key,
     sanitize_traigent_api_key,
 )
 from utils.scoring import semantic_overlap_score
@@ -38,7 +44,6 @@ from utils.scoring import semantic_overlap_score
 import traigent
 from traigent.config.parallel import ParallelConfig
 
-require_openai_key("05_rag_parallel.py")
 sanitize_traigent_api_key()
 configure_logging()
 logging.getLogger("tokencost.costs").setLevel(logging.ERROR)

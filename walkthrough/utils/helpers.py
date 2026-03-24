@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import logging
 import os
+import runpy
 from functools import reduce
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import traigent
@@ -106,21 +108,103 @@ def sanitize_traigent_api_key() -> None:
         os.environ.pop("TRAIGENT_API_KEY", None)
 
 
-def require_openai_key(example_name: str) -> None:
-    """Exit with error if OPENAI_API_KEY is not set.
+def _is_truthy_env(var_name: str) -> bool:
+    return os.getenv(var_name, "").lower() in ("1", "true", "yes")
+
+
+def _find_repo_root(start_path: Path) -> Path:
+    """Walk upward until the repository root (identified by pyproject.toml)."""
+    for candidate in (start_path.parent, *start_path.parents):
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return start_path.parents[2]
+
+
+def _print_fallback_warning(reason: str, display_path: str) -> None:
+    """Print a prominent warning before delegating to a mock walkthrough."""
+    lines = [
+        f"WARNING: {reason}",
+        f"Falling back to {display_path}.",
+        "Set the required API key to use real LLM calls.",
+        "Set TRAIGENT_REQUIRE_REAL=1 to fail instead of falling back.",
+    ]
+    width = max(len(line) for line in lines)
+    border = "!" * (width + 4)
+    print()
+    print(border)
+    for line in lines:
+        print(f"! {line.ljust(width)} !")
+    print(border)
+    print()
+
+
+def maybe_run_mock_example(
+    example_path: str,
+    *,
+    required_env_vars: tuple[str, ...] = ("OPENAI_API_KEY",),
+) -> None:
+    """Run the matching mock walkthrough when required provider keys are missing.
+
+    This keeps first-run walkthrough usage seamless: the user can invoke a real
+    example directly, see a short warning, and still get a successful mock run.
 
     Args:
-        example_name: Name of the example file (used in error message)
+        example_path: Current script ``__file__`` path.
+        required_env_vars: Provider key env vars that enable real execution.
 
     Raises:
-        SystemExit: If OPENAI_API_KEY environment variable is not set
+        SystemExit: After executing the matching mock example.
     """
-    if not os.getenv("OPENAI_API_KEY"):
+    require_real = _is_truthy_env("TRAIGENT_REQUIRE_REAL")
+    should_force_mock = _is_truthy_env("TRAIGENT_MOCK_LLM")
+    has_required_key = any(os.getenv(var_name) for var_name in required_env_vars)
+
+    if require_real:
+        if should_force_mock:
+            raise SystemExit(
+                "TRAIGENT_REQUIRE_REAL=1 is set, so TRAIGENT_MOCK_LLM cannot be used. "
+                "Unset TRAIGENT_MOCK_LLM or disable TRAIGENT_REQUIRE_REAL."
+            )
+        if not has_required_key:
+            raise SystemExit(
+                "TRAIGENT_REQUIRE_REAL=1 is set and no required provider key is available. "
+                f"Set one of: {', '.join(required_env_vars)}"
+            )
+        return
+
+    if not should_force_mock and has_required_key:
+        return
+
+    example_file = Path(example_path).resolve()
+    mock_path = example_file.parent.parent / "mock" / example_file.name
+    if not mock_path.exists():
+        missing_keys = ", ".join(required_env_vars)
         raise SystemExit(
-            "OPENAI_API_KEY not set. Export it to run real examples: "
-            'export OPENAI_API_KEY="your-key". '  # pragma: allowlist secret
-            f"To run without a key, use walkthrough/mock/{example_name}."
+            f"No mock fallback exists for {example_file.name}. "
+            f"Set one of: {missing_keys}"
         )
+
+    repo_root = _find_repo_root(example_file)
+    display_path = mock_path.relative_to(repo_root).as_posix()
+    if should_force_mock:
+        reason = "TRAIGENT_MOCK_LLM is enabled"
+    else:
+        reason = f"Missing {' or '.join(required_env_vars)}"
+
+    _print_fallback_warning(reason, display_path)
+
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
+    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
+    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+    try:
+        runpy.run_path(str(mock_path), run_name="__main__")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        raise SystemExit(
+            f"Mock fallback {display_path} failed: {type(exc).__name__}: {exc}"
+        )
+    raise SystemExit(0)
 
 
 def setup_example_logger(name: str) -> logging.Logger:

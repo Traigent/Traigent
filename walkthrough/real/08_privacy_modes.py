@@ -4,6 +4,9 @@
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
     .venv/bin/python walkthrough/real/08_privacy_modes.py
+
+If OPENAI_API_KEY is missing, this script shows a warning and runs the matching
+mock walkthrough instead.
 """
 
 import asyncio
@@ -13,6 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from utils.helpers import maybe_run_mock_example
+
+maybe_run_mock_example(__file__)
+
 from langchain_openai import ChatOpenAI
 from utils.helpers import (
     configure_logging,
@@ -20,14 +27,12 @@ from utils.helpers import (
     print_estimated_time,
     print_optimization_config,
     print_results_table,
-    require_openai_key,
 )
 from utils.scoring import token_match_score
 
 import traigent
 from traigent import TraigentConfig
 
-require_openai_key("08_privacy_modes.py")
 configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
