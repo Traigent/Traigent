@@ -457,6 +457,7 @@ examples/nexxen.zip
 
 # Local helper scripts
 walkthrough/run_with_env.sh
+scripts/release/build_offline_zip.sh
 
 # Release polish: internal tracking and dev artifacts (root-level)
 israel_issues*.json
@@ -467,6 +468,7 @@ RELIABILITY_SWEEP_*.md
 PR[0-9]*.md
 playground.py
 playground/
+my_llm_project/
 test_redact*.py
 test_timeout*.py
 nvidia/
@@ -487,3 +489,4 @@ MAINTENANCE.md
 /tools/
 manual_validation/
 scripts/project_review/
+docs/installation-guide-offline.md
