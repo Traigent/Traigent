@@ -173,6 +173,17 @@
   docs_sections:
     - label: "Testing Guide"
       href: "../../docs/getting-started/testing.md"
+- slug: text-to-sql
+  category: core
+  title: "Text-to-SQL Generation"
+  summary: "Optimize natural language to SQL conversion over a telecom schema. Tunes model, temperature, and schema inclusion using a normalized SQL accuracy metric."
+  run: "core/text-to-sql/run.py"
+  order: 4
+  difficulty: intermediate
+  est_time: "10 min"
+  tags: ["sql", "code-generation", "telecom"]
+  datasets:
+    - "datasets/text-to-sql/evaluation_set.jsonl"
 - slug: ai-engineering-tasks
   category: advanced
   title: "AI Engineering Task Library"

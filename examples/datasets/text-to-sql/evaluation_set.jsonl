@@ -1,0 +1,15 @@
+{"input": {"question": "Show all active customers"}, "output": "SELECT * FROM customers WHERE status = 'active'"}
+{"input": {"question": "Count how many customers are in New York"}, "output": "SELECT COUNT(*) FROM customers WHERE city = 'New York'"}
+{"input": {"question": "Find customers with unpaid bills"}, "output": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'"}
+{"input": {"question": "Get the total billing revenue"}, "output": "SELECT SUM(amount) FROM billing"}
+{"input": {"question": "List the top 5 customers by data usage"}, "output": "SELECT c.name, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_data DESC LIMIT 5"}
+{"input": {"question": "Find all premium plan subscribers"}, "output": "SELECT * FROM subscriptions WHERE plan_name = 'premium'"}
+{"input": {"question": "Get average monthly rate per plan"}, "output": "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name"}
+{"input": {"question": "Count customers by city"}, "output": "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city ORDER BY customer_count DESC"}
+{"input": {"question": "Find overdue unpaid bills"}, "output": "SELECT * FROM billing WHERE status = 'unpaid' AND due_date < CURRENT_DATE"}
+{"input": {"question": "Show total call minutes by customer"}, "output": "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_minutes DESC"}
+{"input": {"question": "Find customers with no network usage"}, "output": "SELECT name FROM customers WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)"}
+{"input": {"question": "List customers on the enterprise plan"}, "output": "SELECT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.plan_name = 'enterprise'"}
+{"input": {"question": "Get the highest monthly billing amount"}, "output": "SELECT MAX(amount) FROM billing"}
+{"input": {"question": "Show customers who have more than one subscription"}, "output": "SELECT customer_id, COUNT(*) AS sub_count FROM subscriptions GROUP BY customer_id HAVING COUNT(*) > 1"}
+{"input": {"question": "Find the average data usage per customer"}, "output": "SELECT c.name, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name"}
