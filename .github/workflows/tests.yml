@@ -46,7 +46,6 @@ jobs:
         mypy traigent/ traigent_validation/
 
     - name: Test with pytest
-      continue-on-error: true  # Pre-existing test failures; tracked for remediation
       env:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true

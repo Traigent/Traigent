@@ -68,8 +68,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce lint/type on release tags
-        if: github.ref_type == 'tag' && steps.lint_type_status.outputs.status == 'fail'
+      - name: Enforce lint/type gate
+        if: steps.lint_type_status.outputs.status == 'fail'
         run: exit 1
 
   tests_unit:
@@ -101,8 +101,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce unit tests on release tags
-        if: github.ref_type == 'tag' && steps.tests_unit_status.outputs.status == 'fail'
+      - name: Enforce unit-test gate
+        if: steps.tests_unit_status.outputs.status == 'fail'
         run: exit 1
 
   tests_integration:
@@ -134,8 +134,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce integration tests on release tags
-        if: github.ref_type == 'tag' && steps.tests_integration_status.outputs.status == 'fail'
+      - name: Enforce integration-test gate
+        if: steps.tests_integration_status.outputs.status == 'fail'
         run: exit 1
 
   security:
@@ -164,8 +164,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce security checks on release tags
-        if: github.ref_type == 'tag' && steps.security_status.outputs.status == 'fail'
+      - name: Enforce security gate
+        if: steps.security_status.outputs.status == 'fail'
         run: exit 1
 
   dependency_review:
@@ -207,8 +207,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce dependency review on release tags
-        if: github.ref_type == 'tag' && steps.dependency_review_status.outputs.status == 'fail'
+      - name: Enforce dependency-review gate
+        if: steps.dependency_review_status.outputs.status == 'fail'
         run: exit 1
 
   codeql:
@@ -241,8 +241,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce CodeQL on release tags
-        if: github.ref_type == 'tag' && steps.codeql_status.outputs.status == 'fail'
+      - name: Enforce CodeQL gate
+        if: steps.codeql_status.outputs.status == 'fail'
         run: exit 1
 
   release_review_consistency:
