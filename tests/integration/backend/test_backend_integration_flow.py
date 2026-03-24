@@ -191,14 +191,14 @@ class TestBackendIntegrationWithMocks:
             api_key=None, backend_config=backend_config, enable_fallback=False
         )
 
-        session_id = client.create_session(
+        result = client.create_session(
             function_name="test_function",
             search_space={"temperature": [0.1, 0.5, 0.9]},
             optimization_goal="maximize",
         )
 
-        assert session_id is not None
-        assert isinstance(session_id, str)
+        assert result.session_id is not None
+        assert isinstance(result.session_id, str)
 
     @patch("traigent.cloud.api_operations.aiohttp.ClientSession")
     def test_submit_result_with_mock(self, mock_session_class):

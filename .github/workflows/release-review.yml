@@ -33,6 +33,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
+  LINT_PYTHON_VERSION: "3.12"
   TRAIGENT_MOCK_LLM: "true"
   TRAIGENT_OFFLINE_MODE: "true"
   TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.LINT_PYTHON_VERSION }}
       - name: Install lint and type tooling
         env:
           TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
@@ -205,7 +206,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-audit
-          pip-audit --progress-spinner off --desc -r requirements/requirements.txt
+          # pip-audit currently reports CVE-2026-4539 on Pygments 2.19.2 with no
+          # fixed version available. Traigent only brings Pygments in transitively
+          # through Rich for local CLI rendering, and the advisory is not presently
+          # actionable as an upgrade. Keep the gate hard for everything else.
+          pip-audit --progress-spinner off --desc --ignore-vuln CVE-2026-4539 -r requirements/requirements.txt
       - name: Capture dependency-review status
         id: dependency_review_status
         if: always()
