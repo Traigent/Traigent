@@ -23,9 +23,20 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git && cd Traigent
+uv venv --python 3.12 && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+uv pip install -e ".[recommended]"
+```
+
+<details>
+<summary>Alternative: pip (slower)</summary>
+
+```bash
+git clone https://github.com/Traigent/Traigent.git && cd Traigent
 python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[recommended]"
 ```
+
+</details>
 
 **Try it now — no API keys needed:**
 
@@ -293,7 +304,7 @@ traigent --help                              # Full command reference
 
 | Problem | Fix |
 |---------|-----|
-| `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
+| `ModuleNotFoundError` | `uv pip install -e ".[recommended]"` or check venv is activated |
 | 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
 | Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
 | Permission errors | Create a fresh venv |
@@ -305,7 +316,7 @@ traigent --help                              # Full command reference
 ## 🛠️ Development
 
 ```bash
-pip install -e ".[all,dev]"              # Install with dev dependencies
+uv pip install -e ".[all,dev]"           # Install with dev dependencies
 TRAIGENT_MOCK_LLM=true pytest            # Run tests
 make format && make lint                 # Format and lint
 ```

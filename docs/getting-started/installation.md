@@ -4,22 +4,24 @@ Release-ready, minimal install steps for the SDK and examples.
 
 ## Recommended Installs
 
-### Fast path (pip)
+### Recommended path (uv)
+
+```bash
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+uv venv --python 3.12 && source .venv/bin/activate
+uv pip install -e ".[recommended]"        # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
+```
+
+> **Don't have uv?** Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### Alternative path (pip)
 
 ```bash
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
-```
-
-### Faster path (uv)
-
-```bash
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-uv venv && source .venv/bin/activate
-uv pip install -e ".[recommended]"        # Same recommended bundle, faster resolver
+pip install -e ".[recommended]"           # Same recommended bundle, slower resolver
 ```
 
 ### PyPI vs source installs
@@ -30,25 +32,25 @@ uv pip install -e ".[recommended]"        # Same recommended bundle, faster reso
 
 | Extra | What's included | Install example |
 | --- | --- | --- |
-| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install -e ".[recommended]"`** |
-| `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
-| `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
-| `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
-| `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
-| `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `pip install -e ".[hybrid]"` |
-| `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
-| `test` | pytest + tooling | `pip install -e ".[test]"` |
-| `dev` | Linters + tests | `pip install -e ".[dev]"` |
-| `docs` | MkDocs tooling | `pip install -e ".[docs]"` |
-| `tracing` | OpenTelemetry SDK | `pip install -e ".[tracing]"` |
-| `all` / `enterprise` | Everything above | `pip install -e ".[all]"` |
+| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`uv pip install -e ".[recommended]"`** |
+| `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `uv pip install -e ".[integrations]"` |
+| `analytics` | numpy, pandas, matplotlib | `uv pip install -e ".[analytics]"` |
+| `bayesian` | Optuna + sklearn/scipy | `uv pip install -e ".[bayesian]"` |
+| `visualization` | matplotlib, plotly | `uv pip install -e ".[visualization]"` |
+| `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `uv pip install -e ".[hybrid]"` |
+| `security` | FastAPI, JWT, cryptography, Redis | `uv pip install -e ".[security]"` |
+| `test` | pytest + tooling | `uv pip install -e ".[test]"` |
+| `dev` | Linters + tests | `uv pip install -e ".[dev]"` |
+| `docs` | MkDocs tooling | `uv pip install -e ".[docs]"` |
+| `tracing` | OpenTelemetry SDK | `uv pip install -e ".[tracing]"` |
+| `all` / `enterprise` | Everything above | `uv pip install -e ".[all]"` |
 
 ## Common Scenarios
 
 - **Run examples (no API keys):**
 
   ```bash
-  pip install -e ".[recommended]"
+  uv pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
   python examples/core/rag-optimization/run.py
   ```
@@ -56,7 +58,7 @@ uv pip install -e ".[recommended]"        # Same recommended bundle, faster reso
 - **Develop/contribute:**
 
   ```bash
-  pip install -e ".[recommended,dev]"
+  uv pip install -e ".[recommended,dev]"
   TRAIGENT_MOCK_LLM=true pytest tests/ -q
   ```
 
@@ -67,7 +69,7 @@ uv pip install -e ".[recommended]"        # Same recommended bundle, faster reso
 - **Full bundle for team environments:**
 
   ```bash
-  pip install -e ".[all]"
+  uv pip install -e ".[all]"
   ```
 
 ## Verify the install
@@ -81,9 +83,9 @@ PY
 
 ## Troubleshooting (quick fixes)
 
-- **`ModuleNotFoundError: langchain`** — install recommended extras: `pip install -e ".[recommended]"`.
+- **`ModuleNotFoundError: langchain`** — install recommended extras: `uv pip install -e ".[recommended]"`.
 - **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`). On Ubuntu desktop, you can also store keys in GNOME Keyring and export them with `secret-tool lookup ...` before running examples (see `docs/guides/secrets_management.md`).
-- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[recommended]"`.
+- **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; uv venv --python 3.12; source .venv/bin/activate; uv pip install -e ".[recommended]"`.
 
 ---
 
