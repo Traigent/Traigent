@@ -221,7 +221,7 @@ class ObjectiveSchema:
             raise ValueError(f"Duplicate objective names found: {set(duplicates)}")
 
         # Validate weights_sum matches actual sum
-        actual_sum = sum(obj.weight for obj in self.objectives)
+        actual_sum = math.fsum(obj.weight for obj in self.objectives)
         if abs(self.weights_sum - actual_sum) > 1e-10:
             raise ValueError(
                 f"weights_sum ({self.weights_sum}) doesn't match "
@@ -270,7 +270,7 @@ class ObjectiveSchema:
             raise ValueError("At least one objective must be provided")
 
         # Calculate weights sum
-        weights_sum = sum(obj.weight for obj in objectives)
+        weights_sum = math.fsum(obj.weight for obj in objectives)
 
         if weights_sum <= 0:
             raise ValueError(f"Sum of weights must be positive, got {weights_sum}")

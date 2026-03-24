@@ -121,8 +121,8 @@ class StreamingInvoker(LocalInvoker):
             # Get the response iterator
             response = configured_func(**input_data)
 
-            # Handle coroutine that returns an iterator
-            if asyncio.iscoroutine(response):
+            # Await plain awaitables, but do not await generators/iterators.
+            if inspect.isawaitable(response) and not inspect.isgenerator(response):
                 response = await response
 
             # Stream chunks from the response

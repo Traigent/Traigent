@@ -11,13 +11,21 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from traigent.api.types import TrialResult
+from traigent.api.types import TrialStatus as SDKTrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import TrialStatus
+
+    TrialStatusLike: TypeAlias = SDKTrialStatus | TrialStatus
+else:
+    TrialStatusLike: TypeAlias = Any
 
 # Cloud models - required at runtime for this optimizer
 try:
@@ -75,6 +83,18 @@ def _require_cloud_models() -> None:
             plugin_name="traigent-cloud",
             install_hint="pip install traigent[cloud]",
         )
+
+
+def _coerce_trial_status(status: TrialStatusLike) -> Any:
+    """Convert SDK trial statuses to cloud trial statuses when needed."""
+    if _CLOUD_MODELS_AVAILABLE and isinstance(status, SDKTrialStatus):
+        return TrialStatus(status.value)
+    return status
+
+
+def _is_completed_status(status: TrialStatusLike) -> bool:
+    """Check completion across SDK and cloud status enums."""
+    return getattr(status, "value", status) == "completed"
 
 
 class RemoteGuidanceService(Protocol):
@@ -280,7 +300,7 @@ class InteractiveOptimizer(BaseOptimizer):
         trial_id: str,
         metrics: dict[str, float],
         duration: float,
-        status: TrialStatus = TrialStatus.COMPLETED,
+        status: TrialStatusLike = SDKTrialStatus.COMPLETED,
         outputs_sample: list[Any] | None = None,
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -308,7 +328,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 trial_id=trial_id,
                 metrics=metrics,
                 duration=duration,
-                status=status,
+                status=_coerce_trial_status(status),
                 outputs_sample=outputs_sample,
                 error_message=error_message,
                 metadata=metadata or {},
@@ -320,7 +340,7 @@ class InteractiveOptimizer(BaseOptimizer):
             self._completed_trials.append(result)
 
             # Update session if successful
-            if self.session and status == TrialStatus.COMPLETED:
+            if self.session and _is_completed_status(status):
                 self.session.completed_trials += 1
 
                 # Update best if improved

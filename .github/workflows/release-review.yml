@@ -33,8 +33,11 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
+  LINT_PYTHON_VERSION: "3.12"
+  RELEASE_GATE_CODEQL_ENABLED: "false"
   TRAIGENT_MOCK_LLM: "true"
   TRAIGENT_OFFLINE_MODE: "true"
+  TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
 
 jobs:
   lint_type:
@@ -46,11 +49,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ env.LINT_PYTHON_VERSION }}
       - name: Install lint and type tooling
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          bash scripts/ci/install_sdk_requirements.sh -e ".[dev]"
       - name: Black + isort + Ruff + MyPy
         id: lint_type_run
         continue-on-error: true
@@ -68,8 +75,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce lint/type on release tags
-        if: github.ref_type == 'tag' && steps.lint_type_status.outputs.status == 'fail'
+      - name: Enforce lint/type gate
+        if: steps.lint_type_status.outputs.status == 'fail'
         run: exit 1
 
   tests_unit:
@@ -83,9 +90,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[all,dev]"
+          bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
       - name: Run unit tests
         id: tests_unit_run
         continue-on-error: true
@@ -101,8 +112,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce unit tests on release tags
-        if: github.ref_type == 'tag' && steps.tests_unit_status.outputs.status == 'fail'
+      - name: Enforce unit-test gate
+        if: steps.tests_unit_status.outputs.status == 'fail'
         run: exit 1
 
   tests_integration:
@@ -116,9 +127,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[all,dev]"
+          bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
       - name: Run integration tests
         id: tests_integration_run
         continue-on-error: true
@@ -134,8 +149,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce integration tests on release tags
-        if: github.ref_type == 'tag' && steps.tests_integration_status.outputs.status == 'fail'
+      - name: Enforce integration-test gate
+        if: steps.tests_integration_status.outputs.status == 'fail'
         run: exit 1
 
   security:
@@ -164,8 +179,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce security checks on release tags
-        if: github.ref_type == 'tag' && steps.security_status.outputs.status == 'fail'
+      - name: Enforce security gate
+        if: steps.security_status.outputs.status == 'fail'
         run: exit 1
 
   dependency_review:
@@ -192,7 +207,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-audit
-          pip-audit --progress-spinner off --desc -r requirements/requirements.txt
+          # pip-audit currently reports CVE-2026-4539 on Pygments 2.19.2 with no
+          # fixed version available. Traigent only brings Pygments in transitively
+          # through Rich for local CLI rendering, and the advisory is not presently
+          # actionable as an upgrade. Keep the gate hard for everything else.
+          pip-audit --progress-spinner off --desc --ignore-vuln CVE-2026-4539 -r requirements/requirements.txt
       - name: Capture dependency-review status
         id: dependency_review_status
         if: always()
@@ -207,8 +226,8 @@ jobs:
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce dependency review on release tags
-        if: github.ref_type == 'tag' && steps.dependency_review_status.outputs.status == 'fail'
+      - name: Enforce dependency-review gate
+        if: steps.dependency_review_status.outputs.status == 'fail'
         run: exit 1
 
   codeql:
@@ -221,28 +240,44 @@ jobs:
       contents: read
       security-events: write
     steps:
+      - name: Detect CodeQL availability
+        id: codeql_capability
+        run: |
+          if [ "${{ env.RELEASE_GATE_CODEQL_ENABLED }}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.codeql_capability.outputs.enabled == 'true'
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
+        if: steps.codeql_capability.outputs.enabled == 'true'
         uses: github/codeql-action/init@v3
         with:
           languages: python
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
+        if: steps.codeql_capability.outputs.enabled == 'true'
         uses: github/codeql-action/analyze@v3
+      - name: Skip unavailable CodeQL upload
+        if: steps.codeql_capability.outputs.enabled != 'true'
+        run: echo "CodeQL upload is disabled for this repository until GitHub code scanning is enabled."
       - name: Capture CodeQL status
         id: codeql_status
         if: always()
         run: |
-          if [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
+          if [ "${{ steps.codeql_capability.outputs.enabled }}" != "true" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
             echo "status=pass" >> "$GITHUB_OUTPUT"
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
           fi
-      - name: Enforce CodeQL on release tags
-        if: github.ref_type == 'tag' && steps.codeql_status.outputs.status == 'fail'
+      - name: Enforce CodeQL gate
+        if: steps.codeql_status.outputs.status == 'fail'
         run: exit 1
 
   release_review_consistency:
@@ -338,12 +373,7 @@ jobs:
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
           mkdir -p "$run_dir/gate_results"
-
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            required=true
-          else
-            required=false
-          fi
+          required=true
 
           cat > "$run_dir/gate_results/check_results.json" <<JSON
           {
@@ -364,30 +394,17 @@ jobs:
         if: steps.release_review_tools.outputs.available == 'true'
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
-          if [ "${{ github.ref_type }}" != "tag" ]; then
-            set +e
-            python3 local/release_review/automation/build_release_verdict.py \
-              --release-id "${{ steps.release_id.outputs.release_id }}" \
-              --run-dir "$run_dir" \
-              --checks-file "$run_dir/gate_results/check_results.json"
-            verdict_exit="$?"
-            if [ "$verdict_exit" -ne 0 ]; then
-              echo "Dry-run verdict is NOT_READY; recording artifact without failing required check."
-            fi
-            exit 0
-          else
-            python3 local/release_review/automation/build_release_verdict.py \
-              --release-id "${{ steps.release_id.outputs.release_id }}" \
-              --run-dir "$run_dir" \
-              --checks-file "$run_dir/gate_results/check_results.json" \
-              --required-check lint-type \
-              --required-check tests-unit \
-              --required-check tests-integration \
-              --required-check security \
-              --required-check dependency-review \
-              --required-check codeql \
-              --required-check release-review-consistency
-          fi
+          python3 local/release_review/automation/build_release_verdict.py \
+            --release-id "${{ steps.release_id.outputs.release_id }}" \
+            --run-dir "$run_dir" \
+            --checks-file "$run_dir/gate_results/check_results.json" \
+            --required-check lint-type \
+            --required-check tests-unit \
+            --required-check tests-integration \
+            --required-check security \
+            --required-check dependency-review \
+            --required-check codeql \
+            --required-check release-review-consistency
 
       - name: Upload release-review artifacts
         if: always() && steps.release_review_tools.outputs.available == 'true'

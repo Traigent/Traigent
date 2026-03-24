@@ -1779,7 +1779,7 @@ class OptimizationOrchestrator:
                 f"Creating session with max_trials={max_trials_value} (self.max_trials={self.max_trials})"
             )
 
-            result = self.backend_client.create_session(
+            raw_result = self.backend_client.create_session(
                 function_name=identifier,
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
@@ -1794,7 +1794,9 @@ class OptimizationOrchestrator:
                 },
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
-                result
+                self.backend_session_manager.normalize_session_creation_result(
+                    raw_result
+                )
             )
             return session_id
         else:

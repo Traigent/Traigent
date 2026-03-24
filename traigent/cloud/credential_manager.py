@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.config.backend_config import BackendConfig
-
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)

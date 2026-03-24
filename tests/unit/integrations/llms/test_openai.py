@@ -333,12 +333,13 @@ class TestAutoDetectOpenAI:
         """Test auto_detect_openai warns when OpenAI SDK not installed."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
+            real_import = __import__
 
             # Patch the import to raise ImportError
             def mock_import(name, *args, **kwargs):
                 if name == "openai":
                     raise ImportError("No module named 'openai'")
-                return __import__(name, *args, **kwargs)
+                return real_import(name, *args, **kwargs)
 
             with patch("builtins.__import__", side_effect=mock_import):
                 auto_detect_openai()
