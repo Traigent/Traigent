@@ -52,6 +52,9 @@ bash walkthrough/test_all_examples.sh --mock
 # Run all real examples (uses provider keys when set, otherwise falls back to mock)
 export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
 bash walkthrough/test_all_examples.sh --real
+
+# Disable fallback and fail fast when keys are missing (useful for CI)
+export TRAIGENT_REQUIRE_REAL=1
 ```
 
 ## Structure
@@ -61,7 +64,7 @@ walkthrough/
 ├── README.md              # This file
 ├── demo/                  # Optional demo/video support scripts
 ├── mock/                  # No API keys needed, instant results
-├── real/                  # Real LLM calls when keyed, mock fallback on first run
+├── real/                  # Real LLM calls when keyed, mock fallback when keys are missing
 ├── datasets/              # Pre-built evaluation datasets (20 examples each)
 ├── utils/                 # Shared utilities (scoring, helpers, mock answers)
 └── test_all_examples.sh   # Run all examples script
