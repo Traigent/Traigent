@@ -31,11 +31,12 @@ This includes:
 # Mock examples - no API keys needed
 python walkthrough/mock/01_tuning_qa.py
 
-# Real examples - requires an LLM API key for LLM API calls
+# Real examples - use real LLM calls when a provider key is set;
+# otherwise they warn and fall back to the matching mock walkthrough
 export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
 python walkthrough/real/01_tuning_qa.py
 
-# Multi-provider example (any one key works)
+# Multi-provider example (any one key works; without keys it falls back to mock)
 export OPENAI_API_KEY="your-key"  # Or ANTHROPIC_API_KEY / GOOGLE_API_KEY  <!-- pragma: allowlist secret -->
 python walkthrough/real/07_multi_provider.py
 ```
@@ -48,7 +49,7 @@ Check your environment with `python walkthrough/utils/check_environment.py`.
 # Run all mock examples (no API keys needed)
 bash walkthrough/test_all_examples.sh --mock
 
-# Run all real examples (requires OpenAI API key; Example 07 can also use Anthropic/Gemini keys)
+# Run all real examples (uses provider keys when set, otherwise falls back to mock)
 export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
 bash walkthrough/test_all_examples.sh --real
 ```
@@ -60,7 +61,7 @@ walkthrough/
 ├── README.md              # This file
 ├── demo/                  # Optional demo/video support scripts
 ├── mock/                  # No API keys needed, instant results
-├── real/                  # Requires API keys, real LLM calls
+├── real/                  # Real LLM calls when keyed, mock fallback on first run
 ├── datasets/              # Pre-built evaluation datasets (20 examples each)
 ├── utils/                 # Shared utilities (scoring, helpers, mock answers)
 └── test_all_examples.sh   # Run all examples script
@@ -83,7 +84,7 @@ Eight hands-on examples that build on each other:
 
 Injection modes are explained in depth here: [Injection Modes Guide](../docs/user-guide/injection_modes.md).
 
-Each example has **mock** (no API keys) and **real** (actual LLM calls) variants.
+Each example has **mock** (no API keys) and **real** (actual LLM calls when keys are present, otherwise automatic mock fallback) variants.
 
 Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
 appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
@@ -192,8 +193,8 @@ In mock mode, Example 06 uses a lightweight heuristic scorer (function signature
 
 | Mock (`mock/`)        | Real (`real/`)           |
 |-----------------------|--------------------------|
-| No API keys           | Requires OPENAI_API_KEY  |
-| Instant results       | Real LLM calls           |
+| No API keys           | Uses provider keys when present |
+| Instant results       | Real LLM calls or mock fallback |
 | Simulated accuracy    | Actual model performance |
 | Simulated best config | Real best config per run |
 | Great for learning    | Production-ready         |

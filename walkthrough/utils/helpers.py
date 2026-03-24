@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import logging
 import os
+import runpy
 from functools import reduce
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import traigent
@@ -104,6 +106,61 @@ def sanitize_traigent_api_key() -> None:
             "Set a valid Traigent key to enable cloud features."
         )
         os.environ.pop("TRAIGENT_API_KEY", None)
+
+
+def _is_truthy_env(var_name: str) -> bool:
+    return os.getenv(var_name, "").lower() in ("1", "true", "yes")
+
+
+def maybe_run_mock_example(
+    example_path: str,
+    *,
+    required_env_vars: tuple[str, ...] = ("OPENAI_API_KEY",),
+) -> None:
+    """Run the matching mock walkthrough when required provider keys are missing.
+
+    This keeps first-run walkthrough usage seamless: the user can invoke a real
+    example directly, see a short warning, and still get a successful mock run.
+
+    Args:
+        example_path: Current script ``__file__`` path.
+        required_env_vars: Provider key env vars that enable real execution.
+
+    Raises:
+        SystemExit: After executing the matching mock example.
+    """
+    should_force_mock = _is_truthy_env("TRAIGENT_MOCK_LLM")
+    has_required_key = any(os.getenv(var_name) for var_name in required_env_vars)
+
+    if not should_force_mock and has_required_key:
+        return
+
+    example_file = Path(example_path).resolve()
+    mock_path = example_file.parent.parent / "mock" / example_file.name
+    if not mock_path.exists():
+        missing_keys = ", ".join(required_env_vars)
+        raise SystemExit(
+            f"No mock fallback exists for {example_file.name}. "
+            f"Set one of: {missing_keys}"
+        )
+
+    repo_root = example_file.parents[2]
+    display_path = mock_path.relative_to(repo_root).as_posix()
+    if should_force_mock:
+        reason = "TRAIGENT_MOCK_LLM is enabled"
+    else:
+        reason = f"Missing {' or '.join(required_env_vars)}"
+
+    print(
+        f"WARNING: {reason}. Running {display_path} instead. "
+        "Set the required API key to use real LLM calls."
+    )
+
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
+    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
+    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+    runpy.run_path(str(mock_path), run_name="__main__")
+    raise SystemExit(0)
 
 
 def require_openai_key(example_name: str) -> None:

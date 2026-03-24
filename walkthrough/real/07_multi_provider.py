@@ -20,7 +20,8 @@ Usage (run from repo root):
     .venv/bin/python walkthrough/real/07_multi_provider.py
 
 Note: This example validates API keys using Traigent's core provider validation
-and skips any invalid providers.
+and skips any invalid providers. If no provider key is set, it shows a warning
+and runs the matching mock walkthrough instead.
 """
 
 import asyncio
@@ -32,6 +33,13 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from utils.helpers import maybe_run_mock_example
+
+maybe_run_mock_example(
+    __file__,
+    required_env_vars=("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"),
+)
 
 # Track errors per model to avoid spamming the console
 _error_counts: Counter[str] = Counter()
