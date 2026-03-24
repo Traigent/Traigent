@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
+
 class OptimizationStorage:
     """Handles file-based storage of optimization results."""
 
@@ -210,14 +211,14 @@ class OptimizationStorage:
                 # Load results for this problem
                 for file_path in problem_dir.glob("run_*.json"):
                     try:
-                    result = json.loads(safe_read_text(file_path, self.base_path))
-                            # Ensure run_id is present
-                            if "run_id" not in result:
-                                result["run_id"] = file_path.stem
-                            # Ensure problem name matches
-                            if "problem" not in result:
-                                result["problem"] = problem_name
-                            all_results.append(result)
+                        result = json.loads(safe_read_text(file_path, self.base_path))
+                        # Ensure run_id is present
+                        if "run_id" not in result:
+                            result["run_id"] = file_path.stem
+                        # Ensure problem name matches
+                        if "problem" not in result:
+                            result["problem"] = problem_name
+                        all_results.append(result)
                     except Exception as e:
                         print(f"Error loading {file_path}: {str(e)}")
                         continue
