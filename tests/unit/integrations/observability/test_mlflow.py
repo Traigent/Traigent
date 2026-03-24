@@ -559,12 +559,13 @@ class TestTraigentMLflowTracker:
         assert "error" in comparison["invalid_run"]
 
     def test_compare_optimizations_when_mlflow_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, patched_mlflow: MockMLflow
     ) -> None:
         """Test compare_optimizations raises when MLflow not available."""
         monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", False)
 
-        # Create tracker with mocked availability during init
+        # Create the tracker against the module-local mock so this test never
+        # depends on the real MLflow process state.
         with patch.object(mlflow_module, "MLFLOW_AVAILABLE", True):
             tracker = mlflow_module.TraigentMLflowTracker()
 

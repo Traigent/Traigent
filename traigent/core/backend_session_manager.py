@@ -21,14 +21,14 @@ from traigent.config.types import TraigentConfig
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
-from traigent.cloud.session_types import (
-    SessionCreationFailureReason,
-    SessionCreationResult,
-)
 from traigent.config.backend_config import SIGNUP_URL, get_no_credentials_hint
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
+from traigent.core.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
@@ -135,6 +135,15 @@ class BackendSessionManager:
             logger.info("Created backend session: %s", result.session_id)
 
         return result.session_id
+
+    @staticmethod
+    def normalize_session_creation_result(
+        result: SessionCreationResult | str,
+    ) -> SessionCreationResult:
+        """Accept legacy string session IDs from tests and older stubs."""
+        if isinstance(result, SessionCreationResult):
+            return result
+        return SessionCreationResult.connected(session_id=result)
 
     @staticmethod
     def create_backend_client(
@@ -369,12 +378,13 @@ class BackendSessionManager:
             if slug_hash:
                 portal_name = f"{portal_name} ({slug_hash})"
 
-            result = self._backend_client.create_session(
+            raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
             )
+            result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
 
             # On success, upload dataset features via the session mapping
@@ -898,9 +908,9 @@ class BackendSessionManager:
             result.metadata.get("statistical_significance") if result.metadata else None
         )
         if stat_sig:
-            summary_stats_with_aggregation["metadata"]["statistical_significance"] = (
-                stat_sig
-            )
+            summary_stats_with_aggregation["metadata"][
+                "statistical_significance"
+            ] = stat_sig
 
         try:
             successful_trials = len([t for t in result.trials if t.is_successful])
