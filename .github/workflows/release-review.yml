@@ -351,12 +351,7 @@ jobs:
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
           mkdir -p "$run_dir/gate_results"
-
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            required=true
-          else
-            required=false
-          fi
+          required=true
 
           cat > "$run_dir/gate_results/check_results.json" <<JSON
           {
@@ -377,30 +372,17 @@ jobs:
         if: steps.release_review_tools.outputs.available == 'true'
         run: |
           run_dir=".release_review/runs/${{ steps.release_id.outputs.release_id }}"
-          if [ "${{ github.ref_type }}" != "tag" ]; then
-            set +e
-            python3 local/release_review/automation/build_release_verdict.py \
-              --release-id "${{ steps.release_id.outputs.release_id }}" \
-              --run-dir "$run_dir" \
-              --checks-file "$run_dir/gate_results/check_results.json"
-            verdict_exit="$?"
-            if [ "$verdict_exit" -ne 0 ]; then
-              echo "Dry-run verdict is NOT_READY; recording artifact without failing required check."
-            fi
-            exit 0
-          else
-            python3 local/release_review/automation/build_release_verdict.py \
-              --release-id "${{ steps.release_id.outputs.release_id }}" \
-              --run-dir "$run_dir" \
-              --checks-file "$run_dir/gate_results/check_results.json" \
-              --required-check lint-type \
-              --required-check tests-unit \
-              --required-check tests-integration \
-              --required-check security \
-              --required-check dependency-review \
-              --required-check codeql \
-              --required-check release-review-consistency
-          fi
+          python3 local/release_review/automation/build_release_verdict.py \
+            --release-id "${{ steps.release_id.outputs.release_id }}" \
+            --run-dir "$run_dir" \
+            --checks-file "$run_dir/gate_results/check_results.json" \
+            --required-check lint-type \
+            --required-check tests-unit \
+            --required-check tests-integration \
+            --required-check security \
+            --required-check dependency-review \
+            --required-check codeql \
+            --required-check release-review-consistency
 
       - name: Upload release-review artifacts
         if: always() && steps.release_review_tools.outputs.available == 'true'

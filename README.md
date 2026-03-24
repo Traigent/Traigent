@@ -258,6 +258,7 @@ cd Traigent
 # Installs uv if it is not already available in this shell.
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   irm https://astral.sh/uv/install.ps1 | iex
+  $env:PATH = "$HOME\\.local\\bin;$env:PATH"
 }
 
 uv venv .venv
