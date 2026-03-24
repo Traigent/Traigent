@@ -159,7 +159,9 @@ class TestSubmitTraces:
         mgr = _make_manager(tracker=tracker)
         mgr._collected_spans = [_FakeSpan()]
 
-        with caplog.at_level(logging.DEBUG), patch(
+        with caplog.at_level(
+            logging.DEBUG, logger="traigent.core.workflow_trace_manager"
+        ), patch(
             "traigent.core.workflow_trace_manager.is_backend_offline",
             return_value=False,
         ):
