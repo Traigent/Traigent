@@ -22,6 +22,21 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _is_trace_ingestion_auth_rejection(error: str | None) -> bool:
+    """Return True when trace ingestion failed due to auth rejection."""
+    if not error:
+        return False
+
+    normalized = error.lower()
+    auth_markers = (
+        "auth failed",
+        "auth rejected",
+        "unauthorized",
+        "forbidden",
+    )
+    return any(marker in normalized for marker in auth_markers)
+
+
 class WorkflowTraceManager:
     """Manages workflow trace span collection and backend submission.
 
@@ -136,7 +151,7 @@ class WorkflowTraceManager:
                         graph_id = response.graph_id
                 else:
                     # Auth rejections are expected in local/edge mode — log at DEBUG only
-                    if response.error and "Auth failed" in response.error:
+                    if _is_trace_ingestion_auth_rejection(response.error):
                         logger.debug(
                             f"Trace ingestion auth rejected for config_run {config_run_id}"
                         )

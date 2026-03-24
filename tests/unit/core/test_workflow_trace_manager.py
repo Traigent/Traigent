@@ -138,12 +138,23 @@ class TestSubmitTraces:
         assert mgr._collected_spans == []
 
     @pytest.mark.asyncio
-    async def test_auth_rejection_logs_at_debug_not_warning(self, caplog) -> None:
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "Auth failed (401)",
+            "Auth failed (403)",
+            "Unauthorized",
+            "Forbidden",
+        ],
+    )
+    async def test_auth_rejection_logs_at_debug_not_warning(
+        self, caplog, error_message: str
+    ) -> None:
         import logging
 
         tracker = MagicMock()
         tracker.ingest_traces_async = AsyncMock(
-            return_value=_FakeIngestResponse(success=False, error="Auth failed (401)")
+            return_value=_FakeIngestResponse(success=False, error=error_message)
         )
         mgr = _make_manager(tracker=tracker)
         mgr._collected_spans = [_FakeSpan()]
@@ -158,7 +169,9 @@ class TestSubmitTraces:
         assert any("auth rejected" in r.message.lower() for r in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_handles_failed_ingestion(self) -> None:
+    async def test_handles_failed_ingestion_logs_warning(self, caplog) -> None:
+        import logging
+
         tracker = MagicMock()
         tracker.ingest_traces_async = AsyncMock(
             return_value=_FakeIngestResponse(success=False, error="network error")
@@ -170,9 +183,11 @@ class TestSubmitTraces:
             "traigent.core.workflow_trace_manager.is_backend_offline",
             return_value=False,
         ):
-            await mgr.submit_traces(session_id="real-session")
+            with caplog.at_level(logging.WARNING):
+                await mgr.submit_traces(session_id="real-session")
 
         assert mgr._collected_spans == []
+        assert any("Failed to submit spans" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_handles_exception_during_submission(self) -> None:
