@@ -19,13 +19,39 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 > **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
 
-**Quick Install:**
+**Quick Install (`uv` recommended):**
+
+macOS / Linux:
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git && cd Traigent
-python3 -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e ".[recommended]"
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+
+command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install -e ".[recommended]"
 ```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+  irm https://astral.sh/uv/install.ps1 | iex
+}
+
+uv venv --python 3.12 .venv
+.venv\Scripts\Activate.ps1
+uv pip install -e ".[recommended]"
+```
+
+Prefer `uv` for new environments. If you need a `pip` fallback instead, see
+[Installation details](#installation).
 
 **Try it now — no API keys needed:**
 
@@ -225,6 +251,28 @@ Python 3.11+ on Linux, macOS, or Windows. For coordinated release validation, in
 
 **[Full installation guide →](docs/getting-started/installation.md)**
 
+Preferred source install with `uv`:
+
+```bash
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install -e ".[recommended]"
+```
+
+Fallback source install with `pip`:
+
+```bash
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[recommended]"
+```
+
 ### Cost Management
 
 | Setting | How |
@@ -293,10 +341,10 @@ traigent --help                              # Full command reference
 
 | Problem | Fix |
 |---------|-----|
-| `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
+| `ModuleNotFoundError` | `uv pip install -e ".[recommended]"` or check venv is activated |
 | 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
 | Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
-| Permission errors | Create a fresh venv |
+| Permission errors | Create a fresh `uv` venv and reinstall dependencies |
 
 </details>
 
@@ -305,7 +353,8 @@ traigent --help                              # Full command reference
 ## 🛠️ Development
 
 ```bash
-pip install -e ".[all,dev]"              # Install with dev dependencies
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install -e ".[all,dev]"           # Install with dev dependencies
 TRAIGENT_MOCK_LLM=true pytest            # Run tests
 make format && make lint                 # Format and lint
 ```
