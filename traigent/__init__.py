@@ -31,6 +31,8 @@ Example:
     >>> best_config = my_function.get_best_config()
 """
 
+# ruff: noqa: E402
+
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
 from __future__ import annotations
@@ -38,6 +40,11 @@ from __future__ import annotations
 import builtins
 import sys
 import warnings
+
+# Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
+)
 
 from traigent._version import get_version
 
@@ -161,11 +168,6 @@ from traigent.utils.validation import (
     validate_and_suggest,
 )
 from traigent.visualization.plots import PlotGenerator, create_quick_plot
-
-# Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
-warnings.filterwarnings(
-    "ignore", category=FutureWarning, module=r"instructor\.providers\.gemini"
-)
 
 
 def _is_missing_optional_module(

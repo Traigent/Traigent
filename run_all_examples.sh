@@ -91,8 +91,8 @@ fi
 
 # --- All examples (paths relative to repo root) ---
 declare -a ALL_EXAMPLES=(
-    # === hello.py (repo root) ===
-    "hello.py"
+    # === hello_world.py (repo root) ===
+    "hello_world.py"
 
     # === Core (12) ===
     "examples/core/rag-optimization/run.py"
