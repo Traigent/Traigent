@@ -817,5 +817,4 @@ Optional extension:
 ## Related Documentation
 
 - [Client Integration Guide](./hybrid-mode-client-guide.md) - Implementation patterns and examples
-- [Client Guide](./hybrid-mode-client-guide.md) - Flask and FastAPI inline examples
 - [TraigentService Wrapper](../traigent/wrapper/) - Decorator-based SDK for building services
