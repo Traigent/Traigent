@@ -393,7 +393,22 @@ class SessionOperations:
         except ValidationException:
             raise  # User input errors must propagate
 
-        except (TimeoutError, CloudServiceError, AuthenticationError, OSError) as exc:
+        except AuthenticationError as exc:
+            logger.debug(
+                "Backend auth failed for '%s': %s",
+                function_name,
+                exc,
+            )
+            fallback_id = self._create_local_fallback_session(
+                function_name, search_space, optimization_goal, metadata
+            )
+            return SessionCreationResult.fallback(
+                session_id=fallback_id,
+                reason=SessionCreationFailureReason.AUTH,
+                detail=str(exc)[:200],
+            )
+
+        except (TimeoutError, CloudServiceError, OSError) as exc:
             logger.debug(
                 "Error in create_session for function '%s': %s",
                 function_name,
