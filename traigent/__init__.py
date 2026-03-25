@@ -129,6 +129,16 @@ from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
+from traigent.core_metrics import CoreMetricsClient, CoreMetricsConfig
+from traigent.observability import ObservabilityClient, ObservabilityConfig
+from traigent.projects import ProjectManagementClient, ProjectManagementConfig
+from traigent.prompts import (
+    PromptManagementClient,
+    PromptManagementConfig,
+    PromptPlaygroundConfig,
+    PromptPlaygroundResult,
+    PromptPlaygroundTokenUsage,
+)
 from traigent.utils.callbacks import (
     LoggingCallback,
     ProgressBarCallback,
@@ -257,6 +267,17 @@ __all__ = [
     "OptimizationState",
     # Thread context helpers
     "copy_context_to_thread",
+    "CoreMetricsClient",
+    "CoreMetricsConfig",
+    "ObservabilityClient",
+    "ObservabilityConfig",
+    "ProjectManagementClient",
+    "ProjectManagementConfig",
+    "PromptManagementClient",
+    "PromptManagementConfig",
+    "PromptPlaygroundConfig",
+    "PromptPlaygroundResult",
+    "PromptPlaygroundTokenUsage",
     "TraigentMetadata",
     "is_traigent_metadata",
     # Exceptions and warnings
