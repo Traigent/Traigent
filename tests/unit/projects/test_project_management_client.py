@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from urllib import error
 
 import pytest
 
+from traigent.observability.decorators import _ObserveFactory
 from traigent.projects import ProjectManagementClient
+from traigent.projects.config import ProjectManagementConfig
 from traigent.utils.exceptions import AuthenticationError, ClientError
 
 
@@ -160,7 +163,11 @@ def test_project_management_client_crud_and_list() -> None:
     )
 
     assert calls[0] == ("GET", "?page=1&per_page=20&search=alp", None)
-    assert calls[1] == ("POST", "", {"name": "Alpha", "slug": "alpha", "description": None})
+    assert calls[1] == (
+        "POST",
+        "",
+        {"name": "Alpha", "slug": "alpha", "description": None},
+    )
     assert calls[2] == ("GET", "/project_alpha", None)
     assert calls[3] == ("PATCH", "/project_alpha", {"description": "Primary project"})
     assert calls[4] == ("GET", "/project_alpha/policies/rate-limits", None)
@@ -204,9 +211,13 @@ def test_project_management_client_validates_override_response_shape() -> None:
 
 
 def test_project_management_client_rejects_missing_data_payload() -> None:
-    client = ProjectManagementClient(request_sender=lambda *_args, **_kwargs: {"data": []})
+    client = ProjectManagementClient(
+        request_sender=lambda *_args, **_kwargs: {"data": []}
+    )
 
-    with pytest.raises(ClientError, match="Unexpected response structure for project list"):
+    with pytest.raises(
+        ClientError, match="Unexpected response structure for project list"
+    ):
         client.list_projects()
 
 
@@ -244,3 +255,49 @@ def test_project_management_client_maps_generic_http_failures(monkeypatch) -> No
 
     with pytest.raises(ClientError, match="status 409"):
         client.create_project(name="Alpha")
+
+
+def test_project_management_config_rejects_non_http_backend_origin() -> None:
+    with pytest.raises(ValueError, match="absolute http or https URL"):
+        ProjectManagementConfig(backend_origin="file:///tmp/backend")
+
+
+def test_project_management_client_rejects_invalid_internal_path() -> None:
+    client = ProjectManagementClient(
+        ProjectManagementConfig(backend_origin="https://backend.example")
+    )
+
+    with pytest.raises(ValueError, match="must start with '/' or '\\?'"):
+        client._build_request_url("projects")
+
+
+def test_observe_factory_exit_requires_active_context() -> None:
+    factory = _ObserveFactory(
+        name="example",
+        client=None,
+        observation_type="span",
+        metadata=None,
+        environment=None,
+        release=None,
+        tags=None,
+        redact_input=False,
+    )
+
+    with pytest.raises(RuntimeError, match="__exit__ called before __enter__"):
+        factory.__exit__(None, None, None)
+
+
+def test_observe_factory_async_exit_requires_active_context() -> None:
+    factory = _ObserveFactory(
+        name="example",
+        client=None,
+        observation_type="span",
+        metadata=None,
+        environment=None,
+        release=None,
+        tags=None,
+        redact_input=False,
+    )
+
+    with pytest.raises(RuntimeError, match="__exit__ called before __enter__"):
+        asyncio.run(factory.__aexit__(None, None, None))

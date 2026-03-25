@@ -213,6 +213,13 @@ class _ObserveFactory:
         self.redact_input = redact_input
         self._context: ObserveContext | None = None
 
+    def _require_context(self) -> ObserveContext:
+        if self._context is None:
+            raise RuntimeError(
+                "observe context has not been entered; __exit__ called before __enter__"
+            )
+        return self._context
+
     def __call__(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
 
@@ -280,8 +287,7 @@ class _ObserveFactory:
         return self._context.__enter__()
 
     def __exit__(self, exc_type, exc, exc_tb) -> bool:
-        assert self._context is not None
-        return self._context.__exit__(exc_type, exc, exc_tb)
+        return self._require_context().__exit__(exc_type, exc, exc_tb)
 
     async def __aenter__(self) -> ObserveContext:
         self._context = ObserveContext(
@@ -297,8 +303,7 @@ class _ObserveFactory:
         return await self._context.__aenter__()
 
     async def __aexit__(self, exc_type, exc, exc_tb) -> bool:
-        assert self._context is not None
-        return await self._context.__aexit__(exc_type, exc, exc_tb)
+        return await self._require_context().__aexit__(exc_type, exc, exc_tb)
 
 
 def observe(
