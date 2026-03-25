@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import io
 import json
 import threading
 import uuid
@@ -539,7 +540,7 @@ class ObservabilityClient:
                     )
                 return self._parse_ingest_response(body)
         except error.HTTPError as exc:
-            body = exc.read().decode("utf-8") if exc.fp else ""
+            body = self._read_http_error_body(exc)
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability ingest rejected with status {exc.code}"
@@ -555,8 +556,8 @@ class ObservabilityClient:
             ) from exc
 
     def _log_ingest_warnings(self, body: str) -> None:
-        parsed = self._parse_ingest_response(body)
-        self._log_ingest_warnings_from_data(parsed)
+        payload = self._decode_ingest_response(body)
+        self._log_ingest_warnings_from_data(payload)
 
     def _log_ingest_warnings_from_data(self, payload: dict[str, Any] | None) -> None:
         warnings = (payload or {}).get("warnings")
@@ -567,6 +568,11 @@ class ObservabilityClient:
             logger.warning("Observability ingest warning: %s", warning)
 
     def _parse_ingest_response(self, body: str) -> dict[str, Any] | None:
+        data = self._decode_ingest_response(body)
+        self._log_ingest_warnings_from_data(data)
+        return data
+
+    def _decode_ingest_response(self, body: str) -> dict[str, Any] | None:
         if not body:
             return None
         try:
@@ -576,7 +582,6 @@ class ObservabilityClient:
         data = parsed.get("data")
         if not isinstance(data, dict):
             return None
-        self._log_ingest_warnings_from_data(data)
         return data
 
     def _request_json(
@@ -624,7 +629,7 @@ class ObservabilityClient:
                     )
                 return parsed
         except error.HTTPError as exc:
-            body = exc.read().decode("utf-8") if exc.fp else ""
+            body = self._read_http_error_body(exc)
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability request rejected with status {exc.code}"
@@ -679,6 +684,19 @@ class ObservabilityClient:
         except (TypeError, ValueError) as exc:
             raise ClientError(f"{field_name} must be JSON serializable") from exc
         return value
+
+    def _read_http_error_body(self, exc: error.HTTPError) -> str:
+        try:
+            if exc.fp is None:
+                return ""
+            body = exc.read()
+            if isinstance(body, bytes):
+                return body.decode("utf-8")
+            if isinstance(body, io.BytesIO):
+                return body.getvalue().decode("utf-8")
+            return str(body)
+        finally:
+            exc.close()
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import logging
 from datetime import datetime, timezone
+from urllib import error
 
 import pytest
 
@@ -688,4 +690,52 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
 
     client.close()
 
-    assert "Observability ingest warning" in caplog.text
+    assert caplog.text.count("Observability ingest warning") == 1
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args", "message"),
+    [
+        ("_post_batch_sync", ([{"id": "trace_sdk"}],), "Observability ingest failed with status 500"),
+        ("_request_json_sync", ("GET", "/traces/trace_sdk", None), "Observability request failed with status 500"),
+    ],
+)
+def test_observability_client_closes_http_errors(monkeypatch, method_name, args, message):
+    http_error = error.HTTPError(
+        url="http://localhost:5000",
+        code=500,
+        msg="boom",
+        hdrs=None,
+        fp=io.BytesIO(b'{"error":"boom"}'),
+    )
+    close_calls = {"count": 0}
+    original_close = http_error.close
+
+    def close() -> None:
+        close_calls["count"] += 1
+        original_close()
+
+    http_error.close = close
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+    )
+
+    monkeypatch.setattr(
+        "traigent.observability.client.request.urlopen",
+        lambda *call_args, **call_kwargs: (_ for _ in ()).throw(http_error),
+    )
+
+    with pytest.raises(ClientError, match=message):
+        getattr(client, method_name)(*args)
+
+    client.close()
+
+    assert close_calls["count"] == 1
