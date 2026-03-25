@@ -357,7 +357,7 @@ Measure output quality with any metrics you need:
 
 ### Flask Example
 
-See the complete [Flask demo](../examples/experimental/hybrid_api_demo/app.py):
+Complete Flask example:
 
 ```python
 from flask import Flask, jsonify, request
@@ -517,7 +517,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 ### Using the Test Client
 
-See the [test client](../examples/experimental/hybrid_api_demo/test_mastra_js_api.py) for a complete testing script.
+See the Flask example above for a complete reference implementation.
 
 ### CDN/WAF Troubleshooting (403 on Python requests)
 
@@ -873,5 +873,5 @@ Backend tracking unavailable ... Results will be saved locally
 ## Related Documentation
 
 - [API Contract](./hybrid-mode-api-contract.md) - Detailed endpoint specifications
-- [Flask Demo](../examples/experimental/hybrid_api_demo/) - Working example implementation
+- See inline Flask and FastAPI examples in this guide
 - [TraigentService Wrapper](../traigent/wrapper/) - Decorator-based SDK

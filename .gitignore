@@ -473,9 +473,6 @@ test_redact*.py
 test_timeout*.py
 nvidia/
 
-# Client-specific examples (not part of SDK)
-examples/bazak/
-
 # LaTeX build artifacts
 *.aux
 *.out
