@@ -71,6 +71,7 @@ def test_prompt_management_client_lists_and_gets_prompts():
     detail = client.get_prompt("support/welcome")
 
     assert calls[0] == ("GET", "?page=1&per_page=20&search=support&prompt_type=text&label=production", None)
+    assert calls[1] == ("GET", "/support%2Fwelcome", None)
     assert prompt_list.items[0].name == "support/welcome"
     assert detail.versions[0].prompt_text == "Hello {{ customer_name }}"
 
@@ -140,7 +141,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     assert calls[0][2]["prompt_type"] == "chat"
     assert calls[1] == (
         "POST",
-        "/chat/support-agent/versions",
+        "/chat%2Fsupport-agent/versions",
         {
             "config": {"model": "gpt-4.1"},
             "commit_message": "Premium support variant",
@@ -155,7 +156,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     )
     assert calls[2] == (
         "PATCH",
-        "/chat/support-agent/labels",
+        "/chat%2Fsupport-agent/labels",
         {"labels": {"production": 1, "staging": 2}},
     )
     assert created.prompt_type == PromptType.CHAT
@@ -167,7 +168,7 @@ def test_prompt_management_client_resolves_prompt_versions():
     def request_sender(method: str, path: str, payload: dict | None):
         assert method == "GET"
         assert payload is None
-        assert path == "/ops/runbook/resolve?version=2"
+        assert path == "/ops%2Frunbook/resolve?version=2"
         return {
             "data": {
                 "name": "ops/runbook",
@@ -201,7 +202,7 @@ def test_prompt_management_client_fetches_prompt_analytics():
     def request_sender(method: str, path: str, payload: dict | None):
         assert method == "GET"
         assert payload is None
-        assert path == "/support/welcome/analytics?recent_limit=10&recent_page=2"
+        assert path == "/support%2Fwelcome/analytics?recent_limit=10&recent_page=2"
         return {
             "data": {
                 "prompt_id": "prompt_1",
@@ -326,7 +327,7 @@ def test_prompt_management_client_runs_playground():
     assert calls == [
         (
             "POST",
-            "/support/welcome/playground/run",
+            "/support%2Fwelcome/playground/run",
             {
                 "variables": {"customer_name": "Ada"},
                 "dry_run": False,
@@ -344,6 +345,47 @@ def test_prompt_management_client_runs_playground():
     assert result.trace_id == "trace_123"
     assert result.token_usage is not None
     assert result.token_usage.total_tokens == 15
+
+
+def test_prompt_management_client_encodes_route_like_prompt_names():
+    calls: list[str] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        assert method == "GET"
+        assert payload is None
+        calls.append(path)
+        return {
+            "data": {
+                "id": "prompt_analytics",
+                "name": "ops/analytics",
+                "prompt_type": "text",
+                "description": "Route-like prompt name",
+                "latest_version": 1,
+                "version_count": 1,
+                "labels": {"latest": 1},
+                "tags": [],
+                "versions": [
+                    {
+                        "id": "version_1",
+                        "version": 1,
+                        "prompt_type": "text",
+                        "prompt_text": "Investigate {{ incident_id }}",
+                        "chat_messages": None,
+                        "config": {"model": "gpt-4.1-mini"},
+                        "commit_message": "Initial",
+                        "variable_names": ["incident_id"],
+                        "labels": ["latest"],
+                    }
+                ],
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+
+    detail = client.get_prompt("ops/analytics")
+
+    assert calls == ["/ops%2Fanalytics"]
+    assert detail.name == "ops/analytics"
 
 
 def test_prompt_management_client_raises_authentication_error_on_401(monkeypatch):

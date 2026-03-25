@@ -45,6 +45,40 @@ The SDK exposes typed DTOs for the playground flow:
 
 These are exported from both `traigent.prompts` and top-level `traigent`.
 
+## Cross-Surface Demo
+
+For a compact SDK demo, chain the three parity surfaces together:
+
+1. Use `PromptManagementClient.run_playground(...)` to execute a stored prompt version.
+2. Read the returned `trace_id` and fetch trace detail from `ObservabilityClient`.
+3. Fetch the project observability summary dashboard from `CoreMetricsClient`.
+
+This shows that prompt execution, observability trace retrieval, and project-scoped analytics all line up across the SDK surface.
+
+```python
+from traigent import CoreMetricsClient, ObservabilityClient, PromptManagementClient
+
+prompts = PromptManagementClient()
+observability = ObservabilityClient()
+metrics = CoreMetricsClient()
+
+result = prompts.run_playground(
+    "support/welcome",
+    version=2,
+    variables={"customer_name": "Ada"},
+    provider="openai",
+    model="gpt-4.1-mini",
+    dry_run=False,
+)
+
+trace = observability.get_trace(result.trace_id)
+dashboard = metrics.get_observability_summary_dashboard(days=7, limit=3)
+
+print(result.output)
+print(trace.name)
+print(dashboard.summary_cards.traces_in_range)
+```
+
 ## Verification
 
 Validated by:

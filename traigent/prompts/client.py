@@ -267,16 +267,8 @@ class PromptManagementClient:
             with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
-                status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
-                parsed = json.loads(body) if body else {}
-                if status_code >= 400:
-                    raise ClientError(
-                        f"Prompt request failed with status {status_code}",
-                        status_code=status_code,
-                        details={"body": body},
-                    )
-                return parsed
+                return json.loads(body) if body else {}
         except error.HTTPError as exc:
             try:
                 body = exc.read().decode("utf-8") if exc.fp else ""
@@ -313,7 +305,7 @@ class PromptManagementClient:
         return "?" + urlencode(serialized)
 
     def _quote_name(self, name: str) -> str:
-        return quote(name, safe="/")
+        return quote(name, safe="")
 
     def _serialize_message(self, message: ChatPromptMessage | dict) -> dict:
         if isinstance(message, ChatPromptMessage):
