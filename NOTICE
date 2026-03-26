@@ -18,3 +18,17 @@ This project includes code from the following third-party libraries:
 - Anthropic Python SDK (MIT License) - https://github.com/anthropics/anthropic-sdk-python
 
 For full license texts of dependencies, see their respective repositories.
+
+================================================================================
+
+Compatibility notice:
+
+- Traigent SDK includes an optional interoperability module at
+  `traigent.integrations.langfuse` for reading data from Langfuse APIs and SDKs.
+- This integration is independently implemented by Traigent. It is not
+  affiliated with, endorsed by, or sponsored by Langfuse GmbH.
+- "Langfuse" and related marks are the property of their respective owner.
+- Traigent SDK does not claim any rights in Langfuse branding, and users remain
+  responsible for complying with the applicable Langfuse open-source licenses,
+  enterprise-license boundaries, and hosted-service terms when they connect to
+  Langfuse software or services.
