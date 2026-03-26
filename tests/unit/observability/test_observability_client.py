@@ -7,6 +7,7 @@ from urllib import error
 
 import pytest
 
+from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
     ObservabilityClient,
     ObservabilityConfig,
@@ -165,6 +166,113 @@ def test_observe_decorator_creates_nested_observations():
     assert root_observation["name"] == "outer-operation"
     assert root_observation["children"][0]["name"] == "inner-operation"
     assert root_observation["children"][0]["type"] == "tool_call"
+
+
+def test_observe_decorator_enriches_trace_metadata_for_trial_runs():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe("optimized-call", client=client, metadata={"custom_label": "golden-path"})
+    def optimized_call() -> str:
+        return "ok"
+
+    with ConfigurationContext(
+        {
+            "model": "gpt-4o",
+            "temperature": 0.1,
+            "api_key": "top-secret",  # pragma: allowlist secret
+            "_optuna_trial_id": 99,
+        }
+    ):
+        with TrialContext(
+            "trial-7",
+            metadata={
+                "optimization_id": "opt-1",
+                "experiment_id": "exp-1",
+                "experiment_run_id": "run-1",
+                "config_snapshot": {
+                    "model": "gpt-4o",
+                    "temperature": 0.1,
+                    "api_key": "top-secret",  # pragma: allowlist secret
+                },
+            },
+        ):
+            assert optimized_call() == "ok"
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    assert trace_payload["metadata"]["custom_label"] == "golden-path"
+    assert trace_payload["metadata"]["traigent_active_config"] == {
+        "model": "gpt-4o",
+        "temperature": 0.1,
+        "api_key": "[REDACTED]",
+    }
+    assert trace_payload["metadata"]["traigent_optimization_context"] == {
+        "trial_id": "trial-7",
+        "optimization_id": "opt-1",
+        "experiment_id": "exp-1",
+        "experiment_run_id": "run-1",
+        "config_source": "trial-config",
+    }
+    assert trace_payload["observations"][0]["metadata"]["traigent_active_config"] == {
+        "model": "gpt-4o",
+        "temperature": 0.1,
+        "api_key": "[REDACTED]",
+    }
+
+
+def test_observe_decorator_enriches_trace_metadata_for_direct_runs():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe("post-best-config-call", client=client)
+    def post_best_config_call() -> str:
+        return "done"
+
+    with ConfigurationContext({"model": "gpt-4o-mini", "temperature": 0.7}):
+        assert post_best_config_call() == "done"
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    assert trace_payload["metadata"]["traigent_active_config"] == {
+        "model": "gpt-4o-mini",
+        "temperature": 0.7,
+    }
+    assert trace_payload["metadata"]["traigent_optimization_context"] == {
+        "config_source": "applied-config"
+    }
 
 
 def test_observe_decorator_can_redact_inputs():

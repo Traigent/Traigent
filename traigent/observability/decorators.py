@@ -10,11 +10,29 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
 
+from traigent.config.context import (
+    applied_config_context,
+    config_context,
+    get_trial_context,
+)
 from traigent.observability.client import ObservabilityClient
-from traigent.observability.dtos import ObservationType, utc_now
+from traigent.observability.dtos import ObservationType, to_jsonable, utc_now
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_SENSITIVE_KEY_FRAGMENTS = (
+    "api_key",
+    "apikey",
+    "auth",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+)
+_ACTIVE_CONFIG_METADATA_KEY = "traigent_active_config"
+_OPTIMIZATION_CONTEXT_METADATA_KEY = "traigent_optimization_context"
 
 _current_client: contextvars.ContextVar[ObservabilityClient | None] = (
     contextvars.ContextVar(
@@ -38,6 +56,90 @@ _default_client_lock = threading.Lock()
 
 def _redacted_input_payload() -> dict[str, bool]:
     return {"redacted": True}
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS)
+
+
+def _coerce_mapping_payload(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        candidate = to_dict()
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def _sanitize_metadata_value(value: Any, *, key: str | None = None) -> Any:
+    if key is not None and _is_sensitive_key(key):
+        return "[REDACTED]"
+
+    mapping = _coerce_mapping_payload(value)
+    if mapping is not None:
+        sanitized: dict[str, Any] = {}
+        for raw_key, raw_value in mapping.items():
+            normalized_key = str(raw_key)
+            if normalized_key.startswith("_"):
+                continue
+            sanitized_value = _sanitize_metadata_value(raw_value, key=normalized_key)
+            sanitized[normalized_key] = sanitized_value
+        return sanitized
+
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_metadata_value(item) for item in value]
+
+    return to_jsonable(value)
+
+
+def _build_observe_enrichment_metadata() -> dict[str, Any]:
+    raw_applied_config = applied_config_context.get(None)
+    raw_active_config = config_context.get(None)
+    active_config_source: str | None = None
+
+    active_config = _sanitize_metadata_value(raw_applied_config)
+    if isinstance(active_config, dict) and active_config:
+        active_config_source = "applied-config"
+    else:
+        fallback_config = _sanitize_metadata_value(raw_active_config)
+        if isinstance(fallback_config, dict) and fallback_config:
+            active_config = fallback_config
+            active_config_source = "context-config"
+        else:
+            active_config = None
+
+    raw_trial_context = get_trial_context()
+    optimization_context: dict[str, Any] = {}
+    if isinstance(raw_trial_context, dict):
+        for raw_key, raw_value in raw_trial_context.items():
+            normalized_key = str(raw_key)
+            if normalized_key.startswith("_") or raw_value is None:
+                continue
+            optimization_context[normalized_key] = _sanitize_metadata_value(
+                raw_value, key=normalized_key
+            )
+
+    if isinstance(active_config, dict) and active_config:
+        config_snapshot = optimization_context.get("config_snapshot")
+        if config_snapshot == active_config:
+            optimization_context.pop("config_snapshot", None)
+
+    if raw_trial_context is not None:
+        optimization_context["config_source"] = "trial-config"
+    elif active_config_source is not None:
+        optimization_context["config_source"] = active_config_source
+
+    enriched: dict[str, Any] = {}
+    if isinstance(active_config, dict) and active_config:
+        enriched[_ACTIVE_CONFIG_METADATA_KEY] = active_config
+    if optimization_context:
+        enriched[_OPTIMIZATION_CONTEXT_METADATA_KEY] = optimization_context
+    return enriched
 
 
 def get_default_observability_client() -> ObservabilityClient:
@@ -94,6 +196,7 @@ class ObserveContext:
         self._client_token: contextvars.Token[ObservabilityClient | None] | None = None
         self._finished = False
         self._result: Any = None
+        self._enriched_metadata = _build_observe_enrichment_metadata()
 
     def __enter__(self) -> ObserveContext:
         self._started_at = utc_now()
@@ -104,18 +207,23 @@ class ObserveContext:
 
         trace_id = _current_trace_id.get()
         if trace_id is None:
+            trace_metadata = {"source": "observe"}
+            trace_metadata.update(self.metadata)
+            trace_metadata.update(self._enriched_metadata)
             trace_id = client.start_trace(
                 self.name,
                 environment=self.environment,
                 release=self.release,
                 tags=self.tags,
-                metadata={"source": "observe"},
+                metadata=trace_metadata,
                 started_at=self._started_at,
                 input_data=self.input_data,
             )
             self._created_trace = True
             self._trace_token = _current_trace_id.set(trace_id)
 
+        observation_metadata = dict(self.metadata)
+        observation_metadata.update(self._enriched_metadata)
         stack = _current_observation_stack.get()
         parent_observation_id = stack[-1] if stack else None
         self._observation_id = client.record_observation(
@@ -127,7 +235,7 @@ class ObserveContext:
             status="running",
             started_at=self._started_at,
             input_data=self.input_data,
-            metadata=self.metadata,
+            metadata=observation_metadata,
         )
         self._trace_id = trace_id
         self._stack_token = _current_observation_stack.set(
@@ -156,6 +264,7 @@ class ObserveContext:
         ended_at = utc_now()
         status = "failed" if error is not None else "completed"
         metadata = dict(self.metadata)
+        metadata.update(self._enriched_metadata)
         if error is not None:
             metadata["error_type"] = type(error).__name__
             metadata["error_message"] = str(error)
