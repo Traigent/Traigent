@@ -41,7 +41,7 @@ dependencies = [
     "jsonschema>=4.0.0",
     "cryptography>=46.0.5",  # CVE-2026-26007 fix
     "backoff>=2.2.0",
-    "litellm>=1.0.0",
+    "litellm>=1.0.0,<1.82.7",
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
