@@ -1,19 +1,18 @@
 """Find the best model and temperature for your task — in one decorator.
 
-No API keys needed — mock mode is on by default and simulates LLM
-responses so you can see the optimization flow instantly.
-To use real LLMs: TRAIGENT_MOCK_LLM=false python hello_world.py
+No API keys needed — runs in mock mode and simulates LLM responses
+so you can see the optimization flow instantly.
+For a real run with actual LLM calls, see walkthrough/real/01_tuning_qa.py.
 """
 import asyncio
 import os
 import sys
 from pathlib import Path
 
-# Mock mode: simulates LLM calls so you don't need API keys.
-os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-# Provide a dummy key so ChatOpenAI can be constructed in mock mode.
+# hello_world.py always runs in mock mode — no API keys needed.
+# Hard-set so stale shell env vars don't silently break the quickstart.
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
-# Offline mode: no Traigent backend connection needed.
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 sys.path.append(str(Path(__file__).parent / "walkthrough"))
