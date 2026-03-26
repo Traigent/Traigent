@@ -1047,7 +1047,7 @@ def _compute_cost(
                 metrics.cost.total_cost,
             )
     else:
-        logger.warning(
+        logger.debug(
             "No token usage extracted for model %s; "
             "falling back to deprecated text-based cost calculation",
             model_name,
