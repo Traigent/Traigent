@@ -291,6 +291,76 @@ class TestBuildSuccessResult:
         assert comparability["per_metric_coverage"]["accuracy"]["present"] == 2
         assert comparability["warning_codes"] == []
 
+    def test_invalid_ranking_eligible_in_comparability_falls_back(self, eval_config):
+        """Invalid comparability metadata should not bypass synthesized safeguards."""
+        eval_result = Mock()
+        eval_result.metrics = {"accuracy": 0.85, "cost": 0.05}
+        eval_result.success_rate = 1.0
+        eval_result.has_errors = False
+        eval_result.outputs = ["output1", "output2"]
+        eval_result.example_results = []
+        eval_result.total_examples = 2
+        eval_result.comparability = {
+            "primary_objective": "accuracy",
+            "evaluation_mode": "evaluated",
+            "ranking_eligible": "yes",
+        }
+        eval_result.summary_stats = None
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=2,
+            total_cost=0.05,
+            optuna_trial_id=None,
+        )
+
+        comparability = result.metadata["comparability"]
+        assert comparability["primary_objective"] == "accuracy"
+        assert comparability["examples_with_primary_metric"] == 2
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["ranking_eligible"] is True
+
+    def test_invalid_ranking_eligible_in_summary_metadata_falls_back(
+        self, eval_config
+    ):
+        """Invalid nested summary comparability should not leak through unchanged."""
+        eval_result = Mock()
+        eval_result.metrics = {"accuracy": 0.85, "cost": 0.05}
+        eval_result.success_rate = 1.0
+        eval_result.has_errors = False
+        eval_result.outputs = ["output1", "output2"]
+        eval_result.example_results = []
+        eval_result.total_examples = 2
+        eval_result.comparability = None
+        eval_result.summary_stats = {
+            "metadata": {
+                "comparability": {
+                    "primary_objective": "accuracy",
+                    "evaluation_mode": "evaluated",
+                    "ranking_eligible": 1,
+                }
+            }
+        }
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=2,
+            total_cost=0.05,
+            optuna_trial_id=None,
+        )
+
+        comparability = result.metadata["comparability"]
+        assert comparability["primary_objective"] == "accuracy"
+        assert comparability["examples_with_primary_metric"] == 2
+        assert comparability["coverage_ratio"] == pytest.approx(1.0)
+        assert comparability["ranking_eligible"] is True
+
 
 class TestBuildPrunedResult:
     """Test build_pruned_result function."""

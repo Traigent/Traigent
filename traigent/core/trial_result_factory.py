@@ -257,19 +257,43 @@ def _set_metric_if_convertible(
 
 def _extract_success_comparability(eval_result: Any) -> dict[str, Any]:
     """Resolve comparability metadata from evaluator output or fallback synthesis."""
-    comparability_payload = getattr(eval_result, "comparability", None)
-    if isinstance(comparability_payload, dict):
+    comparability_payload = _validated_comparability_payload(
+        getattr(eval_result, "comparability", None)
+    )
+    if comparability_payload is not None:
         return comparability_payload
 
     summary_stats = getattr(eval_result, "summary_stats", None)
     if isinstance(summary_stats, dict):
         metadata = summary_stats.get("metadata")
         if isinstance(metadata, dict):
-            summary_comp = metadata.get("comparability")
-            if isinstance(summary_comp, dict):
+            summary_comp = _validated_comparability_payload(
+                metadata.get("comparability")
+            )
+            if summary_comp is not None:
                 return summary_comp
 
     return _build_fallback_comparability(eval_result)
+
+
+def _validated_comparability_payload(
+    comparability_payload: Any,
+) -> dict[str, Any] | None:
+    """Return comparability payloads only when ranking_eligible is absent or boolean."""
+    if not isinstance(comparability_payload, dict):
+        return None
+
+    ranking_eligible = comparability_payload.get("ranking_eligible")
+    if "ranking_eligible" in comparability_payload and not isinstance(
+        ranking_eligible, bool
+    ):
+        logger.warning(
+            "Ignoring comparability payload with non-boolean ranking_eligible: %r",
+            ranking_eligible,
+        )
+        return None
+
+    return comparability_payload
 
 
 def build_success_result(
