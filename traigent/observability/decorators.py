@@ -316,13 +316,13 @@ class _ObserveFactory:
         client: ObservabilityClient | None,
         observation_type: ObservationType | str,
         metadata: dict[str, Any] | None,
-        session_id: str | None,
-        user_id: str | None,
-        custom_trace_id: str | None,
-        environment: str | None,
-        release: str | None,
-        tags: list[str] | None,
-        redact_input: bool,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        custom_trace_id: str | None = None,
+        environment: str | None = None,
+        release: str | None = None,
+        tags: list[str] | None = None,
+        redact_input: bool = False,
     ) -> None:
         self.name = name
         self.client = client

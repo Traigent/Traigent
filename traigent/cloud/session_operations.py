@@ -351,7 +351,7 @@ class SessionOperations:
                         >= self.client._max_active_sessions
                     ):
                         oldest_session_id = None
-                        oldest_time = datetime.max
+                        oldest_time = datetime.max.replace(tzinfo=UTC)
 
                         for sid, sess in list(self.client._active_sessions.items()):
                             if (
