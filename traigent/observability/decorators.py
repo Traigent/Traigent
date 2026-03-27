@@ -168,6 +168,9 @@ class ObserveContext:
         observation_type: ObservationType | str = ObservationType.SPAN,
         input_data: Any = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        custom_trace_id: str | None = None,
         environment: str | None = None,
         release: str | None = None,
         tags: list[str] | None = None,
@@ -182,6 +185,9 @@ class ObserveContext:
         )
         self.input_data = input_data
         self.metadata = dict(metadata or {})
+        self.session_id = session_id
+        self.user_id = user_id
+        self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
         self.tags = list(tags or [])
@@ -212,12 +218,15 @@ class ObserveContext:
             trace_metadata.update(self._enriched_metadata)
             trace_id = client.start_trace(
                 self.name,
+                session_id=self.session_id,
+                user_id=self.user_id,
                 environment=self.environment,
                 release=self.release,
                 tags=self.tags,
                 metadata=trace_metadata,
                 started_at=self._started_at,
                 input_data=self.input_data,
+                custom_trace_id=self.custom_trace_id,
             )
             self._created_trace = True
             self._trace_token = _current_trace_id.set(trace_id)
@@ -307,6 +316,9 @@ class _ObserveFactory:
         client: ObservabilityClient | None,
         observation_type: ObservationType | str,
         metadata: dict[str, Any] | None,
+        session_id: str | None,
+        user_id: str | None,
+        custom_trace_id: str | None,
         environment: str | None,
         release: str | None,
         tags: list[str] | None,
@@ -316,6 +328,9 @@ class _ObserveFactory:
         self.client = client
         self.observation_type = observation_type
         self.metadata = metadata
+        self.session_id = session_id
+        self.user_id = user_id
+        self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
         self.tags = tags
@@ -347,6 +362,9 @@ class _ObserveFactory:
                     observation_type=self.observation_type,
                     input_data=input_data,
                     metadata=self.metadata,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                    custom_trace_id=self.custom_trace_id,
                     environment=self.environment,
                     release=self.release,
                     tags=self.tags,
@@ -371,6 +389,9 @@ class _ObserveFactory:
                 observation_type=self.observation_type,
                 input_data=input_data,
                 metadata=self.metadata,
+                session_id=self.session_id,
+                user_id=self.user_id,
+                custom_trace_id=self.custom_trace_id,
                 environment=self.environment,
                 release=self.release,
                 tags=self.tags,
@@ -388,6 +409,9 @@ class _ObserveFactory:
             client=self.client,
             observation_type=self.observation_type,
             metadata=self.metadata,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
             tags=self.tags,
@@ -404,6 +428,9 @@ class _ObserveFactory:
             client=self.client,
             observation_type=self.observation_type,
             metadata=self.metadata,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
             tags=self.tags,
@@ -421,6 +448,9 @@ def observe(
     client: ObservabilityClient | None = None,
     observation_type: ObservationType | str = ObservationType.SPAN,
     metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    custom_trace_id: str | None = None,
     environment: str | None = None,
     release: str | None = None,
     tags: list[str] | None = None,
@@ -441,6 +471,9 @@ def observe(
         client=client,
         observation_type=observation_type,
         metadata=metadata,
+        session_id=session_id,
+        user_id=user_id,
+        custom_trace_id=custom_trace_id,
         environment=environment,
         release=release,
         tags=tags,

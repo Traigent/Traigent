@@ -275,6 +275,45 @@ def test_observe_decorator_enriches_trace_metadata_for_direct_runs():
     }
 
 
+def test_observe_decorator_can_set_root_trace_identifiers():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    @observe(
+        "identified-call",
+        client=client,
+        session_id="session-demo-1",
+        user_id="guided-demo-user",
+        custom_trace_id="guided-demo:baseline",
+    )
+    def identified_call() -> str:
+        return "ok"
+
+    assert identified_call() == "ok"
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    trace_payload = sent_batches[-1][-1]
+    assert trace_payload["session_id"] == "session-demo-1"
+    assert trace_payload["user_id"] == "guided-demo-user"
+    assert trace_payload["custom_trace_id"] == "guided-demo:baseline"
+
+
 def test_observe_decorator_can_redact_inputs():
     sent_batches: list[list[dict]] = []
 
