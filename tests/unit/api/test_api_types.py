@@ -494,6 +494,7 @@ class TestOptimizationResult:
         assert "accuracy" in df.columns  # From metrics
         assert "duration" in df.columns
         assert "timestamp" in df.columns
+        assert "avg_response_time_ms" in df.columns
 
     def test_extract_response_time_from_mapping(self):
         """_extract_response_time should prioritise direct mapping fields."""

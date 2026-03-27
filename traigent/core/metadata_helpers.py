@@ -338,6 +338,24 @@ def _calculate_fallback_score(example_result: Any) -> float | None:
     return None
 
 
+def _add_execution_time_metrics(
+    metrics_dict: dict[str, Any], example_result: Any
+) -> None:
+    """Add explicit and legacy timing metrics for compatibility.
+
+    `execution_time` on example results is tracked internally in seconds. The
+    canonical optimization payload key is `response_time_ms`, but the legacy
+    `response_time` key remains for one compatibility window.
+    """
+    execution_time = getattr(example_result, "execution_time", None)
+    if execution_time is None or not isinstance(execution_time, (int, float)):
+        return
+
+    response_time_seconds = float(execution_time)
+    metrics_dict["response_time_ms"] = response_time_seconds * 1000.0
+    metrics_dict["response_time"] = response_time_seconds
+
+
 def _build_single_measure_full(
     example_result: Any,
     idx: int,
@@ -363,9 +381,7 @@ def _build_single_measure_full(
     if example_score is not None:
         metrics_dict["score"] = float(example_score)
 
-    # Add execution time
-    if hasattr(example_result, "execution_time"):
-        metrics_dict["response_time"] = example_result.execution_time
+    _add_execution_time_metrics(metrics_dict, example_result)
 
     measure_result = {"example_id": example_id, "metrics": metrics_dict}
     _validate_measure_dict(measure_result, idx)
@@ -438,9 +454,7 @@ def _build_single_measure_privacy(
     if example_score is not None:
         metrics_dict["score"] = float(example_score)
 
-    # Add execution time
-    if hasattr(example_result, "execution_time"):
-        metrics_dict["response_time"] = example_result.execution_time
+    _add_execution_time_metrics(metrics_dict, example_result)
 
     # Add privacy-safe token and cost metrics
     if eval_metrics:
@@ -462,11 +476,11 @@ def _build_measures_privacy(
     metrics are in a 'metrics' sub-object:
         {
             "example_id": "ex_a3f4b2c8_0",
-            "metrics": {"score": 0.85, "response_time": 1.2, ...}
+            "metrics": {"score": 0.85, "response_time_ms": 1200.0, ...}
         }
 
     Only includes in metrics:
-    - Score, response time, tokens, and cost metrics
+    - Score, explicit response_time_ms, legacy response_time, tokens, and cost metrics
 
     Args:
         example_results: List of example evaluation results

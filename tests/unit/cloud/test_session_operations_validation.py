@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -41,6 +41,14 @@ class FakeAuth:
         return {}
 
 
+class FakeAuthManager:
+    def __init__(self) -> None:
+        self.auth = FakeAuth()
+
+    def has_api_key(self) -> bool:
+        return True
+
+
 class FakeClient:
     def __init__(self, lock: TrackingLock | None = None) -> None:
         self._active_sessions_lock = lock or TrackingLock()
@@ -48,10 +56,16 @@ class FakeClient:
         self._max_active_sessions = 5
         self.session_bridge = FakeSessionBridge()
         self.backend_config = SimpleNamespace(api_base_url=None, backend_base_url=None)
-        self.auth_manager = SimpleNamespace(auth=FakeAuth())
+        self.auth_manager = FakeAuthManager()
+        self._register_security_session = MagicMock()
 
     async def _ensure_session(self):  # pragma: no cover - not used in validation tests
         return SimpleNamespace(post=AsyncMock(), get=AsyncMock())
+
+    async def _create_traigent_session_via_api(
+        self, _request
+    ):  # pragma: no cover - overridden in tests
+        return ("session-default", "experiment-default", "run-default")
 
     def _register_security_session(
         self, *args, **kwargs
@@ -103,3 +117,70 @@ async def test_finalize_session_uses_lock(monkeypatch):
 
     await ops.finalize_session("session-1")
     assert lock.enter_count == 1  # Lock entered exactly once for finalization
+
+
+def test_create_session_tracks_connected_session_locally(monkeypatch):
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        return ("session-123", "experiment-123", "run-123")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3, "dataset_size": 4},
+    )
+
+    assert result.backend_connected is True
+    assert result.session_id == "session-123"
+    assert client._register_security_session.called is True
+    tracked = client._active_sessions["session-123"]
+    assert tracked.max_trials == 3
+    assert tracked.metadata["experiment_id"] == "experiment-123"
+    assert tracked.metadata["experiment_run_id"] == "run-123"
+
+
+def test_create_session_prunes_completed_sessions_with_aware_timestamps(monkeypatch):
+    client = FakeClient()
+    client._max_active_sessions = 2
+    now = datetime.now(UTC)
+    client._active_sessions["completed-oldest"] = OptimizationSession(
+        session_id="completed-oldest",
+        function_name="demo-completed",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=1,
+        status=OptimizationSessionStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+    )
+    client._active_sessions["active-newer"] = OptimizationSession(
+        session_id="active-newer",
+        function_name="demo-active",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=1,
+        status=OptimizationSessionStatus.ACTIVE,
+        created_at=now,
+        updated_at=now,
+    )
+    ops = SessionOperations(client)
+
+    async def create_via_api(_request):
+        return ("session-123", "experiment-123", "run-123")
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    result = ops.create_session(
+        "demo-function",
+        {"model": ["gpt-4o"]},
+        metadata={"max_trials": 3, "dataset_size": 4},
+    )
+
+    assert result.backend_connected is True
+    assert "completed-oldest" not in client._active_sessions
+    assert "active-newer" in client._active_sessions
+    assert "session-123" in client._active_sessions

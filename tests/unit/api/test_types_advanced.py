@@ -284,6 +284,8 @@ class TestOptimizationResultResponseTime:
 
         avg = OptimizationResult._compute_average_response_time(metadata)
         assert avg == pytest.approx((1.5 + 2.0 + 1.8) / 3)
+        avg_ms = OptimizationResult._compute_average_response_time_ms(metadata)
+        assert avg_ms == pytest.approx(((1.5 + 2.0 + 1.8) / 3) * 1000.0)
 
     def test_compute_average_response_time_from_measures(self):
         """Test _compute_average_response_time with measures."""
@@ -296,6 +298,8 @@ class TestOptimizationResultResponseTime:
 
         avg = OptimizationResult._compute_average_response_time(metadata)
         assert avg == pytest.approx((0.5 + 0.8) / 2)
+        avg_ms = OptimizationResult._compute_average_response_time_ms(metadata)
+        assert avg_ms == pytest.approx(((0.5 + 0.8) / 2) * 1000.0)
 
     def test_compute_average_response_time_no_metadata(self):
         """Test _compute_average_response_time with no metadata."""
@@ -467,7 +471,7 @@ class TestOptimizationResultAggregatedDataframe:
         assert len(df) == 0
 
     def test_to_aggregated_dataframe_with_response_time(self):
-        """Test to_aggregated_dataframe includes avg_response_time."""
+        """Test to_aggregated_dataframe includes explicit and legacy response times."""
         result = OptimizationResult(
             trials=self.trials[:3],  # Only config A with response times
             best_config={"model": "a", "temp": 0.5},
@@ -484,7 +488,11 @@ class TestOptimizationResultAggregatedDataframe:
         df = result.to_aggregated_dataframe()
 
         assert "avg_response_time" in df.columns
+        assert "avg_response_time_ms" in df.columns
         assert df.iloc[0]["avg_response_time"] == pytest.approx((0.5 + 0.6 + 0.55) / 3)
+        assert df.iloc[0]["avg_response_time_ms"] == pytest.approx(
+            ((0.5 + 0.6 + 0.55) / 3) * 1000.0
+        )
 
 
 class TestOptimizationResultGetSummary:

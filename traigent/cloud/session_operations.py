@@ -334,6 +334,69 @@ class SessionOperations:
                     objectives=[optimization_goal],
                 )
 
+                self.client._register_security_session(
+                    session_id,
+                    None,
+                    {
+                        "function_name": function_name,
+                        "objectives": [optimization_goal],
+                        "experiment_id": experiment_id,
+                        "experiment_run_id": experiment_run_id,
+                    },
+                )
+
+                with self.client._active_sessions_lock:
+                    if (
+                        len(self.client._active_sessions)
+                        >= self.client._max_active_sessions
+                    ):
+                        oldest_session_id = None
+                        oldest_time = datetime.max.replace(tzinfo=UTC)
+
+                        for sid, sess in list(self.client._active_sessions.items()):
+                            if (
+                                sess.status
+                                in [
+                                    OptimizationSessionStatus.COMPLETED,
+                                    OptimizationSessionStatus.FAILED,
+                                ]
+                                and sess.created_at < oldest_time
+                            ):
+                                oldest_time = sess.created_at
+                                oldest_session_id = sid
+
+                        if oldest_session_id is None and self.client._active_sessions:
+                            oldest_session_id = min(
+                                self.client._active_sessions.keys(),
+                                key=lambda s: self.client._active_sessions[
+                                    s
+                                ].created_at,
+                            )
+
+                        if oldest_session_id:
+                            del self.client._active_sessions[oldest_session_id]
+                            logger.debug(
+                                "Removed session %s to stay within active session limit",
+                                oldest_session_id,
+                            )
+
+                    self.client._active_sessions[session_id] = OptimizationSession(
+                        session_id=session_id,
+                        function_name=function_name,
+                        configuration_space=search_space,
+                        objectives=[optimization_goal],
+                        max_trials=max_trials_from_metadata,
+                        status=OptimizationSessionStatus.ACTIVE,
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
+                        metadata={
+                            "mode": "session_api",
+                            "experiment_id": experiment_id,
+                            "experiment_run_id": experiment_run_id,
+                            **(metadata or {}),
+                        },
+                    )
+
                 logger.debug(
                     "Created backend tracking: session=%s, experiment=%s, run=%s",
                     session_id,

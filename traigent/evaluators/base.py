@@ -2597,14 +2597,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ]
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
-        # Calculate average response time
+        # Keep the explicit millisecond key canonical while preserving the
+        # legacy seconds-based field during the compatibility window.
         response_times = [
             r.execution_time
             for r in example_results
             if hasattr(r, "execution_time") and r.execution_time > 0
         ]
         if response_times:
-            aggregated["avg_response_time"] = sum(response_times) / len(response_times)
+            avg_response_time_seconds = sum(response_times) / len(response_times)
+            aggregated["avg_response_time_ms"] = avg_response_time_seconds * 1000.0
+            aggregated["avg_response_time"] = avg_response_time_seconds
 
         return aggregated
 

@@ -22,10 +22,9 @@ Quick Start:
 Direct Client Usage:
     from traigent.integrations.langfuse import LangfuseClient
 
-    client = LangfuseClient(
-        public_key="your_public_key",
-        secret_key="your_secret_key",
-    )
+    # Instantiate the client with your Langfuse credentials from the
+    # environment or another secure configuration source.
+    client = LangfuseClient(...)
 
     # Get metrics from a trace
     metrics = client.get_trace_metrics(trace_id="trace_123")
@@ -35,6 +34,14 @@ Direct Client Usage:
     # Convert to MeasuresDict format
     measures = metrics.to_measures_dict(prefix="langfuse_")
     # {"langfuse_total_cost": 0.006, "langfuse_grader_cost": 0.001, ...}
+
+Compatibility Note:
+    This package provides interoperability with Langfuse APIs and SDKs. It is
+    implemented independently by Traigent and is not affiliated with, endorsed
+    by, or sponsored by Langfuse GmbH. "Langfuse" is a trademark of its
+    respective owner. When connecting this integration to Langfuse software or
+    services, users remain responsible for complying with the applicable
+    Langfuse licenses and hosted-service terms.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS REQ-INT-008
