@@ -227,4 +227,4 @@ def _candidate_to_config_value(
         return suggested_range.kwargs
     if format == "ranges":
         return suggested_range.to_parameter_range()
-    raise ValueError("format must be 'normalized' or 'ranges', " f"got {format!r}")
+    raise ValueError(f"format must be 'normalized' or 'ranges', got {format!r}")

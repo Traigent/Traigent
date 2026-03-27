@@ -93,7 +93,9 @@ class DatasetConverter:
     async def __aenter__(self):
         """Async context manager entry."""
         if AIOHTTP_AVAILABLE:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60)
+            )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

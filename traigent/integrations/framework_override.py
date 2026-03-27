@@ -580,7 +580,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
             original_method = self._get_method(target_class, method_name)
         else:
             original_method = cast(
-                Callable[..., Any], target_class.__init__  # type: ignore[misc]
+                Callable[..., Any],
+                target_class.__init__,  # type: ignore[misc]
             )
 
         # Create the intelligent wrapper

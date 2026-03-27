@@ -436,7 +436,5 @@ def _check_range(tvar: TVARDefinition, value: int | float) -> str | None:
     """Return a range error string if value is outside the TVAR domain range."""
     range_spec = tvar.domain.get("range", [])
     if len(range_spec) >= 2 and (value < range_spec[0] or value > range_spec[1]):
-        return (
-            f"{tvar.name}: {value} not in range " f"[{range_spec[0]}, {range_spec[1]}]"
-        )
+        return f"{tvar.name}: {value} not in range [{range_spec[0]}, {range_spec[1]}]"
     return None

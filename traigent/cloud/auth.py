@@ -1328,7 +1328,9 @@ class AuthManager:
             ),
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as session:
             async with session.post(token_url, data=data) as response:
                 if response.status == 200:
                     return cast(dict[str, Any], await response.json())
@@ -1446,7 +1448,9 @@ class AuthManager:
         )
 
         async def perform_login():
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
                 async with session.post(
                     login_url,
                     json={

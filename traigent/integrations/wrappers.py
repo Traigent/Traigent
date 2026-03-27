@@ -140,8 +140,7 @@ def apply_parameter_overrides(
             and overridden_kwargs[framework_param] != new_value
         ):
             logger.debug(
-                "Overriding user-provided %s=%r with config value %r "
-                "(source key: %s)",
+                "Overriding user-provided %s=%r with config value %r (source key: %s)",
                 framework_param,
                 overridden_kwargs[framework_param],
                 new_value,

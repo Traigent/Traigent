@@ -49,6 +49,7 @@ from typing import Any, Literal, TypeVar
 from traigent.hybrid.protocol import (
     EstimatedTokensPerExample,
     EvaluationKwargDefinition,
+    ScalarValue,
 )
 from traigent.utils.logging import get_logger
 from traigent.wrapper.errors import BadRequestError, HybridAPIError
@@ -61,7 +62,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
 _ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
 _ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
-ScalarValue = str | int | float | bool
 
 
 def _estimated_tokens_from_env() -> EstimatedTokensPerExample | None:

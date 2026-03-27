@@ -221,24 +221,24 @@ class RefactoringValidator:
         report = f"""
 # 🔍 Refactoring Validation Report
 
-**Timestamp:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(latest['timestamp']))}
-**Overall Status:** {'✅ PASSED' if latest['overall_success'] else '❌ FAILED'}
+**Timestamp:** {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(latest["timestamp"]))}
+**Overall Status:** {"✅ PASSED" if latest["overall_success"] else "❌ FAILED"}
 
 ## 📊 Performance Metrics
-- Import Time: {latest['baseline'].get('import_time', 'N/A'):.4f}s
-- Instantiation Time: {latest['baseline'].get('instantiation_time', 'N/A'):.4f}s
+- Import Time: {latest["baseline"].get("import_time", "N/A"):.4f}s
+- Instantiation Time: {latest["baseline"].get("instantiation_time", "N/A"):.4f}s
 
 ## 🔗 API Compatibility
-- Public Classes: {len(latest['api_compatibility'].get('public_classes', []))}
-- Public Methods: {len(latest['api_compatibility'].get('public_methods', []))}
+- Public Classes: {len(latest["api_compatibility"].get("public_classes", []))}
+- Public Methods: {len(latest["api_compatibility"].get("public_methods", []))}
 
 ## ⚡ Performance Check
-- Regression Detected: {latest['performance'].get('regression_detected', 'N/A')}
-- Threshold: {latest['performance'].get('threshold', 'N/A')}
+- Regression Detected: {latest["performance"].get("regression_detected", "N/A")}
+- Threshold: {latest["performance"].get("threshold", "N/A")}
 
 ## 🧪 Functionality Tests
-- Tests Passed: {latest['functionality'].get('tests_passed', 0)}
-- Tests Failed: {latest['functionality'].get('tests_failed', 0)}
+- Tests Passed: {latest["functionality"].get("tests_passed", 0)}
+- Tests Failed: {latest["functionality"].get("tests_failed", 0)}
 """
 
         if latest["functionality"].get("errors"):

@@ -153,11 +153,14 @@ class WorkflowTraceManager:
                     # Auth rejections are expected in local/edge mode — log at DEBUG only
                     if _is_trace_ingestion_auth_rejection(response.error):
                         logger.debug(
-                            f"Trace ingestion auth rejected for config_run {config_run_id}"
+                            "Trace ingestion auth rejected for config_run %s",
+                            config_run_id,
                         )
                     else:
                         logger.warning(
-                            f"Failed to submit spans for config_run {config_run_id}: {response.error}"
+                            "Failed to submit spans for config_run %s: %s",
+                            config_run_id,
+                            response.error,
                         )
 
             if total_submitted > 0:

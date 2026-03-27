@@ -21,21 +21,37 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 **Quick Install (`uv` recommended):**
 
+macOS / Linux:
+
 ```bash
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 
-# Installs uv if it is not already available in your shell.
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-uv venv .venv
+uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv pip install -e ".[recommended]"
 ```
 
-Prefer `uv` for new environments. For Windows PowerShell steps and a `pip`
-fallback, see [Installation details](#installation).
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+  irm https://astral.sh/uv/install.ps1 | iex
+}
+
+uv venv --python 3.12 .venv
+.venv\Scripts\Activate.ps1
+uv pip install -e ".[recommended]"
+```
+
+Prefer `uv` for new environments. If you need a `pip` fallback instead, see
+[Installation details](#installation).
 
 **Try it now — no API keys needed:**
 
@@ -240,29 +256,10 @@ Preferred source install with `uv`:
 ```bash
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
-
-# Installs uv if it is not already available in your shell.
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv venv .venv
+uv venv --python 3.12 .venv
 source .venv/bin/activate
-uv pip install -e ".[recommended]"
-```
-
-Windows PowerShell with `uv`:
-
-```powershell
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-
-# Installs uv if it is not already available in this shell.
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-  irm https://astral.sh/uv/install.ps1 | iex
-  $env:PATH = "$HOME\\.local\\bin;$env:PATH"
-}
-
-uv venv .venv
-.venv\Scripts\Activate.ps1
 uv pip install -e ".[recommended]"
 ```
 
@@ -344,7 +341,7 @@ traigent --help                              # Full command reference
 
 | Problem | Fix |
 |---------|-----|
-| `ModuleNotFoundError` | `uv pip install -e ".[recommended]"` (or `pip install -e ".[recommended]"` in a pip-managed venv) |
+| `ModuleNotFoundError` | `uv pip install -e ".[recommended]"` or check venv is activated |
 | 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
 | Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
 | Permission errors | Create a fresh `uv` venv and reinstall dependencies |
@@ -356,7 +353,7 @@ traigent --help                              # Full command reference
 ## 🛠️ Development
 
 ```bash
-uv venv .venv && source .venv/bin/activate
+uv venv --python 3.12 .venv && source .venv/bin/activate
 uv pip install -e ".[all,dev]"           # Install with dev dependencies
 TRAIGENT_MOCK_LLM=true pytest            # Run tests
 make format && make lint                 # Format and lint

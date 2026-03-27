@@ -6,6 +6,46 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **DeepEval metric integration** - `DeepEvalScorer` bridges DeepEval metrics into Traigent's `metric_functions` system
+- **Rich results table** - Formatted ASCII table with box-drawing characters for optimization output
+- **Interactive vendor error handling** - Pause/resume prompts on rate limits and budget exhaustion
+- **Evaluation kwargs** - Configurable per-evaluation parameters for hybrid wrapper service
+- **Run labeling** - Optional `run_label` on `OptimizationResult` for experiment tagging
+- **Session creation circuit breaker** - Graceful fallback when backend is unreachable
+- **RAG walkthrough demo** - New `walkthrough/demo/optimize_rag.py` example
+
+### Changed
+- Default backend URL changed from `localhost:5000` to `https://portal.traigent.ai` - SDK devs should set `TRAIGENT_BACKEND_URL=http://localhost:5000` explicitly
+- `ExperimentRunDTO.status` default changed from `"pending"` to `"not_started"`
+- `HybridEvaluateRequest.config` type narrowed from `dict[str, Any]` to `dict[str, ScalarValue]` (`config` is now a deprecated alias for `kwargs`)
+- Keyring credential storage removed in favor of file-only storage (`~/.traigent/credentials.json` with `0600` permissions) to avoid macOS Keychain prompts
+- Schema validator package renamed from `optigen_schemas` to `traigent-schema`
+
+### Removed
+- **`benchmark_id` from `HybridExecuteRequest` and `HybridEvaluateRequest`** - Breaking change for external hybrid service consumers
+- **`benchmarks_revision` from hybrid request DTOs**
+- `hello.py` replaced by `hello_world.py`
+- `traigent/experimental/` package (simple_cloud platforms)
+- `traigent/conftest.py` (moved to `tests/conftest.py`)
+
+### Fixed
+- Credential file write TOCTOU race fixed with atomic `os.open()` + mode `0o600`
+- Credential file read now verifies and tightens permissions if overly permissive
+- Auth rejection log spam suppressed with instance-scoped deduplication at DEBUG level
+- `pydantic` added to core dependencies
+- `traigent-schema` made optional for public installs
+- Missing `aiohttp.ClientTimeout` added to `DatasetConverter` and OAuth2 sessions
+- Vendor error classification anchored to contextual patterns (`"status 429"` instead of bare `"429"`)
+- `_safe_copy` in DeepEval integration now raises `TypeError` instead of silently returning shared mutable instance
+- Silent `except Exception: pass` in `_finalize_optimization` replaced with debug logging
+- Dead methods removed from orchestrator (`_check_batch_vendor_failures`, `_maybe_pause_on_cost_limit`, `_handle_vendor_pause_in_loop`)
+
+### Breaking Changes
+- `create_session()` return type changed from `str` to `SessionCreationResult` dataclass
+- `HybridExecuteRequest` and `HybridEvaluateRequest` no longer accept `benchmark_id` parameter
+- Default backend URL is now cloud instead of localhost
+
 ## [0.10.0] - 2026-02-07
 
 ### Added

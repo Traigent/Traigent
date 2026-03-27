@@ -1505,7 +1505,7 @@ def _coerce_auto_detect_tvars_min_confidence(value: Any) -> str:
                 "['high', 'medium', 'low']."
             ) from exc
     raise TypeError(
-        "auto_detect_tvars_min_confidence must be a string " "('high'|'medium'|'low')."
+        "auto_detect_tvars_min_confidence must be a string ('high'|'medium'|'low')."
     )
 
 

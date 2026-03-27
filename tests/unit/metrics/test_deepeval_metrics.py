@@ -447,7 +447,7 @@ class TestThreadSafety:
             fn(output="answer", input_data={"question": "q"})
             mock_cp.assert_called_once()
 
-    def test_fallback_to_bare_instance_with_warning(self, mock_deepeval):
+    def test_raises_type_error_when_copy_impossible(self, mock_deepeval):
         dm, _ = mock_deepeval
         metric = _make_mock_metric(score=0.5, name="cp")
         fn = dm.DeepEvalScorer([metric]).to_metric_functions()["cp"]
@@ -455,11 +455,9 @@ class TestThreadSafety:
         with (
             patch.object(copy, "deepcopy", side_effect=TypeError),
             patch.object(copy, "copy", side_effect=TypeError),
-            patch.object(dm.logger, "warning") as mock_warn,
+            pytest.raises(TypeError, match="cannot be copied"),
         ):
-            result = fn(output="answer", input_data={"question": "q"})
-            mock_warn.assert_called_once()
-            assert result == 0.5
+            fn(output="answer", input_data={"question": "q"})
 
 
 class TestNamingCollisions:

@@ -121,7 +121,7 @@ def _validate_trial_datetime_format(datetime_format: TrialDatetimeFormat) -> Non
     """Validate supported datetime formats for public trial serialization."""
     if datetime_format not in ("iso", "epoch"):
         raise ValueError(
-            "datetime_format must be 'iso' or 'epoch', " f"got {datetime_format!r}"
+            f"datetime_format must be 'iso' or 'epoch', got {datetime_format!r}"
         )
 
 

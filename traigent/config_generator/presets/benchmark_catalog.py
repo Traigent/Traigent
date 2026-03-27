@@ -71,8 +71,7 @@ _BENCHMARK_CATALOG: dict[str, BenchmarkSpec] = {
     "classification": BenchmarkSpec(
         name="Text Classification",
         description=(
-            "Evaluate classification accuracy: given text, "
-            "predict the correct label."
+            "Evaluate classification accuracy: given text, predict the correct label."
         ),
         example_schema={
             "input": {"text": "str"},

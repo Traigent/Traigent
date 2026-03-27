@@ -44,7 +44,7 @@ def create_sampler(config: Mapping[str, Any] | None = None) -> RandomSampler[Any
     sampler_type = str(config.get("type", "random")).lower()
     if sampler_type != "random":
         raise ValueError(
-            "Unsupported sampler type " f"{sampler_type!r}; only 'random' is available."
+            f"Unsupported sampler type {sampler_type!r}; only 'random' is available."
         )
 
     params = dict(config.get("params", {}))
