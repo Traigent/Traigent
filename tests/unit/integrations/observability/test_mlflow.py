@@ -648,12 +648,15 @@ class TestTraigentMLflowTracker:
         assert result is None
 
     def test_get_best_run_when_mlflow_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, mock_mlflow: MockMLflow
     ) -> None:
         """Test get_best_run returns None when MLflow not available."""
         monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", False)
 
-        with patch.object(mlflow_module, "MLFLOW_AVAILABLE", True):
+        with (
+            patch.object(mlflow_module, "MLFLOW_AVAILABLE", True),
+            patch.object(mlflow_module, "mlflow", mock_mlflow),
+        ):
             tracker = mlflow_module.TraigentMLflowTracker()
 
         monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", False)

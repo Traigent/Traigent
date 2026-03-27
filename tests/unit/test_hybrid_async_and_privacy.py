@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from traigent.api.types import ExampleResult
+from traigent.cloud.session_types import SessionCreationResult
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
@@ -145,11 +146,11 @@ class DummyBackend:
         optimization_goal: str,
         metadata: dict,
     ):
-        sid = f"sess-{len(self.sessions)+1}"
+        sid = f"sess-{len(self.sessions) + 1}"
         self.sessions.append(
             {"id": sid, "fn": function_name, "space": search_space, "meta": metadata}
         )
-        return sid
+        return SessionCreationResult.connected(sid)
 
     def submit_result(
         self, session_id: str, config: dict, score: float, metadata: dict
@@ -289,9 +290,9 @@ async def test_local_mode_includes_aggregated_summary_in_submission():
             self.finalized = []
 
         def create_session(self, **kwargs):
-            sid = f"sess-{len(self.sessions)+1}"
+            sid = f"sess-{len(self.sessions) + 1}"
             self.sessions.append({"id": sid})
-            return sid
+            return SessionCreationResult.connected(sid)
 
         def submit_result(
             self, session_id: str, config: dict, score: float, metadata: dict
@@ -412,7 +413,7 @@ async def test_hybrid_remote_fallback_on_failure(monkeypatch):
 
     class _DummyBackend:
         def create_session(self, *a, **k):
-            return "sess"
+            return SessionCreationResult.connected("sess")
 
         def submit_result(self, *a, **k):
             return True
@@ -464,7 +465,7 @@ async def test_hybrid_remote_subset_indices_used(monkeypatch):
     # Dummy backend to avoid network
     class _DummyBackend:
         def create_session(self, *a, **k):
-            return "sess"
+            return SessionCreationResult.connected("sess")
 
         def submit_result(self, *a, **k):
             return True

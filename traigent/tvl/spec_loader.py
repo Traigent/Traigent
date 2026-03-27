@@ -270,8 +270,7 @@ def _check_section_types(data: dict[str, Any]) -> list[str]:
             else " or ".join(t.__name__ for t in expected_type)
         )
         issues.append(
-            f"Section '{section}' should be {type_names}, "
-            f"got {type(value).__name__}"
+            f"Section '{section}' should be {type_names}, got {type(value).__name__}"
         )
     return issues
 
@@ -398,9 +397,7 @@ def _validate_tvar_type_field(name: str, tvar_def: dict[str, Any]) -> list[str]:
         tvar_type.lower() not in valid_types
         and normalized_type not in extended_normalized
     ):
-        return [
-            f"TVAR '{name}' has invalid type '{tvar_type}'. " f"Valid: {valid_types}"
-        ]
+        return [f"TVAR '{name}' has invalid type '{tvar_type}'. Valid: {valid_types}"]
     return []
 
 

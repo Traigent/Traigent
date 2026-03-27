@@ -110,10 +110,20 @@ class CredentialManager:
         """
         if CREDENTIALS_FILE.exists():
             try:
+                # Verify file permissions are restrictive (owner-only read/write)
+                file_mode = CREDENTIALS_FILE.stat().st_mode & 0o777
+                if file_mode & 0o077:
+                    logger.warning(
+                        "Credentials file %s has overly permissive mode %o "
+                        "(expected 0600). Tightening permissions.",
+                        CREDENTIALS_FILE,
+                        file_mode,
+                    )
+                    CREDENTIALS_FILE.chmod(0o600)
                 with open(CREDENTIALS_FILE) as f:
                     return cast(dict[str, Any], json.load(f))
             except Exception as e:
-                logger.debug(f"Failed to load credentials file: {e}")
+                logger.debug("Failed to load credentials file: %s", e)
 
         return None
 

@@ -10,11 +10,12 @@ evaluation data into DeepEval's ``LLMTestCase`` format.
 from __future__ import annotations
 
 import copy
-import logging
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 try:  # pragma: no cover - import guard
     from deepeval.test_case import LLMTestCase
@@ -107,20 +108,24 @@ def _coerce_to_str_list(value: Any) -> list[str] | None:
 
 
 def _safe_copy(instance: Any) -> Any:
-    """Return a copy of *instance*, falling back gracefully."""
+    """Return a copy of *instance*, falling back gracefully.
+
+    Raises ``TypeError`` if the instance cannot be copied at all, to avoid
+    returning a shared mutable reference that would cause race conditions
+    during parallel trial execution.
+    """
     try:
         return copy.deepcopy(instance)
     except Exception:
         pass
     try:
         return copy.copy(instance)
-    except Exception:
-        logger.warning(
-            "DeepEvalScorer: could not copy metric instance %r; "
-            "parallel trial execution may produce race conditions.",
-            type(instance).__name__,
-        )
-        return instance
+    except Exception as exc:
+        raise TypeError(
+            f"DeepEvalScorer: metric instance {type(instance).__name__!r} "
+            f"cannot be copied. Parallel trial execution requires copyable "
+            f"metric instances to avoid race conditions."
+        ) from exc
 
 
 class DeepEvalScorer:

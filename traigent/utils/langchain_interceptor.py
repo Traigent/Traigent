@@ -201,7 +201,9 @@ def patch_langchain_for_metadata_capture() -> bool:
                     from langchain_core.messages import AIMessage
 
                     model_name = getattr(self, "model", "mock-model")
-                    mock_data = MockAdapter.get_mock_response("anthropic", model=model_name)
+                    mock_data = MockAdapter.get_mock_response(
+                        "anthropic", model=model_name
+                    )
                     content = mock_data["content"][0]["text"]
                     response = AIMessage(
                         content=content,
@@ -213,7 +215,8 @@ def patch_langchain_for_metadata_capture() -> bool:
                         usage_metadata={
                             "input_tokens": mock_data["usage"]["input_tokens"],
                             "output_tokens": mock_data["usage"]["output_tokens"],
-                            "total_tokens": mock_data["usage"]["input_tokens"] + mock_data["usage"]["output_tokens"],
+                            "total_tokens": mock_data["usage"]["input_tokens"]
+                            + mock_data["usage"]["output_tokens"],
                         },
                     )
                     capture_langchain_response(response)
@@ -283,8 +286,12 @@ def patch_langchain_for_metadata_capture() -> bool:
                 if MockAdapter.is_mock_enabled("openai"):
                     from langchain_core.messages import AIMessage
 
-                    model_name = getattr(self, "model_name", None) or getattr(self, "model", "mock-model")
-                    mock_data = MockAdapter.get_mock_response("openai", model=model_name)
+                    model_name = getattr(self, "model_name", None) or getattr(
+                        self, "model", "mock-model"
+                    )
+                    mock_data = MockAdapter.get_mock_response(
+                        "openai", model=model_name
+                    )
                     content = mock_data["choices"][0]["message"]["content"]
                     response = AIMessage(
                         content=content,

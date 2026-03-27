@@ -29,25 +29,33 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-class _Colors:
-    """ANSI color codes for terminal output."""
-
-    BOLD = "\033[1m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    CYAN = "\033[96m"
-    DIM = "\033[2m"
-    RESET = "\033[0m"
-
-    @classmethod
-    def disable(cls) -> None:
-        cls.BOLD = cls.GREEN = cls.YELLOW = cls.CYAN = cls.DIM = cls.RESET = ""
-
-
 def _check_color_support() -> bool:
     if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
         return False
     return os.getenv("NO_COLOR") is None and os.getenv("TERM") != "dumb"
+
+
+def _get_colors() -> tuple[str, str, str, str, str, str]:
+    """Return (BOLD, GREEN, YELLOW, CYAN, DIM, RESET) per-call based on TTY."""
+    if _check_color_support():
+        return "\033[1m", "\033[92m", "\033[93m", "\033[96m", "\033[2m", "\033[0m"
+    return "", "", "", "", "", ""
+
+
+class _Colors:
+    """ANSI color codes resolved per-call (never permanently mutated)."""
+
+    BOLD = ""
+    GREEN = ""
+    YELLOW = ""
+    CYAN = ""
+    DIM = ""
+    RESET = ""
+
+    @classmethod
+    def refresh(cls) -> None:
+        """Refresh color codes based on current TTY state."""
+        cls.BOLD, cls.GREEN, cls.YELLOW, cls.CYAN, cls.DIM, cls.RESET = _get_colors()
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +155,7 @@ def print_results_table(
         print("\nNo trials to display.")
         return
 
-    if not _check_color_support():
-        _Colors.disable()
+    _Colors.refresh()
     C = _Colors
 
     # Resolve objectives & metrics present in trial data

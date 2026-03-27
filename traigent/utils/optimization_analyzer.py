@@ -722,9 +722,9 @@ class OptimizationAnalyzer:
             return f"No data found for {experiment_name}/{run_id}"
 
         summary = []
-        summary.append(f"{'='*60}")
+        summary.append(f"{'=' * 60}")
         summary.append("Optimization Run Summary")
-        summary.append(f"{'='*60}")
+        summary.append(f"{'=' * 60}")
         summary.append(f"Experiment: {experiment_name}")
         summary.append(f"Run ID: {run_id}")
 
@@ -779,6 +779,6 @@ class OptimizationAnalyzer:
                 for obj, weight in weighted["objective_weights"].items():
                     summary.append(f"    {obj}: {weight}")
 
-        summary.append(f"{'='*60}")
+        summary.append(f"{'=' * 60}")
 
         return "\n".join(summary)

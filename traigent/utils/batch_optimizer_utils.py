@@ -218,7 +218,9 @@ class BatchOptimizationHelper:
             # Evaluate all results
             expected_outputs = [ex.expected_output for ex in dataset.examples]
             evaluation_result = await evaluator.evaluate(
-                all_invocation_results, expected_outputs, dataset  # type: ignore[arg-type]
+                all_invocation_results,
+                expected_outputs,
+                dataset,  # type: ignore[arg-type]
             )
 
             return evaluation_result  # type: ignore[return-value]

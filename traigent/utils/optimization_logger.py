@@ -511,7 +511,7 @@ class OptimizationLogger:
         if serialized_examples:
             hdr = f"  {'example_id':<14} {'acc':>4}  {'expected':<22} {'response'}"
             lines.append(hdr)
-            lines.append(f"  {'-'*14} {'-'*4}  {'-'*22} {'-'*50}")
+            lines.append(f"  {'-' * 14} {'-' * 4}  {'-' * 22} {'-' * 50}")
             for ex in serialized_examples:
                 iid = str(ex.get("example_id") or "?")
                 a = ex.get("accuracy", "?")

@@ -80,8 +80,7 @@ def _is_significantly_worse_than_any(
 
         if result.p_value < alpha and top_is_better:
             logger.debug(
-                "%s: trial %d significantly worse than trial %d "
-                "(p=%.4f, effect=%.6f)",
+                "%s: trial %d significantly worse than trial %d (p=%.4f, effect=%.6f)",
                 badge_name,
                 trial["trial_idx"],
                 top_trial["trial_idx"],
