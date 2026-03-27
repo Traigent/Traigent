@@ -655,6 +655,16 @@ class OptimizationResult:
         return float(sum(times) / len(times))
 
     @staticmethod
+    def _compute_average_response_time_ms(
+        metadata: dict[str, Any] | None,
+    ) -> float | None:
+        """Compute the mean response time in milliseconds from trial metadata."""
+        average_seconds = OptimizationResult._compute_average_response_time(metadata)
+        if average_seconds is None:
+            return None
+        return float(average_seconds * 1000.0)
+
+    @staticmethod
     def _coerce_seconds(value: Any) -> float | None:
         """Convert a value to seconds if possible."""
         return OptimizationResult._coerce_float(value)
@@ -1223,8 +1233,16 @@ class OptimizationResult:
                 **trial.metrics,
             }
             avg_response_time = self._compute_average_response_time(trial.metadata)
+            avg_response_time_ms = self._compute_average_response_time_ms(
+                trial.metadata
+            )
             row["avg_response_time"] = (
                 float(avg_response_time) if avg_response_time is not None else None
+            )
+            row["avg_response_time_ms"] = (
+                float(avg_response_time_ms)
+                if avg_response_time_ms is not None
+                else None
             )
             metadata = trial.metadata or {}
             if "examples_attempted" in metadata:
@@ -1271,11 +1289,21 @@ class OptimizationResult:
             group["duration_sum"] += float(trial.duration or 0.0)
 
             avg_response_time = self._compute_average_response_time(trial.metadata)
+            avg_response_time_ms = self._compute_average_response_time_ms(
+                trial.metadata
+            )
             if avg_response_time is not None:
                 group["response_time_sum"] = (
                     group.get("response_time_sum", 0.0) + avg_response_time
                 )
                 group["response_time_count"] = group.get("response_time_count", 0) + 1
+            if avg_response_time_ms is not None:
+                group["response_time_ms_sum"] = (
+                    group.get("response_time_ms_sum", 0.0) + avg_response_time_ms
+                )
+                group["response_time_ms_count"] = (
+                    group.get("response_time_ms_count", 0) + 1
+                )
 
             self._accumulate_trial_metrics(trial, group)
 
@@ -1304,6 +1332,10 @@ class OptimizationResult:
             if group.get("response_time_count"):
                 row["avg_response_time"] = (
                     group["response_time_sum"] / group["response_time_count"]
+                )
+            if group.get("response_time_ms_count"):
+                row["avg_response_time_ms"] = (
+                    group["response_time_ms_sum"] / group["response_time_ms_count"]
                 )
             rows.append(row)
         return rows

@@ -391,11 +391,13 @@ class TestBuildMeasuresFull:
         assert "model" not in metrics
 
     def test_include_execution_time(self, example_result):
-        """Test execution_time is included as response_time in metrics."""
+        """Test execution_time is exported in explicit and legacy timing keys."""
         example_result.execution_time = 1.5
 
         measures = _build_measures_full([example_result], "accuracy")
 
+        assert "response_time_ms" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["response_time_ms"] == 1500.0
         assert "response_time" in measures[0]["metrics"]
         assert measures[0]["metrics"]["response_time"] == 1.5
 
@@ -455,11 +457,13 @@ class TestBuildMeasuresPrivacy:
         assert measures[0]["metrics"]["score"] == 0.9
 
     def test_include_response_time(self, example_result):
-        """Test response_time is included in privacy mode metrics."""
+        """Test privacy mode includes explicit and legacy timing keys."""
         example_result.execution_time = 1.5
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
+        assert "response_time_ms" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["response_time_ms"] == 1500.0
         assert "response_time" in measures[0]["metrics"]
         assert measures[0]["metrics"]["response_time"] == 1.5
 
