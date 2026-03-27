@@ -117,6 +117,34 @@ def load_saved_optimization_results(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+def as_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def get_saved_experiment_run_id(payload: dict[str, Any]) -> str | None:
+    direct = as_optional_text(payload.get("experiment_run_id"))
+    if direct:
+        return direct
+
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+
+    nested = as_optional_text(metadata.get("experiment_run_id"))
+    if nested:
+        return nested
+
+    local_session_summary = metadata.get("local_session_summary")
+    if isinstance(local_session_summary, dict):
+        local_metadata = local_session_summary.get("metadata")
+        if isinstance(local_metadata, dict):
+            return as_optional_text(local_metadata.get("experiment_run_id"))
+    return None
+
+
 def build_runtime(args: argparse.Namespace, *, trace_name: str) -> shared.RuntimeSettings:
     runtime_args = argparse.Namespace(
         mode=args.mode,
@@ -175,6 +203,8 @@ def build_phase_summary(
     active_config: dict[str, Any] | None,
     answers: list[dict[str, str]] | None,
     optimization_id: str | None,
+    experiment_id: str | None,
+    experiment_run_id: str | None,
     best_config: dict[str, Any] | None,
     best_metrics: dict[str, Any] | None,
     flush_success: bool,
@@ -192,11 +222,14 @@ def build_phase_summary(
         "frontend_observability_url": f"{args.frontend_url}/observability",
         "frontend_experiments_url": f"{args.frontend_url}/experiments",
         "frontend_experiment_url": (
-            f"{args.frontend_url}/experiments/view/{optimization_id}"
-            if optimization_id
+            f"{args.frontend_url}/experiments/view/{experiment_id}"
+            if experiment_id
             else None
         ),
         "optimization_results_path": str(optimization_results_path(run_dir)),
+        "optimization_id": optimization_id,
+        "experiment_id": experiment_id,
+        "experiment_run_id": experiment_run_id,
         "active_config": active_config,
         "baseline_default_config": DEFAULT_BASELINE_CONFIG,
         "best_config": best_config,
@@ -280,6 +313,9 @@ def create_guided_agent(
     @observe(
         name=trace_name,
         client=client,
+        session_id=f"guided-session:{run_id}:{phase}",
+        user_id="guided-demo-user",
+        custom_trace_id=f"guided-trace:{run_id}:{phase}",
         environment=runtime.environment,
         tags=list(runtime.tags),
         metadata=trace_metadata,
@@ -346,6 +382,9 @@ async def run_phase(args: argparse.Namespace) -> None:
 
     persisted_results: dict[str, Any] | None = None
     best_config_for_post: dict[str, Any] | None = None
+    persisted_optimization_id: str | None = None
+    persisted_experiment_id: str | None = None
+    persisted_experiment_run_id: str | None = None
     if args.phase == "post":
         results_path = optimization_results_path(run_dir)
         if not results_path.exists():
@@ -354,6 +393,9 @@ async def run_phase(args: argparse.Namespace) -> None:
             )
         persisted_results = load_saved_optimization_results(results_path)
         best_config_for_post = dict(persisted_results.get("best_config") or {})
+        persisted_optimization_id = as_optional_text(persisted_results.get("optimization_id"))
+        persisted_experiment_id = as_optional_text(persisted_results.get("experiment_id"))
+        persisted_experiment_run_id = get_saved_experiment_run_id(persisted_results)
 
     trace_name = build_trace_name(args.phase, active_config=best_config_for_post)
     runtime = build_runtime(args, trace_name=trace_name)
@@ -392,6 +434,12 @@ async def run_phase(args: argparse.Namespace) -> None:
     elif args.phase == "post" and best_config_for_post is not None:
         trace_metadata["config_source"] = "best-config"
         trace_metadata["active_config"] = best_config_for_post
+        if persisted_optimization_id:
+            trace_metadata["optimization_id"] = persisted_optimization_id
+        if persisted_experiment_id:
+            trace_metadata["experiment_id"] = persisted_experiment_id
+        if persisted_experiment_run_id:
+            trace_metadata["experiment_run_id"] = persisted_experiment_run_id
     else:
         trace_metadata["config_source"] = "trial-config"
 
@@ -406,7 +454,9 @@ async def run_phase(args: argparse.Namespace) -> None:
 
     try:
         answers: list[dict[str, str]] | None = None
-        optimization_id: str | None = None
+        optimization_id: str | None = persisted_optimization_id
+        experiment_id: str | None = persisted_experiment_id
+        experiment_run_id: str | None = persisted_experiment_run_id
         best_config: dict[str, Any] | None = None
         best_metrics: dict[str, Any] | None = None
 
@@ -428,7 +478,14 @@ async def run_phase(args: argparse.Namespace) -> None:
                 show_progress=True,
                 random_seed=42,
             )
-            optimization_id = str(getattr(results, "optimization_id", ""))
+            optimization_id = as_optional_text(getattr(results, "optimization_id", None))
+            experiment_id = as_optional_text(getattr(results, "experiment_id", None))
+            experiment_run_id = get_saved_experiment_run_id(
+                {
+                    "experiment_run_id": getattr(results, "experiment_run_id", None),
+                    "metadata": getattr(results, "metadata", {}) or {},
+                }
+            )
             best_config = dict(results.best_config or {})
             best_metrics = dict(results.best_metrics or {})
             agent.save_optimization_results(str(optimization_results_path(run_dir)))
@@ -469,6 +526,8 @@ async def run_phase(args: argparse.Namespace) -> None:
             ),
             answers=answers,
             optimization_id=optimization_id,
+            experiment_id=experiment_id,
+            experiment_run_id=experiment_run_id,
             best_config=best_config,
             best_metrics=best_metrics,
             flush_success=flush.success,
