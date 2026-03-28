@@ -5,6 +5,7 @@
 import os
 import statistics
 import time
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -1071,11 +1072,17 @@ def _try_legacy_cost_calculation(
     backward_compatible = False
 
     if calculate_prompt_cost is not None and original_prompt is not None:
-        metrics.cost.input_cost = calculate_prompt_cost(original_prompt, model_name)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            metrics.cost.input_cost = calculate_prompt_cost(original_prompt, model_name)
         backward_compatible = True
 
     if calculate_completion_cost is not None and response_text is not None:
-        metrics.cost.output_cost = calculate_completion_cost(response_text, model_name)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            metrics.cost.output_cost = calculate_completion_cost(
+                response_text, model_name
+            )
         backward_compatible = True
 
     if backward_compatible:

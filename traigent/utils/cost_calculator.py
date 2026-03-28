@@ -863,12 +863,14 @@ class CostCalculator:
         """Calculate prompt cost and propagate pricing failures."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
+            warnings.simplefilter("ignore", DeprecationWarning)
             return calculate_prompt_cost(prompt, model)
 
     def _safe_calculate_completion_cost(self, response: str, model: str) -> float:
         """Calculate completion cost and propagate pricing failures."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
+            warnings.simplefilter("ignore", DeprecationWarning)
             return calculate_completion_cost(response, model)
 
     def _calculate_from_tokens(

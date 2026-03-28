@@ -221,13 +221,14 @@ class LocalEvaluator(BaseEvaluator):
         response_length: int | None = None
         original_prompt: list[dict[str, str]] | None = None
 
+        prompt_length = self._calculate_input_length(example_input, config=config)
+        response_length = self._extract_response_length(output)
+
         if self.privacy_enabled:
-            # In privacy mode, store lengths for cost calculation
-            prompt_length = self._calculate_input_length(example_input, config=config)
-            response_length = self._extract_response_length(output)
+            # In privacy mode, keep only lengths for downstream cost estimation.
             original_prompt = None
         else:
-            # Non-privacy mode: Reconstruct original prompt from dataset example
+            # Non-privacy mode keeps the reconstructed prompt for real cost paths.
             original_prompt = self._reconstruct_prompt(example_input)
 
         return PromptInfo(
