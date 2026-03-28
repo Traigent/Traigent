@@ -73,7 +73,7 @@ def test_bedrock_non_streaming_cost_extraction() -> None:
 def test_bedrock_streaming_without_usage_warns(caplog) -> None:
     response = BedrockChatResponse(text="ok", raw={"streamed": True}, usage=None)
 
-    with caplog.at_level(logging.WARNING, logger="traigent.evaluators.metrics_tracker"):
+    with caplog.at_level(logging.DEBUG, logger="traigent.evaluators.metrics_tracker"):
         metrics = extract_llm_metrics(response, model_name="claude-3-5-sonnet-20241022")
 
     assert metrics.cost.total_cost == 0.0

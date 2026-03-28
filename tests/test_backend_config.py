@@ -40,13 +40,13 @@ def test_backend_config():
     print(f"   Environment: {config['environment']}")
     print(f"   Configured Via: {config['configured_via']}")
     assert (
-        config["backend_url"] == BackendConfig.get_default_local_url()
-    ), "Generic backend config should default to local"
-    assert config["is_local"], "Default should remain local"
+        config["backend_url"] == BackendConfig.DEFAULT_PROD_URL
+    ), "Generic backend config should default to cloud"
+    assert not config["is_local"], "Default should not be treated as local"
     assert config["configured_via"] == "default"
     assert (
-        config["backend_api_url"] == f"{BackendConfig.get_default_local_url()}/api/v1"
-    ), "Default API base should use the local backend"
+        config["backend_api_url"] == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
+    ), "Default API base should use the cloud backend"
     print("   ✅ Default configuration working correctly\n")
 
     print("1b. Testing cloud helper defaults:")
@@ -58,9 +58,10 @@ def test_backend_config():
     assert cloud_api == f"{BackendConfig.DEFAULT_PROD_URL}/api/v1"
     print("   ✅ Cloud helper defaults working correctly\n")
 
-    # Test 2: Local development environment
-    print("2. Testing local development environment:")
+    # Test 2: Explicit local backend override
+    print("2. Testing explicit local backend override:")
     os.environ["TRAIGENT_ENV"] = "development"
+    os.environ["TRAIGENT_BACKEND_URL"] = BackendConfig.get_default_local_url()
     config = BackendConfig.get_config_summary()
     print(f"   Backend URL: {config['backend_url']}")
     print(f"   Backend API URL: {config['backend_api_url']}")
@@ -71,7 +72,7 @@ def test_backend_config():
         config["backend_url"] == "http://localhost:5000"
     ), "Should use local URL in dev"
     assert config["is_local"], "Should detect local backend"
-    assert config["configured_via"] == "default"
+    assert config["configured_via"] == "TRAIGENT_BACKEND_URL"
     assert (
         config["backend_api_url"] == "http://localhost:5000/api/v1"
     ), "Local API base should reflect default path"

@@ -19,6 +19,7 @@ from traigent.api.types import (
 from traigent.core.objectives import create_default_objectives
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.tvl.spec_loader import TVLBudget, TVLSpecArtifact
+from traigent.utils.callbacks import ResultsTableCallback
 from traigent.utils.exceptions import OptimizationError
 
 from .test_fixtures import create_simple_evaluator
@@ -638,14 +639,19 @@ class TestOptimization:
             opt_func,
             "_execute_optimization",
             new=AsyncMock(return_value=sentinel_result),
-        ) as mock_execute:
+        ) as mock_execute, patch(
+            "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+        ):
             result = await opt_func.optimize()
 
         require(result is sentinel_result)
         called = mock_execute.await_args.kwargs
         require(called["timeout"] == pytest.approx(123.0))
         require(called["save_to"] == "defaults.json")
-        require(called["callbacks"] == opt_func.callbacks)
+        require(callback in called["callbacks"])
+        require(
+            any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"])
+        )
 
         runtime_kwargs = called["algorithm_kwargs"]
         require(runtime_kwargs["cache_policy"] == "no_repeats")
@@ -677,7 +683,9 @@ class TestOptimization:
             opt_func,
             "_execute_optimization",
             new=AsyncMock(return_value=sentinel_result),
-        ) as mock_execute:
+        ) as mock_execute, patch(
+            "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+        ):
             result = await opt_func.optimize(
                 timeout=5.0,
                 save_to="override.json",
@@ -690,7 +698,10 @@ class TestOptimization:
         called = mock_execute.await_args.kwargs
         require(called["timeout"] == pytest.approx(5.0))
         require(called["save_to"] == "override.json")
-        require(called["callbacks"] == override_callbacks)
+        require(override_callbacks[0] in called["callbacks"])
+        require(
+            any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"])
+        )
 
         runtime_kwargs = called["algorithm_kwargs"]
         require(runtime_kwargs["cache_policy"] == "deterministic")
