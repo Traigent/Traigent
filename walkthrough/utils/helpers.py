@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-import runpy
 from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -107,11 +106,6 @@ def sanitize_traigent_api_key() -> None:
         )
         os.environ.pop("TRAIGENT_API_KEY", None)
 
-
-def _is_truthy_env(var_name: str) -> bool:
-    return os.getenv(var_name, "").lower() in ("1", "true", "yes")
-
-
 def _find_repo_root(start_path: Path) -> Path:
     """Walk upward until the repository root (identified by pyproject.toml)."""
     for candidate in (start_path.parent, *start_path.parents):
@@ -120,22 +114,26 @@ def _find_repo_root(start_path: Path) -> Path:
     return start_path.parents[2]
 
 
-def _print_fallback_warning(reason: str, display_path: str) -> None:
-    """Print a prominent warning before delegating to a mock walkthrough."""
-    lines = [
-        f"WARNING: {reason}",
-        f"Falling back to {display_path}.",
-        "Set the required API key to use real LLM calls.",
-        "Set TRAIGENT_REQUIRE_REAL=1 to fail instead of falling back.",
-    ]
-    width = max(len(line) for line in lines)
-    border = "!" * (width + 4)
-    print()
-    print(border)
-    for line in lines:
-        print(f"! {line.ljust(width)} !")
-    print(border)
-    print()
+def _required_real_example_message(
+    example_file: Path,
+    required_env_vars: tuple[str, ...],
+) -> str:
+    """Build a clear hard-failure message for real walkthrough examples."""
+    repo_root = _find_repo_root(example_file)
+    real_display_path = example_file.relative_to(repo_root).as_posix()
+    mock_display_path = (
+        example_file.parent.parent / "mock" / example_file.name
+    ).relative_to(repo_root).as_posix()
+    env_list = " or ".join(required_env_vars)
+    primary_env = required_env_vars[0]
+    return (
+        f"ERROR: {env_list} environment variable is required for real examples.\n\n"
+        "To run this example:\n"
+        f"  export {primary_env}=your-key-here\n"
+        f"  python {real_display_path}\n\n"
+        "For mock examples without API keys, use:\n"
+        f"  python {mock_display_path}"
+    )
 
 
 def maybe_run_mock_example(
@@ -143,68 +141,30 @@ def maybe_run_mock_example(
     *,
     required_env_vars: tuple[str, ...] = ("OPENAI_API_KEY",),
 ) -> None:
-    """Run the matching mock walkthrough when required provider keys are missing.
-
-    This keeps first-run walkthrough usage seamless: the user can invoke a real
-    example directly, see a short warning, and still get a successful mock run.
+    """Validate that real walkthroughs have the provider keys they require.
 
     Args:
         example_path: Current script ``__file__`` path.
         required_env_vars: Provider key env vars that enable real execution.
 
     Raises:
-        SystemExit: After executing the matching mock example.
+        SystemExit: When the real example should not proceed.
     """
-    require_real = _is_truthy_env("TRAIGENT_REQUIRE_REAL")
-    should_force_mock = _is_truthy_env("TRAIGENT_MOCK_LLM")
+    should_force_mock = os.getenv("TRAIGENT_MOCK_LLM", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     has_required_key = any(os.getenv(var_name) for var_name in required_env_vars)
-
-    if require_real:
-        if should_force_mock:
-            raise SystemExit(
-                "TRAIGENT_REQUIRE_REAL=1 is set, so TRAIGENT_MOCK_LLM cannot be used. "
-                "Unset TRAIGENT_MOCK_LLM or disable TRAIGENT_REQUIRE_REAL."
-            )
-        if not has_required_key:
-            raise SystemExit(
-                "TRAIGENT_REQUIRE_REAL=1 is set and no required provider key is available. "
-                f"Set one of: {', '.join(required_env_vars)}"
-            )
-        return
-
-    if not should_force_mock and has_required_key:
-        return
-
     example_file = Path(example_path).resolve()
-    mock_path = example_file.parent.parent / "mock" / example_file.name
-    if not mock_path.exists():
-        missing_keys = ", ".join(required_env_vars)
-        raise SystemExit(
-            f"No mock fallback exists for {example_file.name}. "
-            f"Set one of: {missing_keys}"
-        )
-
-    repo_root = _find_repo_root(example_file)
-    display_path = mock_path.relative_to(repo_root).as_posix()
     if should_force_mock:
-        reason = "TRAIGENT_MOCK_LLM is enabled"
-    else:
-        reason = f"Missing {' or '.join(required_env_vars)}"
-
-    _print_fallback_warning(reason, display_path)
-
-    os.environ["TRAIGENT_MOCK_LLM"] = "true"
-    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
-    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
-    try:
-        runpy.run_path(str(mock_path), run_name="__main__")
-    except SystemExit:
-        raise
-    except Exception as exc:
         raise SystemExit(
-            f"Mock fallback {display_path} failed: {type(exc).__name__}: {exc}"
+            "ERROR: walkthrough/real examples do not fall back to mock mode. "
+            "Unset TRAIGENT_MOCK_LLM and provide the required API key, or run the "
+            f"mock example directly.\n\n{_required_real_example_message(example_file, required_env_vars)}"
         )
-    raise SystemExit(0)
+    if not has_required_key:
+        raise SystemExit(_required_real_example_message(example_file, required_env_vars))
 
 
 def setup_example_logger(name: str) -> logging.Logger:
