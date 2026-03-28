@@ -13,11 +13,11 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
 from traigent.api.types import TrialResult
-from traigent.evaluators.base import BaseEvaluator, Dataset
-from traigent.invokers.base import BaseInvoker
+from traigent.evaluators.base import Dataset, EvaluationResult
+from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.results import OptimizationResult, Trial
@@ -25,6 +25,17 @@ from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class TrialBatchEvaluator(Protocol):
+    """Protocol for evaluators that score precomputed invocation batches."""
+
+    async def evaluate(
+        self,
+        invocation_results: list[InvocationResult],
+        expected_outputs: list[Any],
+        dataset: Dataset,
+    ) -> EvaluationResult: ...
 
 
 @dataclass
@@ -69,18 +80,18 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
-        return self.base_optimizer.suggest_next_trial(history)
+        return cast(dict[str, Any], self.base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
-        return self.base_optimizer.should_stop(history)
+        return bool(self.base_optimizer.should_stop(history))
 
     async def optimize(
         self,
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
     ) -> OptimizationResult:
         """Run parallel batch optimization."""
@@ -195,7 +206,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
     ) -> Trial:
         """Run a single optimization trial synchronously."""
         return asyncio.run(
@@ -208,7 +219,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
     ) -> Trial:
         """Run a single optimization trial with batch processing."""
         trial_start = time.time()
@@ -294,7 +305,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         # Use scalarize_objectives for weighted scoring
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return scalarize_objectives(metrics, self.objective_weights)
+        return float(scalarize_objectives(metrics, self.objective_weights))
 
 
 class MultiObjectiveBatchOptimizer(BaseOptimizer):
@@ -344,7 +355,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
-        return self._base_optimizer.suggest_next_trial(history)
+        return cast(dict[str, Any], self._base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
@@ -356,7 +367,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
     ) -> OptimizationResult:
         """Run multi-objective batch optimization."""
@@ -424,7 +435,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
         trial_idx: int,
     ) -> Trial:
         """Run a single trial with batch processing and multi-objective evaluation."""
@@ -610,18 +621,18 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
-        return self.base_optimizer.suggest_next_trial(history)
+        return cast(dict[str, Any], self.base_optimizer.suggest_next_trial(history))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
-        return self.base_optimizer.should_stop(history)
+        return bool(self.base_optimizer.should_stop(history))
 
     async def optimize(
         self,
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
     ) -> OptimizationResult:
         """Run adaptive batch optimization."""
@@ -678,7 +689,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: TrialBatchEvaluator,
         trial_idx: int,
     ) -> Trial:
         """Run trial with adaptive batch sizing."""
@@ -794,4 +805,4 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         # Use scalarize_objectives for weighted scoring
         from traigent.utils.multi_objective import scalarize_objectives
 
-        return scalarize_objectives(metrics, self.objective_weights)
+        return float(scalarize_objectives(metrics, self.objective_weights))

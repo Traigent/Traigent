@@ -66,6 +66,7 @@ def simple_qa_agent(question: str) -> str:
         return mock_answers.get(question, "I don't know")
 
     from langchain_openai import ChatOpenAI
+
     config = traigent.get_config()
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),

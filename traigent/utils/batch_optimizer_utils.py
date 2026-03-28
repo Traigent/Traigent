@@ -8,15 +8,26 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import Dataset
 from traigent.evaluators.metrics import MetricsEvaluationResult
-from traigent.invokers.base import BaseInvoker
+from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class MetricsBatchEvaluator(Protocol):
+    """Protocol for evaluators that score precomputed batch invocation results."""
+
+    async def evaluate(
+        self,
+        invocation_results: list[InvocationResult],
+        expected_outputs: list[Any],
+        dataset: Dataset,
+    ) -> MetricsEvaluationResult: ...
 
 
 @dataclass
@@ -61,7 +72,7 @@ class BatchOptimizationHelper:
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: MetricsBatchEvaluator,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[MetricsEvaluationResult]:
         """Evaluate multiple configurations using batch processing.
@@ -155,7 +166,7 @@ class BatchOptimizationHelper:
         func: Callable[..., Any] | Any,
         dataset: Dataset | Any,
         invoker: BaseInvoker | Any,
-        evaluator: BaseEvaluator | Any,
+        evaluator: MetricsBatchEvaluator | Any,
         progress_callback: Callable[[int, int], None] | None,
     ) -> None:
         """Validate inputs for batch evaluation."""
@@ -190,7 +201,7 @@ class BatchOptimizationHelper:
         func: Callable[..., Any],
         dataset: Dataset,
         invoker: BaseInvoker,
-        evaluator: BaseEvaluator,
+        evaluator: MetricsBatchEvaluator,
         batch_size: int,
     ) -> MetricsEvaluationResult | None:
         """Evaluate a single configuration using batch processing."""
@@ -232,7 +243,7 @@ class BatchOptimizationHelper:
     def _get_current_batch_size(self, total_items: int) -> int:
         """Get current batch size for processing."""
         if self.adaptive_batching and self.adaptive_sizer:
-            return self.adaptive_sizer.get_next_batch_size(total_items)
+            return cast(int, self.adaptive_sizer.get_next_batch_size(total_items))
         else:
             return min(self.batch_size, total_items)
 
@@ -275,7 +286,7 @@ async def parallel_config_evaluation(
     func: Callable[..., Any],
     dataset: Dataset,
     invoker: BaseInvoker,
-    evaluator: BaseEvaluator,
+    evaluator: MetricsBatchEvaluator,
     max_parallel: int = 4,
     batch_size: int = 10,
 ) -> list[MetricsEvaluationResult | None]:

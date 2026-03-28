@@ -1,0 +1,3 @@
+Answer the question using the provided context when it is relevant.
+If the context does not help, answer from general knowledge.
+Respond with a short phrase only, with no explanation.
