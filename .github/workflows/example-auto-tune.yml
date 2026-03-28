@@ -61,6 +61,11 @@ jobs:
       - name: Setup CML
         uses: iterative/setup-cml@f12ea7685438c1fc438d50f77519b3860cf5fa98  # v2.0.1
 
+      - name: Prepare pipeline workspace
+        run: |
+          cp examples/ci-pipeline/dvc.yaml dvc.yaml
+          cp examples/ci-pipeline/params.yaml params.yaml
+
       - name: Configure AWS credentials via OIDC (for DVC storage)
         if: github.event.inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v4
