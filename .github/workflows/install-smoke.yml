@@ -9,7 +9,7 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/install-smoke.yml"
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "pyproject.toml"
       - "uv.lock"
@@ -80,5 +80,5 @@ jobs:
 
       - name: Verify enterprise extras
         run: |
-          python -c "import opentelemetry; print(f'opentelemetry {opentelemetry.version.__version__} OK')"
+          python -c "from importlib.metadata import version; import opentelemetry.sdk; print(f'opentelemetry-sdk {version(\"opentelemetry-sdk\")} OK')"
           python -c "import boto3; print(f'boto3 {boto3.__version__} OK')"
