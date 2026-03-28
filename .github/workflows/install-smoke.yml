@@ -1,0 +1,84 @@
+name: Install Smoke Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "scripts/ci/**"
+      - ".github/workflows/install-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "scripts/ci/**"
+      - ".github/workflows/install-smoke.yml"
+  workflow_dispatch:
+
+env:
+  TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
+
+jobs:
+  # .[recommended] is the default user-facing bundle — test across all platforms
+  install-recommended:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install .[recommended]
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
+        shell: bash
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[recommended]"
+
+      - name: Verify core import
+        run: python -c "import traigent; print(f'traigent {traigent.__version__} OK')"
+
+      - name: Verify key extras are importable
+        run: |
+          python -c "from langchain_openai import ChatOpenAI; print('langchain_openai OK')"
+          python -c "import numpy; print(f'numpy {numpy.__version__} OK')"
+
+  # .[enterprise] on Linux only — validates the full dependency surface
+  install-enterprise:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install .[enterprise]
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[enterprise]"
+
+      - name: Verify core import
+        run: python -c "import traigent; print(f'traigent {traigent.__version__} OK')"
+
+      - name: Verify enterprise extras
+        run: |
+          python -c "import opentelemetry; print(f'opentelemetry {opentelemetry.version.__version__} OK')"
+          python -c "import boto3; print(f'boto3 {boto3.__version__} OK')"
