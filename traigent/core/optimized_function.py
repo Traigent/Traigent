@@ -101,6 +101,11 @@ def _resolve_callbacks(
     consistent. Auto-enables a progress bar in interactive terminals unless
     the caller explicitly disables it.
 
+    A lightweight :class:`ResultsTableCallback` is always appended (unless
+    the full ``ProgressBarCallback`` is active, which already renders the
+    table) so that users see a results summary even in non-interactive
+    environments.
+
     Args:
         explicit_callbacks: Callbacks passed directly to optimize().
         decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
@@ -109,15 +114,31 @@ def _resolve_callbacks(
     Returns:
         Resolved list of callback instances.
     """
-    from traigent.utils.callbacks import ProgressBarCallback
+    from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
-    if progress_bar is not False:
-        has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
-        if not has_progress:
-            # True = always inject; None = inject only in interactive terminals
-            if progress_bar is True or sys.stdin.isatty():
-                callbacks.insert(0, ProgressBarCallback())
+    has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
+
+    if progress_bar is not False and not has_progress:
+        # True = always inject; None = inject only in interactive terminals
+        if progress_bar is True or sys.stdin.isatty():
+            callbacks.insert(0, ProgressBarCallback())
+            has_progress = True
+
+    has_table = any(isinstance(cb, ResultsTableCallback) for cb in callbacks)
+
+    # ProgressBarCallback already renders the table, so avoid duplicate table
+    # output when a standalone ResultsTableCallback is also present.
+    if has_progress and has_table:
+        callbacks = [cb for cb in callbacks if not isinstance(cb, ResultsTableCallback)]
+        has_table = False
+
+    # Always ensure a results table is rendered on completion.
+    # ProgressBarCallback already does this, so only add the standalone
+    # ResultsTableCallback when the progress bar is absent.
+    if not has_progress and not has_table:
+        callbacks.append(ResultsTableCallback())
+
     return callbacks
 
 

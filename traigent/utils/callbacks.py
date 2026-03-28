@@ -103,12 +103,16 @@ class ProgressBarCallback(OptimizationCallback):
         self.start_time = 0.0
         # Track last progress for final update
         self._last_progress: ProgressInfo | None = None
+        self._config_space: dict[str, Any] = {}
+        self._objectives: list[str] = []
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         self.start_time = time.time()
+        self._config_space = dict(config_space)
+        self._objectives = list(objectives)
         # Note: ProgressBarCallback uses print for interactive console output
         # This is intentional for user-facing progress display
         print(f"🚀 Starting optimization with {algorithm}")
@@ -211,6 +215,61 @@ class ProgressBarCallback(OptimizationCallback):
             and result.metadata.get("offline_mode")
         ):
             print("   Run locally — sync to cloud with `traigent sync`")
+
+        self._print_results_table(result)
+
+    def _print_results_table(self, result: OptimizationResult) -> None:
+        """Render the canonical optimization results table when enough context exists."""
+        if not getattr(result, "trials", None):
+            return
+        if not self._config_space or not self._objectives:
+            return
+
+        try:
+            from traigent.utils.results_table import print_results_table
+
+            print_results_table(result, self._config_space, self._objectives)
+        except Exception as exc:
+            logger.warning("Failed to render results table: %s", exc)
+
+
+class ResultsTableCallback(OptimizationCallback):
+    """Lightweight callback that renders the results table after optimization.
+
+    Unlike ``ProgressBarCallback``, this callback produces *no* output during
+    optimization and only prints the rich results table once optimization
+    completes.  It is auto-injected by ``_resolve_callbacks`` so that users
+    always see a results summary — even in non-interactive terminals where the
+    progress bar is suppressed.
+    """
+
+    def __init__(self) -> None:
+        self._config_space: dict[str, Any] = {}
+        self._objectives: list[str] = []
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        self._config_space = dict(config_space)
+        self._objectives = list(objectives)
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        return None
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        return None
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        if not getattr(result, "trials", None):
+            return
+        if not self._config_space or not self._objectives:
+            return
+        try:
+            from traigent.utils.results_table import print_results_table
+
+            print_results_table(result, self._config_space, self._objectives)
+        except Exception as exc:
+            logger.warning("Failed to render results table: %s", exc)
 
 
 class LoggingCallback(OptimizationCallback):

@@ -269,6 +269,58 @@ class TestProgressBarCallback:
         assert "Best score: 0.920" in captured.out
         assert "Total time: 120.5s" in captured.out
 
+    def test_on_optimization_complete_prints_results_table(
+        self,
+        callback: ProgressBarCallback,
+        trial_result: TrialResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Canonical results table should be rendered when callback has context."""
+        callback.on_optimization_start(
+            {"model": ["gpt-4"], "temperature": [0.1, 0.2]},
+            ["accuracy"],
+            "grid",
+        )
+
+        result = OptimizationResult(
+            trials=[trial_result],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        rendered: dict[str, Any] = {}
+
+        def _capture_table(
+            table_result: OptimizationResult,
+            config_space: dict[str, Any],
+            objectives: list[str],
+        ) -> None:
+            rendered["result"] = table_result
+            rendered["config_space"] = config_space
+            rendered["objectives"] = objectives
+
+        monkeypatch.setattr(
+            callback,
+            "_print_results_table",
+            lambda r: _capture_table(r, callback._config_space, callback._objectives),
+        )
+
+        callback.on_optimization_complete(result)
+
+        assert rendered["result"] is result
+        assert rendered["config_space"] == {
+            "model": ["gpt-4"],
+            "temperature": [0.1, 0.2],
+        }
+        assert rendered["objectives"] == ["accuracy"]
+
     def test_on_optimization_complete_timeout_shows_warning(
         self, callback: ProgressBarCallback, capsys: pytest.CaptureFixture[str]
     ) -> None:

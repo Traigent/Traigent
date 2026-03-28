@@ -35,7 +35,7 @@ else:
     def _pydantic_ai_unavailable(*args: Any, **kwargs: Any) -> Any:
         raise ImportError(
             "PydanticAI integration is unavailable. "
-            "Install with: pip install 'pydantic-ai>=1,<2'"
+            "Install with: pip install 'pydantic-ai-slim>=1,<2'"
         )
 
     PydanticAIHandler = _pydantic_ai_unavailable  # type: ignore[assignment, misc]

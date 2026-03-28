@@ -67,7 +67,7 @@ class PydanticAIHandler:
         if not PYDANTICAI_AVAILABLE:
             raise ImportError(
                 "PydanticAI is required for PydanticAIHandler. "
-                "Install with: pip install 'pydantic-ai>=1,<2'"
+                "Install with: pip install 'pydantic-ai-slim>=1,<2'"
             )
 
         self._agent = agent
