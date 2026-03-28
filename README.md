@@ -53,7 +53,7 @@ uv pip install -e ".[recommended]"
 Prefer `uv` for new environments. If you need a `pip` fallback instead, see
 [Installation details](#installation).
 
-**Try it now — no API keys needed:**
+**Try it now — no API keys needed** (requires the source checkout above):
 
 ```bash
 python hello_world.py
