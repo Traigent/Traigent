@@ -13,33 +13,37 @@ Learn Traigent by doing. Simple, clean examples showing how to use Traigent for 
 
 ## Requirements
 
-Install Traigent with integrations to run all examples:
+These walkthrough examples live inside the Traigent source tree and use
+relative paths to shared helpers and datasets. **Clone the repo first**, then
+install with the recommended extras:
 
 ```bash
-pip install traigent[integrations]
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+pip install -e ".[recommended]"   # or: uv pip install -e ".[recommended]"
 ```
 
-This includes:
-
-- `langchain`, `langchain-openai`, `langchain-anthropic`, `langchain-google-genai`, `langchain-community` - LLM framework
-- `faiss-cpu` - Vector search for RAG examples
-- `openai`, `anthropic`, `google-generativeai` - LLM providers
+The `recommended` extra includes LangChain, OpenAI, Anthropic, Google Gemini,
+vector search, and other dependencies needed by these examples.
 
 ## Quick Start
 
 ```bash
-# Mock examples - no API keys needed
+# Mock examples — no API keys needed
 python walkthrough/mock/01_tuning_qa.py
 
-# Real examples - use real LLM calls when a provider key is set;
-# otherwise they warn and fall back to the matching mock walkthrough
+# Real examples — require a provider API key
 export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
 python walkthrough/real/01_tuning_qa.py
 
-# Multi-provider example (any one key works; without keys it falls back to mock)
+# Multi-provider example (set at least one provider key)
 export OPENAI_API_KEY="your-key"  # Or ANTHROPIC_API_KEY / GOOGLE_API_KEY  <!-- pragma: allowlist secret -->
 python walkthrough/real/07_multi_provider.py
 ```
+
+> **Note:** Real examples warn and exit when the required API key is missing.
+> Set `TRAIGENT_REQUIRE_REAL=1` to enforce this in CI. Without a key, run the
+> matching `mock/` variant instead.
 
 Check your environment with `python walkthrough/utils/check_environment.py`.
 
@@ -49,12 +53,9 @@ Check your environment with `python walkthrough/utils/check_environment.py`.
 # Run all mock examples (no API keys needed)
 bash walkthrough/test_all_examples.sh --mock
 
-# Run all real examples (uses provider keys when set, otherwise falls back to mock)
+# Run all real examples (requires provider keys)
 export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
 bash walkthrough/test_all_examples.sh --real
-
-# Disable fallback and fail fast when keys are missing (useful for CI)
-export TRAIGENT_REQUIRE_REAL=1
 ```
 
 ## Structure
@@ -64,7 +65,7 @@ walkthrough/
 ├── README.md              # This file
 ├── demo/                  # Optional demo/video support scripts
 ├── mock/                  # No API keys needed, instant results
-├── real/                  # Real LLM calls when keyed, mock fallback when keys are missing
+├── real/                  # Real LLM calls (requires provider API keys)
 ├── datasets/              # Pre-built evaluation datasets (20 examples each)
 ├── utils/                 # Shared utilities (scoring, helpers, mock answers)
 └── test_all_examples.sh   # Run all examples script
@@ -87,7 +88,7 @@ Eight hands-on examples that build on each other:
 
 Injection modes are explained in depth here: [Injection Modes Guide](../docs/user-guide/injection_modes.md).
 
-Each example has **mock** (no API keys) and **real** (actual LLM calls when keys are present, otherwise automatic mock fallback) variants.
+Each example has **mock** (no API keys) and **real** (actual LLM calls, requires provider API keys) variants.
 
 Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
 appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
@@ -196,14 +197,14 @@ In mock mode, Example 06 uses a lightweight heuristic scorer (function signature
 
 ## Mock vs Real
 
-| Mock (`mock/`)        | Real (`real/`)           |
-|-----------------------|--------------------------|
-| No API keys           | Uses provider keys when present |
-| Instant results       | Real LLM calls or mock fallback |
-| Simulated accuracy    | Actual model performance |
-| Simulated best config | Real best config per run |
-| Great for learning    | Production-ready         |
-| ~50 lines each        | ~60-150 lines each       |
+| Mock (`mock/`)        | Real (`real/`)                     |
+|-----------------------|------------------------------------|
+| No API keys           | Requires provider API keys         |
+| Instant results       | Real LLM calls                     |
+| Simulated accuracy    | Actual model performance           |
+| Simulated best config | Real best config per run           |
+| Great for learning    | Production-ready                   |
+| ~50 lines each        | ~60-150 lines each                 |
 
 ## Execution Modes & Privacy
 
