@@ -199,6 +199,12 @@ jobs:
           cp examples/ci-pipeline/dvc.yaml dvc.yaml
           cp examples/ci-pipeline/params.yaml params.yaml
 
+      - name: Initialize DVC repository
+        run: |
+          if [ ! -d ".dvc" ]; then
+            dvc init --quiet --force
+          fi
+
       - name: Configure AWS credentials via OIDC
         if: github.event.inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v4
