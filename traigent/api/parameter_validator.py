@@ -29,6 +29,7 @@ class OptimizeParameters:
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
     constraints: list[Callable[..., Any]] | None = None
+    safety_constraints: list[Any] | None = None
     injection_mode: str | InjectionMode = InjectionMode.CONTEXT
     config_param: str | None = None
     auto_override_frameworks: bool = False  # Requires traigent-integrations plugin
@@ -70,6 +71,7 @@ class ParameterValidator:
         self._validate_objectives(params.objectives)
         self._validate_configuration_space(params.configuration_space)
         self._validate_constraints(params.constraints)
+        validate_safety_constraints(params.safety_constraints)
 
         # Normalize parameters
         params.injection_mode = self._normalize_injection_mode(params.injection_mode)
@@ -356,16 +358,28 @@ class ParameterValidator:
     def _validate_constraints(
         self, constraints: list[Callable[..., Any]] | None
     ) -> None:
-        """Validate constraints parameter."""
+        """Validate constraints parameter.
+
+        Accepts callables (lambdas / functions) as well as structural
+        ``Constraint`` and ``BoolExpr`` objects from the public API.
+        """
         if constraints is None:
             return
 
         if not isinstance(constraints, list):
-            raise ValidationError("constraints must be a list of callable functions")
+            raise ValidationError("constraints must be a list")
+
+        from traigent.api.constraints import BoolExpr, Constraint
 
         for i, constraint in enumerate(constraints):
-            if not callable(constraint):
-                raise ValidationError(f"constraint at index {i} is not callable")
+            if callable(constraint):
+                continue
+            if isinstance(constraint, (Constraint, BoolExpr)):
+                continue
+            raise ValidationError(
+                f"constraint at index {i} must be a callable, Constraint, or BoolExpr "
+                f"(got {type(constraint).__name__})"
+            )
 
     def _normalize_injection_mode(
         self, injection_mode: str | InjectionMode
@@ -435,3 +449,27 @@ def validate_optimize_parameters(**kwargs: Any) -> OptimizeParameters:
 
 
 _PARAMETER_VALIDATOR = ParameterValidator()
+
+
+def validate_safety_constraints(
+    safety_constraints: list[Any] | None,
+) -> None:
+    """Validate ``safety_constraints`` accepted by the decorator.
+
+    Each entry must be a :class:`SafetyConstraint` or
+    :class:`CompoundSafetyConstraint`.
+    """
+    if safety_constraints is None:
+        return
+
+    if not isinstance(safety_constraints, list):
+        raise ValidationError("safety_constraints must be a list")
+
+    from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
+
+    for i, sc in enumerate(safety_constraints):
+        if not isinstance(sc, (SafetyConstraint, CompoundSafetyConstraint)):
+            raise ValidationError(
+                f"safety_constraints[{i}] must be a SafetyConstraint or "
+                f"CompoundSafetyConstraint (got {type(sc).__name__})"
+            )

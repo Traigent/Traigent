@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from traigent.core.optimized_function import _resolve_callbacks
-from traigent.utils.callbacks import ProgressBarCallback
+from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
 
 
 class TestResolveCallbacks:
@@ -19,31 +19,35 @@ class TestResolveCallbacks:
         assert isinstance(callbacks[0], ProgressBarCallback)
 
     def test_disabled_explicit(self):
-        """progress_bar=False suppresses auto-injection."""
+        """progress_bar=False still keeps the standalone results table."""
         with patch("traigent.core.optimized_function.sys") as mock_sys:
             mock_sys.stdin.isatty.return_value = True
             callbacks = _resolve_callbacks(None, None, progress_bar=False)
 
-        assert len(callbacks) == 0
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], ResultsTableCallback)
 
     def test_skipped_non_interactive(self):
-        """No auto-injection when stdin is not a TTY."""
+        """Non-interactive mode injects only the standalone results table."""
         with patch("traigent.core.optimized_function.sys") as mock_sys:
             mock_sys.stdin.isatty.return_value = False
             callbacks = _resolve_callbacks(None, None, progress_bar=None)
 
-        assert len(callbacks) == 0
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], ResultsTableCallback)
 
     def test_not_duplicated(self):
-        """User-provided ProgressBarCallback is not duplicated."""
+        """User-provided ProgressBarCallback is not duplicated or paired with a table."""
         existing = ProgressBarCallback()
         with patch("traigent.core.optimized_function.sys") as mock_sys:
             mock_sys.stdin.isatty.return_value = True
             callbacks = _resolve_callbacks([existing], None, progress_bar=None)
 
         progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
+        table_callbacks = [cb for cb in callbacks if isinstance(cb, ResultsTableCallback)]
         assert len(progress_bars) == 1
         assert progress_bars[0] is existing
+        assert table_callbacks == []
 
     def test_explicit_callbacks_preserved(self):
         """Explicit callbacks are preserved alongside auto-injected bar."""
@@ -76,6 +80,18 @@ class TestResolveCallbacks:
         assert isinstance(callbacks[0], ProgressBarCallback)
         assert callbacks[1] is dec_cb
 
+    def test_results_table_callback_not_duplicated_with_progress_bar(self):
+        """Standalone table callback should be removed when progress bar is active."""
+        existing_table = ResultsTableCallback()
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = True
+            callbacks = _resolve_callbacks([existing_table], None, progress_bar=None)
+
+        progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
+        table_callbacks = [cb for cb in callbacks if isinstance(cb, ResultsTableCallback)]
+        assert len(progress_bars) == 1
+        assert table_callbacks == []
+
     def test_force_progress_bar_non_interactive(self):
         """progress_bar=True forces injection even in non-interactive mode."""
         with patch("traigent.core.optimized_function.sys") as mock_sys:
@@ -86,9 +102,10 @@ class TestResolveCallbacks:
         assert isinstance(callbacks[0], ProgressBarCallback)
 
     def test_auto_skips_non_interactive(self):
-        """progress_bar=None with isatty=False should not inject."""
+        """progress_bar=None with isatty=False injects only the table callback."""
         with patch("traigent.core.optimized_function.sys") as mock_sys:
             mock_sys.stdin.isatty.return_value = False
             callbacks = _resolve_callbacks(None, None, progress_bar=None)
 
-        assert len(callbacks) == 0
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], ResultsTableCallback)

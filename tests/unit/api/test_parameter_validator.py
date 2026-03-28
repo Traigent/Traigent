@@ -4,11 +4,14 @@ Unit tests for parameter validation module.
 
 import pytest
 
+from traigent.api.constraints import implies
+from traigent.api.parameter_ranges import Choices, Range
 from traigent.api.parameter_validator import (
     OptimizeParameters,
     ParameterValidator,
     validate_optimize_parameters,
 )
+from traigent.api.safety import hallucination_rate
 from traigent.config.types import InjectionMode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
@@ -107,7 +110,10 @@ class TestParameterValidator:
             ["a.json", "b.json", "c.json"],
             [
                 {"input": {"question": "What is 2+2?"}, "expected": "4"},
-                {"input_data": {"question": "Capital of France?"}, "expected_output": "Paris"},
+                {
+                    "input_data": {"question": "Capital of France?"},
+                    "expected_output": "Paris",
+                },
             ],
         ]
 
@@ -147,7 +153,10 @@ class TestParameterValidator:
             with pytest.raises(ValidationError) as exc_info:
                 self.validator._validate_dataset(invalid_list)
             error_message = str(exc_info.value)
-            assert "inline example" in error_message or "cannot mix file paths" in error_message
+            assert (
+                "inline example" in error_message
+                or "cannot mix file paths" in error_message
+            )
 
     def test_validate_objectives_valid(self):
         """Test validation of valid objectives."""
@@ -223,6 +232,20 @@ class TestParameterValidator:
             result = self.validator._validate_constraints(constraints)
             assert result is None, "Expected None for valid constraints"
 
+    def test_validate_constraints_accepts_constraint_objects(self):
+        """Constraint and BoolExpr API objects should be accepted."""
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        result = self.validator._validate_constraints(
+            [
+                implies(model.equals("gpt-4"), temp.lte(0.7)),
+                temp.gte(0.1),
+            ]
+        )
+
+        assert result is None, "Expected None for Constraint and BoolExpr inputs"
+
     def test_validate_constraints_invalid(self):
         """Test validation of invalid constraints."""
         invalid_constraints = [
@@ -234,7 +257,7 @@ class TestParameterValidator:
         for constraints in invalid_constraints:
             with pytest.raises(ValidationError) as exc_info:
                 self.validator._validate_constraints(constraints)
-            assert "not callable" in str(exc_info.value)
+            assert "must be a callable" in str(exc_info.value)
 
     def test_normalize_injection_mode_string(self):
         """Test normalization of string injection modes."""
@@ -298,6 +321,25 @@ class TestValidateOptimizeParameters:
 
         assert result.kwargs["custom_param"] == "value"
         assert result.kwargs["another_param"] == 123
+
+    def test_validate_optimize_parameters_accepts_safety_constraints(self):
+        """Standalone validation should accept valid safety constraints."""
+        constraint = hallucination_rate().below(0.1)
+
+        result = validate_optimize_parameters(
+            eval_dataset="test.jsonl",
+            safety_constraints=[constraint],
+        )
+
+        assert result.safety_constraints == [constraint]
+
+    def test_validate_optimize_parameters_rejects_invalid_safety_constraints(self):
+        """Standalone validation should reject invalid safety constraints."""
+        with pytest.raises(ValidationError, match="safety_constraints\\[0\\]"):
+            validate_optimize_parameters(
+                eval_dataset="test.jsonl",
+                safety_constraints=["not-a-safety-constraint"],
+            )
 
     def test_validate_optimize_parameters_invalid(self):
         """Test parameter validation with invalid parameters."""
