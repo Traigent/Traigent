@@ -55,7 +55,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,integrations,bayesian]"
-          pip install dvc[s3] cml dvclive
+          # setup-cml provides the CML CLI; pin modern DVC to avoid legacy resolver pulls.
+          pip install "dvc[s3]>=3,<4" "dvclive>=3,<4"
 
       - name: Setup CML
         uses: iterative/setup-cml@f12ea7685438c1fc438d50f77519b3860cf5fa98  # v2.0.1
