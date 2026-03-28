@@ -327,7 +327,9 @@ class LocalEvaluator(BaseEvaluator):
     def _extract_response_length(self, output: Any) -> int | None:
         """Extract response length for privacy mode."""
         response_text = self._extract_response_text(output)
-        return len(response_text) if response_text else None
+        if response_text is None:
+            return None
+        return len(response_text)
 
     def _get_metrics_source(
         self,
@@ -673,7 +675,11 @@ class LocalEvaluator(BaseEvaluator):
 
         # Determine response text for scoring logic
         response_text = self._extract_response_text(output)
-        if self.privacy_enabled and response_text and response_length is None:
+        if (
+            self.privacy_enabled
+            and response_text is not None
+            and response_length is None
+        ):
             response_length = len(response_text)
 
         # Get best metrics source using helper
