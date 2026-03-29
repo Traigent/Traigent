@@ -13,15 +13,6 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
 ```
 
-### Faster path (uv)
-
-```bash
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-uv venv && source .venv/bin/activate
-uv pip install -e ".[recommended]"        # Same recommended bundle, faster resolver
-```
-
 ### PyPI vs source installs
 
 `0.10.0` release validation uses the source install from this repository. Use a published package only if your team separately validates that artifact for your environment.
