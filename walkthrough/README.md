@@ -20,7 +20,7 @@ install with the recommended extras:
 ```bash
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
-pip install -e ".[recommended]"   # or: uv pip install -e ".[recommended]"
+pip install -e ".[recommended]"
 ```
 
 The `recommended` extra includes LangChain, OpenAI, Anthropic, Google Gemini,
