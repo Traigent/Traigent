@@ -98,10 +98,10 @@ class TestLocalEvaluatorTokenEstimation:
         config = {}
         result = await evaluator.evaluate(known_output_function, config, sample_dataset)
 
-        # Check first example (input: "This is a test input with some words" = 37 chars = 9 tokens)
+        # Check first example using the raw text payload length.
         first_result = result.example_results[0]
         expected_input_tokens = max(
-            1, len(str(sample_dataset.examples[0].input_data)) // 4
+            1, len(sample_dataset.examples[0].input_data["text"]) // 4
         )
         expected_output_tokens = max(1, len("test_output") // 4)
 
