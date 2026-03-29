@@ -10,11 +10,8 @@ This guide covers running tests in the Traigent SDK project.
 # Using pip
 pip install -e ".[test]"
 
-# Using uv (faster)
-uv pip install -e ".[test]"
-
 # Or install dev dependencies (includes test + linting tools)
-uv pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 ### Run Tests
@@ -132,13 +129,13 @@ TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 
-# Create virtual environment with uv
-uv venv
+# Create virtual environment
+python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
 # or: .venv\Scripts\activate  # Windows
 
 # Install dev dependencies (includes test)
-uv pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 ### 2. Run Tests Before Committing
@@ -273,8 +270,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install uv
-        uv pip install -e ".[test]"
+        pip install -e ".[test]"
 
     - name: Run tests
       run: pytest --cov=traigent --cov-report=xml
