@@ -36,12 +36,12 @@ jobs:
       contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0  # Full history for version detection
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 
@@ -146,10 +146,10 @@ jobs:
 
     steps:
     - name: Wait for package propagation
-      run: sleep 60
+      run: sleep 120
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 
@@ -170,7 +170,10 @@ jobs:
         VERSION="$EXPECTED_VERSION"
         echo "Testing installation of traigent==$VERSION from $PACKAGE_LABEL"
 
-        curl -fsSL "$PACKAGE_API_URL" | python - "$VERSION" <<'PY'
+        # Retry API check up to 3 times (CDN propagation can be slow)
+        for attempt in 1 2 3; do
+          echo "Attempt $attempt: checking $PACKAGE_LABEL API for version $VERSION..."
+          if curl -fsSL "$PACKAGE_API_URL" | python - "$VERSION" <<'PY'
         import json
         import sys
 
@@ -181,6 +184,17 @@ jobs:
             raise SystemExit(f"Version {version} not found on package index")
         print(f"Verified version {version} exists on package index")
         PY
+          then
+            break
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            echo "Version not found yet, waiting 60s before retry..."
+            sleep 60
+          else
+            echo "Error: version $VERSION not found on $PACKAGE_LABEL after 3 attempts"
+            exit 1
+          fi
+        done
 
         # Create clean environment and test installation
         python -m venv test_env
