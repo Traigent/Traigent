@@ -111,8 +111,8 @@ class TestGetModelsForTier:
 
         assert any("claude" in m for m in models)
 
-    def test_fallback_models_for_gemini(self) -> None:
-        """Fallback should return known Gemini models."""
+    def test_fallback_models_for_google(self) -> None:
+        """Fallback should return known Google/Gemini models."""
         with (
             patch.dict(os.environ, {}, clear=True),
             patch(
@@ -120,9 +120,22 @@ class TestGetModelsForTier:
             ) as mock_discovery,
         ):
             mock_discovery.return_value = None
-            models = get_models_for_tier(provider="gemini", tier="fast")
+            models = get_models_for_tier(provider="google", tier="fast")
 
         assert any("gemini" in m for m in models)
+
+    def test_fallback_models_for_groq(self) -> None:
+        """Fallback should return known Groq models."""
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "traigent.integrations.providers.get_model_discovery"
+            ) as mock_discovery,
+        ):
+            mock_discovery.return_value = None
+            models = get_models_for_tier(provider="groq", tier="balanced")
+
+        assert any("llama" in m for m in models)
 
     def test_fallback_models_for_mistral(self) -> None:
         """Fallback should return known Mistral models."""
@@ -236,7 +249,8 @@ class TestListAvailableProviders:
 
         assert "openai" in providers
         assert "anthropic" in providers
-        assert "gemini" in providers
+        assert "google" in providers
+        assert "groq" in providers
         assert "mistral" in providers
 
 
@@ -366,7 +380,7 @@ class TestFallbackModels:
     """Tests for fallback model dictionaries."""
 
     # Known built-in providers to test
-    BUILTIN_PROVIDERS = {"openai", "anthropic", "gemini", "mistral"}
+    BUILTIN_PROVIDERS = {"openai", "anthropic", "google", "groq", "mistral"}
 
     def test_fallback_models_structure(self) -> None:
         """Fallback models should have correct structure."""

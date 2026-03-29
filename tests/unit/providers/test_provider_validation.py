@@ -5,7 +5,7 @@ Tests cover:
 - Model name validation against known models lists
 - Error classification (auth vs transient)
 - Timeout handling
-- Provider-specific validators (OpenAI, Anthropic, Google, Mistral, Cohere)
+- Provider-specific validators (OpenAI, Anthropic, Google, Groq, Mistral, Cohere)
 - Caching behavior
 - Status printing and filtering
 """
@@ -85,11 +85,25 @@ class TestGetProviderForModel:
         assert get_provider_for_model("command-light") == "cohere"
         assert get_provider_for_model("command-r") == "cohere"
 
+    def test_groq_llama_models(self):
+        """Test Groq Llama model detection."""
+        assert get_provider_for_model("llama-3.3-70b-versatile") == "groq"
+        assert get_provider_for_model("llama-3.1-8b-instant") == "groq"
+        assert get_provider_for_model("llama3-8b-8192") == "groq"
+        assert get_provider_for_model("llama3-70b-8192") == "groq"
+
+    def test_groq_other_models(self):
+        """Test Groq Gemma and Mixtral model detection."""
+        assert get_provider_for_model("gemma2-9b-it") == "groq"
+        assert get_provider_for_model("gemma-7b-it") == "groq"
+        assert get_provider_for_model("mixtral-8x7b-32768") == "groq"
+
     def test_litellm_slash_format(self):
         """Test LiteLLM provider/model format detection."""
         assert get_provider_for_model("openai/gpt-4") == "openai"
         assert get_provider_for_model("anthropic/claude-3-haiku") == "anthropic"
         assert get_provider_for_model("google/gemini-pro") == "google"
+        assert get_provider_for_model("groq/llama-3.3-70b-versatile") == "groq"
         assert get_provider_for_model("mistral/mistral-small") == "mistral"
         assert get_provider_for_model("cohere/command") == "cohere"
 
@@ -982,6 +996,110 @@ class TestProviderValidatorCohere:
         assert status.valid is False
         assert "Validation failed" in status.message
         assert status.error_type == "RuntimeError"
+
+
+@pytest.mark.unit
+class TestProviderValidatorGroq:
+    """Tests for ProviderValidator._validate_groq."""
+
+    def test_missing_api_key(self, monkeypatch):
+        """Test Groq validation with missing API key."""
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        validator = ProviderValidator()
+        status = validator._validate_groq()
+        assert status.provider == "groq"
+        assert status.valid is False
+        assert status.message == "Set GROQ_API_KEY"
+        assert status.error_type == "MissingKey"
+
+    def test_cached_validation(self, monkeypatch):
+        """Test Groq validation with cached result."""
+        key = "gsk_test_key_123"  # pragma: allowlist secret
+        monkeypatch.setenv("GROQ_API_KEY", key)
+        validator = ProviderValidator()
+        validator._cache_success("groq", key)
+        status = validator._validate_groq()
+        assert status.provider == "groq"
+        assert status.valid is True
+        assert status.message == "Available (cached)"
+
+    def test_import_error(self, monkeypatch):
+        """Test Groq validation with SDK not installed."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_123")  # pragma: allowlist secret
+        validator = ProviderValidator()
+
+        with patch.dict(sys.modules, {"groq": None}):
+            with patch("builtins.__import__", side_effect=ImportError):
+                status = validator._validate_groq()
+
+        assert status.provider == "groq"
+        assert status.valid is False
+        assert "SDK not installed" in status.message
+        assert status.error_type == "ModuleNotFoundError"
+
+    def test_auth_error(self, monkeypatch):
+        """Test Groq validation with authentication error."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_invalid")  # pragma: allowlist secret
+        validator = ProviderValidator()
+
+        class AuthenticationError(Exception):
+            pass
+
+        mock_models = Mock()
+        mock_models.list.side_effect = AuthenticationError("Invalid API key")
+        mock_client = Mock()
+        mock_client.models = mock_models
+
+        mock_groq = SimpleNamespace(Groq=Mock(return_value=mock_client))
+
+        with patch.dict(sys.modules, {"groq": mock_groq}):
+            status = validator._validate_groq()
+
+        assert status.provider == "groq"
+        assert status.valid is False
+        assert "Invalid key" in status.message
+        assert status.error_type == "AuthenticationError"
+
+    def test_transient_error(self, monkeypatch):
+        """Test Groq validation with transient error."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_123")  # pragma: allowlist secret
+        validator = ProviderValidator()
+
+        class RateLimitError(Exception):
+            pass
+
+        mock_models = Mock()
+        mock_models.list.side_effect = RateLimitError("Rate limit exceeded")
+        mock_client = Mock()
+        mock_client.models = mock_models
+
+        mock_groq = SimpleNamespace(Groq=Mock(return_value=mock_client))
+
+        with patch.dict(sys.modules, {"groq": mock_groq}):
+            status = validator._validate_groq()
+
+        assert status.provider == "groq"
+        assert status.valid is True
+        assert "unverified" in status.message.lower()
+
+    def test_successful_validation(self, monkeypatch):
+        """Test successful Groq validation."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_123")  # pragma: allowlist secret
+        validator = ProviderValidator()
+
+        mock_models = Mock()
+        mock_models.list.return_value = []
+        mock_client = Mock()
+        mock_client.models = mock_models
+
+        mock_groq = SimpleNamespace(Groq=Mock(return_value=mock_client))
+
+        with patch.dict(sys.modules, {"groq": mock_groq}):
+            status = validator._validate_groq()
+
+        assert status.provider == "groq"
+        assert status.valid is True
+        assert status.message == "Available"
 
 
 @pytest.mark.unit
