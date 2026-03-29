@@ -1,0 +1,15 @@
+{"question": "show all active customers", "expected": "SELECT * FROM customers WHERE status = 'active'"}
+{"question": "count how many customers are in new york", "expected": "SELECT COUNT(*) FROM customers WHERE city = 'New York'"}
+{"question": "find customers with unpaid bills", "expected": "SELECT DISTINCT c.name FROM customers c JOIN billing b ON c.customer_id = b.customer_id WHERE b.status = 'unpaid'"}
+{"question": "get the total billing revenue", "expected": "SELECT SUM(amount) FROM billing"}
+{"question": "list the top 5 customers by data usage", "expected": "SELECT c.name, SUM(nu.data_gb) AS total_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_data DESC LIMIT 5"}
+{"question": "find all premium plan subscribers", "expected": "SELECT * FROM subscriptions WHERE plan_name = 'premium'"}
+{"question": "get average monthly rate per plan", "expected": "SELECT plan_name, AVG(monthly_rate) AS avg_rate FROM subscriptions GROUP BY plan_name"}
+{"question": "count customers by city", "expected": "SELECT city, COUNT(*) AS customer_count FROM customers GROUP BY city ORDER BY customer_count DESC"}
+{"question": "find overdue unpaid bills", "expected": "SELECT * FROM billing WHERE status = 'unpaid' AND due_date < CURRENT_DATE"}
+{"question": "show total call minutes by customer", "expected": "SELECT c.name, SUM(nu.call_minutes) AS total_minutes FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name ORDER BY total_minutes DESC"}
+{"question": "find customers with no network usage", "expected": "SELECT name FROM customers WHERE customer_id NOT IN (SELECT DISTINCT customer_id FROM network_usage)"}
+{"question": "list customers on the enterprise plan", "expected": "SELECT c.name, c.city FROM customers c JOIN subscriptions s ON c.customer_id = s.customer_id WHERE s.plan_name = 'enterprise'"}
+{"question": "get the highest monthly billing amount", "expected": "SELECT MAX(amount) FROM billing"}
+{"question": "show customers who have more than one subscription", "expected": "SELECT customer_id, COUNT(*) AS sub_count FROM subscriptions GROUP BY customer_id HAVING COUNT(*) > 1"}
+{"question": "find the average data usage per customer", "expected": "SELECT c.name, AVG(nu.data_gb) AS avg_data FROM customers c JOIN network_usage nu ON c.customer_id = nu.customer_id GROUP BY c.customer_id, c.name"}

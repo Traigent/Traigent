@@ -46,7 +46,8 @@ except ImportError:  # pragma: no cover
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "text-to-sql"
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
-SCHEMA = (BASE / "schema.sql").read_text()
+_schema_path = BASE / "schema.sql"
+SCHEMA = _schema_path.read_text() if _schema_path.exists() else ""
 
 if MOCK:
     try:
