@@ -8,11 +8,13 @@ import asyncio
 import os
 from pathlib import Path
 
-# hello_world.py always runs in mock mode — no API keys needed.
-# Hard-set so stale shell env vars don't silently break the quickstart.
-os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
-os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+# Default to mock mode so the quickstart works without API keys.
+# Override with: TRAIGENT_MOCK_LLM=false python hello_world.py
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+_mock = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes")
+if _mock:
+    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
+    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 from langchain_openai import ChatOpenAI
 
