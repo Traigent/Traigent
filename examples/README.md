@@ -270,6 +270,31 @@ export OPENAI_API_KEY="your-key-here" # pragma: allowlist secret
 python examples/core/multi-objective-tradeoff/run_anthropic.py
 ```
 
+### Running From Outside the Repo Tree
+
+If you want to run demo scripts from a different directory (e.g. your own project),
+set the `TRAIGENT_SDK_PATH` environment variable to the SDK repo root:
+
+```bash
+# Point demos at a local SDK clone
+export TRAIGENT_SDK_PATH=/path/to/Traigent
+
+# Now you can run any example from anywhere
+python /path/to/Traigent/examples/quickstart/01_simple_qa.py
+```
+
+This works for both local-dev and CI scenarios.  When `TRAIGENT_SDK_PATH` is not set,
+scripts automatically detect the SDK location relative to their own path — so running
+from inside the repo tree requires no extra setup.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `TRAIGENT_SDK_PATH` | Absolute path to the SDK repo root (overrides auto-detection) |
+| `TRAIGENT_MOCK_LLM` | Set to `true` to run without real API keys |
+| `TRAIGENT_DATASET_ROOT` | Root directory for resolving dataset paths |
+| `TRAIGENT_RESULTS_FOLDER` | Custom directory for optimization results |
+| `TRAIGENT_COST_APPROVED` | Set to `true` to skip cost confirmation prompts |
+
 ### Recommended Learning Path
 
 1. **Quickstart:** `quickstart/01_simple_qa.py` (1 min) - README examples that just work
@@ -353,7 +378,7 @@ Follow these best practices when contributing new examples:
 
 | Problem | Solution |
 | ------- | -------- |
-| `ModuleNotFoundError: No module named 'traigent'` | Run `pip install -e .` from repository root |
+| `ModuleNotFoundError: No module named 'traigent'` | Run `pip install -e .` from repository root, or set `TRAIGENT_SDK_PATH` |
 | `API key not found` | Export your API key or use `TRAIGENT_MOCK_LLM=true` |
 | `Example doesn't run` | Check example's inline comments for prerequisites |
 | `0.0% accuracy` | Use mock mode or provide valid API keys |

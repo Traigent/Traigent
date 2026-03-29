@@ -21,8 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Add parent directory to path to ensure traigent can be imported
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add SDK root to path to ensure traigent can be imported.
+# Set TRAIGENT_SDK_PATH to override when running from outside the repo tree.
+sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent)))
 
 from traigent.utils.logging import setup_logging  # noqa: E402
 
