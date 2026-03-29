@@ -20,8 +20,8 @@ Usage (run from repo root):
     .venv/bin/python walkthrough/real/07_multi_provider.py
 
 Note: This example validates API keys using Traigent's core provider validation
-and skips any invalid providers. If no provider key is set, it shows a warning
-and runs the matching mock walkthrough instead.
+and skips any invalid providers. If no provider key is set, the script exits
+with an error and suggests running the mock walkthrough instead.
 """
 
 import asyncio
@@ -78,7 +78,7 @@ traigent.initialize(
 # Uses Traigent core provider validation (traigent.providers.validation)
 # -----------------------------------------------------------------------------
 
-# Models organized by provider
+# Models organized by provider (valid model names: https://models.litellm.ai/)
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
 ANTHROPIC_MODELS = ["claude-sonnet-4-20250514"]
 GOOGLE_MODELS = ["gemini-2.0-flash", "gemini-1.5-pro-latest"]

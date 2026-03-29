@@ -41,6 +41,7 @@ DATASET_PATH = (
 )
 
 
+# Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # Tuned Variable #1

@@ -5,8 +5,8 @@ Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
     .venv/bin/python walkthrough/real/04_multi_objective.py
 
-If OPENAI_API_KEY is missing, this script shows a warning and runs the matching
-mock walkthrough instead.
+If OPENAI_API_KEY is missing, this script exits with an error and suggests
+running the mock walkthrough instead.
 """
 
 import asyncio
@@ -51,6 +51,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
         ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
     ]
 )
+# Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
     "model": [
         "gpt-3.5-turbo",

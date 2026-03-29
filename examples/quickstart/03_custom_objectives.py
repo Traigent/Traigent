@@ -52,6 +52,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
 )
 
 
+# Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     objectives=custom_objectives,
     configuration_space={

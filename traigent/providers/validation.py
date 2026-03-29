@@ -44,6 +44,9 @@ _MSG_TRANSIENT_WARNING = (
 _MSG_AVAILABLE_UNVERIFIED = "Available (unverified: {error_type})"
 _MSG_VALIDATION_FAILED = "Validation failed ({error_type})"
 _MSG_AVAILABLE_CACHED = "Available (cached)"
+_MSG_INSUFFICIENT_FUNDS = (
+    "Insufficient funds — top up your {provider} account and retry"
+)
 
 # Provider detection patterns (model name -> provider)
 # Matches: gpt-*, o1-*, o3-* -> openai
@@ -197,6 +200,23 @@ def _is_transient_error(exc: Exception) -> bool:
         if parent.__name__ in _TRANSIENT_ERROR_TYPES:
             return True
     return False
+
+
+_INSUFFICIENT_FUNDS_KEYWORDS = (
+    "insufficient_funds",
+    "insufficient funds",
+    "insufficient credits",
+    "billing hard limit",
+    "exceeded your current billing",
+    "payment required",
+    "402",
+)
+
+
+def _is_insufficient_funds_error(exc: Exception) -> bool:
+    """Check if exception indicates insufficient funds / billing failure."""
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _INSUFFICIENT_FUNDS_KEYWORDS)
 
 
 def _run_with_timeout(func: Callable[[], T], timeout: float, provider: str) -> T:
@@ -457,6 +477,13 @@ class ProviderValidator:
                     message=_MSG_INVALID_KEY.format(error_type=error_type),
                     error_type=error_type,
                 )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="openai",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenAI"),
+                    error_type="InsufficientFunds",
+                )
             if _is_transient_error(exc):
                 # Transient error - key might be valid, warn but don't block
                 logger.warning(
@@ -526,6 +553,13 @@ class ProviderValidator:
                     valid=False,
                     message=_MSG_INVALID_KEY.format(error_type=error_type),
                     error_type=error_type,
+                )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="anthropic",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="Anthropic"),
+                    error_type="InsufficientFunds",
                 )
             if _is_transient_error(exc):
                 logger.warning(
@@ -597,6 +631,13 @@ class ProviderValidator:
                     message=_MSG_INVALID_KEY.format(error_type=error_type),
                     error_type=error_type,
                 )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="google",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="Google"),
+                    error_type="InsufficientFunds",
+                )
             if _is_transient_error(exc):
                 logger.warning(
                     _MSG_TRANSIENT_WARNING,
@@ -662,6 +703,13 @@ class ProviderValidator:
                     message=_MSG_INVALID_KEY.format(error_type=error_type),
                     error_type=error_type,
                 )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="mistral",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="Mistral"),
+                    error_type="InsufficientFunds",
+                )
             if _is_transient_error(exc):
                 logger.warning(
                     _MSG_TRANSIENT_WARNING,
@@ -726,6 +774,13 @@ class ProviderValidator:
                     valid=False,
                     message=_MSG_INVALID_KEY.format(error_type=error_type),
                     error_type=error_type,
+                )
+            if _is_insufficient_funds_error(exc):
+                return ProviderStatus(
+                    provider="cohere",
+                    valid=False,
+                    message=_MSG_INSUFFICIENT_FUNDS.format(provider="Cohere"),
+                    error_type="InsufficientFunds",
                 )
             if _is_transient_error(exc):
                 logger.warning(

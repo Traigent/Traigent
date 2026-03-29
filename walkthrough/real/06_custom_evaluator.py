@@ -8,8 +8,8 @@ Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
     .venv/bin/python walkthrough/real/06_custom_evaluator.py
 
-If OPENAI_API_KEY is missing, this script shows a warning and runs the matching
-mock walkthrough instead.
+If OPENAI_API_KEY is missing, this script exits with an error and suggests
+running the mock walkthrough instead.
 """
 
 import asyncio
@@ -47,6 +47,7 @@ traigent.initialize(execution_mode="edge_analytics")
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
+# Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
     "temperature": [0.0, 0.2, 0.5],
