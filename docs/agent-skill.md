@@ -10,9 +10,9 @@ Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, Windsu
 
 ## Install
 
-**Option A — npx (all 8 skills):**
+**Option A — npx (all 7 SDK skills):**
 ```bash
-npx skills add Traigent/agent-skills
+npx skills add Traigent/agents-skills
 ```
 
 **Option B — already included:**
