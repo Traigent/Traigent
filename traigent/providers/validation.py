@@ -55,6 +55,7 @@ _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
     "openai": re.compile(r"^(gpt-|o[13]-|text-davinci|text-embedding|whisper-)"),
     "anthropic": re.compile(r"^(claude-|haiku-|sonnet-|opus-)"),
     "google": re.compile(r"^(gemini-|models/gemini-)"),
+    "groq": re.compile(r"^(llama-|llama3-|gemma2?-|mixtral-)"),
     "mistral": re.compile(r"^(mistral-|codestral-|pixtral-|open-mistral-)"),
     "cohere": re.compile(r"^command-"),
 }
@@ -108,6 +109,16 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "gemini-1.5-pro",
             "gemini-1.0-pro",
             "gemini-pro",
+        }
+    ),
+    "groq": frozenset(
+        {
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama3-8b-8192",
+            "llama3-70b-8192",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768",
         }
     ),
     "mistral": frozenset(
@@ -616,6 +627,70 @@ class ProviderValidator:
                 error_type=error_type,
             )
 
+    def _validate_groq(self) -> ProviderStatus:
+        """Validate Groq API key."""
+        key = os.getenv("GROQ_API_KEY")
+        if not key:
+            return ProviderStatus(
+                provider="groq",
+                valid=False,
+                message="Set GROQ_API_KEY",
+                error_type="MissingKey",
+            )
+
+        if self._is_cached("groq", key):
+            return ProviderStatus(
+                provider="groq",
+                valid=True,
+                message=_MSG_AVAILABLE_CACHED,
+            )
+
+        try:
+            from groq import Groq
+
+            client = Groq(api_key=key, timeout=self.timeout)
+            client.models.list()
+            self._cache_success("groq", key)
+            return ProviderStatus(
+                provider="groq",
+                valid=True,
+                message="Available",
+            )
+        except ImportError:
+            return ProviderStatus(
+                provider="groq",
+                valid=False,
+                message="SDK not installed (pip install groq)",
+                error_type="ModuleNotFoundError",
+            )
+        except Exception as exc:
+            error_type = type(exc).__name__
+            if _is_auth_error(exc):
+                return ProviderStatus(
+                    provider="groq",
+                    valid=False,
+                    message=_MSG_INVALID_KEY.format(error_type=error_type),
+                    error_type=error_type,
+                )
+            if _is_transient_error(exc):
+                logger.warning(
+                    _MSG_TRANSIENT_WARNING,
+                    "Groq",
+                    error_type,
+                )
+                return ProviderStatus(
+                    provider="groq",
+                    valid=True,
+                    message=_MSG_AVAILABLE_UNVERIFIED.format(error_type=error_type),
+                    error_type=error_type,
+                )
+            return ProviderStatus(
+                provider="groq",
+                valid=False,
+                message=_MSG_VALIDATION_FAILED.format(error_type=error_type),
+                error_type=error_type,
+            )
+
     def _validate_mistral(self) -> ProviderStatus:
         """Validate Mistral API key."""
         key = os.getenv("MISTRAL_API_KEY")
@@ -779,6 +854,7 @@ def get_provider_for_model(model_name: str) -> str | None:
             "google": "google",
             "gemini": "google",
             "vertex_ai": "google",
+            "groq": "groq",
             "mistral": "mistral",
             "cohere": "cohere",
         }

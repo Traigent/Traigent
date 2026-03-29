@@ -2,8 +2,8 @@
 """Example 7: Multi-Provider LLM Support - Use any LLM vendor with Traigent.
 
 This example demonstrates how to use different LLM providers (OpenAI, Anthropic,
-Google Gemini) within the same Traigent optimization workflow. You can optimize
-across providers to find the best model for your use case.
+Google Gemini, Groq) within the same Traigent optimization workflow. You can
+optimize across providers to find the best model for your use case.
 
 Key concepts:
 - Define a configuration space that includes models from multiple providers
@@ -36,6 +36,8 @@ from utils.mock_answers import (
 
 import traigent
 from traigent import TraigentConfig
+from traigent.integrations.providers import get_models_for_tier
+from traigent.providers import get_provider_for_model
 
 # -----------------------------------------------------------------------------
 # Environment Setup (Mock Mode)
@@ -51,17 +53,14 @@ traigent.initialize(
 # -----------------------------------------------------------------------------
 DATASETS = Path(__file__).parent.parent / "datasets"
 
-# Models from three providers: OpenAI, Anthropic, and Google
-# In real mode, each requires its respective API key
+# Models from four providers — sourced from core (single source of truth).
+# In real mode, each provider requires its respective API key:
+#   OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY
+_PROVIDERS = ["openai", "anthropic", "google", "groq"]
 PROVIDER_MODELS = {
-    # OpenAI models (requires OPENAI_API_KEY)
-    "gpt-4o-mini": "openai",
-    "gpt-4o": "openai",
-    # Anthropic models (requires ANTHROPIC_API_KEY)
-    "claude-sonnet-4-20250514": "anthropic",
-    # Google Gemini models (requires GOOGLE_API_KEY)
-    "gemini-2.0-flash": "google",
-    "gemini-1.5-pro-latest": "google",
+    model: get_provider_for_model(model)
+    for provider in _PROVIDERS
+    for model in get_models_for_tier(provider=provider, tier="balanced")
 }
 
 OBJECTIVES = ["accuracy", "cost", "latency"]

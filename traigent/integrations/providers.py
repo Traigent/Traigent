@@ -51,10 +51,14 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     ("anthropic", "fast"): ["claude-3-haiku-20240307"],
     ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
     ("anthropic", "quality"): ["claude-3-opus-20240229"],
-    # Gemini tiers
-    ("gemini", "fast"): ["gemini-1.5-flash"],
-    ("gemini", "balanced"): ["gemini-1.5-flash", "gemini-1.5-pro"],
-    ("gemini", "quality"): ["gemini-1.5-pro"],
+    # Google / Gemini tiers (provider name is "google" per get_provider_for_model)
+    ("google", "fast"): ["gemini-1.5-flash"],
+    ("google", "balanced"): ["gemini-1.5-flash", "gemini-2.0-flash"],
+    ("google", "quality"): ["gemini-1.5-pro", "gemini-2.0-flash"],
+    # Groq tiers
+    ("groq", "fast"): ["llama-3.1-8b-instant"],
+    ("groq", "balanced"): ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
+    ("groq", "quality"): ["llama-3.3-70b-versatile"],
     # Mistral tiers
     ("mistral", "fast"): ["mistral-small-latest"],
     ("mistral", "balanced"): ["mistral-medium-latest"],
@@ -77,10 +81,15 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
         "balanced": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
         "quality": ["claude-3-opus-20240229", "claude-3-5-sonnet-20241022"],
     },
-    "gemini": {
+    "google": {
         "fast": ["gemini-1.5-flash", "gemini-1.5-flash-8b"],
-        "balanced": ["gemini-1.5-flash", "gemini-1.5-pro"],
-        "quality": ["gemini-1.5-pro", "gemini-2.0-flash-exp"],
+        "balanced": ["gemini-1.5-flash", "gemini-2.0-flash"],
+        "quality": ["gemini-1.5-pro", "gemini-2.0-flash"],
+    },
+    "groq": {
+        "fast": ["llama-3.1-8b-instant"],
+        "balanced": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
+        "quality": ["llama-3.3-70b-versatile"],
     },
     "mistral": {
         "fast": ["mistral-small-latest", "open-mistral-7b"],

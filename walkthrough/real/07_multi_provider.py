@@ -2,26 +2,27 @@
 """Example 7: Multi-Provider LLM Support - Use any LLM vendor with Traigent.
 
 This example demonstrates how to use different LLM providers (OpenAI, Anthropic,
-Google Gemini) within the same Traigent optimization workflow. You can optimize
-across providers to find the best model for your use case.
+Google Gemini, Groq) within the same Traigent optimization workflow. You can
+optimize across providers to find the best model for your use case.
 
 Key concepts:
-- Define a configuration space that includes models from multiple providers
-- Use conditional logic in your function to call the appropriate provider
-- Traigent optimizes across all providers equally using your scoring function
-- Uses core provider validation (traigent.providers) to check API keys
+- Model lists per provider come from traigent.integrations.providers (single source of truth)
+- Provider routing uses traigent.providers.get_provider_for_model
+- API key validation uses traigent.providers.validate_providers
+- Traigent optimizes across all available providers using your scoring function
 
 Usage (run from repo root):
-    # Set at least one API key (set all three to test all providers)
+    # Set at least one API key (set any combination to test those providers)
     export OPENAI_API_KEY="your-openai-key"        # For GPT models  # pragma: allowlist secret
     export ANTHROPIC_API_KEY="your-anthropic-key"  # For Claude models  # pragma: allowlist secret
     export GOOGLE_API_KEY="your-google-key"        # For Gemini models  # pragma: allowlist secret
+    export GROQ_API_KEY="your-groq-key"            # For Llama/Mixtral via Groq  # pragma: allowlist secret
 
     .venv/bin/python walkthrough/real/07_multi_provider.py
 
 Note: This example validates API keys using Traigent's core provider validation
-and skips any invalid providers. If no provider key is set, it shows a warning
-and runs the matching mock walkthrough instead.
+and skips any invalid providers. If no provider key is set at all, it shows a
+warning and runs the matching mock walkthrough instead.
 """
 
 import asyncio
@@ -38,7 +39,12 @@ from utils.helpers import maybe_run_mock_example
 
 maybe_run_mock_example(
     __file__,
-    required_env_vars=("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"),
+    required_env_vars=(
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+    ),
 )
 
 # Track errors per model to avoid spamming the console
@@ -56,6 +62,7 @@ from utils.scoring import token_match_score
 
 import traigent
 from traigent import TraigentConfig
+from traigent.integrations.providers import get_models_for_tier
 from traigent.providers import (
     get_provider_for_model,
     print_provider_status,
@@ -76,15 +83,16 @@ traigent.initialize(
 # -----------------------------------------------------------------------------
 # Provider Detection - Check which API keys are available and valid
 # Uses Traigent core provider validation (traigent.providers.validation)
+# Model lists come from traigent.integrations.providers (single source of truth)
 # -----------------------------------------------------------------------------
 
-# Models organized by provider
-OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
-ANTHROPIC_MODELS = ["claude-sonnet-4-20250514"]
-GOOGLE_MODELS = ["gemini-2.0-flash", "gemini-1.5-pro-latest"]
-
-# All models we want to potentially use (5 models × 2 temperatures = 10 trials)
-ALL_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GOOGLE_MODELS
+# Collect balanced-tier models for each provider from the core
+ALL_MODELS = (
+    get_models_for_tier(provider="openai", tier="balanced")
+    + get_models_for_tier(provider="anthropic", tier="balanced")
+    + get_models_for_tier(provider="google", tier="balanced")
+    + get_models_for_tier(provider="groq", tier="balanced")
+)
 
 # Validate all providers using core validation
 PROVIDER_STATUS = validate_providers(ALL_MODELS)
@@ -141,6 +149,11 @@ def create_llm_client(model: str, temperature: float) -> Any:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(model=model, temperature=temperature)
+
+    elif provider == "groq":
+        from langchain_groq import ChatGroq
+
+        return ChatGroq(model=model, temperature=temperature)
 
     else:
         raise ValueError(f"Unknown provider for model: {model}")
@@ -202,6 +215,7 @@ async def main() -> None:
     """Run the multi-provider optimization example."""
     print("Traigent Example 7: Multi-Provider LLM Support")
     print("=" * 55)
+    print("Providers: OpenAI, Anthropic, Google Gemini, Groq")
     print("This example makes LLM API calls to any available provider.")
 
     print_provider_status(PROVIDER_STATUS)
@@ -212,6 +226,7 @@ async def main() -> None:
         print("  export OPENAI_API_KEY='your-key'")  # pragma: allowlist secret
         print("  export ANTHROPIC_API_KEY='your-key'")  # pragma: allowlist secret
         print("  export GOOGLE_API_KEY='your-key'")  # pragma: allowlist secret
+        print("  export GROQ_API_KEY='your-key'")  # pragma: allowlist secret
         sys.exit(1)
 
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
