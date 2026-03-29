@@ -19,12 +19,16 @@ try:
 except ImportError:  # pragma: no cover - support IDE execution paths
     import importlib
 
-    module_path = Path(__file__).resolve()
-    for depth in (2, 3):
-        try:
-            sys.path.append(str(module_path.parents[depth]))
-        except IndexError:
-            continue
+    _sdk = os.environ.get("TRAIGENT_SDK_PATH")
+    if _sdk:
+        sys.path.insert(0, _sdk)
+    else:
+        module_path = Path(__file__).resolve()
+        for depth in (2, 3):
+            try:
+                sys.path.append(str(module_path.parents[depth]))
+            except IndexError:
+                continue
     traigent = importlib.import_module("traigent")
 
 try:  # Fallbacks if langchain packages are unavailable

@@ -8,30 +8,54 @@ import importlib.metadata
 import os
 from pathlib import Path
 
+_FALLBACK_VERSION = "0.10.0"
+
+
+def _read_pyproject_version() -> str | None:
+    """Read version from pyproject.toml without external dependencies."""
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except Exception:
+        return None
+    try:
+        with open(pyproject, "rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except Exception:
+        return None
+
 
 def get_version() -> str:
     """Get the current version of the Traigent SDK.
 
+    Resolution order:
+    1. TRAIGENT_FORCE_VERSION env var (override for testing)
+    2. pyproject.toml (development mode - single source of truth)
+    3. Installed package metadata (pip-installed mode)
+    4. Hardcoded fallback
+
     Returns:
-        Version string from package metadata or fallback version
+        Version string
     """
     if override := os.getenv("TRAIGENT_FORCE_VERSION"):
         return override
 
-    project_root = Path(__file__).resolve().parent.parent
-    if (project_root / "pyproject.toml").exists():
-        # In workspace/development mode we rely on the development version string
-        return "0.10.0"
+    # Development mode: read from pyproject.toml (single source of truth)
+    pyproject_version = _read_pyproject_version()
+    if pyproject_version:
+        return pyproject_version
 
-    if os.getenv("TRAIGENT_USE_PACKAGE_METADATA", "0") == "1":
-        try:
-            # Try to get version from installed package metadata
-            return importlib.metadata.version("traigent")
-        except importlib.metadata.PackageNotFoundError:
-            pass
+    # Installed package mode: read from package metadata
+    try:
+        return importlib.metadata.version("traigent")
+    except importlib.metadata.PackageNotFoundError:
+        pass
 
-    # Fallback to hardcoded version for development/testing
-    return "0.10.0"
+    return _FALLBACK_VERSION
 
 
 def get_version_info() -> dict[str, str]:

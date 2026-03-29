@@ -36,10 +36,44 @@ def setup_mock_environment(base_path: Path) -> None:
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(results_dir)
 
 
-def setup_traigent_import() -> None:
+def resolve_sdk_path(caller_file: str | Path | None = None) -> str | None:
+    """Resolve the Traigent SDK root directory.
+
+    Resolution order:
+      1. ``TRAIGENT_SDK_PATH`` environment variable (explicit override)
+      2. Walk parent directories of *caller_file* looking for the package
+      3. Walk parent directories of *this* file as a last resort
+
+    Returns:
+        Absolute path to the SDK root, or ``None`` when the package is
+        probably pip-installed.
+    """
+    env_path = os.environ.get("TRAIGENT_SDK_PATH")
+    if env_path:
+        return str(Path(env_path).resolve())
+
+    anchors: list[Path] = []
+    if caller_file is not None:
+        anchors.append(Path(caller_file).resolve())
+    anchors.append(Path(__file__).resolve())
+
+    for anchor in anchors:
+        for depth in range(1, 7):
+            try:
+                parent = anchor.parents[depth]
+                if (parent / "traigent" / "__init__.py").exists():
+                    return str(parent)
+            except IndexError:
+                break
+    return None
+
+
+def setup_traigent_import(caller_file: str | Path | None = None) -> None:
     """Set up sys.path to allow importing traigent from the repo.
 
-    This is useful when running examples directly without installing traigent.
+    Checks ``TRAIGENT_SDK_PATH`` first, then falls back to parent-directory
+    detection.  Pass *caller_file* (``__file__``) from example scripts so the
+    walk starts from the correct location.
     """
     try:
         import traigent  # noqa: F401
@@ -48,16 +82,9 @@ def setup_traigent_import() -> None:
     except ImportError:
         pass
 
-    # Try to find the traigent package in parent directories
-    module_path = Path(__file__).resolve()
-    for depth in range(1, 5):
-        try:
-            parent = module_path.parents[depth]
-            if (parent / "traigent" / "__init__.py").exists():
-                sys.path.insert(0, str(parent))
-                return
-        except IndexError:
-            continue
+    sdk_root = resolve_sdk_path(caller_file)
+    if sdk_root and sdk_root not in sys.path:
+        sys.path.insert(0, sdk_root)
 
 
 def initialize_traigent(execution_mode: str = "edge_analytics") -> None:
