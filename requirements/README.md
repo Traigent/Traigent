@@ -28,24 +28,13 @@ pip install -r requirements/requirements.txt
 pip install -r requirements/requirements-dev.txt
 ```
 
-### Method 2: Using uv (Recommended - 10-100x faster)
+### Method 2: Using pyproject.toml extras (Recommended for development)
 
 ```bash
-# Core only
-uv pip install -r requirements/requirements.txt
-
-# Development (all features + dev tools)
-uv pip install -r requirements/requirements-dev.txt
-```
-
-### Method 3: Using pyproject.toml extras (Recommended for development)
-
-```bash
-# Using uv (faster)
-uv pip install -e ".[test,dev,integrations,analytics,bayesian,security]"
+pip install -e ".[test,dev,integrations,analytics,bayesian,security]"
 
 # Install everything
-uv pip install -e ".[all]"
+pip install -e ".[all]"
 ```
 
 ## Recent Changes (2024-10-14)
