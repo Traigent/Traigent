@@ -37,7 +37,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
     _sdk = os.environ.get("TRAIGENT_SDK_PATH")
     if _sdk:
-        sys.path.insert(0, _sdk)
+        if _sdk not in sys.path:
+            sys.path.insert(0, _sdk)
     else:
         module_path = Path(__file__).resolve()
         for depth in (2, 3, 4, 5):
