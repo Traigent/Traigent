@@ -77,14 +77,14 @@ MOCK_MODE_CONFIG = {
 }
 
 
-def get_provider_for_model(model_name: str) -> str:
-    """Return the provider name for a given model.
+def _lookup_provider(model_name: str) -> str:
+    """Return the provider name for a given model from the local mapping.
 
     Args:
         model_name: The model identifier (e.g., 'gpt-4o-mini', 'claude-3-haiku')
 
     Returns:
-        Provider name: 'openai', 'anthropic', or 'google'
+        Provider name: 'openai', 'anthropic', 'google', or 'groq'
     """
     return PROVIDER_MODELS.get(model_name, "openai")
 
@@ -162,7 +162,7 @@ async def main() -> None:
 
     # Show best configuration with provider info
     best_model = results.best_config.get("model", DEFAULT_MOCK_MODEL)
-    best_provider = get_provider_for_model(best_model)
+    best_provider = _lookup_provider(best_model)
     best_temp = results.best_config.get("temperature")
 
     print("\nBest Configuration Found:")

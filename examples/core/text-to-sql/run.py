@@ -69,8 +69,8 @@ def _normalize_sql(sql: str) -> str:
 def sql_accuracy(output: str, expected: str, **_: object) -> float:
     """Score SQL output against expected query.
 
-    Returns 1.0 for a normalized exact match, 0.5 if all expected SQL
-    keywords and table names are present, otherwise 0.0.
+    Returns 1.0 for a normalized exact match, partial credit (up to 0.5)
+    based on coverage of expected table/column names, otherwise 0.0.
     """
     norm_out = _normalize_sql(output)
     norm_exp = _normalize_sql(expected)
@@ -79,9 +79,6 @@ def sql_accuracy(output: str, expected: str, **_: object) -> float:
         return 1.0
 
     # Partial credit: check that key tokens from the expected query appear
-    sql_keywords = {"select", "from", "where", "join", "on", "group by",
-                    "order by", "having", "limit", "count", "sum", "avg",
-                    "max", "min", "distinct", "not in"}
     exp_tokens = set(norm_exp.split())
     out_tokens = set(norm_out.split())
     # Table/column names are any word that is not a SQL keyword
