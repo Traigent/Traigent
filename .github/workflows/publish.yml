@@ -1,6 +1,12 @@
 name: Publish to PyPI
 
 on:
+  # Auto-publish when a version tag is pushed (e.g. v0.10.0)
+  push:
+    tags:
+      - "v*"
+
+  # Keep manual dispatch as fallback (e.g. for TestPyPI)
   workflow_dispatch:
     inputs:
       environment:
@@ -20,8 +26,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: github.event.inputs.confirm_publish == 'true'
-    environment: ${{ github.event.inputs.environment || 'pypi' }}
+    # Run if: tag push OR manual dispatch with confirmation
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.confirm_publish == 'true'
+    environment: ${{ (github.event_name == 'push' && 'pypi') || github.event.inputs.environment || 'pypi' }}
     permissions:
       id-token: write  # For trusted publishing
       contents: read
@@ -50,6 +57,17 @@ jobs:
         if [ "$VERSION_PYPROJECT" != "$VERSION_INIT" ]; then
           echo "Error: Version mismatch between pyproject.toml and __init__.py"
           exit 1
+        fi
+
+        # If triggered by a tag, verify the tag matches the package version
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Git tag version: $TAG_VERSION"
+          if [ "$TAG_VERSION" != "$VERSION_PYPROJECT" ]; then
+            echo "Error: Git tag v$TAG_VERSION does not match package version $VERSION_PYPROJECT"
+            exit 1
+          fi
+          echo "Tag v$TAG_VERSION matches package version $VERSION_PYPROJECT"
         fi
 
     - name: Run tests before publishing
@@ -87,17 +105,17 @@ jobs:
         pip install dist/*.whl
         python -c "import traigent; print(f'Package test: traigent v{traigent.__version__} imported successfully')"
 
-    # Publish to Test PyPI first for manual verification
+    # Publish to Test PyPI (manual dispatch only)
     - name: Publish to Test PyPI
-      if: github.event.inputs.environment == 'testpypi'
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'testpypi'
       uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
         repository-url: https://test.pypi.org/legacy/
         verbose: true
 
-    # Publish to production PyPI only by explicit manual dispatch
+    # Publish to production PyPI (automatic on tag push, or manual dispatch)
     - name: Publish to PyPI
-      if: github.event.inputs.environment == 'pypi'
+      if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'pypi')
       uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
         verbose: true
@@ -105,10 +123,12 @@ jobs:
     - name: Create deployment summary
       if: always()
       run: |
+        ENVIRONMENT="${{ (github.event_name == 'push' && 'pypi (auto from tag)') || github.event.inputs.environment || 'unknown' }}"
         echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
         echo "- **Version**: $(python -c "import traigent; print(traigent.__version__)")" >> $GITHUB_STEP_SUMMARY
-        echo "- **Environment**: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
         echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Ref**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
 
   verify-publication:
