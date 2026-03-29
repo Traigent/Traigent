@@ -10,6 +10,7 @@ from traigent.core.exception_handler import (
     classify_vendor_error,
 )
 from traigent.utils.exceptions import (
+    InsufficientFundsError,
     QuotaExceededError,
     RateLimitError,
     ServiceUnavailableError,
@@ -32,6 +33,22 @@ class TestClassifyVendorError:
     def test_service_unavailable_error(self):
         exc = ServiceUnavailableError("Service down")
         assert classify_vendor_error(exc) == VendorErrorCategory.SERVICE_UNAVAILABLE
+
+    def test_insufficient_funds_error(self):
+        exc = InsufficientFundsError("Insufficient funds")
+        assert classify_vendor_error(exc) == VendorErrorCategory.INSUFFICIENT_FUNDS
+
+    def test_generic_402_in_message(self):
+        exc = RuntimeError("HTTP status 402 Payment Required")
+        assert classify_vendor_error(exc) == VendorErrorCategory.INSUFFICIENT_FUNDS
+
+    def test_generic_insufficient_funds_in_message(self):
+        exc = RuntimeError("Error: insufficient funds on this account")
+        assert classify_vendor_error(exc) == VendorErrorCategory.INSUFFICIENT_FUNDS
+
+    def test_generic_billing_hard_limit_in_message(self):
+        exc = RuntimeError("You exceeded your current billing hard limit")
+        assert classify_vendor_error(exc) == VendorErrorCategory.INSUFFICIENT_FUNDS
 
     def test_generic_429_in_message(self):
         exc = RuntimeError("HTTP 429 Too Many Requests")
@@ -114,6 +131,16 @@ class TestTerminalPausePromptVendor:
             mock_stdin.isatty.return_value = True
             result = prompt.prompt_vendor_pause(
                 RuntimeError("rate limit"), VendorErrorCategory.RATE_LIMIT
+            )
+        assert result == "stop"
+
+    def test_insufficient_funds_auto_stops(self):
+        """Insufficient funds is non-recoverable — should auto-stop without prompting."""
+        prompt = TerminalPausePrompt()
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            result = prompt.prompt_vendor_pause(
+                RuntimeError("insufficient funds"), VendorErrorCategory.INSUFFICIENT_FUNDS
             )
         assert result == "stop"
 

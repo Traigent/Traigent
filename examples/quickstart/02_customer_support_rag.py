@@ -83,6 +83,7 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
     return [doc for _, doc in scores[:k]]
 
 
+# Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
