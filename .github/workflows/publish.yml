@@ -64,12 +64,20 @@ jobs:
 
     - name: Verify version consistency
       run: |
-        VERSION_PYPROJECT=$(grep "^version = " pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-        VERSION_INIT=$(python -c "import traigent; print(traigent.__version__)")
+        VERSION_PYPROJECT=${{ steps.package_version.outputs.package_version }}
         echo "pyproject.toml version: $VERSION_PYPROJECT"
-        echo "__init__.py version: $VERSION_INIT"
-        if [ "$VERSION_PYPROJECT" != "$VERSION_INIT" ]; then
-          echo "Error: Version mismatch between pyproject.toml and __init__.py"
+
+        # Extract version from _version.py without importing (avoids dependency issues)
+        VERSION_CODE=$(python -c "
+        import re
+        text = open('traigent/_version.py').read()
+        # Find the hardcoded return value in get_version()
+        match = re.search(r'return \"(\d+\.\d+\.\d+)\"', text)
+        print(match.group(1) if match else 'UNKNOWN')
+        ")
+        echo "_version.py version: $VERSION_CODE"
+        if [ "$VERSION_PYPROJECT" != "$VERSION_CODE" ]; then
+          echo "Error: Version mismatch between pyproject.toml ($VERSION_PYPROJECT) and _version.py ($VERSION_CODE)"
           exit 1
         fi
 
