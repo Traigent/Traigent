@@ -209,7 +209,11 @@ _INSUFFICIENT_FUNDS_KEYWORDS = (
     "billing hard limit",
     "exceeded your current billing",
     "payment required",
-    "402",
+    "status 402",
+    "http 402",
+    "code: 402",
+    "error 402",
+    "402 payment",
 )
 
 
