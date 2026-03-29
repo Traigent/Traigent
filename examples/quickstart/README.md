@@ -43,6 +43,8 @@ python examples/quickstart/03_custom_objectives.py
 
 Once you're ready to use real LLM APIs:
 
+> **Note:** Running with `TRAIGENT_MOCK_LLM=false` will make real API calls and consume tokens from your LLM provider account.
+
 ```bash
 # Set your API keys
 export OPENAI_API_KEY="your-key-here"
