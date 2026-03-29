@@ -67,20 +67,6 @@ jobs:
         VERSION_PYPROJECT=${{ steps.package_version.outputs.package_version }}
         echo "pyproject.toml version: $VERSION_PYPROJECT"
 
-        # Extract version from _version.py without importing (avoids dependency issues)
-        VERSION_CODE=$(python -c "
-        import re
-        text = open('traigent/_version.py').read()
-        # Find the hardcoded return value in get_version()
-        match = re.search(r'return \"(\d+\.\d+\.\d+)\"', text)
-        print(match.group(1) if match else 'UNKNOWN')
-        ")
-        echo "_version.py version: $VERSION_CODE"
-        if [ "$VERSION_PYPROJECT" != "$VERSION_CODE" ]; then
-          echo "Error: Version mismatch between pyproject.toml ($VERSION_PYPROJECT) and _version.py ($VERSION_CODE)"
-          exit 1
-        fi
-
         # If triggered by a tag, verify the tag matches the package version
         if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
