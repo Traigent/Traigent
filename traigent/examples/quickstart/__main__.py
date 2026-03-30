@@ -1,9 +1,10 @@
-"""Find the best model and temperature for your task — in one decorator.
+"""Find the best model and temperature for your task - in one decorator.
 
-No API keys needed — runs in mock mode and simulates LLM responses
+No API keys needed - runs in mock mode and simulates LLM responses
 so you can see the optimization flow instantly.
 For a real run with actual LLM calls, see walkthrough/real/01_tuning_qa.py.
 """
+
 import asyncio
 import os
 from pathlib import Path

@@ -1,1 +1,1 @@
-# Quickstart example — run with: python -m traigent.examples.quickstart
+# Quickstart example - run with: python -m traigent.examples.quickstart
