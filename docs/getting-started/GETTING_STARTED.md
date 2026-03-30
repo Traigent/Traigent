@@ -107,7 +107,8 @@ from litellm import completion
     configuration_space={
         "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
     },
-    ...
+    objectives=["accuracy"],
+    eval_dataset="data/qa_samples.jsonl",
 )
 def my_agent(query: str) -> str:
     config = traigent.get_config()
