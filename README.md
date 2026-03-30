@@ -54,7 +54,7 @@ python hello_world.py
 **Here's what `hello_world.py` does — one decorator, automatic optimization:**
 
 ```python
-import litellm
+from openai import OpenAI
 import traigent
 
 DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
@@ -69,7 +69,8 @@ DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
-    response = litellm.completion(
+    client = OpenAI()
+    response = client.chat.completions.create(
         model=cfg["model"],
         temperature=cfg["temperature"],
         messages=[{"role": "user", "content": question}],

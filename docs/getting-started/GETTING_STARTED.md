@@ -18,8 +18,8 @@ python hello_world.py
 
 ```python
 import asyncio
+from openai import OpenAI
 import traigent
-from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     configuration_space={
@@ -31,8 +31,13 @@ from langchain_openai import ChatOpenAI
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
-    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    return llm.invoke(question).content
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model=cfg["model"],
+        temperature=cfg["temperature"],
+        messages=[{"role": "user", "content": question}],
+    )
+    return response.choices[0].message.content
 
 # Run optimization
 result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))

@@ -15,7 +15,7 @@ if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
     os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
     os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-import litellm
+from openai import OpenAI
 
 import traigent
 
@@ -36,7 +36,8 @@ CONFIG_SPACE = {
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
-    response = litellm.completion(
+    client = OpenAI()
+    response = client.chat.completions.create(
         model=cfg["model"],
         temperature=cfg["temperature"],
         messages=[{"role": "user", "content": question}],
