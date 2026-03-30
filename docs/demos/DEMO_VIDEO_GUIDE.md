@@ -59,8 +59,8 @@ echo ""
 sleep 0.5
 
 cat << 'PYTHON'
+import litellm
 import traigent
-from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     # Define TUNED VARIABLES - parameters to optimize
@@ -78,11 +78,12 @@ from langchain_openai import ChatOpenAI
 )
 def qa_agent(question: str) -> str:
     """Q&A agent with tunable parameters"""
-    llm = ChatOpenAI(
+    response = litellm.completion(
         model="gpt-3.5-turbo",    # Traigent will tune this
-        temperature=0.7           # Traigent will tune this
+        temperature=0.7,          # Traigent will tune this
+        messages=[{"role": "user", "content": question}],
     )
-    return str(llm.invoke(question).content)
+    return response.choices[0].message.content
 PYTHON
 sleep 3
 
