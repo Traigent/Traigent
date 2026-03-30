@@ -78,9 +78,11 @@ import traigent
 )
 def qa_agent(question: str) -> str:
     """Q&A agent with tunable parameters"""
+    cfg = traigent.get_config()
     response = litellm.completion(
-        model="gpt-3.5-turbo",    # Traigent will tune this
-        temperature=0.7,          # Traigent will tune this
+        model=cfg["model"],
+        temperature=cfg["temperature"],
+        max_tokens=cfg["max_tokens"],
         messages=[{"role": "user", "content": question}],
     )
     return response.choices[0].message.content
