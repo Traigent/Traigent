@@ -48,6 +48,8 @@ dependencies = [
     "psutil>=5.8.0",
     # Required by API decorators and config validation
     "pydantic>=2.0.0",
+    # Required by hello_world.py — the first-run quickstart example
+    "langchain-openai>=0.3.0",
 ]
 
 [project.optional-dependencies]
