@@ -80,16 +80,20 @@ What this does:
 - Great for natural language tasks where paraphrasing is fine.
 
 ```python
+import litellm
 import traigent
-from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     eval_dataset="data/qa_samples.jsonl",
     objectives=["accuracy", "cost"],
 )
 def qa_agent(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-    return str(llm.invoke(f"Question: {question}\nAnswer:").content)
+    response = litellm.completion(
+        model="gpt-4o-mini",
+        temperature=0.7,
+        messages=[{"role": "user", "content": f"Question: {question}\nAnswer:"}],
+    )
+    return response.choices[0].message.content
 ```
 
 ### 2) Custom scoring functions

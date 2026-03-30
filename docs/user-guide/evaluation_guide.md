@@ -343,8 +343,8 @@ print(f"Best accuracy: {results.best_score:.2%}")
 ### Q&A System with Semantic Evaluation
 
 ```python
+import litellm
 import traigent
-from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     configuration_space={
@@ -356,15 +356,14 @@ from langchain_openai import ChatOpenAI
     max_trials=15
 )
 def qa_system(question, temperature=0.5, max_tokens=100):
-    llm = ChatOpenAI(
+    response = litellm.completion(
+        model="gpt-4o-mini",
         temperature=temperature,
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": f"Answer concisely: {question}"}],
     )
 
-    prompt = f"Answer concisely: {question}"
-    response = llm.invoke(prompt)
-
-    return str(response.content)
+    return response.choices[0].message.content
 
 # The default evaluator will use semantic similarity
 # to compare answers, allowing for paraphrasing
