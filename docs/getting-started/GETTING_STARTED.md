@@ -18,7 +18,7 @@ python hello_world.py
 
 ```python
 import asyncio
-import litellm
+from openai import OpenAI
 import traigent
 
 @traigent.optimize(
@@ -31,7 +31,8 @@ import traigent
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
-    response = litellm.completion(
+    client = OpenAI()
+    response = client.chat.completions.create(
         model=cfg["model"],
         temperature=cfg["temperature"],
         messages=[{"role": "user", "content": question}],
