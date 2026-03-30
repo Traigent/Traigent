@@ -7,7 +7,7 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 1) Install and run - no API keys needed:
 
 ```bash
-pip install traigent
+pip install "traigent[integrations]"
 python -m traigent.examples.quickstart
 ```
 
@@ -21,11 +21,11 @@ python hello_world.py
 
 The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.
 
-2) Here's what it does — one decorator, automatic optimization:
+2) Here's what it does - one decorator, automatic optimization:
 
 ```python
 import asyncio
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
 import traigent
 
 @traigent.optimize(
@@ -34,17 +34,12 @@ import traigent
         "temperature": [0.0, 0.7, 1.0],
     },
     objectives=["accuracy"],
-    eval_dataset="examples/datasets/quickstart/qa_samples.jsonl",
+    eval_dataset="qa_samples.jsonl",
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
-    client = OpenAI()
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        temperature=cfg["temperature"],
-        messages=[{"role": "user", "content": question}],
-    )
-    return response.choices[0].message.content
+    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
+    return llm.invoke(question).content
 
 # Run optimization
 result = asyncio.run(answer.optimize(max_trials=6, algorithm="grid"))
