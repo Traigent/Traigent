@@ -16,7 +16,9 @@ if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
     os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
     os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-from openai import OpenAI
+# Use LangChain's ChatOpenAI so Traigent's mock interceptor can bypass
+# real API calls when TRAIGENT_MOCK_LLM=true.
+from langchain_openai import ChatOpenAI
 
 import traigent
 
@@ -37,13 +39,8 @@ CONFIG_SPACE = {
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
-    client = OpenAI()
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        temperature=cfg["temperature"],
-        messages=[{"role": "user", "content": question}],
-    )
-    return response.choices[0].message.content
+    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
+    return llm.invoke(question).content
 
 
 if __name__ == "__main__":
