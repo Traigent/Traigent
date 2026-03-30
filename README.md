@@ -45,19 +45,24 @@ pip install -e ".[recommended]"
 
 For more options, see [Installation details](#installation).
 
-**Try it now — no API keys needed** (requires the source checkout above):
+**Try it now - no API keys needed:**
+
+```bash
+pip install "traigent[integrations]"
+python -m traigent.examples.quickstart
+```
+
+Or from a source checkout:
 
 ```bash
 python hello_world.py
 ```
 
-**Here's what `hello_world.py` does — one decorator, automatic optimization:**
+**Here's what the quickstart does - one decorator, automatic optimization:**
 
 ```python
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
 import traigent
-
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
 
 @traigent.optimize(
     configuration_space={
@@ -65,17 +70,12 @@ DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
         "temperature": [0.0, 0.7, 1.0],
     },
     objectives=["accuracy"],
-    eval_dataset=DATASET,
+    eval_dataset="qa_samples.jsonl",
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
-    client = OpenAI()
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        temperature=cfg["temperature"],
-        messages=[{"role": "user", "content": question}],
-    )
-    return response.choices[0].message.content
+    llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
+    return llm.invoke(question).content
 ```
 
 ---
