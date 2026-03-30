@@ -4,7 +4,14 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 
 ## 🚀 Quick Start
 
-1) Install and run — no API keys needed:
+1) Install and run - no API keys needed:
+
+```bash
+pip install traigent
+python -m traigent.examples.quickstart
+```
+
+Or from a source checkout:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -12,7 +19,7 @@ pip install -e ".[recommended]"
 python hello_world.py
 ```
 
-`hello_world.py` runs in mock mode by default — it simulates LLM calls so you can see the full optimization flow instantly.
+The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.
 
 2) Here's what it does — one decorator, automatic optimization:
 

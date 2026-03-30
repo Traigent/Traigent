@@ -40,6 +40,13 @@ jobs:
       run: |
         python -c "import sys; sys.path.insert(0, 'examples'); import utils.base_example"
 
+    - name: Run packaged quickstart module
+      env:
+        TRAIGENT_MOCK_LLM: "true"
+        TRAIGENT_OFFLINE_MODE: "true"
+      run: |
+        python -m traigent.examples.quickstart
+
     - name: Run hello world example
       env:
         TRAIGENT_MOCK_LLM: "true"
@@ -122,6 +129,7 @@ jobs:
       run: |
         pip install -e ".[dev,integrations]"
         python -c "import traigent; print('Import works')"
+        python -m traigent.examples.quickstart
         python hello_world.py
         python examples/quickstart/01_simple_qa.py || true
         echo "Quick validation passed"

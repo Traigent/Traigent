@@ -45,13 +45,20 @@ pip install -e ".[recommended]"
 
 For more options, see [Installation details](#installation).
 
-**Try it now — no API keys needed** (requires the source checkout above):
+**Try it now - no API keys needed:**
+
+```bash
+pip install traigent
+python -m traigent.examples.quickstart
+```
+
+Or from a source checkout:
 
 ```bash
 python hello_world.py
 ```
 
-**Here's what `hello_world.py` does — one decorator, automatic optimization:**
+**Here's what the quickstart does - one decorator, automatic optimization:**
 
 ```python
 from openai import OpenAI
