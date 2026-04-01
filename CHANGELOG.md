@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-04-01
+
+### Fixed
+- Quickstart fails when run from any directory other than project root - set `TRAIGENT_DATASET_ROOT` to package directory (#636)
+- PyPI publish verification broken pipe - save curl response to file instead of piping (#635)
+- Consistent `resolve()` for dataset path in quickstart
+
 ## [0.11.0] - 2026-03-30
 
 ### Added
