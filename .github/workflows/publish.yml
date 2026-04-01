@@ -156,7 +156,7 @@ jobs:
 
     steps:
     - name: Wait for package propagation
-      run: sleep 120
+      run: sleep 300
 
     - name: Set up Python
       uses: actions/setup-python@v6
@@ -211,8 +211,21 @@ jobs:
         source test_env/bin/activate
         pip install --upgrade pip
 
-        # Try to install the package
-        pip install "${INSTALL_ARGS[@]}" "traigent==$VERSION"
+        # Retry pip install up to 5 times (CDN propagation can lag behind the API)
+        for install_attempt in 1 2 3 4 5; do
+          echo "Install attempt $install_attempt: pip install traigent==$VERSION..."
+          if pip install "${INSTALL_ARGS[@]}" "traigent==$VERSION"; then
+            echo "Package installed successfully"
+            break
+          fi
+          if [ "$install_attempt" -lt 5 ]; then
+            echo "Install failed (CDN not ready), waiting 60s before retry..."
+            sleep 60
+          else
+            echo "Error: pip install traigent==$VERSION failed after 5 attempts"
+            exit 1
+          fi
+        done
 
         # Test basic import
         python -c "import traigent; print(f'Successfully installed and imported traigent v{traigent.__version__}')"
