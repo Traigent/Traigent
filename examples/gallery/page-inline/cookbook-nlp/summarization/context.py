@@ -25,7 +25,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -66,7 +67,7 @@ def summarize(document: str) -> str:
 
     def _sum(text: str) -> str:
         p = f"Summarize in 1-2 sentences:\n\n{text}"
-        return extract_content(llm.invoke([HumanMessage(content=p)])).strip()
+        return llm.invoke([HumanMessage(content=p)]).content.strip()
 
     words = document.split()
     cs = int(cfg.get("chunk_size", 240))

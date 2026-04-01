@@ -7,6 +7,8 @@ For a real run with actual LLM calls, see walkthrough/real/01_tuning_qa.py.
 
 import asyncio
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 # Default to mock mode so the quickstart works without API keys.
@@ -16,13 +18,24 @@ if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
     os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
     os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-# Use LangChain's ChatOpenAI so Traigent's mock interceptor can bypass
-# real API calls when TRAIGENT_MOCK_LLM=true.
+# NOTE: This uses LangChain's ChatOpenAI rather than the litellm calls shown
+# in the documentation. That is intentional and temporary: Traigent's mock
+# interceptor (TRAIGENT_MOCK_LLM=true) only patches LangChain's ChatOpenAI at
+# this point — it does not yet intercept raw litellm/openai calls.
+# Once the interceptor adds raw litellm support this file will be updated to
+# match the litellm style shown in the docs.
 from langchain_openai import ChatOpenAI
 
 import traigent
 
-DATASET = str(Path(__file__).parent / "qa_samples.jsonl")
+_DATASET_SRC = Path(__file__).parent / "qa_samples.jsonl"
+# The SDK requires dataset files to reside under the system temp directory.
+# When installed via pip the package data is in site-packages, so copy it.
+if str(_DATASET_SRC).startswith(tempfile.gettempdir()):
+    DATASET = str(_DATASET_SRC)
+else:
+    _tmp = Path(tempfile.mkdtemp())
+    DATASET = str(shutil.copy(_DATASET_SRC, _tmp / _DATASET_SRC.name))
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-4o-mini", "gpt-4o"],

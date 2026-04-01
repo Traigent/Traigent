@@ -20,7 +20,7 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI
+from langchain_openai import ChatOpenAI
 
 try:
     import traigent

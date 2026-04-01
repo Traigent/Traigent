@@ -27,7 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -84,7 +85,7 @@ def extract_fields(text: str) -> str:
         "Extract company and amount as JSON with keys 'company' and 'amount'."
         f"\nText: {text}\nReturn only JSON."
     )
-    return extract_content(llm.invoke([HumanMessage(content=prompt)])).strip()
+    return llm.invoke([HumanMessage(content=prompt)]).content.strip()
 
 
 if __name__ == "__main__":

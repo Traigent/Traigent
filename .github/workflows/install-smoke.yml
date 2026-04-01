@@ -82,3 +82,33 @@ jobs:
         run: |
           python -c "from importlib.metadata import version; import opentelemetry.sdk; print(f'opentelemetry-sdk {version(\"opentelemetry-sdk\")} OK')"
           python -c "import boto3; print(f'boto3 {boto3.__version__} OK')"
+
+  # Validates the pip-install user experience for the packaged quickstart.
+  # Runs in a temp directory (no repo checkout) to confirm the module works
+  # without hello_world.py or any other source-tree file present.
+  pip-install-quickstart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4  # needed to build the wheel
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir /tmp/dist
+
+      - name: Install from wheel in a clean temp directory
+        run: |
+          python -m pip install "/tmp/dist/$(ls /tmp/dist | grep .whl)" "langchain-openai"
+
+      - name: Run packaged quickstart from outside the repo (pip-install simulation)
+        env:
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+        working-directory: /tmp
+        run: |
+          python -m traigent.examples.quickstart
