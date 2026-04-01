@@ -25,7 +25,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -77,7 +78,7 @@ def generate_headline(topic: str) -> str:
         f"Write a {style_hint} headline about: {topic}\n"
         f"Max {int(cfg.get('max_words', 12))} words. One line only."
     )
-    return extract_content(llm.invoke([HumanMessage(content=prompt)])).strip()
+    return llm.invoke([HumanMessage(content=prompt)]).content.strip()
 
 
 if __name__ == "__main__":

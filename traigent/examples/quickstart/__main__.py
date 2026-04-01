@@ -16,8 +16,12 @@ if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
     os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
     os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-# Use LangChain's ChatOpenAI so Traigent's mock interceptor can bypass
-# real API calls when TRAIGENT_MOCK_LLM=true.
+# NOTE: This uses LangChain's ChatOpenAI rather than the litellm calls shown
+# in the documentation. That is intentional and temporary: Traigent's mock
+# interceptor (TRAIGENT_MOCK_LLM=true) only patches LangChain's ChatOpenAI at
+# this point — it does not yet intercept raw litellm/openai calls.
+# Once the interceptor adds raw litellm support this file will be updated to
+# match the litellm style shown in the docs.
 from langchain_openai import ChatOpenAI
 
 import traigent

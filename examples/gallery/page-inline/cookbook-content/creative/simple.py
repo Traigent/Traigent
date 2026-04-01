@@ -25,7 +25,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -60,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "creative_eval.jsonl")
 def write_poem(prompt: str) -> str:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.9)
     p = f"Write a 3-line poem about: {prompt}"
-    return extract_content(llm.invoke([HumanMessage(content=p)])).strip()
+    return llm.invoke([HumanMessage(content=p)]).content.strip()
 
 
 if __name__ == "__main__":

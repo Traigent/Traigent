@@ -25,7 +25,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -63,7 +64,7 @@ def should_escalate(utterance: str) -> str:
         "Return yes if this message requires human escalation (legal, threats, complex), else no.\n"
         f"Message: {utterance}\nOne label only."
     )
-    return extract_content(llm.invoke([HumanMessage(content=prompt)])).strip().lower()
+    return llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
 
 
 if __name__ == "__main__":

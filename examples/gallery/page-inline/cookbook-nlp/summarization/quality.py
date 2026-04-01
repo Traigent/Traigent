@@ -27,7 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -79,7 +80,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 def summarize(document: str) -> str:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
     p = f"Summarize in 1-2 sentences:\n\n{document}"
-    return extract_content(llm.invoke([HumanMessage(content=p)])).strip()
+    return llm.invoke([HumanMessage(content=p)]).content.strip()
 
 
 if __name__ == "__main__":

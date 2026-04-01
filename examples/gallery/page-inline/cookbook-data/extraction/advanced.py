@@ -26,7 +26,8 @@ else:
                 break
         except IndexError:
             continue
-from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -116,7 +117,7 @@ Text: {text}
     llm = ChatOpenAI(
         model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
     )
-    raw = extract_content(llm.invoke([HumanMessage(content=prompt)]))
+    raw = llm.invoke([HumanMessage(content=prompt)]).content
 
     if cfg.get("output_format") == "kv":
         # Normalize KV to JSON if needed for metric
