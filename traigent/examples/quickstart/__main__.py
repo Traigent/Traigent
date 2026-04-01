@@ -13,7 +13,7 @@ from pathlib import Path
 # Override with: TRAIGENT_MOCK_LLM=false python -m traigent.examples.quickstart
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
+    os.environ.setdefault("OPENAI_API_KEY", "sk-mock-key-for-traigent-demos")  # must start with sk- for openai SDK validation
     os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 # The bundled dataset lives next to this file (inside the installed package).
