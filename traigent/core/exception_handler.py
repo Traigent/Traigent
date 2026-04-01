@@ -25,6 +25,7 @@ class VendorErrorCategory(Enum):
 
     RATE_LIMIT = "rate_limit"
     QUOTA_EXHAUSTED = "quota_exhausted"
+    INSUFFICIENT_FUNDS = "insufficient_funds"
     SERVICE_UNAVAILABLE = "service_unavailable"
 
 
@@ -53,6 +54,18 @@ _VENDOR_ERROR_PATTERNS: list[tuple[str, VendorErrorCategory]] = [
     ("error 429", VendorErrorCategory.RATE_LIMIT),
     ("429 too many", VendorErrorCategory.RATE_LIMIT),
     ("too many requests", VendorErrorCategory.RATE_LIMIT),
+    ("status 402", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("code: 402", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("code 402", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("http 402", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("error 402", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("402 payment required", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("insufficient_funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("insufficient funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("insufficient credits", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("billing hard limit", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("exceeded your current billing", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("payment required", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("quota", VendorErrorCategory.QUOTA_EXHAUSTED),
     ("quota_exceeded", VendorErrorCategory.QUOTA_EXHAUSTED),
     ("insufficient_quota", VendorErrorCategory.QUOTA_EXHAUSTED),
@@ -81,6 +94,7 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
         VendorErrorCategory if the error is vendor-pausable, None otherwise.
     """
     from traigent.utils.exceptions import (
+        InsufficientFundsError,
         QuotaExceededError,
         RateLimitError,
         ServiceUnavailableError,
@@ -88,6 +102,8 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
 
     if isinstance(exc, RateLimitError):
         return VendorErrorCategory.RATE_LIMIT
+    if isinstance(exc, InsufficientFundsError):
+        return VendorErrorCategory.INSUFFICIENT_FUNDS
     if isinstance(exc, QuotaExceededError):
         return VendorErrorCategory.QUOTA_EXHAUSTED
     if isinstance(exc, ServiceUnavailableError):
@@ -110,6 +126,10 @@ _CATEGORY_DESCRIPTIONS: dict[VendorErrorCategory, str] = {
     VendorErrorCategory.QUOTA_EXHAUSTED: (
         "The LLM provider quota has been exhausted. "
         "Check your billing dashboard or wait for the quota to reset."
+    ),
+    VendorErrorCategory.INSUFFICIENT_FUNDS: (
+        "Your LLM provider API key has insufficient credits. "
+        "Please top up your account at your provider's billing page and retry."
     ),
     VendorErrorCategory.SERVICE_UNAVAILABLE: (
         "The LLM provider service is temporarily unavailable. "
@@ -148,6 +168,13 @@ class TerminalPausePrompt:
         print(f"\n⚠️  Vendor error: {category.value}")
         print(f"   {description}")
         print(f"   Error: {error}")
+
+        # Insufficient funds is non-recoverable — stop immediately
+        if category == VendorErrorCategory.INSUFFICIENT_FUNDS:
+            print()
+            print("Stopping optimization (insufficient funds cannot be resolved by retrying).")
+            return "stop"
+
         print()
         print("Options:")
         print("  [r] Resume optimization")

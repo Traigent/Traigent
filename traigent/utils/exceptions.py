@@ -250,6 +250,14 @@ class QuotaExceededError(ServiceError):
     """Service quota or rate limit exceeded."""
 
 
+class InsufficientFundsError(ServiceError):
+    """LLM provider account has insufficient credits.
+
+    Raised on HTTP 402 / billing errors from providers.
+    This is non-retryable — the user must top up their account.
+    """
+
+
 class SessionError(TraigentError):
     """Error in session management."""
 

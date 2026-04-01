@@ -27,6 +27,15 @@ class SessionCreationResult:
     failure_reason: SessionCreationFailureReason | None = None
     failure_detail: str | None = None
 
+    def __str__(self) -> str:
+        """Return the session ID string for backwards compatibility.
+
+        v0.10.x returned a plain str from create_session(); code that does
+        ``session_id = create_session()`` and passes the result as a string
+        argument will continue to work without changes.
+        """
+        return self.session_id
+
     def __post_init__(self) -> None:
         if not self.backend_connected and self.failure_reason is None:
             raise ValueError("failure_reason is required when backend_connected=False")

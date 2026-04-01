@@ -38,6 +38,7 @@ from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
+    InsufficientFundsError,
     OptimizationError,
     QuotaExceededError,
     RateLimitError,
@@ -433,6 +434,7 @@ class TrialLifecycle:
         except (
             RateLimitError,
             QuotaExceededError,
+            InsufficientFundsError,
             ServiceUnavailableError,
         ) as vendor_exc:
             # Re-raise as VendorPauseError so the orchestrator can prompt

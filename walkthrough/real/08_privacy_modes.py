@@ -5,8 +5,8 @@ Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
     .venv/bin/python walkthrough/real/08_privacy_modes.py
 
-If OPENAI_API_KEY is missing, this script shows a warning and runs the matching
-mock walkthrough instead.
+If OPENAI_API_KEY is missing, this script exits with an error and suggests
+running the mock walkthrough instead.
 """
 
 import asyncio
@@ -50,6 +50,7 @@ traigent.initialize(
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 OBJECTIVES = ["accuracy"]
+# Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
     "temperature": [0.1, 0.5],

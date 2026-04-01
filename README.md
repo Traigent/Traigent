@@ -45,19 +45,24 @@ pip install -e ".[recommended]"
 
 For more options, see [Installation details](#installation).
 
-**Try it now — no API keys needed** (requires the source checkout above):
+**Try it now - no API keys needed:**
+
+```bash
+pip install "traigent[integrations]"
+python -m traigent.examples.quickstart
+```
+
+Or from a source checkout:
 
 ```bash
 python hello_world.py
 ```
 
-**Here's what `hello_world.py` does — one decorator, automatic optimization:**
+**Here's what the quickstart does - one decorator, automatic optimization:**
 
 ```python
-import traigent
 from langchain_openai import ChatOpenAI
-
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+import traigent
 
 @traigent.optimize(
     configuration_space={
@@ -65,7 +70,7 @@ DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
         "temperature": [0.0, 0.7, 1.0],
     },
     objectives=["accuracy"],
-    eval_dataset=DATASET,
+    eval_dataset="qa_samples.jsonl",
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
@@ -76,6 +81,32 @@ def answer(question: str) -> str:
 ---
 
 ## Using it in your own code
+
+Add `@traigent.optimize()` to any function that calls an LLM — no framework required:
+
+```python
+import traigent
+import litellm                    # or openai, anthropic, requests …
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.7, 1.0],
+    },
+    objectives=["accuracy"],
+    eval_dataset="path/to/your_evals.jsonl",
+)
+def your_function(question: str) -> str:
+    cfg = traigent.get_config()
+    response = litellm.completion(
+        model=cfg["model"],
+        temperature=cfg["temperature"],
+        messages=[{"role": "user", "content": question}],
+    )
+    return response.choices[0].message.content
+```
+
+Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Anthropic](https://docs.anthropic.com), [LiteLLM](https://github.com/BerriAI/litellm) (100+ providers), or plain HTTP calls.
 
 <p align="center">
   <a href="https://portal.traigent.ai">Portal</a> &middot;

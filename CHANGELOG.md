@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-30
+
 ### Added
 - **DeepEval metric integration** - `DeepEvalScorer` bridges DeepEval metrics into Traigent's `metric_functions` system
 - **Rich results table** - Formatted ASCII table with box-drawing characters for optimization output
@@ -42,7 +44,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dead methods removed from orchestrator (`_check_batch_vendor_failures`, `_maybe_pause_on_cost_limit`, `_handle_vendor_pause_in_loop`)
 
 ### Breaking Changes
-- `create_session()` return type changed from `str` to `SessionCreationResult` dataclass
+- `create_session()` return type changed from `str` to `SessionCreationResult` dataclass.
+  `SessionCreationResult.__str__` returns the session ID so most existing code continues
+  to work without changes, but explicit `isinstance(result, str)` checks will need updating.
+
+  **Before (v0.10.x):**
+  ```python
+  session_id: str = create_session()
+  ```
+  **After (v0.11.0+):**
+  ```python
+  result = create_session()
+  session_id: str = result.session_id   # explicit
+  # or: str(result)                      # via __str__
+  ```
 - `HybridExecuteRequest` and `HybridEvaluateRequest` no longer accept `benchmark_id` parameter
 - Default backend URL is now cloud instead of localhost
 

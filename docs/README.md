@@ -7,8 +7,8 @@
 ## 🚀 Quick Start
 
 ```python
+import litellm
 import traigent
-from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
@@ -17,8 +17,12 @@ from langchain_openai import ChatOpenAI
 )
 def answer_question(question: str) -> str:
     cfg = traigent.get_config()  # Active trial/applied config
-    llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
-    return str(llm.invoke(question).content)
+    response = litellm.completion(
+        model=cfg.get("model"),
+        temperature=cfg.get("temperature"),
+        messages=[{"role": "user", "content": question}],
+    )
+    return response.choices[0].message.content
 
 # Async-safe in Traigent
 # results = await answer_question.optimize(max_trials=5)

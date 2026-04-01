@@ -4,7 +4,14 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 
 ## 🚀 Quick Start
 
-1) Install and run — no API keys needed:
+1) Install and run - no API keys needed:
+
+```bash
+pip install "traigent[integrations]"
+python -m traigent.examples.quickstart
+```
+
+Or from a source checkout:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -12,14 +19,14 @@ pip install -e ".[recommended]"
 python hello_world.py
 ```
 
-`hello_world.py` runs in mock mode by default — it simulates LLM calls so you can see the full optimization flow instantly.
+The quickstart runs in mock mode by default - it simulates LLM calls so you can see the full optimization flow instantly.
 
-2) Here's what it does — one decorator, automatic optimization:
+2) Here's what it does - one decorator, automatic optimization:
 
 ```python
 import asyncio
-import traigent
 from langchain_openai import ChatOpenAI
+import traigent
 
 @traigent.optimize(
     configuration_space={
@@ -27,7 +34,7 @@ from langchain_openai import ChatOpenAI
         "temperature": [0.0, 0.7, 1.0],
     },
     objectives=["accuracy"],
-    eval_dataset="examples/datasets/quickstart/qa_samples.jsonl",
+    eval_dataset="qa_samples.jsonl",
 )
 def answer(question: str) -> str:
     cfg = traigent.get_config()
@@ -103,7 +110,8 @@ from litellm import completion
     configuration_space={
         "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
     },
-    ...
+    objectives=["accuracy"],
+    eval_dataset="data/qa_samples.jsonl",
 )
 def my_agent(query: str) -> str:
     config = traigent.get_config()

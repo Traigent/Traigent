@@ -25,11 +25,12 @@ os.environ.setdefault(
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
-# Allow running from repo root without installation
+# Allow running from anywhere: set TRAIGENT_SDK_PATH to the SDK repo root,
+# or run from within the repo tree for automatic detection.
 try:
     import traigent
 except ImportError:
-    sys.path.insert(0, str(ROOT_DIR))
+    sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(ROOT_DIR)))
     import traigent
 
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
@@ -82,6 +83,7 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
     return [doc for _, doc in scores[:k]]
 
 
+# Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
