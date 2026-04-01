@@ -425,3 +425,4 @@ known-third-party = [
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
 "examples/*" = ["E402"]  # Examples often set env vars before imports
+"traigent/examples/*" = ["E402"]  # Bundled examples set env vars before imports
