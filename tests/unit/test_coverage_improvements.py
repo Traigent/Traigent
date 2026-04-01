@@ -102,9 +102,9 @@ def test_get_version_info():
     assert "major" in info
     assert "minor" in info
     assert "patch" in info
-    # Version should be 0.9.0 format
+    # Version should be 0.11.0 format
     assert info["major"] == "0"
-    assert info["minor"] == "10"
+    assert info["minor"] == "11"
     assert info["patch"] == "0"
 
 
