@@ -44,8 +44,10 @@ _SYSTEM_PROMPT = "Answer in as few words as possible. Give only the answer itsel
 
 
 def contains_accuracy(output: str, expected: str) -> float:
-    """1.0 if the expected answer appears anywhere in the output (case-insensitive)."""
-    return 1.0 if expected.lower() in output.lower() else 0.0
+    """1.0 if expected and output are substring-compatible (case-insensitive)."""
+    out_lower = output.strip().lower()
+    exp_lower = expected.strip().lower()
+    return 1.0 if (exp_lower in out_lower or out_lower in exp_lower) else 0.0
 
 
 @traigent.optimize(

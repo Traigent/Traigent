@@ -9,7 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.11.2] - 2026-04-01
 
 ### Fixed
-- Quickstart accuracy always 0% with real LLMs - add system prompt for concise answers and use contains-match instead of exact-match (#641)
+- Quickstart accuracy always 0% with real LLMs - add system prompt for concise answers and use contains-match instead of exact-match (#642)
 - CI publish verification retry improvements (#640)
 
 ## [0.11.1] - 2026-04-01
