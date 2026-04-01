@@ -32,7 +32,7 @@ from langchain_openai import ChatOpenAI
 
 import traigent
 
-DATASET = str(Path(__file__).parent / "qa_samples.jsonl")
+DATASET = str(Path(__file__).resolve().parent / "qa_samples.jsonl")
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-4o-mini", "gpt-4o"],
