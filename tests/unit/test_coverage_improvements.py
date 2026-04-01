@@ -85,7 +85,7 @@ def test_version_package_metadata_not_found():
                 importlib.reload(version_module)
                 result = version_module.get_version()
                 # Should fall back to hardcoded version
-                assert result == "0.11.1"
+                assert result == version_module._FALLBACK_VERSION
 
     # Clean up
     if "TRAIGENT_USE_PACKAGE_METADATA" in os.environ:
