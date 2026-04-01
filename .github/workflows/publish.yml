@@ -184,7 +184,7 @@ jobs:
         for attempt in 1 2 3 4 5; do
           echo "Attempt $attempt: checking $PACKAGE_LABEL API for version $VERSION..."
           HTTP_CODE=$(curl -sL -w '%{http_code}' -o /tmp/pypi_response.json "$PACKAGE_API_URL" || echo "000")
-          if [ "$HTTP_CODE" = "200" ] && CHECK_VERSION="$VERSION" python3 -c "
+          if [ "$HTTP_CODE" = "200" ] && CHECK_VERSION="$VERSION" python -c "
         import json, os, sys
         with open('/tmp/pypi_response.json') as f:
             data = json.load(f)
