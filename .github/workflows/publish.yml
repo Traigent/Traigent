@@ -180,28 +180,28 @@ jobs:
         VERSION="$EXPECTED_VERSION"
         echo "Testing installation of traigent==$VERSION from $PACKAGE_LABEL"
 
-        # Retry API check up to 3 times (CDN propagation can be slow)
-        for attempt in 1 2 3; do
+        # Retry API check up to 5 times (CDN propagation can be slow)
+        for attempt in 1 2 3 4 5; do
           echo "Attempt $attempt: checking $PACKAGE_LABEL API for version $VERSION..."
-          if curl -fsSL "$PACKAGE_API_URL" | python - "$VERSION" <<'PY'
-        import json
-        import sys
-
-        data = json.load(sys.stdin)
-        version = sys.argv[1]
-        releases = data.get("releases", {})
+          HTTP_CODE=$(curl -sL -w '%{http_code}' -o /tmp/pypi_response.json "$PACKAGE_API_URL" || echo "000")
+          if [ "$HTTP_CODE" = "200" ] && CHECK_VERSION="$VERSION" python -c "
+        import json, os, sys
+        with open('/tmp/pypi_response.json') as f:
+            data = json.load(f)
+        version = os.environ['CHECK_VERSION']
+        releases = data.get('releases', {})
         if version not in releases or not releases[version]:
-            raise SystemExit(f"Version {version} not found on package index")
-        print(f"Verified version {version} exists on package index")
-        PY
+            sys.exit(1)
+        print(f'Verified version {version} exists on package index')
+        "
           then
             break
           fi
-          if [ "$attempt" -lt 3 ]; then
-            echo "Version not found yet, waiting 60s before retry..."
+          if [ "$attempt" -lt 5 ]; then
+            echo "Version not found yet (HTTP $HTTP_CODE), waiting 60s before retry..."
             sleep 60
           else
-            echo "Error: version $VERSION not found on $PACKAGE_LABEL after 3 attempts"
+            echo "Error: version $VERSION not found on $PACKAGE_LABEL after 5 attempts"
             exit 1
           fi
         done
