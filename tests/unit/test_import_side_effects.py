@@ -55,3 +55,35 @@ def test_local_evaluator_patches_langchain_lazily_once(monkeypatch):
     local_module.LocalEvaluator(metrics=["accuracy"])
 
     assert calls == ["patched"]
+
+
+def test_local_evaluator_init_does_not_emit_optional_langchain_warning():
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{repo_root}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(repo_root)
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from traigent.evaluators.local import LocalEvaluator; "
+            "LocalEvaluator(metrics=['accuracy'])",
+        ],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    combined_output = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, combined_output
+    assert (
+        "No LangChain models could be patched for metadata capture"
+        not in combined_output
+    )
