@@ -344,6 +344,7 @@ class TestExperimentDTO:
         assert result["id"] == "exp-009"
         assert result["status"] == "running"
         assert result["dataset_id"] == "dataset-001"
+        assert result["evaluation_set_id"] == "dataset-001"
         assert result["eval_dataset_id"] == "dataset-001"
         assert result["benchmark_id"] == "dataset-001"
         assert result["experiment_parameters"]["max_trials"] == 50

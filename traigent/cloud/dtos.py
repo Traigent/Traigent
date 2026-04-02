@@ -402,8 +402,8 @@ class ExperimentDTO:
 
         # Required fields always included
         result["agent_id"] = self.agent_id
-        result["evaluation_set_id"] = self.evaluation_set_id
         result["dataset_id"] = resolved_dataset_id
+        result["evaluation_set_id"] = resolved_dataset_id
         result["eval_dataset_id"] = resolved_dataset_id
         result["model_parameters_id"] = self.model_parameters_id
 
