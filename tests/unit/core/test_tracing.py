@@ -377,7 +377,6 @@ class TestGetTracer:
         """Test that get_tracer caches the result."""
         with patch.object(tracing, "TRACING_ENABLED", False):
             tracing._initialized = False
-
             result1 = get_tracer()
             tracing._initialized = True  # Mark as initialized
 
@@ -386,6 +385,31 @@ class TestGetTracer:
             # Both should be None and cached
             assert result1 is None
             assert result2 is None
+
+class TestSetErrorStatus:
+    """Tests for fallback error-status handling."""
+
+    def test_set_error_status_without_otel_uses_named_error_fallback(self) -> None:
+        span = MagicMock()
+
+        with patch.object(tracing, "trace", None):
+            tracing._set_error_status(span, "broken")
+
+        span.set_status.assert_called_once_with(status="ERROR", description="broken")
+
+    def test_set_error_status_falls_back_to_simple_error_status_on_type_error(self) -> None:
+        span = MagicMock()
+        span.set_status.side_effect = [TypeError("unsupported kwargs"), None]
+
+        with patch.object(tracing, "trace", None):
+            tracing._set_error_status(span, "broken")
+
+        assert span.set_status.call_count == 2
+        assert span.set_status.call_args_list[0].kwargs == {
+            "status": "ERROR",
+            "description": "broken",
+        }
+        assert span.set_status.call_args_list[1].args == ("ERROR",)
 
 
 class TestTrialSpan:

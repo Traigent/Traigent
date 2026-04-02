@@ -96,6 +96,51 @@ def test_observability_client_flushes_trace_payloads():
     )
 
 
+def test_record_observation_update_preserves_tokens_and_cost_when_omitted():
+    sent_batches: list[list[dict]] = []
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: sent_batches.append(traces),
+    )
+
+    trace_id = client.start_trace("preserve-metrics", trace_id="trace_preserve")
+    observation_id = client.record_observation(
+        trace_id,
+        observation_id="obs_preserve",
+        name="llm-call",
+        observation_type=ObservationType.GENERATION,
+        input_tokens=11,
+        output_tokens=7,
+        total_tokens=18,
+        cost_usd=0.004,
+    )
+    client.record_observation(
+        trace_id,
+        observation_id=observation_id,
+        name="llm-call",
+        observation_type=ObservationType.GENERATION,
+        status="completed",
+    )
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert observation["input_tokens"] == 11
+    assert observation["output_tokens"] == 7
+    assert observation["total_tokens"] == 18
+    assert observation["cost_usd"] == 0.004
+
+
 def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     sent_batches: list[list[dict]] = []
 

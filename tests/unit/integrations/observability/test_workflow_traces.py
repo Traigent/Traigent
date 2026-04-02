@@ -286,6 +286,23 @@ class TestSpanPayload:
 
         assert result["metadata"] == {"pair": [5, "broken-scalar"]}
 
+    def test_to_dict_coerces_sets_and_frozensets(self) -> None:
+        """Test set-like containers are coerced to stable JSON-safe lists."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={"tags": {"alpha", "beta"}, "frozen": frozenset({"x", "y"})},
+        )
+
+        result = span.to_dict()
+
+        assert result["metadata"]["tags"] == ["alpha", "beta"]
+        assert result["metadata"]["frozen"] == ["x", "y"]
+
     def test_to_dict_excludes_none_optionals(self) -> None:
         """Test to_dict excludes optional fields when None."""
         span = SpanPayload(

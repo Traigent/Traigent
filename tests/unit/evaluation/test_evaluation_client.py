@@ -682,3 +682,9 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
         },
     )
     assert calls[1] == ("POST", "/api/v1beta/evaluator-runs/evalrun_1/retry", {})
+
+
+def test_get_next_annotation_queue_item_returns_none_for_empty_queue():
+    client = EvaluationClient(request_sender=lambda method, path, payload: {"data": None})
+
+    assert client.get_next_annotation_queue_item("queue_1") is None

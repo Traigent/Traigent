@@ -111,10 +111,16 @@ class ObservabilityClient:
             daemon=True,
         )
         self._thread.start()
-        self._transport: AsyncBatchTransport = self._run_in_loop(
-            self._create_transport(),
-            timeout=self.config.flush_timeout,
-        )
+        try:
+            self._transport = self._run_in_loop(
+                self._create_transport(),
+                timeout=self.config.flush_timeout,
+            )
+        except Exception:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=1)
+            self._loop.close()
+            raise
 
         if self.config.enable_atexit_flush:
             atexit.register(self._atexit_close)
@@ -181,10 +187,10 @@ class ObservabilityClient:
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
         latency_ms: int | None = None,
-        input_tokens: int = 0,
-        output_tokens: int = 0,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
         total_tokens: int | None = None,
-        cost_usd: float = 0.0,
+        cost_usd: float | None = None,
         model_name: str | None = None,
         tool_name: str | None = None,
         input_data: Any = None,
@@ -213,10 +219,10 @@ class ObservabilityClient:
                     started_at=started_at or utc_now(),
                     ended_at=ended_at,
                     latency_ms=latency_ms,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    input_tokens=input_tokens if input_tokens is not None else 0,
+                    output_tokens=output_tokens if output_tokens is not None else 0,
                     total_tokens=total_tokens,
-                    cost_usd=cost_usd,
+                    cost_usd=cost_usd if cost_usd is not None else 0.0,
                     model_name=model_name,
                     tool_name=tool_name,
                     input_data=input_data,
@@ -245,14 +251,22 @@ class ObservabilityClient:
                     latency_ms=(
                         latency_ms if latency_ms is not None else existing.latency_ms
                     ),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    input_tokens=(
+                        input_tokens
+                        if input_tokens is not None
+                        else existing.input_tokens
+                    ),
+                    output_tokens=(
+                        output_tokens
+                        if output_tokens is not None
+                        else existing.output_tokens
+                    ),
                     total_tokens=(
                         total_tokens
                         if total_tokens is not None
                         else existing.total_tokens
                     ),
-                    cost_usd=cost_usd,
+                    cost_usd=cost_usd if cost_usd is not None else existing.cost_usd,
                     model_name=model_name or existing.model_name,
                     tool_name=tool_name or existing.tool_name,
                     input_data=(
@@ -321,7 +335,7 @@ class ObservabilityClient:
         )
 
     def get_stats(self) -> dict[str, Any]:
-        stats = self._transport.get_stats()
+        stats = cast(dict[str, Any], self._transport.get_stats())
         with self._lock:
             stats["active_trace_count"] = len(self._trace_states)
         return stats
