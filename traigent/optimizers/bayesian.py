@@ -26,10 +26,6 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    logger.warning(
-        "scikit-learn not available. Bayesian optimization will not work. "
-        "Install with: pip install scikit-learn scipy"
-    )
 
 
 class BayesianOptimizer(BaseOptimizer):
