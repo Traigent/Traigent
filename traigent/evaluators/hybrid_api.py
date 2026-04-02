@@ -13,6 +13,7 @@ import asyncio
 import os
 import statistics
 import time
+import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -296,6 +297,12 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         transport = await self._get_transport()
         resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
+        if benchmark_id is not None:
+            warnings.warn(
+                "benchmark_id is deprecated; use dataset_id instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         selected_dataset_id = dataset_id or benchmark_id
 
         # Filter datasets where this tunable is linked
