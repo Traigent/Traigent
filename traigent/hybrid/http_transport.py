@@ -51,6 +51,7 @@ class HTTPTransport:
     # API endpoint paths (relative to base_url)
     CAPABILITIES_PATH = "/traigent/v1/capabilities"
     CONFIG_SPACE_PATH = "/traigent/v1/config-space"
+    DATASETS_PATH = "/traigent/v1/datasets"
     BENCHMARKS_PATH = "/traigent/v1/benchmarks"
     EXECUTE_PATH = "/traigent/v1/execute"
     EVALUATE_PATH = "/traigent/v1/evaluate"
@@ -324,13 +325,13 @@ class HTTPTransport:
         self,
         tunable_id: str | None = None,
     ) -> BenchmarksResponse:
-        """Discover available benchmarks and their example IDs.
+        """Discover available datasets and their example IDs.
 
         Args:
-            tunable_id: Optional filter — only return benchmarks linked to this tunable.
+            tunable_id: Optional filter — only return datasets linked to this tunable.
 
         Returns:
-            BenchmarksResponse with benchmark entries and example IDs.
+            BenchmarksResponse with dataset entries and example IDs.
 
         Raises:
             TransportError: If discovery fails or tunable_id is unknown.
@@ -338,7 +339,12 @@ class HTTPTransport:
         params: dict[str, str] | None = None
         if tunable_id is not None:
             params = {"tunable_id": tunable_id}
-        data = await self._request("GET", self.BENCHMARKS_PATH, params=params)
+        try:
+            data = await self._request("GET", self.DATASETS_PATH, params=params)
+        except TransportError as exc:
+            if exc.status_code != 404:
+                raise
+            data = await self._request("GET", self.BENCHMARKS_PATH, params=params)
         return BenchmarksResponse.from_dict(data)
 
     @staticmethod

@@ -211,6 +211,7 @@ class TestExperimentDTO:
         assert exp.model_parameters_id == "local-model-params-001"
 
         # Optional fields default to None/empty
+        assert exp.dataset_id is None
         assert exp.benchmark_id is None
         assert exp.experiment_parameters == {}
         assert exp.metadata == {}
@@ -253,12 +254,14 @@ class TestExperimentDTO:
             agent_id="agent-backend-123",
             evaluation_set_id="evalset-456",
             model_parameters_id="model-params-789",
+            dataset_id="dataset-001",
             benchmark_id="benchmark-001",
         )
 
         assert exp.agent_id == "agent-backend-123"
         assert exp.evaluation_set_id == "evalset-456"
         assert exp.model_parameters_id == "model-params-789"
+        assert exp.dataset_id == "dataset-001"
         assert exp.benchmark_id == "benchmark-001"
 
     def test_experiment_with_metadata(self):
@@ -312,6 +315,9 @@ class TestExperimentDTO:
         assert result["id"] == "exp-008"
         assert result["name"] == "Minimal"
         assert result["description"] == "Minimal experiment"
+        assert result["dataset_id"] == "local-evalset-001"
+        assert result["eval_dataset_id"] == "local-evalset-001"
+        assert result["benchmark_id"] == "local-evalset-001"
         assert "configurations" in result
         assert "measures" in result
 
@@ -325,6 +331,7 @@ class TestExperimentDTO:
             measures=["accuracy", "cost"],
             agent_id="agent-001",
             evaluation_set_id="eval-001",
+            dataset_id="dataset-001",
             model_parameters_id="model-001",
             benchmark_id="bench-001",
             experiment_parameters={"max_trials": 50},
@@ -336,7 +343,9 @@ class TestExperimentDTO:
 
         assert result["id"] == "exp-009"
         assert result["status"] == "running"
-        assert result["benchmark_id"] == "bench-001"
+        assert result["dataset_id"] == "dataset-001"
+        assert result["eval_dataset_id"] == "dataset-001"
+        assert result["benchmark_id"] == "dataset-001"
         assert result["experiment_parameters"]["max_trials"] == 50
         assert result["metadata"]["version"] == "1.0"
 
