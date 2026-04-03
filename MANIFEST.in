@@ -20,6 +20,7 @@ include pyproject.toml
 # Include package data
 recursive-include traigent *.py
 recursive-include traigent *.json
+recursive-include traigent *.jsonl
 recursive-include traigent *.yaml
 include traigent/py.typed
 

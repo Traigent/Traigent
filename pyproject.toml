@@ -224,7 +224,7 @@ include = ["traigent*", "traigent_validation*"]
 exclude = ["tests*", "demos*", "docs*"]
 
 [tool.setuptools.package-data]
-traigent = ["py.typed"]
+traigent = ["py.typed", "examples/quickstart/*.jsonl"]
 traigent_validation = ["py.typed"]
 
 [tool.black]
