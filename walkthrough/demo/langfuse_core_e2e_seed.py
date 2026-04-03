@@ -9,10 +9,12 @@ frontend Playwright tests can use for full-stack assertions.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -22,6 +24,9 @@ import requests
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 GUIDED_RUNNER = SCRIPT_DIR / "guided_optimize_and_observe.py"
+TOKEN_CACHE_PATH = Path(
+    os.getenv("LANGFUSE_CORE_E2E_TOKEN_CACHE", "/tmp/langfuse_core_e2e_token.json")
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +111,96 @@ def ensure_api_key() -> str:
     raise RuntimeError("TRAIGENT_API_KEY must be set for langfuse core E2E seeding")
 
 
+def _decode_jwt_expiration(token: str) -> int | None:
+    try:
+        _header, payload, _sig = token.split(".", 2)
+        padded = payload + "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        exp = json.loads(decoded).get("exp")
+        return int(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+def _load_cached_bearer_token() -> str | None:
+    if not TOKEN_CACHE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(TOKEN_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        return None
+
+    expires_at = payload.get("expires_at")
+    now = int(time.time())
+    if isinstance(expires_at, int) and expires_at - now > 60:
+        os.environ["TRAIGENT_JWT_TOKEN"] = token
+        return token
+    if isinstance(expires_at, float) and expires_at - now > 60:
+        os.environ["TRAIGENT_JWT_TOKEN"] = token
+        return token
+    return None
+
+
+def _store_cached_bearer_token(token: str) -> None:
+    expires_at = _decode_jwt_expiration(token)
+    TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_CACHE_PATH.write_text(
+        json.dumps(
+            {
+                "token": token,
+                "expires_at": expires_at,
+                "cached_at": int(time.time()),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def ensure_bearer_token(base_url: str) -> str | None:
+    token = os.getenv("TRAIGENT_JWT_TOKEN")
+    if token:
+        return token
+
+    cached_token = _load_cached_bearer_token()
+    if cached_token:
+        return cached_token
+
+    email = os.getenv("LANGFUSE_CORE_E2E_EMAIL")
+    password = os.getenv("LANGFUSE_CORE_E2E_PASSWORD")
+    if not email or not password:
+        return None
+
+    for attempt in range(4):
+        response = requests.post(
+            f"{base_url.rstrip('/')}/api/v1/auth/login",
+            headers={"Content-Type": "application/json"},
+            json={"email": email, "password": password},
+            timeout=30,
+        )
+        if response.status_code == 429:
+            cached_token = _load_cached_bearer_token()
+            if cached_token:
+                return cached_token
+            if attempt < 3:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+        response.raise_for_status()
+        payload = response.json()
+        token = payload.get("data", {}).get("access_token")
+        if isinstance(token, str) and token:
+            os.environ["TRAIGENT_JWT_TOKEN"] = token
+            _store_cached_bearer_token(token)
+            return token
+        return None
+    return None
+
+
 def run_phase(args: argparse.Namespace, phase: str, artifacts_dir: Path) -> dict[str, Any]:
     cmd = [
         sys.executable,
@@ -188,14 +283,18 @@ def extract_items(payload: Any) -> list[Any]:
 
 def api_request_json(base_url: str, api_key: str, method: str, path: str, payload: Any | None = None) -> Any:
     url = f"{base_url.rstrip('/')}{path}"
+    jwt_token = ensure_bearer_token(base_url)
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": api_key,
+        "X-Request-ID": f"langfuse-core-e2e-{method.lower()}-{path.rsplit('/', 1)[-1]}",
+    }
+    if jwt_token:
+        headers["Authorization"] = f"Bearer {jwt_token}"
     response = requests.request(
         method.upper(),
         url,
-        headers={
-            "Content-Type": "application/json",
-            "X-API-Key": api_key,
-            "X-Request-ID": f"langfuse-core-e2e-{method.lower()}-{path.rsplit('/', 1)[-1]}",
-        },
+        headers=headers,
         json=payload,
         timeout=60,
     )
@@ -251,17 +350,23 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def build_frontend_urls(frontend_url: str, experiment_id: str, experiment_run_id: str, dataset_id: str | None) -> dict[str, str]:
+def build_frontend_urls(
+    frontend_url: str,
+    experiment_id: str | None,
+    experiment_run_id: str | None,
+    dataset_id: str | None,
+) -> dict[str, str]:
     urls = {
         "base": frontend_url,
         "datasets": f"{frontend_url.rstrip('/')}/datasets",
         "agents": f"{frontend_url.rstrip('/')}/agents",
         "experiments": f"{frontend_url.rstrip('/')}/experiments",
-        "experiment": (
+    }
+    if experiment_id and experiment_run_id:
+        urls["experiment"] = (
             f"{frontend_url.rstrip('/')}/experiments/view/{experiment_id}"
             f"?results_tab=overview&run_id={experiment_run_id}"
-        ),
-    }
+        )
     if dataset_id:
         urls["dataset"] = f"{frontend_url.rstrip('/')}/datasets/view/{dataset_id}"
         urls["legacy_dataset"] = f"{frontend_url.rstrip('/')}/benchmarks/view/{dataset_id}"
@@ -270,20 +375,22 @@ def build_frontend_urls(frontend_url: str, experiment_id: str, experiment_run_id
 
 def build_backend_urls(
     backend_url: str,
-    experiment_id: str,
-    experiment_run_id: str,
+    experiment_id: str | None,
+    experiment_run_id: str | None,
     dataset_id: str | None,
 ) -> dict[str, str]:
     urls = {
         "base": backend_url,
-        "experiment": f"{backend_url.rstrip('/')}/api/v1/experiments/{experiment_id}",
-        "experiment_run_results": (
-            f"{backend_url.rstrip('/')}/api/v1/experiment-runs/runs/{experiment_run_id}/results"
-        ),
-        "experiment_runs": (
-            f"{backend_url.rstrip('/')}/api/v1/experiment-runs/{experiment_id}/runs?per_page=25"
-        ),
     }
+    if experiment_id:
+        urls["experiment"] = f"{backend_url.rstrip('/')}/api/v1/experiments/{experiment_id}"
+        urls["experiment_runs"] = (
+            f"{backend_url.rstrip('/')}/api/v1/experiment-runs/{experiment_id}/runs?per_page=25"
+        )
+    if experiment_run_id:
+        urls["experiment_run_results"] = (
+            f"{backend_url.rstrip('/')}/api/v1/experiment-runs/runs/{experiment_run_id}/results"
+        )
     if dataset_id:
         urls["dataset"] = f"{backend_url.rstrip('/')}/api/v1/datasets/{dataset_id}"
         urls["dataset_examples"] = f"{backend_url.rstrip('/')}/api/v1/datasets/{dataset_id}/examples"
@@ -679,6 +786,7 @@ def main() -> int:
         else output_path.parent / "guided-artifacts"
     )
     api_key = ensure_api_key()
+    ensure_bearer_token(args.backend_url)
 
     baseline_summary = run_phase(args, "baseline", artifacts_dir)
     optimize_summary = run_phase(args, "optimize", artifacts_dir)
@@ -695,28 +803,49 @@ def main() -> int:
         or baseline_summary.get("experiment_run_id")
     )
 
-    if not experiment_id or not experiment_run_id:
+    experiment_optional_scenarios = {
+        "trace-session-user-browse",
+        "trace-feedback-collaboration",
+        "prompt-version-lineage",
+        "playground-run-and-compare",
+        "trace-to-prompt-lineage",
+    }
+    requires_experiment_linkage = args.scenario not in experiment_optional_scenarios
+
+    if requires_experiment_linkage and (not experiment_id or not experiment_run_id):
         raise RuntimeError("Unable to resolve experiment_id / experiment_run_id from guided summaries")
 
-    experiment_payload = api_get_json(args.backend_url, api_key, f"/api/v1/experiments/{experiment_id}")
-    run_results_payload = api_get_json(
-        args.backend_url,
-        api_key,
-        f"/api/v1/experiment-runs/runs/{experiment_run_id}/results",
-    )
-    runs_payload = api_get_json(
-        args.backend_url,
-        api_key,
-        f"/api/v1/experiment-runs/{experiment_id}/runs?per_page=25",
-    )
+    experiment_payload: dict[str, Any] | None = None
+    run_results_payload: dict[str, Any] | None = None
+    runs_payload: dict[str, Any] | None = None
+    if experiment_id:
+        experiment_payload = api_get_json(
+            args.backend_url,
+            api_key,
+            f"/api/v1/experiments/{experiment_id}",
+        )
+        write_json(output_path.parent / "backend-experiment.json", experiment_payload)
+    if experiment_id and experiment_run_id:
+        run_results_payload = api_get_json(
+            args.backend_url,
+            api_key,
+            f"/api/v1/experiment-runs/runs/{experiment_run_id}/results",
+        )
+        runs_payload = api_get_json(
+            args.backend_url,
+            api_key,
+            f"/api/v1/experiment-runs/{experiment_id}/runs?per_page=25",
+        )
+        write_json(output_path.parent / "backend-run-results.json", run_results_payload)
+        write_json(output_path.parent / "backend-runs.json", runs_payload)
 
-    write_json(output_path.parent / "backend-experiment.json", experiment_payload)
-    write_json(output_path.parent / "backend-run-results.json", run_results_payload)
-    write_json(output_path.parent / "backend-runs.json", runs_payload)
-
-    experiment = extract_payload(experiment_payload)
-    run_results = extract_payload(run_results_payload)
-    configuration_run_ids = collect_configuration_run_ids(run_results_payload)
+    experiment = extract_payload(experiment_payload) if experiment_payload is not None else {}
+    run_results = extract_payload(run_results_payload) if run_results_payload is not None else {}
+    configuration_run_ids = (
+        collect_configuration_run_ids(run_results_payload)
+        if run_results_payload is not None
+        else []
+    )
 
     dataset_id = None
     agent_id = None
@@ -861,7 +990,8 @@ def main() -> int:
             run_compare=True,
         )
         prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
-        trace_for_prompt = next(iter(prompt_fixture.get("compare_trace_ids", [])), None)
+        compare_trace_ids = [value for value in prompt_fixture.get("compare_trace_ids", []) if value]
+        trace_for_prompt = compare_trace_ids[-1] if compare_trace_ids else None
         if trace_for_prompt:
             observations_payload = api_get_json(
                 args.backend_url,
