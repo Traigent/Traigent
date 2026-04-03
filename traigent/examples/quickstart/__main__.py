@@ -28,29 +28,42 @@ os.environ.setdefault("TRAIGENT_DATASET_ROOT", _PACKAGE_DIR)
 # this point - it does not yet intercept raw litellm/openai calls.
 # Once the interceptor adds raw litellm support this file will be updated to
 # match the litellm style shown in the docs.
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 import traigent
+from traigent.api.decorators import EvaluationOptions
 
 DATASET = str(Path(__file__).resolve().parent / "qa_samples.jsonl")
-OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-4o-mini", "gpt-4o"],
     "temperature": [0.0, 0.7, 1.0],
 }
 
+_SYSTEM_PROMPT = "Answer in as few words as possible. Give only the answer itself, nothing else."
+
+
+def contains_accuracy(output: str, expected: str) -> float:
+    """1.0 if expected and output are substring-compatible (case-insensitive)."""
+    out_lower = output.strip().lower()
+    exp_lower = expected.strip().lower()
+    return 1.0 if (exp_lower in out_lower or out_lower in exp_lower) else 0.0
+
 
 @traigent.optimize(
     configuration_space=CONFIG_SPACE,
-    objectives=OBJECTIVES,
-    eval_dataset=DATASET,
+    objectives=["accuracy"],
+    evaluation=EvaluationOptions(
+        eval_dataset=DATASET,
+        metric_functions={"accuracy": contains_accuracy},
+    ),
     execution_mode="edge_analytics",
 )
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    return llm.invoke(question).content
+    return llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)]).content
 
 
 if __name__ == "__main__":
