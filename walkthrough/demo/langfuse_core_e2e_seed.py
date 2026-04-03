@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
         "--scenario",
         choices=(
             "guided-optimize-observe",
+            "access-control-isolation",
             "dataset-version-lineage",
             "experiment-auto-evaluators",
             "feedback-observability-roundtrip",
@@ -777,6 +778,115 @@ def seed_prompt_fixture(
     }
 
 
+def _first_value(payload: Any, *keys: str) -> str | None:
+    data = extract_payload(payload)
+    if not isinstance(data, dict):
+        return None
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def seed_access_control_fixture(
+    *,
+    args: argparse.Namespace,
+    api_key: str,
+    output_dir: Path,
+) -> dict[str, Any]:
+    agent_types_payload = api_get_json(args.backend_url, api_key, "/api/v1/agents/agent-types")
+    write_json(output_dir / "access-control-agent-types.json", agent_types_payload)
+
+    agent_types = extract_items(agent_types_payload)
+    agent_type_id = None
+    for item in agent_types:
+        if isinstance(item, dict):
+            candidate = item.get("id") or item.get("value") or item.get("label")
+            if candidate:
+                agent_type_id = str(candidate)
+                break
+    if not agent_type_id:
+        raise RuntimeError("Unable to resolve an agent type for access-control-isolation")
+
+    agent_name = f"Access Control Agent {args.run_id}"
+    agent_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1/agents",
+        {
+            "name": agent_name,
+            "agent_type_id": agent_type_id,
+            "prompt_template": "You are a deterministic access-control test agent.",
+        },
+    )
+    write_json(output_dir / "access-control-agent.json", agent_payload)
+    agent_id = _first_value(agent_payload, "agent_id", "id")
+    if not agent_id:
+        raise RuntimeError("Unable to resolve created agent_id for access-control-isolation")
+
+    dataset_name = f"Access Control Dataset {args.run_id}"
+    dataset_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1/datasets",
+        {
+            "name": dataset_name,
+            "label": dataset_name,
+            "type": "input-output",
+            "use_case": "question-answering",
+            "agent_type_id": agent_type_id,
+            "description": "Dataset owned by the primary user for access control isolation.",
+        },
+    )
+    write_json(output_dir / "access-control-dataset.json", dataset_payload)
+    dataset_id = _first_value(dataset_payload, "dataset_id", "benchmark_id", "id")
+    if not dataset_id:
+        raise RuntimeError("Unable to resolve created dataset_id for access-control-isolation")
+
+    dataset_example_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1/datasets/{dataset_id}/examples",
+        {
+            "input_text": f"What is protected in run {args.run_id}?",
+            "expected_output": "Owned datasets and experiments stay private.",
+            "metadata": {"scenario": args.scenario, "run_id": args.run_id},
+        },
+    )
+    write_json(output_dir / "access-control-dataset-example.json", dataset_example_payload)
+
+    experiment_name = f"Access Control Experiment {args.run_id}"
+    experiment_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1/experiments",
+        {
+            "name": experiment_name,
+            "description": "Experiment owned by the primary user for access control isolation.",
+            "status": "NOT_STARTED",
+            "dataset_id": dataset_id,
+            "agent_id": agent_id,
+            "measures": [{"measure_id": "faithfulness"}],
+            "configurations": {"model": "gpt-4o"},
+        },
+    )
+    write_json(output_dir / "access-control-experiment.json", experiment_payload)
+    experiment_id = _first_value(experiment_payload, "experiment_id", "id")
+    if not experiment_id:
+        raise RuntimeError("Unable to resolve created experiment_id for access-control-isolation")
+
+    return {
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "agent_type_id": agent_type_id,
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "experiment_id": experiment_id,
+        "experiment_name": experiment_name,
+    }
+
+
 def main() -> int:
     args = parse_args()
     output_path = Path(args.output).resolve()
@@ -787,6 +897,59 @@ def main() -> int:
     )
     api_key = ensure_api_key()
     ensure_bearer_token(args.backend_url)
+
+    if args.scenario == "access-control-isolation":
+        access_fixture = seed_access_control_fixture(
+            args=args,
+            api_key=api_key,
+            output_dir=output_path.parent,
+        )
+
+        dataset_id = access_fixture["dataset_id"]
+        dataset_name = access_fixture["dataset_name"]
+        experiment_id = access_fixture["experiment_id"]
+        agent_id = access_fixture["agent_id"]
+        agent_name = access_fixture["agent_name"]
+        scenario_id = f"T-E2E-{args.scenario}"
+
+        frontend_urls = build_frontend_urls(args.frontend_url, experiment_id, None, dataset_id)
+        backend_urls = build_backend_urls(args.backend_url, experiment_id, None, dataset_id)
+
+        manifest = {
+            "scenario_id": scenario_id,
+            "scenario_type": args.scenario,
+            "scenario": "langfuse-core",
+            "run_id": args.run_id,
+            "mode": args.mode,
+            "scale": args.scale,
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "experiment_id": experiment_id,
+            "experiment_run_id": None,
+            "configuration_run_ids": [],
+            "trace_ids": [],
+            "baseline_trace_ids": [],
+            "post_trace_ids": [],
+            "score_ids": [],
+            "feedback_ids": [],
+            "session_ids": [],
+            "user_ids": [],
+            "tag_values": [],
+            "prompt_version_ids": [],
+            "best_config": None,
+            "best_metrics": None,
+            "frontend_urls": frontend_urls,
+            "backend_urls": backend_urls,
+            "assertions": {
+                "protected_dataset_id": dataset_id,
+                "protected_experiment_id": experiment_id,
+                "protected_agent_id": agent_id,
+            },
+        }
+        write_json(output_path, manifest)
+        return 0
 
     baseline_summary = run_phase(args, "baseline", artifacts_dir)
     optimize_summary = run_phase(args, "optimize", artifacts_dir)
@@ -1002,6 +1165,11 @@ def main() -> int:
         assertions = {
             "prompt_name": prompt_fixture["prompt_name"],
             "prompt_trace_id": trace_for_prompt,
+        }
+    elif args.scenario == "access-control-isolation":
+        assertions = {
+            "protected_dataset_id": dataset_id,
+            "protected_experiment_id": experiment_id,
         }
     else:
         assertions = {"guided_flow": True}
