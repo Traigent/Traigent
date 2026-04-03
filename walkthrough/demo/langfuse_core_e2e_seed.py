@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -37,6 +38,11 @@ def parse_args() -> argparse.Namespace:
             "feedback-observability-roundtrip",
             "variant-compare",
             "trace-to-dataset-curation",
+            "trace-session-user-browse",
+            "trace-feedback-collaboration",
+            "prompt-version-lineage",
+            "playground-run-and-compare",
+            "trace-to-prompt-lineage",
         ),
         default="guided-optimize-observe",
         help="Scenario to seed for the frontend Playwright suite.",
@@ -180,34 +186,37 @@ def extract_items(payload: Any) -> list[Any]:
     return []
 
 
-def api_get_json(base_url: str, api_key: str, path: str) -> Any:
+def api_request_json(base_url: str, api_key: str, method: str, path: str, payload: Any | None = None) -> Any:
     url = f"{base_url.rstrip('/')}{path}"
-    response = requests.get(
-        url,
-        headers={
-            "X-API-Key": api_key,
-            "X-Request-ID": f"langfuse-core-e2e-{path.rsplit('/', 1)[-1]}",
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-def api_post_json(base_url: str, api_key: str, path: str, payload: Any) -> Any:
-    url = f"{base_url.rstrip('/')}{path}"
-    response = requests.post(
+    response = requests.request(
+        method.upper(),
         url,
         headers={
             "Content-Type": "application/json",
             "X-API-Key": api_key,
-            "X-Request-ID": f"langfuse-core-e2e-post-{path.rsplit('/', 1)[-1]}",
+            "X-Request-ID": f"langfuse-core-e2e-{method.lower()}-{path.rsplit('/', 1)[-1]}",
         },
         json=payload,
         timeout=60,
     )
     response.raise_for_status()
     return response.json()
+
+
+def api_get_json(base_url: str, api_key: str, path: str) -> Any:
+    return api_request_json(base_url, api_key, "GET", path)
+
+
+def api_post_json(base_url: str, api_key: str, path: str, payload: Any) -> Any:
+    return api_request_json(base_url, api_key, "POST", path, payload)
+
+
+def api_put_json(base_url: str, api_key: str, path: str, payload: Any) -> Any:
+    return api_request_json(base_url, api_key, "PUT", path, payload)
+
+
+def api_patch_json(base_url: str, api_key: str, path: str, payload: Any) -> Any:
+    return api_request_json(base_url, api_key, "PATCH", path, payload)
 
 
 def collect_configuration_run_ids(results_payload: Any) -> list[str]:
@@ -461,6 +470,206 @@ def add_auto_evaluator_artifacts(
     }
 
 
+def seed_observability_fixture(
+    *,
+    args: argparse.Namespace,
+    api_key: str,
+    run_id: str,
+    output_dir: Path,
+    prompt_name: str | None = None,
+    prompt_version: int | None = None,
+) -> dict[str, Any]:
+    trace_id = f"obs-trace:{run_id}"
+    session_id = f"obs-session:{run_id}"
+    user_id = f"obs-user:{run_id}"
+    trace_name = f"langfuse-observability-{run_id}"
+    tags = ["langfuse-core", "observability", run_id]
+
+    prompt_reference = None
+    if prompt_name:
+        prompt_reference = {
+            "name": prompt_name,
+            "version": prompt_version,
+            "variables": {"topic": run_id},
+        }
+
+    ingest_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1beta/observability/ingest",
+        {
+            "traces": [
+                {
+                    "id": trace_id,
+                    "name": trace_name,
+                    "status": "completed",
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "environment": "playground",
+                    "release": "langfuse-e2e",
+                    "tags": tags,
+                    "metadata": {
+                        "scenario": args.scenario,
+                        "run_id": run_id,
+                        "source": "sdk-seed",
+                    },
+                    "prompt_reference": prompt_reference,
+                    "session": {
+                        "id": session_id,
+                        "user_id": user_id,
+                        "environment": "playground",
+                        "release": "langfuse-e2e",
+                        "tags": tags,
+                        "metadata": {"scenario": args.scenario, "run_id": run_id},
+                    },
+                    "observations": [
+                        {
+                            "id": f"{trace_id}:root",
+                            "type": "span",
+                            "name": "pipeline",
+                            "status": "completed",
+                            "latency_ms": 42,
+                            "input_tokens": 4,
+                            "output_tokens": 3,
+                            "metadata": {"stage": "pipeline"},
+                            "children": [
+                                {
+                                    "id": f"{trace_id}:generation",
+                                    "type": "generation",
+                                    "name": "answer",
+                                    "status": "completed",
+                                    "latency_ms": 37,
+                                    "input_tokens": 12,
+                                    "output_tokens": 18,
+                                    "cost_usd": 0.0012,
+                                    "model_name": "mock-model",
+                                    "input_data": {"question": f"How did {run_id} perform?"},
+                                    "output_data": {"answer": f"{run_id} completed successfully."},
+                                    "metadata": {"scenario": args.scenario},
+                                    "prompt_reference": prompt_reference,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    trace_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/traces/{quote(trace_id, safe='')}")
+    session_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/sessions/{quote(session_id, safe='')}")
+    user_payload = api_get_json(args.backend_url, api_key, f"/api/v1beta/observability/users/{quote(user_id, safe='')}")
+
+    write_json(output_dir / "observability-fixture-ingest.json", ingest_payload)
+    write_json(output_dir / "observability-fixture-trace.json", trace_payload)
+    write_json(output_dir / "observability-fixture-session.json", session_payload)
+    write_json(output_dir / "observability-fixture-user.json", user_payload)
+
+    return {
+        "trace_id": trace_id,
+        "trace_name": trace_name,
+        "session_id": session_id,
+        "user_id": user_id,
+        "tags": tags,
+    }
+
+
+def seed_prompt_fixture(
+    *,
+    args: argparse.Namespace,
+    api_key: str,
+    run_id: str,
+    output_dir: Path,
+    run_compare: bool = False,
+) -> dict[str, Any]:
+    prompt_name = f"langfuse.e2e.{run_id.replace(':', '-').replace('_', '-').replace('/', '-')}"
+    encoded_prompt_name = quote(prompt_name, safe="")
+
+    create_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1beta/prompts",
+        {
+            "name": prompt_name,
+            "prompt_type": "text",
+            "prompt_text": "Hello {{name}} from version one",
+            "description": f"Langfuse E2E prompt fixture for {run_id}",
+            "labels": ["production"],
+            "tags": ["langfuse-core", run_id],
+            "config": {"model": "mock-model", "provider": "mock"},
+            "commit_message": "Seed v1",
+        },
+    )
+    version_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/prompts/{encoded_prompt_name}/versions",
+        {
+            "prompt_text": "Hi {{name}} from version two",
+            "config": {"model": "mock-model", "provider": "mock"},
+            "commit_message": "Seed v2",
+            "labels": ["candidate"],
+        },
+    )
+    labels_payload = api_patch_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/prompts/{encoded_prompt_name}/labels",
+        {"labels": {"latest": 2, "production": 2}},
+    )
+    prompt_detail = api_get_json(args.backend_url, api_key, f"/api/v1beta/prompts/{encoded_prompt_name}")
+
+    analytics_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+    )
+
+    compare_trace_ids: list[str] = []
+    compare_run_payloads: list[Any] = []
+    if run_compare:
+        for version in (1, 2):
+            run_payload = api_post_json(
+                args.backend_url,
+                api_key,
+                f"/api/v1beta/prompts/{encoded_prompt_name}/playground/run",
+                {
+                    "version": version,
+                    "variables": {"name": "Langfuse"},
+                    "provider": "mock",
+                    "model": "mock-model",
+                    "dry_run": False,
+                },
+            )
+            compare_run_payloads.append(run_payload)
+            trace_id = extract_payload(run_payload).get("trace_id")
+            if trace_id:
+                compare_trace_ids.append(str(trace_id))
+
+        analytics_payload = api_get_json(
+            args.backend_url,
+            api_key,
+            f"/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+        )
+
+    write_json(output_dir / "prompt-create.json", create_payload)
+    write_json(output_dir / "prompt-version.json", version_payload)
+    write_json(output_dir / "prompt-labels.json", labels_payload)
+    write_json(output_dir / "prompt-detail.json", prompt_detail)
+    write_json(output_dir / "prompt-analytics.json", analytics_payload)
+    if compare_run_payloads:
+        write_json(output_dir / "prompt-playground-runs.json", compare_run_payloads)
+
+    return {
+        "prompt_name": prompt_name,
+        "prompt_version_ids": [
+            extract_payload(create_payload).get("versions", [{}])[0].get("id"),
+            extract_payload(version_payload).get("versions", [{}])[0].get("id"),
+        ],
+        "compare_trace_ids": compare_trace_ids,
+        "prompt_labels": extract_payload(labels_payload).get("labels", {}),
+    }
+
+
 def main() -> int:
     args = parse_args()
     output_path = Path(args.output).resolve()
@@ -550,6 +759,9 @@ def main() -> int:
     dataset_version_ids: list[str] = []
     score_ids: list[str] = []
     feedback_ids: list[str] = []
+    prompt_version_ids: list[str] = []
+    prompt_fixture: dict[str, Any] | None = None
+    observability_fixture: dict[str, Any] | None = None
     assertions: dict[str, Any] = {}
 
     if args.scenario == "dataset-version-lineage":
@@ -590,8 +802,137 @@ def main() -> int:
             "configuration_run_count": len(configuration_run_ids),
             "best_config_present": bool(post_summary.get("best_config") or optimize_summary.get("best_config")),
         }
+    elif args.scenario == "trace-session-user-browse":
+        observability_fixture = seed_observability_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+        )
+        assertions = {
+            "browse_trace_id": observability_fixture["trace_id"],
+            "browse_session_id": observability_fixture["session_id"],
+            "browse_user_id": observability_fixture["user_id"],
+        }
+    elif args.scenario == "trace-feedback-collaboration":
+        observability_fixture = seed_observability_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+        )
+        assertions = {
+            "collaboration_trace_id": observability_fixture["trace_id"],
+            "collaboration_session_id": observability_fixture["session_id"],
+            "collaboration_user_id": observability_fixture["user_id"],
+        }
+    elif args.scenario == "prompt-version-lineage":
+        prompt_fixture = seed_prompt_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+            run_compare=False,
+        )
+        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        assertions = {
+            "prompt_name": prompt_fixture["prompt_name"],
+            "prompt_labels": prompt_fixture["prompt_labels"],
+        }
+    elif args.scenario == "playground-run-and-compare":
+        prompt_fixture = seed_prompt_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+            run_compare=True,
+        )
+        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        assertions = {
+            "prompt_name": prompt_fixture["prompt_name"],
+            "compare_trace_ids": prompt_fixture["compare_trace_ids"],
+        }
+    elif args.scenario == "trace-to-prompt-lineage":
+        prompt_fixture = seed_prompt_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+            run_compare=True,
+        )
+        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        trace_for_prompt = next(iter(prompt_fixture.get("compare_trace_ids", [])), None)
+        if trace_for_prompt:
+            observations_payload = api_get_json(
+                args.backend_url,
+                api_key,
+                f"/api/v1beta/observability/traces/{quote(trace_for_prompt, safe='')}/observations",
+            )
+            write_json(output_path.parent / "trace-to-prompt-observations.json", observations_payload)
+        assertions = {
+            "prompt_name": prompt_fixture["prompt_name"],
+            "prompt_trace_id": trace_for_prompt,
+        }
     else:
         assertions = {"guided_flow": True}
+
+    frontend_urls = build_frontend_urls(args.frontend_url, experiment_id, experiment_run_id, dataset_id)
+    backend_urls = build_backend_urls(args.backend_url, experiment_id, experiment_run_id, dataset_id)
+
+    if observability_fixture:
+        trace_id = observability_fixture["trace_id"]
+        session_id = observability_fixture["session_id"]
+        user_id = observability_fixture["user_id"]
+        trace_ids.append(trace_id)
+        session_ids.append(session_id)
+        frontend_urls.update(
+            {
+                "observability": f"{args.frontend_url.rstrip('/')}/observability",
+                "trace": f"{args.frontend_url.rstrip('/')}/observability/traces/{quote(trace_id, safe='')}",
+                "session": f"{args.frontend_url.rstrip('/')}/observability/sessions/{quote(session_id, safe='')}",
+                "user": f"{args.frontend_url.rstrip('/')}/observability/users/{quote(user_id, safe='')}",
+            }
+        )
+        backend_urls.update(
+            {
+                "trace": f"{args.backend_url.rstrip('/')}/api/v1beta/observability/traces/{quote(trace_id, safe='')}",
+                "session": f"{args.backend_url.rstrip('/')}/api/v1beta/observability/sessions/{quote(session_id, safe='')}",
+                "user": f"{args.backend_url.rstrip('/')}/api/v1beta/observability/users/{quote(user_id, safe='')}",
+            }
+        )
+        tag_values = sorted(set(tag_values + list(observability_fixture.get("tags", []))))
+
+    if prompt_fixture:
+        prompt_name = prompt_fixture["prompt_name"]
+        encoded_prompt_name = quote(prompt_name, safe="")
+        compare_trace_ids = [value for value in prompt_fixture.get("compare_trace_ids", []) if value]
+        trace_ids.extend(compare_trace_ids)
+        prompt_version_ids = [value for value in prompt_fixture.get("prompt_version_ids", []) if value]
+        frontend_urls.update(
+            {
+                "prompts": f"{args.frontend_url.rstrip('/')}/prompts",
+                "prompt": f"{args.frontend_url.rstrip('/')}/prompts/{encoded_prompt_name}",
+                "playground": f"{args.frontend_url.rstrip('/')}/playground?prompt={encoded_prompt_name}&playground=1&lhs=1&rhs=2",
+            }
+        )
+        backend_urls.update(
+            {
+                "prompt": f"{args.backend_url.rstrip('/')}/api/v1beta/prompts/{encoded_prompt_name}",
+                "prompt_analytics": f"{args.backend_url.rstrip('/')}/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+            }
+        )
+        if compare_trace_ids:
+            assertions.setdefault("prompt_trace_id", compare_trace_ids[-1])
+            frontend_urls["prompt_trace"] = (
+                f"{args.frontend_url.rstrip('/')}/observability/traces/{quote(compare_trace_ids[-1], safe='')}"
+            )
+            backend_urls["prompt_trace"] = (
+                f"{args.backend_url.rstrip('/')}/api/v1beta/observability/traces/{quote(compare_trace_ids[-1], safe='')}"
+            )
+
+    user_ids = {"guided-demo-user"}
+    if observability_fixture:
+        user_ids.add(observability_fixture["user_id"])
 
     manifest = {
         "scenario_id": scenario_id,
@@ -614,13 +955,13 @@ def main() -> int:
         "score_ids": score_ids,
         "feedback_ids": feedback_ids,
         "session_ids": session_ids,
-        "user_ids": ["guided-demo-user"],
+        "user_ids": sorted(user_ids),
         "tag_values": tag_values,
-        "prompt_version_ids": [],
+        "prompt_version_ids": prompt_version_ids,
         "best_config": post_summary.get("best_config") or optimize_summary.get("best_config"),
         "best_metrics": post_summary.get("best_metrics") or optimize_summary.get("best_metrics"),
-        "frontend_urls": build_frontend_urls(args.frontend_url, experiment_id, experiment_run_id, dataset_id),
-        "backend_urls": build_backend_urls(args.backend_url, experiment_id, experiment_run_id, dataset_id),
+        "frontend_urls": frontend_urls,
+        "backend_urls": backend_urls,
         "assertions": assertions,
         "phase_summaries": {
             "baseline": baseline_summary,
