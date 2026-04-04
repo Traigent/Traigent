@@ -515,7 +515,16 @@ class LocalEvaluator(BaseEvaluator):
             "response_time_ms": example_metric.response.response_time_ms,
         }
 
+        use_mock = is_mock_llm() and self.mock_mode_config.get(
+            "enabled", True
+        ) and self.mock_mode_config.get("override_evaluator", True)
+
         for metric_name, metric_func in self.metric_functions.items():
+            # In mock mode, skip custom functions for metrics that were already
+            # simulated by the mock engine (e.g. "accuracy") to avoid overwriting
+            # the simulated score with a real 0.0 from the mock LLM response.
+            if use_mock and metric_name in example_metric.custom_metrics:
+                continue
             value = self._invoke_metric_function(
                 metric_func,
                 metric_name,
