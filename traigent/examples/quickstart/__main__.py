@@ -42,12 +42,14 @@ CONFIG_SPACE = {
 
 _SYSTEM_PROMPT = "Answer in as few words as possible. Give only the answer itself, nothing else."
 
+# In mock mode the LLM returns a fixed placeholder string, so contains_accuracy
+# would always score 0.  Let the built-in mock simulation handle accuracy instead.
+_mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes")
+
 
 def contains_accuracy(output: str, expected: str) -> float:
-    """1.0 if expected and output are substring-compatible (case-insensitive)."""
-    out_lower = output.strip().lower()
-    exp_lower = expected.strip().lower()
-    return 1.0 if (exp_lower in out_lower or out_lower in exp_lower) else 0.0
+    """1.0 if the expected answer appears anywhere in the output (case-insensitive)."""
+    return 1.0 if expected.lower() in output.lower() else 0.0
 
 
 @traigent.optimize(
@@ -55,7 +57,7 @@ def contains_accuracy(output: str, expected: str) -> float:
     objectives=["accuracy"],
     evaluation=EvaluationOptions(
         eval_dataset=DATASET,
-        metric_functions={"accuracy": contains_accuracy},
+        metric_functions=None if _mock_mode else {"accuracy": contains_accuracy},
     ),
     execution_mode="edge_analytics",
 )
