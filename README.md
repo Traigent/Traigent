@@ -2,6 +2,23 @@
 
 TypeScript SDK for Traigent optimization in JavaScript and TypeScript.
 
+**Traigent is built agent-first.** The SDK ships with
+[agent skills](https://github.com/Traigent/agents-skills) for the full
+optimization lifecycle — from quickstart and configuration-space design through
+running experiments, analyzing results, debugging, and integrating with
+LangChain, LiteLLM, and DSPy. Contributors are expected to use them.
+
+The skills follow the [Agent Skills open standard](https://agentskills.io/) and
+work across all major AI coding agents: Claude Code, Cursor, GitHub Copilot,
+Gemini CLI, OpenAI Codex, Windsurf, Junie, and
+[30+ more](https://skills.sh/).
+
+Install them in one command:
+
+```bash
+npx skills add Traigent/agents-skills --skill '*'
+```
+
 ## Supported Flows
 
 - Native Node optimization of plain agent functions with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`.
@@ -461,6 +478,28 @@ Do not assume context is available in top-level route handlers or unrelated code
   tie-breakers were involved. Full Python promotion-gate lifecycle parity is
   still deferred.
 - Python's safety preset/statistical layer and backend-guided Optuna orchestration are not implemented in this checkout.
+
+## Agent Skills
+
+The SDK ecosystem includes purpose-built agent skills that guide AI coding
+agents through every stage of the optimization workflow:
+
+| Skill | What it does |
+| ----- | ------------ |
+| `traigent-quickstart` | Install, configure, and run a first optimization |
+| `traigent-configuration-space` | Define search spaces with typed parameters and constraints |
+| `traigent-decorator-setup` | Configure evaluation, injection, and execution options |
+| `traigent-run-optimization` | Execute optimization runs with algorithm and budget controls |
+| `traigent-analyze-results` | Inspect results, compare trials, deploy best config |
+| `traigent-debugging` | Diagnose failures with mock mode, logging, and error classes |
+| `traigent-integrations` | Wire up LangChain, LiteLLM, DSPy, MLflow, and W&B |
+
+The repo also ships general-purpose engineering skills (`code-review`,
+`safe-push`, `prepare-pr`, `repo-forensics`, and others) that apply to any
+contribution — not just optimization work.
+
+Full catalog and install instructions:
+[Traigent/agents-skills](https://github.com/Traigent/agents-skills).
 
 ## Documentation
 
