@@ -235,8 +235,9 @@ def _real_quality_metric(
     em = _compute_em(answer, expected)
     f1 = _compute_f1(answer, expected)
 
-    # Weighted combination favoring exact match
-    return 0.6 * em + 0.4 * f1
+    # Weighted combination — favour F1 to tolerate minor phrasing differences
+    # (e.g. "Salzach River" vs "Salzach") that are correct but not exact.
+    return 0.4 * em + 0.6 * f1
 
 
 def _real_latency_metric(
