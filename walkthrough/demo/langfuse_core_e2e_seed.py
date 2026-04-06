@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
             "dataset-version-lineage",
             "experiment-auto-evaluators",
             "feedback-observability-roundtrip",
+            "tool-calling-multistep-trace",
             "variant-compare",
             "trace-to-dataset-curation",
             "trace-session-user-browse",
@@ -681,6 +682,220 @@ def seed_observability_fixture(
     }
 
 
+def seed_tool_calling_multistep_trace_fixture(
+    *,
+    args: argparse.Namespace,
+    api_key: str,
+    run_id: str,
+    output_dir: Path,
+) -> dict[str, Any]:
+    trace_id = f"tool-trace:{run_id}"
+    session_id = f"tool-session:{run_id}"
+    user_id = f"tool-user:{run_id}"
+    trace_name = f"langfuse-tool-calling-{run_id}"
+    custom_trace_id = f"tool-calling:{run_id}"
+    tool_names = ["crm_lookup", "shipping_eta_api"]
+    tags = ["langfuse-core", "observability", "tool-calling", run_id]
+
+    ingest_payload = api_post_json(
+        args.backend_url,
+        api_key,
+        "/api/v1beta/observability/ingest",
+        {
+            "traces": [
+                {
+                    "id": trace_id,
+                    "name": trace_name,
+                    "status": "completed",
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "environment": "support",
+                    "release": "langfuse-e2e",
+                    "custom_trace_id": custom_trace_id,
+                    "tags": tags,
+                    "input_data": {
+                        "ticket_id": f"TCK-{run_id[-6:].upper()}",
+                        "question": "Where is the enterprise shipment and can we expedite it?",
+                    },
+                    "output_data": {
+                        "answer": "The shipment is still on schedule for tomorrow morning and has already been escalated for enterprise handling."
+                    },
+                    "metadata": {
+                        "scenario": args.scenario,
+                        "run_id": run_id,
+                        "workflow": "support-escalation",
+                        "tool_decision_count": 2,
+                        "tool_strategy": "sequential",
+                        "traigent_active_config": {
+                            "model": "gpt-4o-mini",
+                            "tool_choice": "auto",
+                            "tools": tool_names,
+                        },
+                    },
+                    "session": {
+                        "id": session_id,
+                        "user_id": user_id,
+                        "environment": "support",
+                        "release": "langfuse-e2e",
+                        "tags": tags,
+                        "metadata": {
+                            "scenario": args.scenario,
+                            "run_id": run_id,
+                            "channel": "enterprise-support",
+                        },
+                    },
+                    "observations": [
+                        {
+                            "id": f"{trace_id}:root",
+                            "type": "span",
+                            "name": "agent-orchestrator",
+                            "status": "completed",
+                            "latency_ms": 290,
+                            "input_tokens": 10,
+                            "output_tokens": 4,
+                            "metadata": {"stage": "orchestration"},
+                            "children": [
+                                {
+                                    "id": f"{trace_id}:plan",
+                                    "type": "generation",
+                                    "name": "plan-next-actions",
+                                    "status": "completed",
+                                    "latency_ms": 91,
+                                    "input_tokens": 22,
+                                    "output_tokens": 18,
+                                    "model_name": "gpt-4o-mini",
+                                    "input_data": {
+                                        "question": "Where is the enterprise shipment and can we expedite it?"
+                                    },
+                                    "output_data": {
+                                        "plan": [
+                                            "Look up the customer tier and shipment id.",
+                                            "Fetch the latest ETA from the shipping provider.",
+                                            "Compose the final answer for the operator.",
+                                        ]
+                                    },
+                                    "metadata": {"phase": "planning"},
+                                },
+                                {
+                                    "id": f"{trace_id}:crm",
+                                    "type": "tool_call",
+                                    "name": "lookup-account-context",
+                                    "status": "completed",
+                                    "latency_ms": 63,
+                                    "input_tokens": 6,
+                                    "output_tokens": 12,
+                                    "tool_name": "crm_lookup",
+                                    "input_data": {"customer_id": "acct-enterprise-42"},
+                                    "output_data": {
+                                        "account_tier": "enterprise",
+                                        "shipment_id": "ship-4458",
+                                    },
+                                    "metadata": {"provider": "salesforce"},
+                                    "children": [
+                                        {
+                                            "id": f"{trace_id}:crm:event",
+                                            "type": "event",
+                                            "name": "crm-lookup.result",
+                                            "status": "completed",
+                                            "latency_ms": 0,
+                                            "output_data": {
+                                                "matched_records": 1,
+                                                "escalation_policy": "priority-routing",
+                                            },
+                                            "metadata": {"matched_records": 1},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "id": f"{trace_id}:shipping",
+                                    "type": "tool_call",
+                                    "name": "fetch-shipment-timeline",
+                                    "status": "completed",
+                                    "latency_ms": 77,
+                                    "input_tokens": 8,
+                                    "output_tokens": 10,
+                                    "tool_name": "shipping_eta_api",
+                                    "input_data": {"shipment_id": "ship-4458"},
+                                    "output_data": {
+                                        "eta": "2026-04-05T09:30:00Z",
+                                        "latest_checkpoint": "Arrived at regional hub",
+                                    },
+                                    "metadata": {"provider": "carrier-api"},
+                                    "children": [
+                                        {
+                                            "id": f"{trace_id}:shipping:event",
+                                            "type": "event",
+                                            "name": "shipping-eta.result",
+                                            "status": "completed",
+                                            "latency_ms": 0,
+                                            "output_data": {
+                                                "checkpoint_count": 4,
+                                                "expedite_available": False,
+                                            },
+                                            "metadata": {"checkpoint_count": 4},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "id": f"{trace_id}:respond",
+                                    "type": "generation",
+                                    "name": "compose-final-answer",
+                                    "status": "completed",
+                                    "latency_ms": 84,
+                                    "input_tokens": 16,
+                                    "output_tokens": 28,
+                                    "model_name": "gpt-4o-mini",
+                                    "output_data": {
+                                        "answer": "The shipment is still on schedule for tomorrow morning and has already been escalated for enterprise handling."
+                                    },
+                                    "metadata": {"phase": "response"},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    trace_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/traces/{quote(trace_id, safe='')}",
+    )
+    observations_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/traces/{quote(trace_id, safe='')}/observations",
+    )
+    session_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/sessions/{quote(session_id, safe='')}",
+    )
+    user_payload = api_get_json(
+        args.backend_url,
+        api_key,
+        f"/api/v1beta/observability/users/{quote(user_id, safe='')}",
+    )
+
+    write_json(output_dir / "tool-calling-multistep-ingest.json", ingest_payload)
+    write_json(output_dir / "tool-calling-multistep-trace.json", trace_payload)
+    write_json(output_dir / "tool-calling-multistep-observations.json", observations_payload)
+    write_json(output_dir / "tool-calling-multistep-session.json", session_payload)
+    write_json(output_dir / "tool-calling-multistep-user.json", user_payload)
+
+    return {
+        "trace_id": trace_id,
+        "trace_name": trace_name,
+        "session_id": session_id,
+        "user_id": user_id,
+        "tags": tags,
+        "tool_names": tool_names,
+        "observation_count": 7,
+        "custom_trace_id": custom_trace_id,
+    }
+
+
 def seed_prompt_fixture(
     *,
     args: argparse.Namespace,
@@ -967,6 +1182,7 @@ def main() -> int:
     )
 
     experiment_optional_scenarios = {
+        "tool-calling-multistep-trace",
         "trace-session-user-browse",
         "trace-feedback-collaboration",
         "prompt-version-lineage",
@@ -1117,6 +1333,22 @@ def main() -> int:
             "collaboration_trace_id": observability_fixture["trace_id"],
             "collaboration_session_id": observability_fixture["session_id"],
             "collaboration_user_id": observability_fixture["user_id"],
+        }
+    elif args.scenario == "tool-calling-multistep-trace":
+        observability_fixture = seed_tool_calling_multistep_trace_fixture(
+            args=args,
+            api_key=api_key,
+            run_id=args.run_id,
+            output_dir=output_path.parent,
+        )
+        assertions = {
+            "multistep_trace_id": observability_fixture["trace_id"],
+            "multistep_trace_name": observability_fixture["trace_name"],
+            "multistep_session_id": observability_fixture["session_id"],
+            "multistep_user_id": observability_fixture["user_id"],
+            "multistep_tool_names": observability_fixture["tool_names"],
+            "multistep_observation_count": observability_fixture["observation_count"],
+            "multistep_custom_trace_id": observability_fixture["custom_trace_id"],
         }
     elif args.scenario == "prompt-version-lineage":
         prompt_fixture = seed_prompt_fixture(
