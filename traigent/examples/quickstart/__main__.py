@@ -14,7 +14,11 @@ from pathlib import Path
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
     os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
-    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+    # Only fall back to offline mode if no Traigent API key is configured.
+    # When the user has set TRAIGENT_API_KEY, results should reach the portal
+    # even though the LLM calls themselves are mocked.
+    if not os.environ.get("TRAIGENT_API_KEY"):
+        os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 # The bundled dataset lives next to this file (inside the installed package).
 # Set TRAIGENT_DATASET_ROOT so the SDK's path validation accepts it regardless
