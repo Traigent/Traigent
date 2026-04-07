@@ -12,6 +12,7 @@ Cost resolution is intentionally fail-fast:
 import json
 import logging
 import os
+import re
 import threading
 import warnings
 from dataclasses import dataclass
@@ -555,30 +556,51 @@ def _find_fallback_pricing(
 def _try_builtin_per_token_rates(
     candidates: list[str],
 ) -> tuple[float, float, str] | None:
-    """Try Traigent's curated pricing table for exact candidate matches.
+    """Try Traigent's curated pricing table for candidate matches.
 
-    Runtime accounting stays fail-fast here: only exact normalized matches are
-    accepted. Prefix/fuzzy fallback remains reserved for explicit estimation
-    helpers such as ``_estimation_cost_from_tokens()``.
+    First attempts exact normalized matches (fast path). If no exact match
+    is found, falls back to longest-prefix matching so that dated model
+    versions like ``gpt-4o-2024-11-20`` resolve to ``gpt-4o`` pricing.
     """
     pricing_index = {
         model.lower(): (model, pricing)
         for model, pricing in ESTIMATION_MODEL_PRICING.items()
     }
 
+    # Pass 1: exact match (fast path)
     for candidate in candidates:
         normalized = _normalize_model_for_fallback(candidate)
         match = pricing_index.get(normalized)
-        if match is None:
-            continue
-        matched_key, pricing = match
-        return (
-            float(pricing["input_cost_per_token"]),
-            float(pricing["output_cost_per_token"]),
-            matched_key,
+        if match is not None:
+            matched_key, pricing = match
+            return (
+                float(pricing["input_cost_per_token"]),
+                float(pricing["output_cost_per_token"]),
+                matched_key,
+            )
+
+    # Pass 2: longest-prefix match (handles dated model versions)
+    best: tuple[float, float, str] | None = None
+    best_prefix_len = 0
+    for candidate in candidates:
+        normalized = _normalize_model_for_fallback(candidate)
+        for key_lower, (matched_key, pricing) in pricing_index.items():
+            if normalized.startswith(key_lower) and len(key_lower) > best_prefix_len:
+                best_prefix_len = len(key_lower)
+                best = (
+                    float(pricing["input_cost_per_token"]),
+                    float(pricing["output_cost_per_token"]),
+                    matched_key,
+                )
+
+    if best is not None:
+        logger.debug(
+            "Builtin pricing: prefix-matched candidates %r to %r",
+            candidates,
+            best[2],
         )
 
-    return None
+    return best
 
 
 def _estimation_cost_from_tokens(
@@ -635,18 +657,44 @@ def _resolve_builtin_model_alias(normalized: str) -> str:
     return MODEL_NAME_ALIASES.get(normalized.lower(), normalized)
 
 
+def _strip_date_suffix(model: str) -> str | None:
+    """Strip trailing date suffix (``-YYYY-MM-DD``) from a model name.
+
+    Many providers return dated model versions (e.g. ``gpt-4o-2024-11-20``)
+    that may not appear in pricing tables.  Stripping the date yields the
+    base model name (``gpt-4o``) which usually *is* priced.
+
+    Returns:
+        The base model name if a date suffix was found, else ``None``.
+    """
+    # Match both "gpt-4o-2024-11-20" (YYYY-MM-DD) and "claude-3-5-sonnet-20241022" (YYYYMMDD)
+    m = re.search(r"-\d{4}(?:-\d{2}-\d{2}|\d{4})(-v\d+)?$", model)
+    if m:
+        return model[: m.start()]
+    return None
+
+
 def _build_model_candidates(model_name: str) -> list[str]:
     """Build deduplicated list of model name candidates for pricing lookup.
 
     Normalization is applied exactly once; all downstream resolvers receive
     the already-normalized form so that mixed-case provider prefixes like
     ``OPENAI/GPT-4O`` resolve correctly.
+
+    Date-suffixed model names (e.g. ``gpt-4o-2024-11-20``) also generate
+    their base name (``gpt-4o``) as a candidate so that pricing resolution
+    succeeds even when the exact dated version is missing from a table.
     """
     normalized = _normalize_model_name(model_name)
     lowered = normalized.lower()
     builtin_alias = _resolve_builtin_model_alias(lowered)
     litellm_alias = _resolve_litellm_alias(lowered)
     builtin_then_litellm = _resolve_litellm_alias(builtin_alias)
+
+    # Strip date suffix (e.g. "gpt-4o-2024-11-20" → "gpt-4o") to produce
+    # a base-model candidate that is more likely to appear in pricing tables.
+    base_from_date = _strip_date_suffix(lowered)
+
     candidates = [
         c
         for c in [
@@ -656,6 +704,7 @@ def _build_model_candidates(model_name: str) -> list[str]:
             builtin_alias,
             litellm_alias,
             builtin_then_litellm,
+            base_from_date,
         ]
         if c
     ]
