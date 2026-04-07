@@ -969,7 +969,18 @@ def _calculate_cost_for_metrics(
         _handle_mock_mode(metrics, prompt_length, response_length)
         return
 
-    if not model_name or metrics.cost.total_cost > 0.0:
+    if metrics.cost.total_cost > 0.0:
+        return
+
+    if not model_name:
+        logger.warning(
+            "Cost calculation skipped: model_name is None/empty. "
+            "Ensure the optimization config includes a 'model' key or "
+            "the LLM response exposes the model name. "
+            "tokens=(in=%d, out=%d)",
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
+        )
         return
 
     try:
@@ -980,11 +991,28 @@ def _calculate_cost_for_metrics(
             response_text,
             strict_cost_accounting=strict_cost_accounting,
         )
+
+        # Log when cost ends up at zero despite having tokens — this is the
+        # most actionable diagnostic for the "$0 cost" issue (#325).
+        if (
+            metrics.cost.total_cost == 0.0
+            and (metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0)
+        ):
+            logger.warning(
+                "Cost is $0.00 despite non-zero tokens for model %r "
+                "(in=%d, out=%d). Model may be missing from pricing tables.",
+                model_name,
+                metrics.tokens.input_tokens,
+                metrics.tokens.output_tokens,
+            )
     except Exception as e:
         logger.error(
-            "Cost calculation failed for model %s: %s",
+            "Cost calculation failed for model %s: %s "
+            "(tokens: in=%d, out=%d)",
             model_name,
             e,
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
             exc_info=True,
         )
         if (
