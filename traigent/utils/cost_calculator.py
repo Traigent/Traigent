@@ -12,6 +12,7 @@ Cost resolution is intentionally fail-fast:
 import json
 import logging
 import os
+import re
 import threading
 import warnings
 from dataclasses import dataclass
@@ -666,8 +667,6 @@ def _strip_date_suffix(model: str) -> str | None:
     Returns:
         The base model name if a date suffix was found, else ``None``.
     """
-    import re
-
     # Match both "gpt-4o-2024-11-20" (YYYY-MM-DD) and "claude-3-5-sonnet-20241022" (YYYYMMDD)
     m = re.search(r"-\d{4}(?:-\d{2}-\d{2}|\d{4})(-v\d+)?$", model)
     if m:
