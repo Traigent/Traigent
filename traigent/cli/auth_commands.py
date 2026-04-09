@@ -38,12 +38,6 @@ from traigent.cloud.auth import (
 from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.utils.logging import get_logger
 
-# Named environment shortcuts for --env flag
-NAMED_ENVIRONMENTS: dict[str, str] = {
-    "dev": "https://api-dev.traigent.ai",
-    "prod": "https://portal.traigent.ai",
-}
-
 console = Console()
 logger = get_logger(__name__)
 
@@ -909,20 +903,12 @@ def auth() -> None:
 @click.option(
     "--backend-url",
     default=None,
-    help="Backend URL to authenticate against (e.g. https://api-dev.traigent.ai)",
-)
-@click.option(
-    "--env",
-    "env_name",
-    default=None,
-    type=click.Choice(sorted(NAMED_ENVIRONMENTS), case_sensitive=False),
-    help="Named environment shortcut (dev, prod)",
+    help="Backend URL to authenticate against",
 )
 def login(
     email: str | None,
     non_interactive: bool,
     backend_url: str | None,
-    env_name: str | None,
 ) -> None:
     """Authenticate with Traigent backend.
 
@@ -935,13 +921,9 @@ def login(
     Examples:
         traigent auth login
         traigent auth login --email user@example.com
-        traigent auth login --env dev
-        traigent auth login --backend-url https://api-dev.traigent.ai
+        traigent auth login --backend-url https://your-backend.example.com
     """
-    if backend_url and env_name:
-        raise click.UsageError("Cannot specify both --backend-url and --env")
-    url_override = backend_url or (NAMED_ENVIRONMENTS.get(env_name) if env_name else None)
-    cli = TraigentAuthCLI(backend_url_override=url_override)
+    cli = TraigentAuthCLI(backend_url_override=backend_url)
     success = asyncio.run(cli.login(email, non_interactive))
     sys.exit(0 if success else 1)
 

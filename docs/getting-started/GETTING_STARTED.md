@@ -127,23 +127,6 @@ Traigent executes your code locally. The default is `execution_mode="edge_analyt
 
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
-## 🌐 Dev vs Prod Environment
-
-The SDK targets **production** by default. To send experiments to the **dev** environment instead:
-
-```bash
-# Authenticate against dev
-traigent auth login --env dev
-```
-
-Or set the environment variable:
-
-```bash
-export TRAIGENT_BACKEND_URL=https://api-dev.traigent.ai
-```
-
-See the [Authentication Guide](../features/authentication.md#targeting-the-dev-environment) for full details.
-
 ---
 
 Ready for more? Dive into the [examples](../../examples/) and the [API reference](../api-reference/complete-function-specification.md).
