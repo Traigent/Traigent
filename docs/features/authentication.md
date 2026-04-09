@@ -39,6 +39,61 @@ traigent auth configure
 # Select option 2 and enter your API key
 ```
 
+## Targeting the Dev Environment
+
+By default, the SDK and CLI target **production** (`https://portal.traigent.ai`). To work against the dev environment instead, use one of the methods below.
+
+### Option 1: `--env` flag (recommended)
+
+```bash
+traigent auth login --env dev
+```
+
+This authenticates against `https://api-dev.traigent.ai` and stores the dev backend URL in your credentials so all subsequent SDK calls go to dev automatically.
+
+### Option 2: `--backend-url` flag
+
+```bash
+traigent auth login --backend-url https://api-dev.traigent.ai
+```
+
+### Option 3: Environment variable
+
+Set the backend URL before running any SDK code or CLI command:
+
+```bash
+export TRAIGENT_BACKEND_URL=https://api-dev.traigent.ai
+```
+
+Or in a `.env` file in your project root:
+
+```bash
+TRAIGENT_BACKEND_URL=https://api-dev.traigent.ai
+TRAIGENT_API_URL=https://api-dev.traigent.ai/api/v1
+```
+
+### Verifying your target environment
+
+```bash
+traigent auth status
+```
+
+The output includes a **Backend** row showing which URL your credentials are pointing to.
+
+### Switching back to production
+
+Log in again without `--env` or `--backend-url` to restore the default:
+
+```bash
+traigent auth login
+```
+
+Or explicitly:
+
+```bash
+traigent auth login --env prod
+```
+
 ## Authentication Commands
 
 ### Login
@@ -338,6 +393,8 @@ traigent auth whoami KEY   # Validate API key
 # Options
 --email EMAIL             # Specify email
 --non-interactive         # No prompts; use API keys for CI/CD
+--backend-url URL         # Target a specific backend URL
+--env {dev,prod}          # Named environment shortcut
 --help                   # Show help
 ```
 
