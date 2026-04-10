@@ -259,6 +259,20 @@ class TestContextManagersDisabled:
                 assert span is None
 
 
+def test_set_error_status_falls_back_for_mock_spans_without_otel() -> None:
+    span = MagicMock()
+    span.set_status.side_effect = [TypeError("unexpected kwargs"), None]
+
+    with patch.object(tracing, "trace", None):
+        tracing._set_error_status(span, "boom")
+
+    assert span.set_status.call_args_list[0].kwargs == {
+        "status": "ERROR",
+        "description": "boom",
+    }
+    assert span.set_status.call_args_list[1].args == ("ERROR",)
+
+
 class TestRecordFunctionsWithNoneSpan:
     """Tests for record functions when span is None."""
 

@@ -175,7 +175,10 @@ except ImportError:
             span.set_status(trace.Status(trace.StatusCode.ERROR, error))
         else:
             # Best-effort fallback for no-OTEL environments and mock spans.
-            span.set_status(error)
+            try:
+                span.set_status(status="ERROR", description=error)
+            except TypeError:
+                span.set_status("ERROR")
 
     def _set_session_span_attributes(
         span: Span,

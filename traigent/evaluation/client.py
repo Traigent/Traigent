@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 from urllib import error, request
 from urllib.parse import urlencode
 
@@ -440,7 +440,7 @@ class EvaluationClient:
             assigned_user_id=assigned_user_id,
         )
         payload = self._request_json("GET", path)
-        data = self._unwrap_data(payload, "annotation queue next item")
+        data = self._unwrap_data(payload, "annotation queue next item", allow_none=True)
         if data is None:
             return None
         return AnnotationQueueItemDTO.from_dict(data)
@@ -578,8 +578,34 @@ class EvaluationClient:
                 f"Failed to connect to evaluation backend at {self.config.backend_origin}"
             ) from exc
 
-    def _unwrap_data(self, payload: dict[str, Any], label: str) -> dict[str, Any]:
+    @overload
+    def _unwrap_data(
+        self,
+        payload: dict[str, Any],
+        label: str,
+        *,
+        allow_none: Literal[False] = False,
+    ) -> dict[str, Any]: ...
+
+    @overload
+    def _unwrap_data(
+        self,
+        payload: dict[str, Any],
+        label: str,
+        *,
+        allow_none: Literal[True],
+    ) -> dict[str, Any] | None: ...
+
+    def _unwrap_data(
+        self,
+        payload: dict[str, Any],
+        label: str,
+        *,
+        allow_none: bool = False,
+    ) -> dict[str, Any] | None:
         data = payload.get("data")
+        if data is None and allow_none:
+            return None
         if not isinstance(data, dict):
             raise ClientError(f"Unexpected response structure for {label}")
         return data
