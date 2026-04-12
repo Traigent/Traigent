@@ -12,6 +12,7 @@ Tests cover:
 
 import tempfile
 import time
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -732,11 +733,7 @@ class TestDiscoveryWithMockedSDK:
         "os.environ",
         {"GOOGLE_API_KEY": "test-api-key"},  # pragma: allowlist secret
     )
-    @patch("google.generativeai.list_models")
-    @patch("google.generativeai.configure")
-    def test_gemini_sdk_discovery_success(
-        self, mock_configure: MagicMock, mock_list_models: MagicMock
-    ) -> None:
+    def test_gemini_sdk_discovery_success(self) -> None:
         """Gemini SDK discovery should work with valid API key."""
         mock_model1 = MagicMock()
         mock_model1.name = "models/gemini-pro"
@@ -744,10 +741,28 @@ class TestDiscoveryWithMockedSDK:
         mock_model2 = MagicMock()
         mock_model2.name = "models/gemini-1.5-flash"
         mock_model2.supported_generation_methods = ["generateContent"]
-        mock_list_models.return_value = [mock_model1, mock_model2]
 
-        discovery = GeminiDiscovery()
-        result = discovery._fetch_models_from_sdk()
+        google_module = types.ModuleType("google")
+        generativeai_module = types.ModuleType("google.generativeai")
+        generativeai_module.configure = MagicMock()
+        generativeai_module.list_models = MagicMock(
+            return_value=[mock_model1, mock_model2]
+        )
+        google_module.generativeai = generativeai_module
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "google": google_module,
+                "google.generativeai": generativeai_module,
+            },
+        ):
+            discovery = GeminiDiscovery()
+            result = discovery._fetch_models_from_sdk()
+
+        generativeai_module.configure.assert_called_once_with(
+            api_key="test-api-key"  # pragma: allowlist secret
+        )
 
         assert "models/gemini-pro" in result
         assert "models/gemini-1.5-flash" in result

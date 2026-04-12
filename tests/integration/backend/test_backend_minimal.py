@@ -27,11 +27,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _resolve_backend_url() -> str | None:
+    return os.getenv("TRAIGENT_API_URL") or os.getenv("TRAIGENT_BACKEND_URL")
+
+
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not os.getenv("TRAIGENT_BACKEND_LIVE"),
+    reason=(
+        "Set TRAIGENT_BACKEND_LIVE=1 plus TRAIGENT_API_URL (preferred) "
+        "or TRAIGENT_BACKEND_URL to run the live backend DTO smoke test"
+    ),
+)
 async def test_backend_api():
     """Test direct API calls to the backend using DTOs."""
 
-    backend_url = "http://localhost:5000"
+    backend_url = _resolve_backend_url()
+    if not backend_url:
+        pytest.skip(
+            "Set TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL for the live backend DTO smoke test"
+        )
 
     # Create experiment DTO
     experiment_dto = create_local_experiment(
@@ -83,9 +99,9 @@ async def test_backend_api():
                     )
                     return
         except aiohttp.ClientError as e:
-            print(f"   ❌ Connection error: {e}")
-            print(f"   Make sure the backend is running at {backend_url}")
-            return
+            pytest.skip(f"Backend not reachable at {backend_url}: {e}")
+        except TimeoutError as e:
+            pytest.skip(f"Backend timed out at {backend_url}: {e}")
 
         # 2. Create experiment run
         print("\n2. Creating experiment run...")
@@ -123,8 +139,9 @@ async def test_backend_api():
                     )
                     return
         except aiohttp.ClientError as e:
-            print(f"   ❌ Connection error: {e}")
-            return
+            pytest.skip(f"Backend not reachable at {backend_url}: {e}")
+        except TimeoutError as e:
+            pytest.skip(f"Backend timed out at {backend_url}: {e}")
 
         # 3. Create configuration run
         print("\n3. Creating configuration run...")
@@ -157,8 +174,9 @@ async def test_backend_api():
                     )
                     return
         except aiohttp.ClientError as e:
-            print(f"   ❌ Connection error: {e}")
-            return
+            pytest.skip(f"Backend not reachable at {backend_url}: {e}")
+        except TimeoutError as e:
+            pytest.skip(f"Backend timed out at {backend_url}: {e}")
 
         # 4. Update configuration run with results
         print("\n4. Updating configuration run with results...")
@@ -178,7 +196,9 @@ async def test_backend_api():
                         f"   ❌ Failed to update status: {response.status} - {error_text}"
                     )
         except aiohttp.ClientError as e:
-            print(f"   ❌ Connection error: {e}")
+            pytest.skip(f"Backend not reachable at {backend_url}: {e}")
+        except TimeoutError as e:
+            pytest.skip(f"Backend timed out at {backend_url}: {e}")
 
         # Update measures (convert to backend format)
         measures_data = {
@@ -203,7 +223,9 @@ async def test_backend_api():
                         f"   ❌ Failed to update measures: {response.status} - {error_text}"
                     )
         except aiohttp.ClientError as e:
-            print(f"   ❌ Connection error: {e}")
+            pytest.skip(f"Backend not reachable at {backend_url}: {e}")
+        except TimeoutError as e:
+            pytest.skip(f"Backend timed out at {backend_url}: {e}")
 
     print("\n✅ Test completed!")
     print("\nCheck the UI at http://localhost:3000/experiments/")

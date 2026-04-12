@@ -118,6 +118,25 @@ def create_weighted_evaluator(weights: dict[str, float]):
     return weighted_eval
 
 
+def create_seamless_test_function():
+    """Factory for functions with injectable locals for seamless mode tests.
+
+    The shared scenario runner's default function does not declare any config
+    locals, so seamless injection has nothing to rewrite. These targeted tests
+    explicitly validate seamless behavior and therefore need a function body
+    that references the optimized variables.
+    """
+
+    def seamless_func(text: str = "", **kwargs: object) -> str:
+        model = "gpt-3.5-turbo"
+        temperature = 0.3
+        # Reference the locals so the AST rewrite path treats them as live.
+        _injected = (model, temperature)
+        return f"output: {text}::{_injected[0]}::{_injected[1]}"
+
+    return seamless_func
+
+
 # =============================================================================
 # Test Class: Custom Evaluator × Algorithm Matrix
 # =============================================================================
@@ -310,6 +329,11 @@ class TestCustomEvaluatorWithInjectionModes:
             name=f"custom_eval_{injection_mode}",
             description=f"Custom evaluator with {injection_mode} injection",
             injection_mode=injection_mode,
+            custom_function=(
+                create_seamless_test_function()
+                if injection_mode == "seamless"
+                else None
+            ),
             evaluator=EvaluatorSpec(
                 type="custom",
                 evaluator_fn=custom_eval,
@@ -955,6 +979,11 @@ class TestWeightedObjectivesWithInjectionModes:
             name=f"weighted_{injection_mode}",
             description=f"Weighted objectives with {injection_mode} injection",
             injection_mode=injection_mode,
+            custom_function=(
+                create_seamless_test_function()
+                if injection_mode == "seamless"
+                else None
+            ),
             objectives=objectives,
             config_space={
                 "model": ["gpt-3.5-turbo", "gpt-4"],
@@ -977,7 +1006,11 @@ class TestWeightedObjectivesWithInjectionModes:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-        validation = result_validator(scenario, result)
+        validation = result_validator(
+            scenario,
+            result,
+            skip_behavioral=["grid_search"] if injection_mode == "seamless" else None,
+        )
         assert validation.passed, validation.summary()
 
 

@@ -15,6 +15,7 @@ Key Features:
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import Any
 
@@ -238,13 +239,16 @@ def auto_detect_langchain_llms() -> None:
     except ImportError:
         pass
 
-    # Test legacy LangChain OpenAI
-    try:
-        import langchain.llms
-
+    legacy_langchain_llms = sys.modules.get("langchain.llms")
+    if legacy_langchain_llms is not None:
         available_llms.append("langchain.llms.OpenAI")
-    except ImportError:
-        pass
+    else:
+        try:
+            import langchain.llms  # noqa: F401
+
+            available_llms.append("langchain.llms.OpenAI")
+        except ImportError:
+            pass
 
     # Test Anthropic LangChain
     try:
@@ -254,13 +258,15 @@ def auto_detect_langchain_llms() -> None:
     except ImportError:
         pass
 
-    # Test legacy LangChain Anthropic
-    try:
-        import langchain.llms  # noqa: F401, F811
-
+    if legacy_langchain_llms is not None:
         available_llms.append("langchain.llms.Anthropic")
-    except ImportError:
-        pass
+    else:
+        try:
+            import langchain.llms  # noqa: F401, F811
+
+            available_llms.append("langchain.llms.Anthropic")
+        except ImportError:
+            pass
 
     if available_llms:
         enable_langchain_optimization(available_llms)
