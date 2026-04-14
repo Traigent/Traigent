@@ -570,7 +570,7 @@ def temp_dataset_dir() -> Path:
     """
     # Use the data directory within the test package
     datasets_dir = Path(__file__).parent / "data" / "_generated"
-    datasets_dir.mkdir(exist_ok=True)
+    datasets_dir.mkdir(parents=True, exist_ok=True)
     return datasets_dir
 
 

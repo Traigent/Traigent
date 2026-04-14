@@ -373,6 +373,7 @@ class ExperimentDTO:
     model_parameters_id: str = "local-model-params-001"
 
     # Optional fields
+    dataset_id: str | None = None
     benchmark_id: str | None = None
 
     # Optional fields
@@ -384,7 +385,25 @@ class ExperimentDTO:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
-        result = {
+        explicit_dataset_aliases = [
+            value for value in (self.dataset_id, self.benchmark_id) if value is not None
+        ]
+        if self.evaluation_set_id != "local-evalset-001":
+            explicit_dataset_aliases.append(self.evaluation_set_id)
+        if len(set(explicit_dataset_aliases)) > 1:
+            raise ValueError(
+                "Conflicting dataset aliases supplied for ExperimentDTO; "
+                "dataset_id, evaluation_set_id, and benchmark_id must match"
+            )
+        resolved_dataset_id = (
+            self.dataset_id or self.evaluation_set_id or self.benchmark_id
+        )
+        has_explicit_legacy_dataset_reference = (
+            self.dataset_id is not None
+            or self.benchmark_id is not None
+            or self.evaluation_set_id != "local-evalset-001"
+        )
+        result: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -398,12 +417,14 @@ class ExperimentDTO:
 
         # Required fields always included
         result["agent_id"] = self.agent_id
-        result["evaluation_set_id"] = self.evaluation_set_id
+        result["dataset_id"] = resolved_dataset_id
+        result["evaluation_set_id"] = resolved_dataset_id
+        result["eval_dataset_id"] = resolved_dataset_id
         result["model_parameters_id"] = self.model_parameters_id
 
         # Include optional fields only if they have values
-        if self.benchmark_id is not None:
-            result["benchmark_id"] = self.benchmark_id
+        if has_explicit_legacy_dataset_reference and resolved_dataset_id is not None:
+            result["benchmark_id"] = resolved_dataset_id
         if self.status is not None:
             result["status"] = self.status
 

@@ -502,7 +502,7 @@ class TestDiscoverExampleIds:
             )
         )
 
-        with pytest.raises(ValueError, match="Multiple benchmarks match"):
+        with pytest.raises(ValueError, match="Multiple datasets match"):
             await evaluator.discover_example_ids()
 
         assert mock_transport.benchmarks.call_count == 1
@@ -532,7 +532,8 @@ class TestDiscoverExampleIds:
             )
         )
 
-        ids = await evaluator.discover_example_ids(benchmark_id="bench_002")
+        with pytest.warns(DeprecationWarning, match="benchmark_id is deprecated"):
+            ids = await evaluator.discover_example_ids(benchmark_id="bench_002")
 
         assert ids == ["c", "d", "e"]
         assert evaluator._benchmark_id == "bench_002"
@@ -552,7 +553,7 @@ class TestDiscoverExampleIds:
             )
         )
 
-        with pytest.raises(ValueError, match="No benchmarks found"):
+        with pytest.raises(ValueError, match="No datasets found"):
             await evaluator.discover_example_ids()
 
         assert mock_transport.benchmarks.call_count == 1

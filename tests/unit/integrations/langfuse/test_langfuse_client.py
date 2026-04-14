@@ -6,7 +6,6 @@ Run with: TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/langfuse/ -v
 
 from __future__ import annotations
 
-import threading
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -443,7 +442,7 @@ class TestLangfuseClientMetricExtraction:
 
 
 class TestLangfuseClientThreadSafety:
-    """Test thread safety of LangfuseClient."""
+    """Test lightweight concurrency assumptions of LangfuseClient."""
 
     @pytest.fixture
     def client(self, monkeypatch):
@@ -452,10 +451,9 @@ class TestLangfuseClientThreadSafety:
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
         return LangfuseClient()
 
-    def test_client_has_lock(self, client):
-        """Test that client has thread lock."""
-        assert hasattr(client, "_lock")
-        assert isinstance(client._lock, type(threading.Lock()))
+    def test_client_does_not_carry_unused_lock(self, client):
+        """The client should not expose unused synchronization primitives."""
+        assert not hasattr(client, "_lock")
 
 
 class TestLangfuseClientAuthHeader:

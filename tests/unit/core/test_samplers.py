@@ -164,13 +164,17 @@ async def test_random_sampler_plan_async_to_thread():
 
     async def runner() -> None:
         while True:
-            value = await asyncio.to_thread(sampler.sample)
+            # Yield between draws so two async consumers interleave predictably
+            # without depending on interpreter-specific threadpool teardown.
+            await asyncio.sleep(0)
+            value = sampler.sample()
             if value is None:
                 return
             with collect_lock:
                 results.append(value)
 
     await asyncio.gather(runner(), runner())
+
     expected = [population[idx] for idx in plan.indices]
     assert sorted(results) == sorted(expected)
 

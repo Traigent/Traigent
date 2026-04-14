@@ -23,10 +23,12 @@ import sys
 import tempfile
 import weakref
 from collections import defaultdict
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 from traigent import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -39,6 +41,39 @@ pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
 
 # Increase recursion limit to handle complex test scenarios
 sys.setrecursionlimit(2000)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def cleanup_lingering_asyncio_tasks():
+    """Cancel stray tasks before pytest-asyncio closes the per-test runner.
+
+    Some optimization flows intentionally schedule background tasks during a
+    test. If they outlive the test body, Python 3.14's asyncio runner teardown
+    can block while closing the loop. Drain them explicitly so async tests
+    terminate cleanly under both sequential and xdist execution.
+    """
+
+    yield
+
+    await asyncio.sleep(0)
+
+    current = asyncio.current_task()
+    pending = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ]
+    if not pending:
+        return
+
+    for task in pending:
+        task.cancel()
+
+    with suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True),
+            timeout=5.0,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -455,11 +490,19 @@ class MockErrorResponse:
 
 
 @pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+def event_loop_policy():
+    """Let pytest-asyncio manage loops while we choose the policy once.
+
+    A custom session-scoped ``event_loop`` fixture can fight pytest-asyncio's
+    runner lifecycle on newer Python versions and leave teardown hanging after
+    an async test has already passed. The suite does not consume ``event_loop``
+    directly, so expose only the policy and let the plugin create per-test
+    loops.
+    """
+
+    if sys.platform == "win32":
+        return asyncio.WindowsSelectorEventLoopPolicy()
+    return asyncio.DefaultEventLoopPolicy()
 
 
 # Dataset Fixtures

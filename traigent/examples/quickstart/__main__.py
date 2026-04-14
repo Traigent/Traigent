@@ -44,7 +44,9 @@ CONFIG_SPACE = {
     "temperature": [0.0, 0.7, 1.0],
 }
 
-_SYSTEM_PROMPT = "Answer in as few words as possible. Give only the answer itself, nothing else."
+_SYSTEM_PROMPT = (
+    "Answer in as few words as possible. Give only the answer itself, nothing else."
+)
 
 # In mock mode the LLM returns a fixed placeholder string, so contains_accuracy
 # would always score 0.  Let the built-in mock simulation handle accuracy instead.
@@ -69,7 +71,8 @@ def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    return llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)]).content
+    response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
+    return str(response.content)
 
 
 if __name__ == "__main__":

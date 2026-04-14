@@ -27,7 +27,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -230,7 +229,6 @@ class LangfuseClient:
         )
         self.host = resolved_host.rstrip("/")
         self.timeout = timeout
-        self._lock = threading.Lock()
 
         # Initialize SDK client if available
         self._sdk_client: LangfuseType | None = None

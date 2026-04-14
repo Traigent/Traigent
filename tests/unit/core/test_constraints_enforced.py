@@ -13,13 +13,18 @@ class _DummyOptimizer(BaseOptimizer):
             objectives=["accuracy"],
         )
         self._trial_count = 0
+        self._suggestions_made = 0
 
     def suggest_next_trial(self, history: list[TrialResult]):
         self._trial_count += 1
+        self._suggestions_made += 1
         return {"x": 2, "y": 1}
 
     def should_stop(self, history: list[TrialResult]) -> bool:
-        return self._trial_count >= 1
+        # Constraint rejection intentionally gives back the optimizer's private
+        # `_trial_count` slot. Use a separate suggestion counter here so the test
+        # still verifies that the orchestrator respects optimizer stop signals.
+        return self._suggestions_made >= 1
 
 
 class _FailIfCalledEvaluator(BaseEvaluator):

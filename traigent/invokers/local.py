@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import time
 from collections.abc import Callable
@@ -17,6 +18,8 @@ from traigent.utils.exceptions import InvocationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_SYNC_INVOKER_EXECUTOR = concurrent.futures.ThreadPoolExecutor()
 
 
 class LocalInvoker(BaseInvoker):
@@ -178,19 +181,20 @@ class LocalInvoker(BaseInvoker):
         self, func: Callable[..., Any], input_data: dict[str, Any], start_time: float
     ) -> Any:
         """Invoke sync function in thread pool with timeout."""
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, lambda: func(**input_data))
+        future = _SYNC_INVOKER_EXECUTOR.submit(func, **input_data)
+        deadline = (time.monotonic() + self.timeout) if self.timeout else None
 
-        if not self.timeout:
-            return await future
+        # Python 3.14 in this environment intermittently fails to wake the event
+        # loop when many concurrent wrapped futures complete. Polling the
+        # concurrent future avoids that runtime-specific bridge issue while
+        # preserving timeout behavior for sync callables.
+        while not future.done():
+            if deadline is not None and time.monotonic() >= deadline:
+                future.cancel()
+                raise TimeoutError
+            await asyncio.sleep(0.001)
 
-        done, pending = await asyncio.wait({future}, timeout=self.timeout)
-        if not done:
-            for pending_future in pending:
-                pending_future.cancel()
-            raise TimeoutError
-
-        return next(iter(done)).result()
+        return future.result()
 
     async def invoke_batch(
         self,

@@ -181,7 +181,7 @@ class SyncManager:
         # Generate placeholder IDs for required fields
         experiment_id = f"local_import_{session.session_id}"
         agent_id = f"local_agent_{session.function_name}"
-        benchmark_id = f"local_benchmark_{session.function_name}"
+        dataset_id = f"local_dataset_{session.function_name}"
         model_params_id = f"edge_analytics_model_params_{session.session_id}"
 
         # Create minimal agent definition
@@ -194,10 +194,12 @@ class SyncManager:
             "created_at": session.created_at,
         }
 
-        # Create minimal benchmark definition
-        benchmark_data = {
-            "id": benchmark_id,
-            "name": f"Local Benchmark: {session.function_name}",
+        # Create minimal dataset definition
+        dataset_data = {
+            "id": dataset_id,
+            "dataset_id": dataset_id,
+            "benchmark_id": dataset_id,
+            "name": f"Local Dataset: {session.function_name}",
             "label": f"{session.function_name}_eval",
             "description": f"Evaluation dataset for {session.function_name}",
             "type": "custom",
@@ -221,7 +223,10 @@ class SyncManager:
             "name": f"Local Import: {session.function_name}",
             "description": "Imported optimization session from Edge Analytics mode",
             "agent_id": agent_id,
-            "benchmark_id": benchmark_id,
+            "dataset_id": dataset_id,
+            "benchmark_id": dataset_id,
+            "evaluation_set_id": dataset_id,
+            "eval_dataset_id": dataset_id,
             "model_parameters_id": model_params_id,
             "configurations": opt_config.get("search_space", {}),
             "measures": ["score", "accuracy"],  # Default measures
@@ -251,7 +256,8 @@ class SyncManager:
 
         return {
             "agent": agent_data,
-            "benchmark": benchmark_data,
+            "dataset": dataset_data,
+            "benchmark": dataset_data,
             "model_parameters": model_params_data,
             "experiment": experiment_data,
             "experiment_run": experiment_run_data,
@@ -319,6 +325,7 @@ class SyncManager:
             sync_result["preview"] = {
                 "experiment_name": traigent_data["experiment"]["name"],
                 "agent_name": traigent_data["agent"]["name"],
+                "dataset_name": traigent_data["dataset"]["name"],
                 "benchmark_name": traigent_data["benchmark"]["name"],
                 "trial_count": len(traigent_data["experiment_run"]["results"]),
                 "best_score": session.best_score,
@@ -348,7 +355,7 @@ class SyncManager:
                 successful_steps += 1
 
             # Step 2: Create or verify benchmark
-            benchmark_result = self._sync_benchmark(traigent_data["benchmark"])
+            benchmark_result = self._sync_benchmark(traigent_data["dataset"])
             if not benchmark_result["success"]:
                 sync_result["errors"].append(
                     f"Benchmark sync failed: {benchmark_result['error']}"
@@ -463,15 +470,26 @@ class SyncManager:
             return {"success": False, "error": str(e)}
 
     def _sync_benchmark(self, benchmark_data: dict[str, Any]) -> dict[str, Any]:
-        """Sync benchmark data to cloud."""
+        """Sync dataset data to cloud with legacy benchmark fallback."""
         try:
             response = self._session.post(
-                f"{self.base_url}/benchmarks",
+                f"{self.base_url}/datasets",
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
+            if response.status_code == 404:
+                response = self._session.post(
+                    f"{self.base_url}/benchmarks",
+                    json=benchmark_data,
+                    timeout=self._request_timeout,
+                )
             if response.status_code in [200, 201, 409]:
-                return {"success": True, "benchmark_id": benchmark_data["id"]}
+                dataset_id = benchmark_data.get("dataset_id", benchmark_data["id"])
+                return {
+                    "success": True,
+                    "dataset_id": dataset_id,
+                    "benchmark_id": dataset_id,
+                }
             else:
                 return {
                     "success": False,

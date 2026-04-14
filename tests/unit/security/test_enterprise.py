@@ -370,13 +370,16 @@ class TestEnterpriseDeploymentManager:
         """Test SLA monitoring setup"""
         manager = EnterpriseDeploymentManager(DeploymentMode.CLOUD_PUBLIC)
 
-        # Setup SLA monitoring
-        manager.setup_sla_monitoring(SLATier.ENTERPRISE, "admin@test.com")
+        try:
+            # Setup SLA monitoring
+            manager.setup_sla_monitoring(SLATier.ENTERPRISE, "admin@test.com")
 
-        assert manager.sla_monitor is not None
-        assert manager.sla_monitor.sla_config.tier == SLATier.ENTERPRISE
-        assert manager.sla_monitor.sla_config.primary_contact == "admin@test.com"
-        assert len(manager.sla_monitor.alert_handlers) >= 1  # Default handler
+            assert manager.sla_monitor is not None
+            assert manager.sla_monitor.sla_config.tier == SLATier.ENTERPRISE
+            assert manager.sla_monitor.sla_config.primary_contact == "admin@test.com"
+            assert len(manager.sla_monitor.alert_handlers) >= 1  # Default handler
+        finally:
+            manager.shutdown()
 
     @patch("traigent.security.enterprise.psutil")
     def test_deployment_status(self, mock_psutil):
@@ -465,30 +468,33 @@ class TestEnterpriseDeploymentManager:
 
         manager = EnterpriseDeploymentManager(DeploymentMode.VPC_DEDICATED)
 
-        # Setup SLA monitoring for dashboard
-        manager.setup_sla_monitoring(SLATier.PREMIUM, "admin@test.com")
+        try:
+            # Setup SLA monitoring for dashboard
+            manager.setup_sla_monitoring(SLATier.PREMIUM, "admin@test.com")
 
-        dashboard = manager.get_enterprise_dashboard()
+            dashboard = manager.get_enterprise_dashboard()
 
-        assert "timestamp" in dashboard
-        assert "deployment" in dashboard
-        assert "health" in dashboard
-        assert "performance" in dashboard
-        assert "capacity" in dashboard
+            assert "timestamp" in dashboard
+            assert "deployment" in dashboard
+            assert "health" in dashboard
+            assert "performance" in dashboard
+            assert "capacity" in dashboard
 
-        deployment = dashboard["deployment"]
-        assert deployment["mode"] == DeploymentMode.VPC_DEDICATED.value
-        assert "uptime_hours" in deployment
-        assert "config" in deployment
+            deployment = dashboard["deployment"]
+            assert deployment["mode"] == DeploymentMode.VPC_DEDICATED.value
+            assert "uptime_hours" in deployment
+            assert "config" in deployment
 
-        performance = dashboard["performance"]
-        assert "cpu_usage" in performance
-        assert "memory_usage" in performance
-        assert "requests_per_second" in performance
-        assert "response_time_ms" in performance
+            performance = dashboard["performance"]
+            assert "cpu_usage" in performance
+            assert "memory_usage" in performance
+            assert "requests_per_second" in performance
+            assert "response_time_ms" in performance
 
-        # Should include SLA info
-        assert "sla" in dashboard
+            # Should include SLA info
+            assert "sla" in dashboard
+        finally:
+            manager.shutdown()
 
     def test_shutdown(self):
         """Test graceful shutdown"""

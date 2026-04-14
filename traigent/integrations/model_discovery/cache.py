@@ -183,6 +183,10 @@ class ModelCache:
                     cache_file.unlink(missing_ok=True)
                 except FileNotFoundError:
                     pass
+                except OSError as exc:
+                    logger.warning(
+                        "Failed to invalidate cache file for %s: %s", key, exc
+                    )
 
         logger.debug(f"Invalidated cache for {key}")
 

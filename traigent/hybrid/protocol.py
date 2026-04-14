@@ -570,11 +570,16 @@ class BenchmarkEntry:
     def from_dict(cls, data: dict[str, Any]) -> BenchmarkEntry:
         """Create from dictionary (API response)."""
         return cls(
-            benchmark_id=data.get("benchmark_id", ""),
+            benchmark_id=data.get("dataset_id") or data.get("benchmark_id", ""),
             tunable_ids=data.get("tunable_ids", []),
             example_ids=data.get("example_ids", []),
             name=data.get("name"),
         )
+
+    @property
+    def dataset_id(self) -> str:
+        """Canonical dataset identifier alias."""
+        return self.benchmark_id
 
 
 @dataclass(slots=True)
@@ -592,14 +597,16 @@ class BenchmarksResponse:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BenchmarksResponse:
         """Create from dictionary (API response)."""
-        raw_benchmarks = data.get("benchmarks", [])
+        raw_benchmarks = data.get("datasets", data.get("benchmarks", []))
         benchmarks = [
             BenchmarkEntry.from_dict(b) if isinstance(b, dict) else b
             for b in raw_benchmarks
         ]
         return cls(
             benchmarks=benchmarks,
-            benchmarks_revision=data.get("benchmarks_revision"),
+            benchmarks_revision=data.get(
+                "datasets_revision", data.get("benchmarks_revision")
+            ),
         )
 
 

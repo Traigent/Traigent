@@ -833,6 +833,7 @@ class TestCostEstimation:
 
     def test_estimate_cost_unknown_model_raises_in_strict_mode(self):
         """Strict cost accounting raises for unknown model pricing."""
+        pytest.importorskip("langchain_core")
         from traigent.integrations.langchain.handler import TraigentHandler
         from traigent.utils.cost_calculator import UnknownModelError
 
@@ -861,6 +862,7 @@ class TestCostEstimation:
 
     def test_strict_mode_is_latched_at_handler_init(self):
         """Strict flag changes after init do not alter existing handler behavior."""
+        pytest.importorskip("langchain_core")
         from traigent.integrations.langchain.handler import TraigentHandler
         from traigent.utils.cost_calculator import UnknownModelError
 

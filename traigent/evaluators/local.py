@@ -34,6 +34,7 @@ from traigent.utils.langchain_interceptor import (
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_LANGCHAIN_PATCH_ATTEMPTED = False
 
 
 @dataclass
@@ -131,8 +132,18 @@ class _AggregatedResponses:
         )
 
 
-# Apply LangChain patch on module import
-patch_langchain_for_metadata_capture()
+def _ensure_langchain_metadata_patch() -> None:
+    """Patch LangChain metadata capture lazily.
+
+    Importing the SDK should not emit optional-integration warnings just because
+    LocalEvaluator is imported as part of broader package initialization.
+    """
+    global _LANGCHAIN_PATCH_ATTEMPTED
+    if _LANGCHAIN_PATCH_ATTEMPTED:
+        return
+    patch_langchain_for_metadata_capture()
+    _LANGCHAIN_PATCH_ATTEMPTED = True
+
 
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
@@ -172,6 +183,8 @@ class LocalEvaluator(BaseEvaluator):
             execution_mode: Execution mode (privacy, edge_analytics, cloud) for determining submission format
             **kwargs: Additional configuration
         """
+        _ensure_langchain_metadata_patch()
+
         if metrics is None and metric_functions:
             metrics = list(metric_functions.keys())
 
