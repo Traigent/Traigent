@@ -652,6 +652,25 @@ class TestSyncManager:
         assert result["success"] is False
         assert "HTTP 400" in result["error"]
 
+    def test_sync_benchmark_does_not_fallback_when_datasets_route_exists(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """A 404 from an existing /datasets endpoint should not hit the legacy route."""
+        benchmark_data = {"id": "bench_123", "name": "Test Benchmark"}
+
+        sync_manager._session.post.return_value = Mock(status_code=404, text="dataset not found")
+        sync_manager._session.get.return_value = Mock(status_code=200)
+
+        result = sync_manager._sync_benchmark(benchmark_data)
+
+        assert result["success"] is False
+        assert "HTTP 404" in result["error"]
+        sync_manager._session.post.assert_called_once_with(
+            f"{sync_manager.base_url}/datasets",
+            json=benchmark_data,
+            timeout=sync_manager._request_timeout,
+        )
+
     def test_sync_experiment_success(self, sync_manager: SyncManager) -> None:
         """Test successful experiment sync."""
         experiment_data = {"id": "exp_123", "name": "Test Experiment"}

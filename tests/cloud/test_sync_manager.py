@@ -236,9 +236,11 @@ class TestSyncManager:
             Mock(status_code=201, text="created"),
         ]
         original_post = sync_manager._session.post
+        original_get = sync_manager._session.get
 
         try:
             sync_manager._session.post = Mock(side_effect=responses)
+            sync_manager._session.get = Mock(return_value=Mock(status_code=404, text="missing"))
             result = sync_manager._sync_benchmark(payload)
 
             assert result["success"] is True
@@ -251,6 +253,7 @@ class TestSyncManager:
             assert second_call.args[0] == f"{sync_manager.base_url}/benchmarks"
         finally:
             sync_manager._session.post = original_post
+            sync_manager._session.get = original_get
 
     def test_convert_trials_to_results(self):
         """Test converting local trials to Traigent configuration_run format."""

@@ -396,7 +396,14 @@ class ExperimentDTO:
                 "dataset_id, evaluation_set_id, and benchmark_id must match"
             )
         resolved_dataset_id = (
-            self.dataset_id or self.evaluation_set_id or self.benchmark_id
+            self.dataset_id
+            or self.benchmark_id
+            or (
+                self.evaluation_set_id
+                if self.evaluation_set_id != "local-evalset-001"
+                else None
+            )
+            or self.evaluation_set_id
         )
         has_explicit_legacy_dataset_reference = (
             self.dataset_id is not None

@@ -363,6 +363,22 @@ class TestExperimentDTO:
         with pytest.raises(ValueError, match="Conflicting dataset aliases"):
             exp.to_dict()
 
+    def test_to_dict_prefers_benchmark_id_over_placeholder_evalset(self):
+        """Legacy benchmark_id should not be masked by the placeholder evalset."""
+        exp = ExperimentDTO(
+            id="exp-009-benchmark-only",
+            name="Benchmark only",
+            description="Legacy benchmark alias only",
+            benchmark_id="dataset-legacy-001",
+        )
+
+        result = exp.to_dict()
+
+        assert result["dataset_id"] == "dataset-legacy-001"
+        assert result["evaluation_set_id"] == "dataset-legacy-001"
+        assert result["eval_dataset_id"] == "dataset-legacy-001"
+        assert result["benchmark_id"] == "dataset-legacy-001"
+
     def test_experiment_status_values(self):
         """Test various experiment status values."""
         statuses = ["pending", "running", "completed", "failed", "cancelled"]

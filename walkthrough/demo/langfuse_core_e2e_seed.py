@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -27,6 +27,44 @@ GUIDED_RUNNER = SCRIPT_DIR / "guided_optimize_and_observe.py"
 TOKEN_CACHE_PATH = Path(
     os.getenv("LANGFUSE_CORE_E2E_TOKEN_CACHE", "/tmp/langfuse_core_e2e_token.json")
 )
+ALLOWED_OUTPUT_ROOTS = (REPO_ROOT, Path("/tmp"))
+ALLOWED_BACKEND_HOSTS = {"localhost", "127.0.0.1", "::1"}
+ALLOWED_BACKEND_SUFFIXES = (".traigent.ai", ".traigent.dev")
+
+
+def _resolve_allowed_path(path_value: str | Path) -> Path:
+    resolved_path = Path(path_value).resolve()
+    if any(
+        resolved_path == root or root in resolved_path.parents
+        for root in ALLOWED_OUTPUT_ROOTS
+    ):
+        return resolved_path
+    raise RuntimeError(
+        f"Path {resolved_path} must stay inside {REPO_ROOT} or /tmp"
+    )
+
+
+def _validate_backend_url(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise RuntimeError(f"Invalid backend URL: {base_url}")
+
+    allow_remote = os.getenv("TRAIGENT_ALLOW_UNSAFE_E2E_BACKEND_URL", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if allow_remote:
+        return base_url.rstrip("/")
+
+    if hostname in ALLOWED_BACKEND_HOSTS or hostname.endswith(ALLOWED_BACKEND_SUFFIXES):
+        return base_url.rstrip("/")
+
+    raise RuntimeError(
+        "Unsafe backend URL refused for langfuse-core E2E seeding. "
+        "Use localhost / Traigent hosts or set TRAIGENT_ALLOW_UNSAFE_E2E_BACKEND_URL=true."
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -284,7 +322,7 @@ def extract_items(payload: Any) -> list[Any]:
 
 
 def api_request_json(base_url: str, api_key: str, method: str, path: str, payload: Any | None = None) -> Any:
-    url = f"{base_url.rstrip('/')}{path}"
+    url = f"{_validate_backend_url(base_url)}{path}"
     jwt_token = ensure_bearer_token(base_url)
     headers = {
         "Content-Type": "application/json",
@@ -348,8 +386,12 @@ def collect_configuration_run_ids(results_payload: Any) -> list[str]:
 
 
 def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    safe_path = _resolve_allowed_path(path)
+    safe_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def build_frontend_urls(
@@ -1104,11 +1146,12 @@ def seed_access_control_fixture(
 
 def main() -> int:
     args = parse_args()
-    output_path = Path(args.output).resolve()
+    args.backend_url = _validate_backend_url(args.backend_url)
+    output_path = _resolve_allowed_path(args.output)
     artifacts_dir = (
-        Path(args.artifacts_dir).resolve()
+        _resolve_allowed_path(args.artifacts_dir)
         if args.artifacts_dir
-        else output_path.parent / "guided-artifacts"
+        else _resolve_allowed_path(output_path.parent / "guided-artifacts")
     )
     api_key = ensure_api_key()
     ensure_bearer_token(args.backend_url)

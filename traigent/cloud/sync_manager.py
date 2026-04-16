@@ -69,6 +69,7 @@ class SyncManager:
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()
+        self._dataset_route_supported: bool | None = None
 
     @property
     def session(self):
@@ -477,7 +478,7 @@ class SyncManager:
                 json=benchmark_data,
                 timeout=self._request_timeout,
             )
-            if response.status_code == 404:
+            if response.status_code == 404 and not self._supports_dataset_route():
                 response = self._session.post(
                     f"{self.base_url}/benchmarks",
                     json=benchmark_data,
@@ -497,6 +498,28 @@ class SyncManager:
                 }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _supports_dataset_route(self) -> bool:
+        """Detect whether the canonical /datasets endpoint exists on the remote."""
+        if self._dataset_route_supported is not None:
+            return self._dataset_route_supported
+
+        try:
+            response = self._session.get(
+                f"{self.base_url}/datasets",
+                params={"page": 1, "per_page": 1},
+                timeout=self._request_timeout,
+            )
+        except requests.RequestException as exc:
+            logger.warning(
+                "Failed probing /datasets route support; assuming canonical endpoint exists: %s",
+                exc,
+            )
+            self._dataset_route_supported = True
+            return True
+
+        self._dataset_route_supported = response.status_code != 404
+        return self._dataset_route_supported
 
     def _sync_experiment(self, experiment_data: dict[str, Any]) -> dict[str, Any]:
         """Sync experiment data to cloud."""
