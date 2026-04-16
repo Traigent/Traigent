@@ -24,7 +24,7 @@ def _read_pyproject_version() -> str | None:
         return None
     try:
         with open(pyproject, "rb") as f:
-            return tomllib.load(f)["project"]["version"]
+            return tomllib.load(f)["project"]["version"]  # type: ignore[no-any-return]
     except Exception:
         return None
 
