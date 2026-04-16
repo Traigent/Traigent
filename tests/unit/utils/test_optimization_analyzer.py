@@ -994,10 +994,17 @@ class TestOptimizationAnalyzer:
         assert df.iloc[0]["algorithm"] == "bayesian"
 
     def test_export_for_analysis_includes_config_and_metrics(
-        self, analyzer: OptimizationAnalyzer, mock_run_structure: Path
+        self,
+        analyzer: OptimizationAnalyzer,
+        mock_run_structure: Path,
+        temp_base_path: Path,
     ) -> None:
         """Test export_for_analysis includes config and metric columns."""
-        output_file = analyzer.export_for_analysis("test_exp", format="csv")
+        output_dir = temp_base_path / "analysis-exports"
+        output_dir.mkdir()
+        output_file = analyzer.export_for_analysis(
+            "test_exp", format="csv", output_dir=output_dir
+        )
         df = pd.read_csv(output_file)
 
         # Check for config columns
@@ -1006,7 +1013,7 @@ class TestOptimizationAnalyzer:
         assert any(col.startswith("metric_") for col in df.columns)
 
         # Cleanup
-        Path(output_file).unlink()
+        Path(output_file).unlink(missing_ok=True)
 
     def test_candidate_files_handles_value_error(self) -> None:
         """Test _candidate_files handles ValueError from get_filename."""

@@ -584,8 +584,9 @@ class TestHealthCheckerCheckServiceHealth:
         self, mock_time: MagicMock, checker: HealthChecker
     ) -> None:
         """Test health check measures response time correctly."""
-        # Mock time to return consistent values
-        mock_time.side_effect = [1000.0, 1000.5]  # 500ms difference
+        # Use an unbounded sequence so logging and any incidental timestamp
+        # reads do not exhaust the side effect list.
+        mock_time.side_effect = (1000.0 + (0.5 * idx) for idx in count())
 
         health = checker.check_service_health("database")
 
