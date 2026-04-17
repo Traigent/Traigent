@@ -12,14 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Configure async test execution
 @pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
+def event_loop_policy():
+    """Choose the loop policy once and let pytest-asyncio own loop lifecycles."""
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+        return asyncio.WindowsSelectorEventLoopPolicy()
+    return asyncio.DefaultEventLoopPolicy()
 
 
 # Mark all async tests

@@ -128,6 +128,53 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     assert result.items_dropped >= 1
 
 
+def test_observability_client_preserves_existing_usage_fields_on_update():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    trace_id = client.start_trace("usage-preservation", trace_id="trace_usage")
+    client.record_observation(
+        trace_id,
+        observation_id="obs_usage",
+        name="llm-call",
+        input_tokens=12,
+        output_tokens=4,
+        cost_usd=0.25,
+    )
+    client.record_observation(
+        trace_id,
+        observation_id="obs_usage",
+        name="llm-call",
+        status="completed",
+        input_tokens=None,
+        output_tokens=None,
+        cost_usd=None,
+    )
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert observation["input_tokens"] == 12
+    assert observation["output_tokens"] == 4
+    assert observation["cost_usd"] == 0.25
+
+
 def test_observe_decorator_creates_nested_observations():
     sent_batches: list[list[dict]] = []
 

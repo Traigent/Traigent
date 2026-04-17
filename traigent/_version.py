@@ -24,7 +24,12 @@ def _read_pyproject_version() -> str | None:
         return None
     try:
         with open(pyproject, "rb") as f:
-            return tomllib.load(f)["project"]["version"]
+            pyproject_data = tomllib.load(f)
+            project_data = pyproject_data.get("project")
+            if not isinstance(project_data, dict):
+                return None
+            version = project_data.get("version")
+            return version if isinstance(version, str) else None
     except Exception:
         return None
 

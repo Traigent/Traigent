@@ -242,7 +242,7 @@ class LocalAnalytics:
 
         try:
             # Import backend client lazily to avoid circular imports
-            from traigent.cloud.backend_client import get_backend_client
+            from traigent.cloud import backend_client as backend_client_module
 
             # Get API key from environment
             from traigent.config.backend_config import BackendConfig
@@ -259,7 +259,7 @@ class LocalAnalytics:
                 )
                 return {"success": False, "reason": "API key invalid"}
 
-            backend_client = get_backend_client(
+            backend_client = backend_client_module.get_backend_client(
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),
                 enable_fallback=False,  # We're explicitly sending analytics
@@ -344,6 +344,12 @@ class LocalAnalytics:
                     await backend_client.__aexit__(None, None, None)
                 except Exception:
                     pass  # Best effort cleanup
+                finally:
+                    if (
+                        getattr(backend_client_module, "_backend_client", None)
+                        is backend_client
+                    ):
+                        backend_client_module._backend_client = None
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
@@ -534,10 +540,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
 
             def _run_in_thread() -> None:
                 try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(analytics.submit_usage_stats())
-                    loop.close()
+                    asyncio.run(analytics.submit_usage_stats())
                     logger.debug("Analytics submission completed")
                 except Exception as e:
                     logger.debug(f"Analytics submission failed: {e}")

@@ -211,6 +211,7 @@ class TestExperimentDTO:
         assert exp.model_parameters_id == "local-model-params-001"
 
         # Optional fields default to None/empty
+        assert exp.dataset_id is None
         assert exp.benchmark_id is None
         assert exp.experiment_parameters == {}
         assert exp.metadata == {}
@@ -253,12 +254,14 @@ class TestExperimentDTO:
             agent_id="agent-backend-123",
             evaluation_set_id="evalset-456",
             model_parameters_id="model-params-789",
+            dataset_id="dataset-001",
             benchmark_id="benchmark-001",
         )
 
         assert exp.agent_id == "agent-backend-123"
         assert exp.evaluation_set_id == "evalset-456"
         assert exp.model_parameters_id == "model-params-789"
+        assert exp.dataset_id == "dataset-001"
         assert exp.benchmark_id == "benchmark-001"
 
     def test_experiment_with_metadata(self):
@@ -312,6 +315,9 @@ class TestExperimentDTO:
         assert result["id"] == "exp-008"
         assert result["name"] == "Minimal"
         assert result["description"] == "Minimal experiment"
+        assert result["dataset_id"] == "local-evalset-001"
+        assert result["eval_dataset_id"] == "local-evalset-001"
+        assert "benchmark_id" not in result
         assert "configurations" in result
         assert "measures" in result
 
@@ -324,9 +330,10 @@ class TestExperimentDTO:
             configurations=ConfigurationsDTO(parameters={"model": "gpt-4"}),
             measures=["accuracy", "cost"],
             agent_id="agent-001",
-            evaluation_set_id="eval-001",
+            evaluation_set_id="dataset-001",
+            dataset_id="dataset-001",
             model_parameters_id="model-001",
-            benchmark_id="bench-001",
+            benchmark_id="dataset-001",
             experiment_parameters={"max_trials": 50},
             metadata={"version": "1.0"},
             status="running",
@@ -336,9 +343,41 @@ class TestExperimentDTO:
 
         assert result["id"] == "exp-009"
         assert result["status"] == "running"
-        assert result["benchmark_id"] == "bench-001"
+        assert result["dataset_id"] == "dataset-001"
+        assert result["evaluation_set_id"] == "dataset-001"
+        assert result["eval_dataset_id"] == "dataset-001"
+        assert result["benchmark_id"] == "dataset-001"
         assert result["experiment_parameters"]["max_trials"] == 50
         assert result["metadata"]["version"] == "1.0"
+
+    def test_to_dict_rejects_conflicting_dataset_aliases(self):
+        """Conflicting dataset aliases should fail loudly instead of being rewritten."""
+        exp = ExperimentDTO(
+            id="exp-009-conflict",
+            name="Conflict",
+            description="Conflicting dataset aliases",
+            dataset_id="dataset-001",
+            benchmark_id="dataset-002",
+        )
+
+        with pytest.raises(ValueError, match="Conflicting dataset aliases"):
+            exp.to_dict()
+
+    def test_to_dict_prefers_benchmark_id_over_placeholder_evalset(self):
+        """Legacy benchmark_id should not be masked by the placeholder evalset."""
+        exp = ExperimentDTO(
+            id="exp-009-benchmark-only",
+            name="Benchmark only",
+            description="Legacy benchmark alias only",
+            benchmark_id="dataset-legacy-001",
+        )
+
+        result = exp.to_dict()
+
+        assert result["dataset_id"] == "dataset-legacy-001"
+        assert result["evaluation_set_id"] == "dataset-legacy-001"
+        assert result["eval_dataset_id"] == "dataset-legacy-001"
+        assert result["benchmark_id"] == "dataset-legacy-001"
 
     def test_experiment_status_values(self):
         """Test various experiment status values."""

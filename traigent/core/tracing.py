@@ -167,6 +167,19 @@ except ImportError:
         """Get the Traigent tracer, initializing if needed."""
         return _initialize_tracer()
 
+    def _set_error_status(span: Span | None, error: str) -> None:
+        """Mark a span as failed without requiring OpenTelemetry imports."""
+        if span is None:
+            return
+        if trace is not None:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+        else:
+            # Best-effort fallback for no-OTEL environments and mock spans.
+            try:
+                span.set_status(status="ERROR", description=error)
+            except TypeError:
+                span.set_status("ERROR")
+
     def _set_session_span_attributes(
         span: Span,
         function_name: str,
@@ -339,7 +352,7 @@ except ImportError:
                     span.set_attribute(f"trial.metric.{name}", value)
         if error:
             span.set_attribute("trial.error", error)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+            _set_error_status(span, error)
 
     def record_optimization_complete(
         span: Span | None,
@@ -439,7 +452,7 @@ except ImportError:
             span.set_attribute("example.execution_time_ms", execution_time * 1000)
         if error:
             span.set_attribute("example.error", error)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+            _set_error_status(span, error)
 
 
 __all__ = [

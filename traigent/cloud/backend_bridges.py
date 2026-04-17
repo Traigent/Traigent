@@ -468,12 +468,10 @@ Response:"""
     def _create_benchmark_data_from_dataset(
         self, dataset: Dataset, function_name: str
     ) -> dict[str, Any]:
-        """Create benchmark data from SDK dataset with deterministic ID."""
-        # Extract dataset info for consistent benchmark ID generation
+        """Create dataset-backed benchmark data from SDK dataset."""
         dataset_info = self._extract_dataset_characteristics(dataset)
 
-        # Generate deterministic benchmark ID
-        benchmark_id = generate_benchmark_hash(
+        dataset_id = generate_benchmark_hash(
             function_name=function_name, dataset_info=dataset_info
         )
 
@@ -490,12 +488,15 @@ Response:"""
                     benchmark_type = "classification"
 
         return {
-            "benchmark_id": benchmark_id,
-            "benchmark_name": f"{function_name}_benchmark",
+            "dataset_id": dataset_id,
+            "benchmark_id": dataset_id,
+            "name": f"{function_name}_dataset",
+            "dataset_name": f"{function_name}_dataset",
+            "benchmark_name": f"{function_name}_dataset",
             "description": f"Benchmark auto-generated from {function_name} dataset",
             "type": benchmark_type,
             "agent_type_id": self._agent_type_mappings["default"],
-            "label": f"SDK Generated Benchmark for {function_name}",
+            "label": f"SDK Generated Dataset for {function_name}",
         }
 
     def _create_example_set_data_from_dataset(
