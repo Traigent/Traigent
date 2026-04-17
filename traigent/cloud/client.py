@@ -11,11 +11,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+
+if TYPE_CHECKING:
+    from traigent.arena.dtos import ArenaExecutionRef
 from traigent.config.backend_config import BackendConfig
+from traigent.config.project import read_optional_project_env
+from traigent.config.tenant import TENANT_HEADER_NAME, read_optional_env
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -45,6 +50,7 @@ from .models import (
 from .subset_selection import SmartSubsetSelector
 
 logger = get_logger(__name__)
+PROJECT_HEADER_NAME = "X-Project-Id"
 
 # Error messages for session state validation
 _SESSION_NOT_INITIALIZED = "Session not initialized"
@@ -381,6 +387,7 @@ class TraigentCloudClient(BaseTraigentClient):
 
             if "Authorization" not in headers and "X-API-Key" not in headers:
                 raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
+            headers = self._apply_workspace_headers(cast(dict[str, str], headers))
 
             if not AIOHTTP_AVAILABLE:
                 raise CloudServiceError(
@@ -398,7 +405,17 @@ class TraigentCloudClient(BaseTraigentClient):
         headers = await self.auth.get_headers()
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
-        return cast(dict[str, str], headers)
+        return self._apply_workspace_headers(cast(dict[str, str], headers))
+
+    def _apply_workspace_headers(self, headers: dict[str, str]) -> dict[str, str]:
+        tenant_id = read_optional_env("TRAIGENT_TENANT_ID")
+        project_id = read_optional_project_env()
+        resolved_headers = dict(headers)
+        if tenant_id:
+            resolved_headers[TENANT_HEADER_NAME] = tenant_id
+        if project_id:
+            resolved_headers[PROJECT_HEADER_NAME] = project_id
+        return resolved_headers
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session after failures."""
@@ -1063,6 +1080,7 @@ class TraigentCloudClient(BaseTraigentClient):
         default_config: dict[str, Any] | None = None,
         promotion_policy: dict[str, Any] | None = None,
         optimization_strategy: dict[str, Any] | None = None,
+        arena: ArenaExecutionRef | dict[str, Any] | None = None,
         user_id: str | None = None,
         billing_tier: str = "standard",
     ) -> SessionCreationResponse:
@@ -1103,6 +1121,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 default_config=default_config,
                 promotion_policy=promotion_policy,
                 optimization_strategy=optimization_strategy,
+                arena=arena,
                 user_id=user_id,
                 billing_tier=billing_tier,
             )
@@ -1346,6 +1365,11 @@ class TraigentCloudClient(BaseTraigentClient):
             payload["default_config"] = request.default_config
         if request.promotion_policy is not None:
             payload["promotion_policy"] = request.promotion_policy
+        if request.arena is not None:
+            if hasattr(request.arena, "to_dict"):
+                payload["arena"] = request.arena.to_dict()
+            else:
+                payload["arena"] = dict(request.arena)
         return payload
 
     @staticmethod

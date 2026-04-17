@@ -13,9 +13,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from traigent.evaluators.base import Dataset
+
+if TYPE_CHECKING:
+    from traigent.arena.dtos import ArenaExecutionRef
 
 
 class OptimizationSessionStatus(Enum):
@@ -190,6 +193,7 @@ class SessionCreationRequest:
     default_config: dict[str, Any] | None = None
     promotion_policy: dict[str, Any] | None = None
     optimization_strategy: dict[str, Any] | None = None
+    arena: ArenaExecutionRef | dict[str, Any] | None = None
     user_id: str | None = None
     billing_tier: str = "standard"
     metadata: dict[str, Any] = field(default_factory=dict)
