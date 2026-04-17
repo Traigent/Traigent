@@ -216,9 +216,10 @@ def ensure_bearer_token(base_url: str) -> str | None:
     if not email or not password:
         return None
 
+    safe_base_url = _validate_backend_url(base_url)
     for attempt in range(4):
         response = requests.post(
-            f"{base_url.rstrip('/')}/api/v1/auth/login",
+            f"{safe_base_url}/api/v1/auth/login",
             headers={"Content-Type": "application/json"},
             json={"email": email, "password": password},
             timeout=30,
@@ -274,7 +275,7 @@ def run_phase(args: argparse.Namespace, phase: str, artifacts_dir: Path) -> dict
         env=os.environ.copy(),
     )
 
-    phase_log = artifacts_dir / args.run_id / f"{phase}.log"
+    phase_log = _resolve_allowed_path(artifacts_dir / args.run_id / f"{phase}.log")
     phase_log.parent.mkdir(parents=True, exist_ok=True)
     phase_log.write_text(
         "\n".join(
