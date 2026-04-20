@@ -172,7 +172,9 @@ class TerminalPausePrompt:
         # Insufficient funds is non-recoverable — stop immediately
         if category == VendorErrorCategory.INSUFFICIENT_FUNDS:
             print()
-            print("Stopping optimization (insufficient funds cannot be resolved by retrying).")
+            print(
+                "Stopping optimization (insufficient funds cannot be resolved by retrying)."
+            )
             return "stop"
 
         print()
