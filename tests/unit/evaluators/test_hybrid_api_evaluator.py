@@ -1334,6 +1334,33 @@ class TestExecuteBatch:
         results = await ev._execute_batch(mock_transport, caps, {}, batch)
         assert results[0].example_id == "custom_id"
 
+    @pytest.mark.asyncio
+    async def test_uses_input_id_from_input_data(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Falls back to input_id when example_id is absent in input_data."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        ev._benchmark_id = "test-bench"
+        exec_response = _make_execute_response(
+            outputs=[{"input_id": "consultant-fridge", "output": "out"}],
+            quality_metrics=None,
+        )
+        mock_transport.execute = AsyncMock(return_value=exec_response)
+        caps = _default_capabilities(supports_evaluate=False)
+
+        example = EvaluationExample(
+            input_data={"input_id": "consultant-fridge"}
+        )
+        dataset = Dataset(examples=[example], name="test")
+        batch = list(dataset)
+
+        results = await ev._execute_batch(mock_transport, caps, {}, batch)
+        assert results[0].example_id == "consultant-fridge"
+
 
 # ---------------------------------------------------------------------------
 # _evaluate_outputs tests
