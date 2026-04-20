@@ -753,9 +753,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for i, example in enumerate(batch):
             input_data = self._extract_input(example)
             example_id = (
-                input_data.get("example_id")
-                or input_data.get("input_id")
-                or f"ex_{i}"
+                input_data.get("example_id") or input_data.get("input_id") or f"ex_{i}"
             )
             inputs.append(
                 {
@@ -815,7 +813,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Return error results for all examples
             return [
                 HybridExampleResult(
-                    example_id=inp["example_id"],
+                    example_id=str(inp["example_id"]),
                     expected_output=self._extract_expected(batch[i]),
                     error=str(e),
                 )
