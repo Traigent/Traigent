@@ -994,9 +994,8 @@ def _calculate_cost_for_metrics(
 
         # Log when cost ends up at zero despite having tokens — this is the
         # most actionable diagnostic for the "$0 cost" issue (#325).
-        if (
-            metrics.cost.total_cost == 0.0
-            and (metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0)
+        if metrics.cost.total_cost == 0.0 and (
+            metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
         ):
             logger.warning(
                 "Cost is $0.00 despite non-zero tokens for model %r "
@@ -1007,8 +1006,7 @@ def _calculate_cost_for_metrics(
             )
     except Exception as e:
         logger.error(
-            "Cost calculation failed for model %s: %s "
-            "(tokens: in=%d, out=%d)",
+            "Cost calculation failed for model %s: %s " "(tokens: in=%d, out=%d)",
             model_name,
             e,
             metrics.tokens.input_tokens,
