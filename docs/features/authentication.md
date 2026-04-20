@@ -39,6 +39,28 @@ traigent auth configure
 # Select option 2 and enter your API key
 ```
 
+## Custom Backend URL
+
+By default the SDK and CLI target `https://portal.traigent.ai`. To authenticate against a different backend, use `--backend-url`:
+
+```bash
+traigent auth login --backend-url https://your-backend.example.com
+```
+
+The URL is stored in your credentials so subsequent SDK calls use it automatically.
+
+You can also set the backend via environment variables:
+
+```bash
+export TRAIGENT_BACKEND_URL=https://your-backend.example.com
+```
+
+Verify which backend you're pointing to with:
+
+```bash
+traigent auth status
+```
+
 ## Authentication Commands
 
 ### Login
@@ -338,6 +360,7 @@ traigent auth whoami KEY   # Validate API key
 # Options
 --email EMAIL             # Specify email
 --non-interactive         # No prompts; use API keys for CI/CD
+--backend-url URL         # Target a specific backend URL
 --help                   # Show help
 ```
 

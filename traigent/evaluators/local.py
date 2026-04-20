@@ -34,6 +34,7 @@ from traigent.utils.langchain_interceptor import (
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_LANGCHAIN_PATCH_ATTEMPTED = False
 
 
 @dataclass
@@ -131,8 +132,18 @@ class _AggregatedResponses:
         )
 
 
-# Apply LangChain patch on module import
-patch_langchain_for_metadata_capture()
+def _ensure_langchain_metadata_patch() -> None:
+    """Patch LangChain metadata capture lazily.
+
+    Importing the SDK should not emit optional-integration warnings just because
+    LocalEvaluator is imported as part of broader package initialization.
+    """
+    global _LANGCHAIN_PATCH_ATTEMPTED
+    if _LANGCHAIN_PATCH_ATTEMPTED:
+        return
+    patch_langchain_for_metadata_capture()
+    _LANGCHAIN_PATCH_ATTEMPTED = True
+
 
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
@@ -172,6 +183,8 @@ class LocalEvaluator(BaseEvaluator):
             execution_mode: Execution mode (privacy, edge_analytics, cloud) for determining submission format
             **kwargs: Additional configuration
         """
+        _ensure_langchain_metadata_patch()
+
         if metrics is None and metric_functions:
             metrics = list(metric_functions.keys())
 
@@ -302,6 +315,43 @@ class LocalEvaluator(BaseEvaluator):
             else:
                 return [{"role": "user", "content": str(example_input)}]
         return [{"role": "user", "content": str(example_input)}]
+
+    @staticmethod
+    def _infer_model_name_from_output(
+        output: Any,
+        index: int,
+        captured_responses: list[Any],
+    ) -> str | None:
+        """Try to infer the model name from the output or captured LangChain responses.
+
+        This is a fallback for when the optimization config does not contain a
+        ``model`` key (e.g. the user is only tuning prompts, not models).
+        Without a model name, cost calculation is skipped entirely, which
+        causes the $0 cost bug reported in TraigentFrontend#325.
+        """
+        # 1. Check if output is a dict with a model field
+        if isinstance(output, dict):
+            for key in ("model", "model_name", "model_id"):
+                val = output.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        # 2. Check output object attributes (e.g. OpenAI ChatCompletion)
+        for attr in ("model", "model_name"):
+            val = getattr(output, attr, None)
+            if isinstance(val, str) and val:
+                return val
+
+        # 3. Check captured LangChain response (llm_output.model_name)
+        if index < len(captured_responses):
+            resp = captured_responses[index]
+            llm_output = getattr(resp, "llm_output", None)
+            if isinstance(llm_output, dict):
+                val = llm_output.get("model_name") or llm_output.get("model")
+                if isinstance(val, str) and val:
+                    return val
+
+        return None
 
     def _extract_response_text(self, output: Any) -> str | None:
         """Extract text content from various output types.
@@ -653,10 +703,18 @@ class LocalEvaluator(BaseEvaluator):
         if output is None:
             return example_metric
 
-        model_name = config.get("model")
+        model_name = config.get("model") or config.get("model_name")
+
+        # Fallback: try to extract model name from the output or captured responses
+        # when the optimization config does not include "model" as a parameter.
+        if not model_name:
+            model_name = self._infer_model_name_from_output(
+                output, index, all_captured_responses
+            )
+
         logger.debug(
             f"EVALUATOR DEBUG: i={index}, output type={type(output).__name__}, "
-            f"model_name from config='{model_name}'"
+            f"model_name='{model_name}'"
         )
 
         original_prompt = None

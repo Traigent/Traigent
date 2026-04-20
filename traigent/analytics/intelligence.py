@@ -1632,9 +1632,11 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                             "source_provider": provider,
                             "target_provider": min(
                                 providers,
-                                key=lambda p: cloud_usage.get(p, {})
-                                .get("compute", {})
-                                .get("cost", float("inf")),
+                                key=lambda p: (
+                                    cloud_usage.get(p, {})
+                                    .get("compute", {})
+                                    .get("cost", float("inf"))
+                                ),
                             ),
                             "workload_type": "compute",
                             "estimated_effort": "medium",

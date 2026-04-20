@@ -152,6 +152,7 @@ class TestSyncManager:
 
         # Check structure
         assert "agent" in traigent_data
+        assert "dataset" in traigent_data
         assert "benchmark" in traigent_data
         assert "model_parameters" in traigent_data
         assert "experiment" in traigent_data
@@ -163,17 +164,26 @@ class TestSyncManager:
         assert agent["agent_type"] == "custom"
         assert agent["source"] == "local_import"
 
-        # Check benchmark data
+        # Check dataset data
+        dataset = traigent_data["dataset"]
+        assert dataset["name"] == "Local Dataset: test_llm_function"
+        assert dataset["dataset_id"] == dataset["id"]
+        assert dataset["benchmark_id"] == dataset["id"]
+        assert dataset["type"] == "custom"
+        assert dataset["examples_count"] == 4
+
+        # Legacy alias remains available for older callers
         benchmark = traigent_data["benchmark"]
-        assert benchmark["name"] == "Local Benchmark: test_llm_function"
-        assert benchmark["type"] == "custom"
-        assert benchmark["examples_count"] == 4
+        assert benchmark == dataset
 
         # Check experiment data
         experiment = traigent_data["experiment"]
         assert experiment["name"] == "Local Import: test_llm_function"
         assert experiment["agent_id"] == agent["id"]
-        assert experiment["benchmark_id"] == benchmark["id"]
+        assert experiment["dataset_id"] == dataset["id"]
+        assert experiment["benchmark_id"] == dataset["id"]
+        assert experiment["evaluation_set_id"] == dataset["id"]
+        assert experiment["eval_dataset_id"] == dataset["id"]
         assert experiment["status"] == "completed"
         assert "original_session_id" in experiment["metadata"]
 
@@ -189,7 +199,7 @@ class TestSyncManager:
         "method_name,resource_path,payload_key",
         [
             ("_sync_agent", "agents", "agent_id"),
-            ("_sync_benchmark", "benchmarks", "benchmark_id"),
+            ("_sync_benchmark", "datasets", "dataset_id"),
             ("_sync_experiment", "experiments", "experiment_id"),
             ("_sync_experiment_run", "experiment-runs", "run_id"),
         ],
@@ -216,6 +226,34 @@ class TestSyncManager:
             assert payload_key in result
         finally:
             sync_manager._session.post = original_post
+
+    def test_sync_benchmark_falls_back_to_legacy_route(self):
+        """Test dataset sync falls back to legacy benchmark route on 404."""
+        sync_manager = self.sync_manager
+        payload = {"id": "dataset-123", "dataset_id": "dataset-123"}
+        responses = [
+            Mock(status_code=404, text="not found"),
+            Mock(status_code=201, text="created"),
+        ]
+        original_post = sync_manager._session.post
+        original_get = sync_manager._session.get
+
+        try:
+            sync_manager._session.post = Mock(side_effect=responses)
+            sync_manager._session.get = Mock(return_value=Mock(status_code=404, text="missing"))
+            result = sync_manager._sync_benchmark(payload)
+
+            assert result["success"] is True
+            assert result["dataset_id"] == "dataset-123"
+            assert result["benchmark_id"] == "dataset-123"
+            assert sync_manager._session.post.call_count == 2
+            first_call = sync_manager._session.post.call_args_list[0]
+            second_call = sync_manager._session.post.call_args_list[1]
+            assert first_call.args[0] == f"{sync_manager.base_url}/datasets"
+            assert second_call.args[0] == f"{sync_manager.base_url}/benchmarks"
+        finally:
+            sync_manager._session.post = original_post
+            sync_manager._session.get = original_get
 
     def test_convert_trials_to_results(self):
         """Test converting local trials to Traigent configuration_run format."""

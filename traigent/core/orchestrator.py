@@ -1962,8 +1962,7 @@ class OptimizationOrchestrator:
         """
         if self._prompt_adapter is None or exc.category is None:
             return "break"
-        decision = await asyncio.to_thread(
-            self._prompt_adapter.prompt_vendor_pause,
+        decision = self._prompt_adapter.prompt_vendor_pause(
             exc.original_error or exc,
             exc.category,
         )
@@ -1982,8 +1981,7 @@ class OptimizationOrchestrator:
         if self._prompt_adapter is None:
             return "break"
         status = self.cost_enforcer.get_status()
-        decision = await asyncio.to_thread(
-            self._prompt_adapter.prompt_budget_pause,
+        decision = self._prompt_adapter.prompt_budget_pause(
             status.accumulated_cost_usd,
             self.cost_enforcer.config.limit,
         )

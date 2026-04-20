@@ -495,7 +495,9 @@ class UsageTracker:
                 "usage_records": [record.to_dict() for record in self._usage_records],
                 "last_updated": datetime.now(UTC).isoformat(),
             }
-            await asyncio.to_thread(_write_json_file, self.storage_path, data)
+            # Keep billing persistence synchronous to avoid leaking threadpool
+            # executors across many short-lived asyncio.run() calls in tests/CLI usage.
+            _write_json_file(self.storage_path, data)
         except Exception as e:
             logger.error(f"Failed to save usage data: {e}")
 
@@ -1221,14 +1223,12 @@ class CostTracker:
 
         try:
             cache_path = Path(self.config.cost_cache_file)
-            await asyncio.to_thread(
-                cache_path.parent.mkdir, parents=True, exist_ok=True
-            )
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Load existing cache
             cached_items = []
-            if await asyncio.to_thread(cache_path.exists):
-                cached_items = await asyncio.to_thread(_read_json_file, cache_path)
+            if cache_path.exists():
+                cached_items = _read_json_file(cache_path)
 
             # Add new item
             cached_items.append(
@@ -1248,7 +1248,7 @@ class CostTracker:
             )
 
             # Save cache
-            await asyncio.to_thread(_write_json_file, cache_path, cached_items)
+            _write_json_file(cache_path, cached_items)
 
         except Exception as e:
             logger.warning(f"Failed to cache cost item: {e}")

@@ -1,7 +1,8 @@
 """Find the best model and temperature for your task - in one decorator.
 
 No API keys needed - runs in mock mode and simulates LLM responses
-so you can see the optimization flow instantly.
+so you can see the optimization flow instantly. Set ``TRAIGENT_API_KEY``
+to sync results to the portal even while LLM calls stay mocked.
 For a real run with actual LLM calls, see walkthrough/real/01_tuning_qa.py.
 """
 
@@ -9,12 +10,10 @@ import asyncio
 import os
 from pathlib import Path
 
-# Default to mock mode so the quickstart works without API keys.
-# Override with: TRAIGENT_MOCK_LLM=false python -m traigent.examples.quickstart
-os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-    os.environ.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
-    os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+from traigent.examples.quickstart._env import configure_quickstart_env
+from traigent.utils.env_config import is_truthy
+
+configure_quickstart_env(os.environ)
 
 # The bundled dataset lives next to this file (inside the installed package).
 # Set TRAIGENT_DATASET_ROOT so the SDK's path validation accepts it regardless
@@ -40,11 +39,13 @@ CONFIG_SPACE = {
     "temperature": [0.0, 0.7, 1.0],
 }
 
-_SYSTEM_PROMPT = "Answer in as few words as possible. Give only the answer itself, nothing else."
+_SYSTEM_PROMPT = (
+    "Answer in as few words as possible. Give only the answer itself, nothing else."
+)
 
 # In mock mode the LLM returns a fixed placeholder string, so contains_accuracy
 # would always score 0.  Let the built-in mock simulation handle accuracy instead.
-_mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes")
+_mock_mode = is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
 
 def contains_accuracy(output: str, expected: str) -> float:
@@ -65,7 +66,8 @@ def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
-    return llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)]).content
+    response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
+    return str(response.content)
 
 
 if __name__ == "__main__":

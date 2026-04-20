@@ -1135,7 +1135,6 @@ class BaseEvaluator(ABC):
                 if trial_token is not None:
                     trial_context_var.reset(trial_token)
 
-        loop = asyncio.get_event_loop()
         temporary_executor = None
         submit_executor = executor
 
@@ -1146,20 +1145,18 @@ class BaseEvaluator(ABC):
             submit_executor = temporary_executor
 
         try:
-            future = loop.run_in_executor(submit_executor, call_with_config)
-            if self.timeout:
-                done, _ = await asyncio.wait(
-                    {future},
-                    timeout=self.timeout,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if not done:
+            future = submit_executor.submit(call_with_config)
+            deadline = (time.monotonic() + self.timeout) if self.timeout else None
+
+            while not future.done():
+                if deadline is not None and time.monotonic() >= deadline:
                     future.cancel()
                     error_msg = f"Function call timed out after {self.timeout}s"
                     logger.warning(error_msg)
                     return None, error_msg
-                return next(iter(done)).result(), None
-            return await future, None
+                await asyncio.sleep(0.001)
+
+            return future.result(), None
         finally:
             if temporary_executor is not None:
                 temporary_executor.shutdown(wait=False, cancel_futures=True)

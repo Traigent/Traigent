@@ -849,17 +849,17 @@ class TestHTTPTransportBenchmarks:
 
     @pytest.mark.asyncio
     async def test_benchmarks_happy_path(self, transport: HTTPTransport) -> None:
-        """Test benchmarks returns all benchmarks with example IDs."""
+        """Test benchmarks prefers the canonical datasets endpoint."""
         mock_data = {
-            "benchmarks": [
+            "datasets": [
                 {
-                    "benchmark_id": "bench_001",
+                    "dataset_id": "dataset_001",
                     "tunable_ids": ["child-age-agent-a"],
                     "example_ids": ["case_001", "case_002", "case_003"],
-                    "name": "Test Benchmark",
+                    "name": "Test Dataset",
                 }
             ],
-            "benchmarks_revision": None,
+            "datasets_revision": None,
         }
 
         mock_request = AsyncMock(return_value=mock_data)
@@ -867,7 +867,8 @@ class TestHTTPTransportBenchmarks:
             resp = await transport.benchmarks("child-age-agent-a")
 
         assert len(resp.benchmarks) == 1
-        assert resp.benchmarks[0].benchmark_id == "bench_001"
+        assert resp.benchmarks[0].dataset_id == "dataset_001"
+        assert resp.benchmarks[0].benchmark_id == "dataset_001"
         assert resp.benchmarks[0].tunable_ids == ["child-age-agent-a"]
         assert resp.benchmarks[0].example_ids == ["case_001", "case_002", "case_003"]
         assert resp.benchmarks_revision is None
@@ -875,29 +876,29 @@ class TestHTTPTransportBenchmarks:
         # Verify correct path and params
         mock_request.assert_called_once_with(
             "GET",
-            "/traigent/v1/benchmarks",
+            "/traigent/v1/datasets",
             params={"tunable_id": "child-age-agent-a"},
         )
 
     @pytest.mark.asyncio
     async def test_benchmarks_no_tunable_filter(self, transport: HTTPTransport) -> None:
-        """Test benchmarks without tunable_id filter."""
+        """Test benchmarks without tunable_id filter uses datasets endpoint."""
         mock_data = {
-            "benchmarks": [
+            "datasets": [
                 {
-                    "benchmark_id": "bench_001",
+                    "dataset_id": "dataset_001",
                     "tunable_ids": ["agent-x"],
                     "example_ids": ["q006", "q007"],
-                    "name": "Bench A",
+                    "name": "Dataset A",
                 },
                 {
-                    "benchmark_id": "bench_002",
+                    "dataset_id": "dataset_002",
                     "tunable_ids": ["agent-y"],
                     "example_ids": ["q008"],
-                    "name": "Bench B",
+                    "name": "Dataset B",
                 },
             ],
-            "benchmarks_revision": "rev_abc",
+            "datasets_revision": "rev_abc",
         }
 
         mock_request = AsyncMock(return_value=mock_data)
@@ -909,15 +910,15 @@ class TestHTTPTransportBenchmarks:
 
         # Verify no params when tunable_id is None
         mock_request.assert_called_once_with(
-            "GET", "/traigent/v1/benchmarks", params=None
+            "GET", "/traigent/v1/datasets", params=None
         )
 
     @pytest.mark.asyncio
     async def test_benchmarks_empty_response(self, transport: HTTPTransport) -> None:
         """Test benchmarks with empty response."""
         mock_data = {
-            "benchmarks": [],
-            "benchmarks_revision": None,
+            "datasets": [],
+            "datasets_revision": None,
         }
 
         mock_request = AsyncMock(return_value=mock_data)
@@ -928,15 +929,61 @@ class TestHTTPTransportBenchmarks:
         assert resp.benchmarks_revision is None
 
     @pytest.mark.asyncio
+    async def test_benchmarks_falls_back_to_legacy_endpoint(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Test benchmarks falls back to the legacy benchmarks endpoint on 404."""
+        mock_request = AsyncMock(
+            side_effect=[
+                TransportError("Not found", status_code=404),
+                {
+                    "benchmarks": [
+                        {
+                            "benchmark_id": "bench_001",
+                            "tunable_ids": ["agent-a"],
+                            "example_ids": ["ex-1"],
+                            "name": "Legacy Benchmark",
+                        }
+                    ],
+                    "benchmarks_revision": "legacy-rev",
+                },
+            ]
+        )
+
+        with patch.object(transport, "_request", mock_request):
+            resp = await transport.benchmarks("agent-a")
+
+        assert len(resp.benchmarks) == 1
+        assert resp.benchmarks[0].dataset_id == "bench_001"
+        assert resp.benchmarks_revision == "legacy-rev"
+        assert mock_request.await_args_list[0].args == (
+            "GET",
+            "/traigent/v1/datasets",
+        )
+        assert mock_request.await_args_list[0].kwargs == {
+            "params": {"tunable_id": "agent-a"}
+        }
+        assert mock_request.await_args_list[1].args == (
+            "GET",
+            "/traigent/v1/benchmarks",
+        )
+        assert mock_request.await_args_list[1].kwargs == {
+            "params": {"tunable_id": "agent-a"}
+        }
+
+    @pytest.mark.asyncio
     async def test_benchmarks_unknown_tunable_raises(
         self, transport: HTTPTransport
     ) -> None:
-        """Test benchmarks propagates 404 as TransportError."""
+        """Test benchmarks propagates 404 when both canonical and legacy routes miss."""
         with patch.object(
             transport,
             "_request",
             new_callable=AsyncMock,
-            side_effect=TransportError("Not found", status_code=404),
+            side_effect=[
+                TransportError("Not found", status_code=404),
+                TransportError("Not found", status_code=404),
+            ],
         ):
             with pytest.raises(TransportError) as exc_info:
                 await transport.benchmarks("bogus")

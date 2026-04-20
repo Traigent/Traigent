@@ -13,6 +13,7 @@ import asyncio
 import os
 import statistics
 import time
+import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -264,26 +265,28 @@ class HybridAPIEvaluator(BaseEvaluator):
         self,
         tunable_id: str | None = None,
         *,
+        dataset_id: str | None = None,
         benchmark_id: str | None = None,
     ) -> list[str]:
         """Discover available example IDs from the external service.
 
-        Fetches benchmarks via the /benchmarks endpoint and selects the
-        appropriate benchmark for the given tunable.
+        Fetches datasets via the discovery endpoint and selects the
+        appropriate dataset for the given tunable.
 
         Args:
             tunable_id: Tunable to list examples for.
                 Falls back to self._tunable_id if not provided.
-            benchmark_id: Explicit benchmark to use. Required when
-                multiple benchmarks match the tunable.
+            dataset_id: Explicit dataset to use. Required when
+                multiple datasets match the tunable.
+            benchmark_id: Deprecated alias for ``dataset_id``.
 
         Returns:
-            List of example IDs from the selected benchmark.
+            List of example IDs from the selected dataset.
 
         Raises:
             TransportError: If discovery fails.
-            ValueError: If no tunable_id is available, no benchmarks match,
-                or multiple benchmarks match without an explicit benchmark_id.
+            ValueError: If no tunable_id is available, no datasets match,
+                or multiple datasets match without an explicit dataset_id.
         """
         tid = tunable_id or self._tunable_id
         if not tid:
@@ -294,56 +297,64 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         transport = await self._get_transport()
         resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
+        if benchmark_id is not None:
+            warnings.warn(
+                "benchmark_id is deprecated; use dataset_id instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        selected_dataset_id = dataset_id or benchmark_id
 
-        # Filter benchmarks where this tunable is linked
+        # Filter datasets where this tunable is linked
         matching: list[BenchmarkEntry] = [
             entry for entry in resp.benchmarks if tid in entry.tunable_ids
         ]
 
-        # Large payload guard — check only benchmarks matched to this tunable
+        # Large payload guard — check only datasets matched to this tunable
         total_example_ids = sum(len(e.example_ids) for e in matching)
         if total_example_ids > 10000:
             logger.warning(
-                "Matched benchmarks contain %d total example_ids across %d "
-                "benchmarks for tunable %r; consider limiting dataset size",
+                "Matched datasets contain %d total example_ids across %d "
+                "datasets for tunable %r; consider limiting dataset size",
                 total_example_ids,
                 len(matching),
                 tid,
             )
 
-        # Benchmark selection logic
+        # Dataset selection logic
         if len(matching) == 0:
-            available = [e.benchmark_id for e in resp.benchmarks]
+            available = [e.dataset_id for e in resp.benchmarks]
             raise ValueError(
-                f"No benchmarks found for tunable_id={tid!r}. "
-                f"Available benchmarks: {available}"
+                f"No datasets found for tunable_id={tid!r}. "
+                f"Available datasets: {available}"
             )
         elif len(matching) == 1:
             selected = matching[0]
         else:
-            # Multiple matches
-            if benchmark_id is not None:
-                candidates = [e for e in matching if e.benchmark_id == benchmark_id]
+            if selected_dataset_id is not None:
+                candidates = [
+                    e for e in matching if e.dataset_id == selected_dataset_id
+                ]
                 if not candidates:
-                    available = [e.benchmark_id for e in matching]
+                    available = [e.dataset_id for e in matching]
                     raise ValueError(
-                        f"benchmark_id={benchmark_id!r} not found among "
-                        f"benchmarks for tunable_id={tid!r}. "
+                        f"dataset_id={selected_dataset_id!r} not found among "
+                        f"datasets for tunable_id={tid!r}. "
                         f"Available: {available}"
                     )
                 selected = candidates[0]
             else:
-                available = [e.benchmark_id for e in matching]
+                available = [e.dataset_id for e in matching]
                 raise ValueError(
-                    f"Multiple benchmarks match tunable_id={tid!r}: {available}. "
-                    f"Pass benchmark_id= to select one."
+                    f"Multiple datasets match tunable_id={tid!r}: {available}. "
+                    f"Pass dataset_id= to select one."
                 )
 
         self._benchmark_id = selected.benchmark_id
 
         logger.info(
-            "Selected benchmark %s with %d example IDs for tunable %s",
-            selected.benchmark_id,
+            "Selected dataset %s with %d example IDs for tunable %s",
+            selected.dataset_id,
             len(selected.example_ids),
             tid,
         )
@@ -742,9 +753,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for i, example in enumerate(batch):
             input_data = self._extract_input(example)
             example_id = (
-                input_data.get("example_id")
-                or input_data.get("input_id")
-                or f"ex_{i}"
+                input_data.get("example_id") or input_data.get("input_id") or f"ex_{i}"
             )
             inputs.append(
                 {
@@ -804,7 +813,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Return error results for all examples
             return [
                 HybridExampleResult(
-                    example_id=inp["example_id"],
+                    example_id=str(inp["example_id"]),
                     expected_output=self._extract_expected(batch[i]),
                     error=str(e),
                 )

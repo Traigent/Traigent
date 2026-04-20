@@ -6,10 +6,7 @@ import pytest
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
-from traigent.evaluators.metrics_tracker import (
-    CostCalculator,
-    extract_llm_metrics,
-)
+from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
 
 class MockOpenAIResponse:
@@ -103,7 +100,6 @@ class TestTokencostIntegration:
 
         # Mock cost calculation function to return specific values for this test
         def mock_calculate_cost(
-            self,
             metrics,
             model_name,
             original_prompt,
@@ -119,7 +115,7 @@ class TestTokencostIntegration:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -160,7 +156,6 @@ class TestTokencostIntegration:
 
         # Mock litellm not available - mock the CostCalculator to not calculate any cost
         def mock_calculate_cost(
-            self,
             metrics,
             model_name,
             original_prompt,
@@ -173,7 +168,7 @@ class TestTokencostIntegration:
 
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
-            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
         ):
             metrics = extract_llm_metrics(response=response, model_name=model_name)
 
@@ -194,7 +189,6 @@ class TestTokencostIntegration:
 
         # Mock litellm not available to test fallback - mock CostCalculator to not override costs
         def mock_calculate_cost(
-            self,
             metrics,
             model_name,
             original_prompt,
@@ -207,7 +201,7 @@ class TestTokencostIntegration:
 
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
-            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
         ):
             metrics = extract_llm_metrics(response=response)
 
@@ -225,7 +219,6 @@ class TestTokencostIntegration:
 
         # Mock cost calculation function to return specific values for this test
         def mock_calculate_cost(
-            self,
             metrics,
             model_name,
             original_prompt,
@@ -240,7 +233,7 @@ class TestTokencostIntegration:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -336,7 +329,6 @@ class TestLocalEvaluatorWithTokencost:
 
         # Mock cost calculation function to return specific values for this test
         def mock_calculate_cost(
-            self,
             metrics,
             model_name,
             original_prompt,
@@ -351,7 +343,7 @@ class TestLocalEvaluatorWithTokencost:
         with (
             patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
             patch("os.environ.get") as mock_env,
-            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+            patch("traigent.evaluators.metrics_tracker._calculate_cost_for_metrics", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -575,14 +567,17 @@ def test_cost_from_token_counts_openai(monkeypatch):
 def test_fallback_cost_from_prompt_response_when_no_tokens(monkeypatch):
     """If no tokens available, ensure prompt/response path computes cost via litellm functions."""
     from traigent.evaluators.metrics_tracker import extract_llm_metrics
-    from traigent.utils import cost_calculator as cc
 
     # Disable mock mode for this test
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
-    # Provide litellm functions
-    monkeypatch.setattr(cc, "TOKENCOST_AVAILABLE", True, raising=False)
+    # Provide litellm functions on the module actually used by extract_llm_metrics().
+    monkeypatch.setattr(
+        "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE",
+        True,
+        raising=False,
+    )
 
     def fake_calc_prompt(prompt, model):
         return 0.000001  # arbitrary
@@ -590,9 +585,15 @@ def test_fallback_cost_from_prompt_response_when_no_tokens(monkeypatch):
     def fake_calc_completion(resp, model):
         return 0.000002  # arbitrary
 
-    monkeypatch.setattr(cc, "calculate_prompt_cost", fake_calc_prompt, raising=False)
     monkeypatch.setattr(
-        cc, "calculate_completion_cost", fake_calc_completion, raising=False
+        "traigent.evaluators.metrics_tracker.calculate_prompt_cost",
+        fake_calc_prompt,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "traigent.evaluators.metrics_tracker.calculate_completion_cost",
+        fake_calc_completion,
+        raising=False,
     )
 
     class BareResponse:

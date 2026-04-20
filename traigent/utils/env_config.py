@@ -195,6 +195,21 @@ def get_jwt_secret() -> str:
     )
 
 
+def is_truthy(value: str | None) -> bool:
+    """Normalize an environment-variable string to a boolean.
+
+    Accepts ``"1"``, ``"true"``, ``"yes"``, ``"on"`` (case-insensitive) as
+    true. Anything else — including ``None`` and empty string — is false.
+
+    Use this at user-facing entry points (CLI wrappers, example scripts,
+    ``__main__`` modules) so the set of accepted truthy values is consistent
+    across the codebase instead of drifting per call site.
+    """
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 def is_mock_llm() -> bool:
     """Check if LLM API calls should be mocked with simulated responses.
 

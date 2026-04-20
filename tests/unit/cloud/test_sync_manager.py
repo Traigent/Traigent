@@ -35,7 +35,10 @@ class TestSyncManager:
     def sync_manager(self, mock_config: TraigentConfig) -> SyncManager:
         """Create SyncManager instance with mock config."""
         with patch("traigent.cloud.sync_manager.LocalStorageManager"):
-            manager = SyncManager(config=mock_config, api_key="tg_" + "a" * 61)
+            manager = SyncManager(
+                config=mock_config,
+                api_key="tg_" + "a" * 61,  # pragma: allowlist secret
+            )
             # Replace the real session with a mock
             manager._session = MagicMock(spec=requests.Session)
             return manager
@@ -103,7 +106,7 @@ class TestSyncManager:
             manager = SyncManager(config=mock_config, api_key="tg_" + "a" * 61)
 
             assert manager.config == mock_config
-            assert manager.api_key == "tg_" + "a" * 61
+            assert manager.api_key == "tg_" + "a" * 61  # pragma: allowlist secret
             # API key may be in X-API-Key or Authorization header
             assert "X-API-Key" in manager.headers or "Authorization" in manager.headers
             mock_storage.assert_called_once()
@@ -293,8 +296,8 @@ class TestSyncManager:
         assert result["agent"]["agent_type"] == "custom"
         assert result["agent"]["source"] == "local_import"
 
-        # Check benchmark data
-        assert result["benchmark"]["name"] == "Local Benchmark: test_function"
+        # Check dataset/benchmark compatibility payload
+        assert result["benchmark"]["name"] == "Local Dataset: test_function"
         assert result["benchmark"]["examples_count"] == 3
         assert result["benchmark"]["type"] == "custom"
 
@@ -648,6 +651,25 @@ class TestSyncManager:
 
         assert result["success"] is False
         assert "HTTP 400" in result["error"]
+
+    def test_sync_benchmark_does_not_fallback_when_datasets_route_exists(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """A 404 from an existing /datasets endpoint should not hit the legacy route."""
+        benchmark_data = {"id": "bench_123", "name": "Test Benchmark"}
+
+        sync_manager._session.post.return_value = Mock(status_code=404, text="dataset not found")
+        sync_manager._session.get.return_value = Mock(status_code=200)
+
+        result = sync_manager._sync_benchmark(benchmark_data)
+
+        assert result["success"] is False
+        assert "HTTP 404" in result["error"]
+        sync_manager._session.post.assert_called_once_with(
+            f"{sync_manager.base_url}/datasets",
+            json=benchmark_data,
+            timeout=sync_manager._request_timeout,
+        )
 
     def test_sync_experiment_success(self, sync_manager: SyncManager) -> None:
         """Test successful experiment sync."""

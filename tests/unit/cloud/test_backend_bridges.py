@@ -248,10 +248,13 @@ class TestSDKBackendBridge:
         assert "llm_response_function" in agent_data["description"]
         assert "llm_response_function tasks" in agent_data["prompt_template"]
 
-        # Check benchmark data
+        # Check dataset-backed benchmark data
         benchmark_data = backend_request.benchmark_data
+        assert "dataset_id" in benchmark_data
         assert "benchmark_id" in benchmark_data
-        assert benchmark_data["benchmark_name"] == "llm_response_function_benchmark"
+        assert benchmark_data["dataset_id"] == benchmark_data["benchmark_id"]
+        assert benchmark_data["dataset_name"] == "llm_response_function_dataset"
+        assert benchmark_data["benchmark_name"] == "llm_response_function_dataset"
         assert "llm_response_function" in benchmark_data["description"]
 
         # Check example set data
@@ -424,8 +427,12 @@ class TestSDKBackendBridge:
             sample_dataset, "test_function"
         )
 
+        assert "dataset_id" in benchmark_data
         assert "benchmark_id" in benchmark_data
-        assert benchmark_data["benchmark_name"] == "test_function_benchmark"
+        assert benchmark_data["dataset_id"] == benchmark_data["benchmark_id"]
+        assert benchmark_data["name"] == "test_function_dataset"
+        assert benchmark_data["dataset_name"] == "test_function_dataset"
+        assert benchmark_data["benchmark_name"] == "test_function_dataset"
         assert "test_function" in benchmark_data["description"]
         assert benchmark_data["type"] == "qa"  # Based on string expected_output
         assert benchmark_data["agent_type_id"] == "agent-type-1"

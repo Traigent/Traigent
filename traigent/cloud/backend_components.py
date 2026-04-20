@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from traigent.cloud.auth import AuthenticationError, AuthManager
+from traigent.cloud.auth import (
+    AuthenticationError,
+    AuthManager,
+    AuthMode,
+    UnifiedAuthConfig,
+)
 from traigent.cloud.billing import UsageTracker
 from traigent.utils.logging import get_logger
 
@@ -116,7 +121,13 @@ class BackendAuthManager:
         else:
             auth_cls = AuthManager
 
-        self.auth: AuthManager = auth_cls(api_key=api_key)
+        jwt_token = os.getenv("TRAIGENT_JWT_TOKEN")
+        if jwt_token:
+            self.auth = auth_cls(
+                config=UnifiedAuthConfig(default_mode=AuthMode.JWT_TOKEN)
+            )
+        else:
+            self.auth = auth_cls(api_key=api_key)
         self.rate_limit_calls = rate_limit_calls
         self.rate_limit_period = rate_limit_period
         self._request_times: list[float] = []
