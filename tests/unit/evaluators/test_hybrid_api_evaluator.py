@@ -1333,6 +1333,72 @@ class TestExecuteBatch:
         results = await ev._execute_batch(mock_transport, caps, {}, batch)
         assert results[0].example_id == "custom_id"
 
+    @pytest.mark.asyncio
+    async def test_uses_input_id_from_input_data(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Falls back to input_id when example_id is absent in input_data."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        ev._benchmark_id = "test-bench"
+        exec_response = _make_execute_response(
+            outputs=[{"input_id": "consultant-fridge", "output": "out"}],
+            quality_metrics=None,
+        )
+        mock_transport.execute = AsyncMock(return_value=exec_response)
+        caps = _default_capabilities(supports_evaluate=False)
+
+        example = EvaluationExample(
+            input_data={"input_id": "consultant-fridge"}
+        )
+        dataset = Dataset(examples=[example], name="test")
+        batch = list(dataset)
+
+        results = await ev._execute_batch(mock_transport, caps, {}, batch)
+        assert results[0].example_id == "consultant-fridge"
+
+    @pytest.mark.asyncio
+    async def test_two_phase_input_id_matching(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Two-phase mode matches evaluate results keyed by input_id."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            tunable_id="cap",
+            keep_alive=False,
+        )
+        exec_response = _make_execute_response(
+            outputs=[
+                {"input_id": "consultant-fridge", "output": "result_0", "output_id": "out_0"},
+            ],
+            operational_metrics={"cost_usd": 0.01, "latency_ms": 100.0},
+        )
+        eval_response = _make_evaluate_response(
+            results=[
+                {"input_id": "consultant-fridge", "metrics": {"tool_accuracy": 1.0}},
+            ]
+        )
+        mock_transport.evaluate = AsyncMock(return_value=eval_response)
+
+        example = EvaluationExample(
+            input_data={"input_id": "consultant-fridge"},
+            expected_output="expected",
+        )
+        dataset = Dataset(examples=[example], name="test")
+        batch = list(dataset)
+        inputs = [{"example_id": "consultant-fridge", "data": {"input_id": "consultant-fridge"}}]
+
+        results = await ev._evaluate_outputs(
+            mock_transport, {}, batch, inputs, exec_response
+        )
+
+        assert len(results) == 1
+        assert results[0].metrics["tool_accuracy"] == 1.0
+        assert results[0].example_id == "consultant-fridge"
+
 
 # ---------------------------------------------------------------------------
 # _evaluate_outputs tests
