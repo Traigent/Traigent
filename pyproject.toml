@@ -39,7 +39,7 @@ dependencies = [
     "aiohttp>=3.13.4,<4.0",  # CVE-2026-34513..34525 fixed in 3.13.4 (see #677)
     "requests>=2.28.0",  # Required by Langfuse integration sync fallback
     "jsonschema>=4.0.0",
-    "cryptography>=46.0.5",  # CVE-2026-26007 fix
+    "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
     "backoff>=2.2.0",
     "litellm>=1.83.0,<2.0",  # CVE-2026-35029/35030, GHSA-69x8-hrgq-fjj8 fixed in 1.83.0 (see #652)
     "rank-bm25",
