@@ -30,7 +30,7 @@ jobs:
         from pathlib import Path
 
         SKIP_DIRS = {".archive", "_archived", ".release_review", ".post_release_recommendation_fixes",
-                     "node_modules", ".git", "venv", ".venv", "configs", ".claude", "local"}
+                     "node_modules", ".git", "venv", ".venv", "configs", ".claude", "local", "_bmad"}
 
         errors = []
         for md_file in Path(".").rglob("*.md"):
