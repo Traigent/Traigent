@@ -707,8 +707,39 @@ class SessionOperations:
         self._validate_non_empty_string(session_id, "session_id")
         logger.info(f"Finalizing optimization session {session_id}")
 
-        # Get session mapping for experiment_run_id
+        # Get session mapping for experiment_run_id, or reconstruct it from the
+        # active-session metadata if live tracking had succeeded but the in-memory
+        # bridge entry was lost (e.g. after a partial restart or lost-reference
+        # race). Finalization is a one-shot remote call — losing it silently on
+        # a recoverable-metadata path would leave the session flagged as never
+        # finalized.
         mapping = self.client.session_bridge.get_session_mapping(session_id)
+        if mapping is None:
+            with self.client._active_sessions_lock:
+                active_session = self.client._active_sessions.get(session_id)
+            if active_session is not None:
+                metadata = dict(getattr(active_session, "metadata", {}) or {})
+                experiment_id = metadata.get("experiment_id")
+                experiment_run_id = metadata.get("experiment_run_id")
+                if experiment_id and experiment_run_id:
+                    mapping = self.client.session_bridge.create_session_mapping(
+                        session_id=session_id,
+                        experiment_id=str(experiment_id),
+                        experiment_run_id=str(experiment_run_id),
+                        function_name=str(
+                            getattr(active_session, "function_name", "unknown_function")
+                        ),
+                        configuration_space=dict(
+                            getattr(active_session, "configuration_space", {}) or {}
+                        ),
+                        objectives=list(
+                            getattr(active_session, "objectives", []) or []
+                        ),
+                    )
+                    logger.info(
+                        "Recovered session mapping for %s from active session metadata",
+                        session_id,
+                    )
 
         # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize)
         finalized_via_api = False
