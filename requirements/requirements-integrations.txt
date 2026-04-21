@@ -14,7 +14,7 @@ langchain-google-genai>=2.1.4
 openai>=1.0.0
 anthropic>=0.18.0
 rank_bm25>=0.2.2
-mlflow>=3.8.1
+mlflow>=3.11.1,<4.0
 wandb>=0.15.0
 python-dotenv>=1.0.0
 
