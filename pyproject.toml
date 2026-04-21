@@ -80,7 +80,7 @@ integrations = [
     "google-genai>=0.8.0",  # Google's forward SDK for direct Gemini support
     "google-generativeai>=0.3.0",  # Kept for langchain-google-genai compatibility
     "rank_bm25>=0.2.2",
-    "mlflow>=3.11.1,<4.0",  # Defensive bump — Aikido flagged tarfile.extractall CVE in <=3.8.1 (see #616)
+    "mlflow>=3.11.1,<4.0",  # Defensive bump — Aikido flagged tarfile.extractall path-traversal in mlflow <3.9.0 (see #616)
     "wandb>=0.15.0",
     "python-dotenv>=1.0.0",
     "boto3>=1.28.0",
