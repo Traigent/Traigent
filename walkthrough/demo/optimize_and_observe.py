@@ -34,6 +34,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,7 @@ class RuntimeSettings:
     scale: ScalePreset
     observability_mode: str
     trace_name: str
+    session_id: str
     environment: str
     tags: tuple[str, ...]
     post_runs: int
@@ -184,8 +186,12 @@ class InMemoryTraceCollector:
         observation_total = 0
         optimization_traces = 0
         applied_config_traces = 0
+        session_ids: set[str] = set()
 
         for trace in traces:
+            session_id = trace.get("session_id")
+            if session_id:
+                session_ids.add(str(session_id))
             observations = self._walk_observations(trace)
             observation_total += len(observations)
             phases = {
@@ -203,6 +209,7 @@ class InMemoryTraceCollector:
             "observation_count": observation_total,
             "optimization_traces": optimization_traces,
             "applied_config_traces": applied_config_traces,
+            "session_ids": sorted(session_ids),
             "trace_ids": sorted(self._latest_traces.keys()),
         }
 
@@ -307,6 +314,7 @@ def build_runtime(args: argparse.Namespace) -> RuntimeSettings:
 
     post_runs = args.post_runs if args.post_runs is not None else scale.post_runs
     trace_name = f"walkthrough-optimize-observe-{mode}-{args.scale}"
+    session_id = f"{trace_name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     config_space = {
         "model": list(models),
         "temperature": list(scale.temperatures),
@@ -318,6 +326,7 @@ def build_runtime(args: argparse.Namespace) -> RuntimeSettings:
         scale=scale,
         observability_mode=args.observability,
         trace_name=trace_name,
+        session_id=session_id,
         environment=f"walkthrough-{mode}",
         tags=("walkthrough", "optimize-observe", mode, f"scale:{args.scale}"),
         post_runs=max(0, post_runs),
@@ -363,9 +372,7 @@ def configure_runtime(
         )
     else:
         os.environ.pop("TRAIGENT_MOCK_LLM", None)
-    traigent.configure(
-        logging_level=os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper()
-    )
+    traigent.configure(logging_level=os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper())
     traigent.initialize(
         config=TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
     )
@@ -378,9 +385,7 @@ def build_observability_client(
     explicit_backend = explicit_backend_observability_available()
 
     requested = runtime.observability_mode
-    use_backend = requested == "backend" or (
-        requested == "auto" and explicit_backend
-    )
+    use_backend = requested == "backend" or (requested == "auto" and explicit_backend)
 
     if use_backend and not explicit_backend:
         raise SystemExit(
@@ -531,6 +536,7 @@ def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
     @observe(
         name=runtime.trace_name,
         client=client,
+        session_id=runtime.session_id,
         environment=runtime.environment,
         tags=list(runtime.tags),
         metadata={
@@ -579,8 +585,10 @@ def print_runtime_summary(runtime: RuntimeSettings, obs_mode: str) -> None:
     print(f"Scale: {runtime.scale_name}")
     print(f"Observability sink: {obs_mode}")
     print(f"Trace name: {runtime.trace_name}")
+    print(f"Session ID: {runtime.session_id}")
     print(f"Dataset size: {len(runtime.eval_dataset)} examples")
     print(f"Post-optimization runs: {runtime.post_runs}")
+    print(f"Expected emitted traces: {expected_trace_count(runtime)}")
     print_optimization_config(OBJECTIVES, runtime.config_space)
     if runtime.mode == "real":
         print_cost_estimate(
@@ -595,8 +603,17 @@ def print_mock_scaling_hint() -> None:
     print("\nSuggested mock-mode scaling runs:")
     print("  python walkthrough/demo/optimize_and_observe.py --mode mock --scale tiny")
     print("  python walkthrough/demo/optimize_and_observe.py --mode mock --scale small")
-    print("  python walkthrough/demo/optimize_and_observe.py --mode mock --scale medium")
+    print(
+        "  python walkthrough/demo/optimize_and_observe.py --mode mock --scale medium"
+    )
     print("  python walkthrough/demo/optimize_and_observe.py --mode mock --scale large")
+
+
+def expected_trace_count(runtime: RuntimeSettings) -> int:
+    return runtime.scale.max_trials * len(runtime.eval_dataset) + min(
+        runtime.post_runs,
+        len(runtime.eval_dataset),
+    )
 
 
 async def main() -> None:
@@ -678,9 +695,13 @@ async def main() -> None:
             summary = collector.summarize()
             print("\nIn-memory observability summary:")
             print(f"  traces captured: {summary['trace_count']}")
+            print(f"  expected traces: {expected_trace_count(runtime)}")
+            print(f"  sessions captured: {len(summary['session_ids'])}")
             print(f"  observations captured: {summary['observation_count']}")
             print(f"  optimization traces: {summary['optimization_traces']}")
             print(f"  applied-config traces: {summary['applied_config_traces']}")
+            if summary["session_ids"]:
+                print(f"  session ids: {', '.join(summary['session_ids'])}")
             if summary["trace_ids"]:
                 preview = ", ".join(summary["trace_ids"][:5])
                 print(f"  trace ids: {preview}")
@@ -688,6 +709,8 @@ async def main() -> None:
             print("\nBackend observability delivery was enabled.")
             print("Search for these filters in the frontend observability pages:")
             print(f"  trace name: {runtime.trace_name}")
+            print(f"  session id: {runtime.session_id}")
+            print(f"  expected traces: {expected_trace_count(runtime)}")
             print(f"  environment: {runtime.environment}")
             print(f"  tags: {', '.join(runtime.tags)}")
     finally:
