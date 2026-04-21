@@ -82,6 +82,11 @@ class BackendSessionManager:
         self._backend_tracking_enabled: bool = True
         self._backend_disabled_reason: SessionCreationFailureReason | None = None
 
+        # Tracks (session_id, trial_id) pairs that have already been registered
+        # with the backend, so retries of submit_trial don't re-register and
+        # trip "already started" errors on the backend side.
+        self._started_trials: set[tuple[str, str]] = set()
+
     @property
     def backend_tracking_enabled(self) -> bool:
         """Whether remote backend tracking is active for this run."""
@@ -603,21 +608,28 @@ class BackendSessionManager:
         status = status_mapping.get(trial_result.status, "FAILED")
 
         try:
-            try:
-                start_result = self._backend_client.register_trial_start(
-                    session_id=session_id,
-                    trial_id=trial_result.trial_id,
-                    config=trial_result.config,
-                )
-                if inspect.isawaitable(start_result):
-                    await start_result
-            except Exception as exc:
-                logger.debug(
-                    "Trial start registration failed for session %s trial %s: %s",
-                    session_id,
-                    trial_result.trial_id,
-                    exc,
-                )
+            trial_key = (session_id, trial_result.trial_id)
+            if trial_key not in self._started_trials:
+                try:
+                    start_call = self._backend_client.register_trial_start(
+                        session_id=session_id,
+                        trial_id=trial_result.trial_id,
+                        config=trial_result.config,
+                    )
+                    start_ok: Any = (
+                        await start_call
+                        if inspect.isawaitable(start_call)
+                        else start_call
+                    )
+                    if start_ok:
+                        self._started_trials.add(trial_key)
+                except Exception as exc:
+                    logger.debug(
+                        "Trial start registration failed for session %s trial %s: %s",
+                        session_id,
+                        trial_result.trial_id,
+                        exc,
+                    )
 
             submitted_result = self._backend_client._submit_trial_result_via_session(
                 session_id=session_id,

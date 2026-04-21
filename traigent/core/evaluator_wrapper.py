@@ -428,8 +428,14 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                 func, config, example
                             )
                         else:
-                            example_result = self.custom_evaluator(
-                                func, config, example
+                            # Run blocking custom evaluators off the main event loop so
+                            # concurrent async tasks (progress callbacks, heartbeats)
+                            # are not starved while long-running per-example work runs.
+                            example_result = await asyncio.to_thread(
+                                self.custom_evaluator,
+                                func,
+                                config,
+                                example,
                             )
                         per_example_duration = time.time() - per_example_start
 
