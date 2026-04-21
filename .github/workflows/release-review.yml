@@ -58,7 +58,7 @@ jobs:
           TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[dev]"
-      - name: Black + isort + Ruff + MyPy
+      - name: Black + isort + Ruff + MyPy + dep-floor-drift
         id: lint_type_run
         continue-on-error: true
         run: |
@@ -66,6 +66,7 @@ jobs:
           isort --check-only --diff traigent/ traigent_validation/
           ruff check traigent/ traigent_validation/ --output-format=github
           mypy traigent/ traigent_validation/ --install-types --non-interactive
+          python scripts/ci/check_dep_floor_drift.py
       - name: Capture lint/type status
         id: lint_type_status
         if: always()
