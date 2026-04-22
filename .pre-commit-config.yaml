@@ -29,7 +29,7 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        exclude: .*\.lock$|package-lock\.json$|.*\.example$|\.secrets\.baseline$|\.venv/
+        exclude: .*\.lock$|package-lock\.json$|pnpm-lock\.yaml$|.*\.example$|\.secrets\.baseline$|\.venv/
 
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -88,6 +88,12 @@ repos:
         entry: scripts/hooks/check-cost-strictness.sh
         pass_filenames: false
         always_run: true
+      - id: check-dep-floor-drift
+        name: Check dependency floor drift between pyproject.toml and requirements/
+        language: python
+        entry: python scripts/ci/check_dep_floor_drift.py
+        pass_filenames: false
+        files: '^(pyproject\.toml|requirements/.*\.txt)$'
       - id: check-ignored-files
         name: Check for ignored files staged for commit
         language: script

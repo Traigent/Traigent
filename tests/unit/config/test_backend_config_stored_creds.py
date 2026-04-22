@@ -265,6 +265,27 @@ class TestCliAuthPayload:
     """CLI _authenticate_with_backend() should send write permissions and User-Agent."""
 
     @pytest.mark.asyncio
+    async def test_key_creation_requires_explicit_tenant_id(self):
+        """CLI auth must not silently create API keys against a server-default tenant."""
+        from traigent.cli.auth_commands import TraigentAuthCLI
+        from traigent.cloud.auth import AuthenticationError
+
+        with (
+            patch.dict(
+                "os.environ", {"TRAIGENT_PROJECT_ID": "project_alpha"}, clear=True
+            ),
+            patch("aiohttp.ClientSession") as mock_session,
+        ):
+            cli = object.__new__(TraigentAuthCLI)
+            cli.backend_api_url = "http://test/api/v1"
+            cli.backend_url = "http://test"
+
+            with pytest.raises(AuthenticationError, match="TRAIGENT_TENANT_ID"):
+                await cli._authenticate_with_backend("a@b.com", "pass123")
+
+        mock_session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_key_creation_includes_write_permissions_and_user_agent(self):
         """POST /keys payload must include write scopes; both requests need User-Agent."""
         from traigent.cli.auth_commands import TraigentAuthCLI
@@ -316,6 +337,14 @@ class TestCliAuthPayload:
                 pass
 
         with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TRAIGENT_TENANT_ID": "tenant_acme",
+                    "TRAIGENT_PROJECT_ID": "project_alpha",
+                },
+                clear=True,
+            ),
             patch("aiohttp.ClientSession", return_value=FakeSession()),
             patch.object(
                 TraigentAuthCLI,
@@ -332,12 +361,15 @@ class TestCliAuthPayload:
         # Verify login request (first POST) has User-Agent
         login_call = post_calls[0]
         assert login_call["headers"]["User-Agent"] == "Traigent-SDK-CLI/1.0"
+        assert login_call["headers"]["X-Tenant-Id"] == "tenant_acme"
 
-        # Verify key creation request (second POST) has User-Agent + write permissions
+        # Verify key creation request has User-Agent, tenant context, and write permissions.
         key_call = post_calls[1]
         assert key_call["headers"]["User-Agent"] == "Traigent-SDK-CLI/1.0"
+        assert key_call["headers"]["X-Tenant-Id"] == "tenant_acme"
 
         payload = key_call["json"]
+        assert payload["project_id"] == "project_alpha"
         assert "permissions" in payload
         perms = payload["permissions"]
         assert "experiment.write" in perms
@@ -398,6 +430,6 @@ class TestCentralizedCredentialHints:
         ):
             BackendConfig.get_api_key()
 
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
+        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
+            f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
+        )
