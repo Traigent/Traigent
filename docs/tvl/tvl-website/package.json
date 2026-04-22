@@ -94,7 +94,9 @@
       "wouter@3.7.1": "patches/wouter@3.7.1.patch"
     },
     "overrides": {
-      "qs": "6.14.1",
+      "qs": "6.14.2",
+      "lodash": "4.18.1",
+      "lodash-es": "4.18.1",
       "tailwindcss>nanoid": "3.3.7"
     }
   }
