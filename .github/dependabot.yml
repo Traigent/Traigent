@@ -70,7 +70,6 @@ updates:
       api-framework:
         patterns:
           - "pydantic*"
-          - "pydantic-settings*"
           - "aiohttp*"
           - "httpx*"
           - "requests*"
@@ -125,19 +124,18 @@ updates:
       - dependency-name: "anthropic"
         update-types: ["version-update:semver-major"]
       # LangChain has shipped minor-version breaking changes (1.x → 2.x);
-      # hold both major and minor for manual review.
-      - dependency-name: "langchain"
+      # hold both major and minor for manual review. Wildcards cover
+      # langchain-openai, langchain-anthropic, langchain-text-splitters,
+      # langchain-google-genai, etc. langsmith is bundled with langchain
+      # in the group pattern, so it gets the same hold.
+      - dependency-name: "langchain*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: "langchain-core"
+      - dependency-name: "langsmith*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: "langchain-community"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      # OpenTelemetry: historically non-semver-compatible jumps.
+      # OpenTelemetry: historically non-semver-compatible jumps. The wildcard
+      # covers opentelemetry-api, opentelemetry-sdk, and every instrumentation
+      # package in one rule.
       - dependency-name: "opentelemetry-*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "opentelemetry-api"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "opentelemetry-sdk"
         update-types: ["version-update:semver-major"]
 
   # GitHub Actions — monthly, majors held for manual audit.
