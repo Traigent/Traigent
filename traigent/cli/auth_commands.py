@@ -315,9 +315,8 @@ class TraigentAuthCLI:
         login_headers = {
             "Content-Type": "application/json",
             "User-Agent": "Traigent-SDK-CLI/1.0",
+            TENANT_HEADER_NAME: tenant_id,
         }
-        if tenant_id:
-            login_headers[TENANT_HEADER_NAME] = tenant_id
 
         console.print(f"[dim]POST {login_url}[/dim]")
 
@@ -406,9 +405,8 @@ class TraigentAuthCLI:
             "Authorization": f"Bearer {jwt_token}",
             "Content-Type": "application/json",
             "User-Agent": "Traigent-SDK-CLI/1.0",
+            TENANT_HEADER_NAME: tenant_id,
         }
-        if tenant_id:
-            key_headers[TENANT_HEADER_NAME] = tenant_id
 
         console.print(f"\n[dim]POST {api_key_url}[/dim]")
         console.print(f"[dim]Creating API key: {key_name}[/dim]")
