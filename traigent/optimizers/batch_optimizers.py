@@ -249,10 +249,11 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
             # Evaluate all results
             expected_outputs = [ex.expected_output for ex in dataset.examples]
-            evaluation_result = await evaluator.evaluate(
+            evaluator_impl: Any = evaluator
+            evaluation_result = await evaluator_impl.evaluate(
                 all_invocation_results,
                 expected_outputs,
-                dataset,  # type: ignore[arg-type]
+                dataset,
             )
 
             # Calculate composite score
@@ -466,10 +467,11 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
             # Multi-objective evaluation
             expected_outputs = [ex.expected_output for ex in dataset.examples]
-            evaluation_result = await evaluator.evaluate(
+            evaluator_impl: Any = evaluator
+            evaluation_result = await evaluator_impl.evaluate(
                 all_invocation_results,
                 expected_outputs,
-                dataset,  # type: ignore[arg-type]
+                dataset,
             )
 
             # Extract objective scores
@@ -728,10 +730,11 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
             # Evaluate results
             expected_outputs = [ex.expected_output for ex in dataset.examples]
-            evaluation_result = await evaluator.evaluate(
+            evaluator_impl: Any = evaluator
+            evaluation_result = await evaluator_impl.evaluate(
                 all_invocation_results,
                 expected_outputs,
-                dataset,  # type: ignore[arg-type]
+                dataset,
             )
 
             # Calculate metrics for adaptive sizing

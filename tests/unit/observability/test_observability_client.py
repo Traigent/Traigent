@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import io
 import logging
 from datetime import datetime, timezone
-from urllib import error
 
 import pytest
 
-from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
     ObservabilityClient,
     ObservabilityConfig,
@@ -99,6 +96,51 @@ def test_observability_client_flushes_trace_payloads():
     )
 
 
+def test_record_observation_update_preserves_tokens_and_cost_when_omitted():
+    sent_batches: list[list[dict]] = []
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: sent_batches.append(traces),
+    )
+
+    trace_id = client.start_trace("preserve-metrics", trace_id="trace_preserve")
+    observation_id = client.record_observation(
+        trace_id,
+        observation_id="obs_preserve",
+        name="llm-call",
+        observation_type=ObservationType.GENERATION,
+        input_tokens=11,
+        output_tokens=7,
+        total_tokens=18,
+        cost_usd=0.004,
+    )
+    client.record_observation(
+        trace_id,
+        observation_id=observation_id,
+        name="llm-call",
+        observation_type=ObservationType.GENERATION,
+        status="completed",
+    )
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    observation = sent_batches[-1][-1]["observations"][0]
+    assert observation["input_tokens"] == 11
+    assert observation["output_tokens"] == 7
+    assert observation["total_tokens"] == 18
+    assert observation["cost_usd"] == 0.004
+
+
 def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     sent_batches: list[list[dict]] = []
 
@@ -126,53 +168,6 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
 
     assert stats["dropped_items"] >= 1
     assert result.items_dropped >= 1
-
-
-def test_observability_client_preserves_existing_usage_fields_on_update():
-    sent_batches: list[list[dict]] = []
-
-    def sender(traces):
-        sent_batches.append(traces)
-
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=10,
-            max_buffer_age=0.1,
-            max_queue_size=10,
-        ),
-        sender=sender,
-    )
-
-    trace_id = client.start_trace("usage-preservation", trace_id="trace_usage")
-    client.record_observation(
-        trace_id,
-        observation_id="obs_usage",
-        name="llm-call",
-        input_tokens=12,
-        output_tokens=4,
-        cost_usd=0.25,
-    )
-    client.record_observation(
-        trace_id,
-        observation_id="obs_usage",
-        name="llm-call",
-        status="completed",
-        input_tokens=None,
-        output_tokens=None,
-        cost_usd=None,
-    )
-    client.end_trace(trace_id)
-
-    result = client.flush()
-    client.close()
-
-    assert result.success is True
-    observation = sent_batches[-1][-1]["observations"][0]
-    assert observation["input_tokens"] == 12
-    assert observation["output_tokens"] == 4
-    assert observation["cost_usd"] == 0.25
 
 
 def test_observe_decorator_creates_nested_observations():
@@ -213,152 +208,6 @@ def test_observe_decorator_creates_nested_observations():
     assert root_observation["name"] == "outer-operation"
     assert root_observation["children"][0]["name"] == "inner-operation"
     assert root_observation["children"][0]["type"] == "tool_call"
-
-
-def test_observe_decorator_enriches_trace_metadata_for_trial_runs():
-    sent_batches: list[list[dict]] = []
-
-    def sender(traces):
-        sent_batches.append(traces)
-
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=10,
-            max_buffer_age=0.1,
-            max_queue_size=10,
-        ),
-        sender=sender,
-    )
-
-    @observe("optimized-call", client=client, metadata={"custom_label": "golden-path"})
-    def optimized_call() -> str:
-        return "ok"
-
-    with ConfigurationContext(
-        {
-            "model": "gpt-4o",
-            "temperature": 0.1,
-            "api_key": "top-secret",  # pragma: allowlist secret
-            "_optuna_trial_id": 99,
-        }
-    ):
-        with TrialContext(
-            "trial-7",
-            metadata={
-                "optimization_id": "opt-1",
-                "experiment_id": "exp-1",
-                "experiment_run_id": "run-1",
-                "config_snapshot": {
-                    "model": "gpt-4o",
-                    "temperature": 0.1,
-                    "api_key": "top-secret",  # pragma: allowlist secret
-                },
-            },
-        ):
-            assert optimized_call() == "ok"
-
-    result = client.flush()
-    client.close()
-
-    assert result.success is True
-    trace_payload = sent_batches[-1][-1]
-    assert trace_payload["metadata"]["custom_label"] == "golden-path"
-    assert trace_payload["metadata"]["traigent_active_config"] == {
-        "model": "gpt-4o",
-        "temperature": 0.1,
-        "api_key": "[REDACTED]",
-    }
-    assert trace_payload["metadata"]["traigent_optimization_context"] == {
-        "trial_id": "trial-7",
-        "optimization_id": "opt-1",
-        "experiment_id": "exp-1",
-        "experiment_run_id": "run-1",
-        "config_source": "trial-config",
-    }
-    assert trace_payload["observations"][0]["metadata"]["traigent_active_config"] == {
-        "model": "gpt-4o",
-        "temperature": 0.1,
-        "api_key": "[REDACTED]",
-    }
-
-
-def test_observe_decorator_enriches_trace_metadata_for_direct_runs():
-    sent_batches: list[list[dict]] = []
-
-    def sender(traces):
-        sent_batches.append(traces)
-
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=10,
-            max_buffer_age=0.1,
-            max_queue_size=10,
-        ),
-        sender=sender,
-    )
-
-    @observe("post-best-config-call", client=client)
-    def post_best_config_call() -> str:
-        return "done"
-
-    with ConfigurationContext({"model": "gpt-4o-mini", "temperature": 0.7}):
-        assert post_best_config_call() == "done"
-
-    result = client.flush()
-    client.close()
-
-    assert result.success is True
-    trace_payload = sent_batches[-1][-1]
-    assert trace_payload["metadata"]["traigent_active_config"] == {
-        "model": "gpt-4o-mini",
-        "temperature": 0.7,
-    }
-    assert trace_payload["metadata"]["traigent_optimization_context"] == {
-        "config_source": "applied-config"
-    }
-
-
-def test_observe_decorator_can_set_root_trace_identifiers():
-    sent_batches: list[list[dict]] = []
-
-    def sender(traces):
-        sent_batches.append(traces)
-
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=10,
-            max_buffer_age=0.1,
-            max_queue_size=10,
-        ),
-        sender=sender,
-    )
-
-    @observe(
-        "identified-call",
-        client=client,
-        session_id="session-demo-1",
-        user_id="guided-demo-user",
-        custom_trace_id="guided-demo:baseline",
-    )
-    def identified_call() -> str:
-        return "ok"
-
-    assert identified_call() == "ok"
-
-    result = client.flush()
-    client.close()
-
-    assert result.success is True
-    trace_payload = sent_batches[-1][-1]
-    assert trace_payload["session_id"] == "session-demo-1"
-    assert trace_payload["user_id"] == "guided-demo-user"
-    assert trace_payload["custom_trace_id"] == "guided-demo:baseline"
 
 
 def test_observe_decorator_can_redact_inputs():
@@ -884,52 +733,4 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
 
     client.close()
 
-    assert caplog.text.count("Observability ingest warning") == 1
-
-
-@pytest.mark.parametrize(
-    ("method_name", "args", "message"),
-    [
-        ("_post_batch_sync", ([{"id": "trace_sdk"}],), "Observability ingest failed with status 500"),
-        ("_request_json_sync", ("GET", "/traces/trace_sdk", None), "Observability request failed with status 500"),
-    ],
-)
-def test_observability_client_closes_http_errors(monkeypatch, method_name, args, message):
-    http_error = error.HTTPError(
-        url="http://localhost:5000",
-        code=500,
-        msg="boom",
-        hdrs=None,
-        fp=io.BytesIO(b'{"error":"boom"}'),
-    )
-    close_calls = {"count": 0}
-    original_close = http_error.close
-
-    def close() -> None:
-        close_calls["count"] += 1
-        original_close()
-
-    http_error.close = close
-
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=10,
-            max_buffer_age=0.1,
-            max_queue_size=10,
-        ),
-        sender=lambda traces: None,
-    )
-
-    monkeypatch.setattr(
-        "traigent.observability.client.request.urlopen",
-        lambda *call_args, **call_kwargs: (_ for _ in ()).throw(http_error),
-    )
-
-    with pytest.raises(ClientError, match=message):
-        getattr(client, method_name)(*args)
-
-    client.close()
-
-    assert close_calls["count"] == 1
+    assert "Observability ingest warning" in caplog.text

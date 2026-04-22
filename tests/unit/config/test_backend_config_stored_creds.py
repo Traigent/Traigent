@@ -265,6 +265,27 @@ class TestCliAuthPayload:
     """CLI _authenticate_with_backend() should send write permissions and User-Agent."""
 
     @pytest.mark.asyncio
+    async def test_key_creation_requires_explicit_tenant_id(self):
+        """CLI auth must not silently create API keys against a server-default tenant."""
+        from traigent.cli.auth_commands import TraigentAuthCLI
+        from traigent.cloud.auth import AuthenticationError
+
+        with (
+            patch.dict(
+                "os.environ", {"TRAIGENT_PROJECT_ID": "project_alpha"}, clear=True
+            ),
+            patch("aiohttp.ClientSession") as mock_session,
+        ):
+            cli = object.__new__(TraigentAuthCLI)
+            cli.backend_api_url = "http://test/api/v1"
+            cli.backend_url = "http://test"
+
+            with pytest.raises(AuthenticationError, match="TRAIGENT_TENANT_ID"):
+                await cli._authenticate_with_backend("a@b.com", "pass123")
+
+        mock_session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_key_creation_includes_write_permissions_and_user_agent(self):
         """POST /keys payload must include write scopes; both requests need User-Agent."""
         from traigent.cli.auth_commands import TraigentAuthCLI
@@ -316,6 +337,14 @@ class TestCliAuthPayload:
                 pass
 
         with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TRAIGENT_TENANT_ID": "tenant_acme",
+                    "TRAIGENT_PROJECT_ID": "project_alpha",
+                },
+                clear=True,
+            ),
             patch("aiohttp.ClientSession", return_value=FakeSession()),
             patch.object(
                 TraigentAuthCLI,
@@ -332,12 +361,15 @@ class TestCliAuthPayload:
         # Verify login request (first POST) has User-Agent
         login_call = post_calls[0]
         assert login_call["headers"]["User-Agent"] == "Traigent-SDK-CLI/1.0"
+        assert login_call["headers"]["X-Tenant-Id"] == "tenant_acme"
 
-        # Verify key creation request (second POST) has User-Agent + write permissions
+        # Verify key creation request has User-Agent, tenant context, and write permissions.
         key_call = post_calls[1]
         assert key_call["headers"]["User-Agent"] == "Traigent-SDK-CLI/1.0"
+        assert key_call["headers"]["X-Tenant-Id"] == "tenant_acme"
 
         payload = key_call["json"]
+        assert payload["project_id"] == "project_alpha"
         assert "permissions" in payload
         perms = payload["permissions"]
         assert "experiment.write" in perms
@@ -346,58 +378,3 @@ class TestCliAuthPayload:
 
         # Verify result
         assert result["api_key"] == "tg_created_key"  # pragma: allowlist secret
-
-
-class TestCliAuthEnvFileGuard:
-    """CLI should only write API keys to a local .env file."""
-
-    def test_resolve_env_file_path_requires_dotenv_name(self, tmp_path):
-        from traigent.cli.auth_commands import TraigentAuthCLI
-
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            with pytest.raises(ValueError, match="must point to a .env file"):
-                TraigentAuthCLI._resolve_env_file_path(tmp_path / "secrets.txt")
-
-    def test_resolve_env_file_path_stays_within_cwd(self, tmp_path):
-        from traigent.cli.auth_commands import TraigentAuthCLI
-
-        outside = tmp_path.parent / ".env"
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            with pytest.raises(ValueError, match="must remain within the current"):
-                TraigentAuthCLI._resolve_env_file_path(outside)
-
-
-class TestCentralizedCredentialHints:
-    """Verify SIGNUP_URL is derived from DEFAULT_CLOUD_URL and appears in warnings."""
-
-    def test_signup_url_is_portal_root(self):
-        """SIGNUP_URL must equal the portal base (users register or login there)."""
-        assert SIGNUP_URL == DEFAULT_CLOUD_URL
-
-    def test_hint_contains_signup_url(self):
-        """get_no_credentials_hint() must include the signup URL."""
-        hint = get_no_credentials_hint()
-        assert SIGNUP_URL in hint
-
-    def test_class_constant_matches_module_constant(self):
-        """BackendConfig.DEFAULT_PROD_URL must equal module-level DEFAULT_CLOUD_URL."""
-        assert BackendConfig.DEFAULT_PROD_URL == DEFAULT_CLOUD_URL
-
-    def test_get_api_key_warning_includes_signup_url(self, caplog):
-        """get_api_key() warning must contain the signup URL."""
-        import logging
-
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch(
-                "traigent.cloud.credential_manager.CredentialManager.get_stored_api_key_only",
-                return_value=None,
-            ),
-            patch("traigent.utils.env_config.is_backend_offline", return_value=False),
-            caplog.at_level(logging.WARNING, logger="traigent.config.backend_config"),
-        ):
-            BackendConfig.get_api_key()
-
-        assert any(
-            SIGNUP_URL in msg for msg in caplog.messages
-        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"

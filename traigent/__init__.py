@@ -52,6 +52,7 @@ __version__ = get_version()
 __author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
 
+# Multi-agent workflow cost tracking (DTO hardening)
 from traigent.admin import (
     EnterpriseAdminClient,
     EnterpriseAdminConfig,
@@ -131,6 +132,8 @@ from traigent.api.validation_protocol import (
 from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
+from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
+from traigent.cloud.dtos import MeasuresDict
 
 # Thread context helpers
 from traigent.config.context import copy_context_to_thread, get_trial_context
@@ -141,7 +144,16 @@ from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
-from traigent.core_metrics import CoreMetricsClient, CoreMetricsConfig
+from traigent.core_metrics import (
+    CoreEntityCountsDTO,
+    CoreExperimentTrendDTO,
+    CoreMetricsClient,
+    CoreMetricsConfig,
+    CoreMetricsOverviewDTO,
+    DailyCountPointDTO,
+    FineTuningExportDTO,
+    MeasureAggregateSummaryDTO,
+)
 from traigent.evaluation import (
     AnnotationQueueDTO,
     AnnotationQueueItemDTO,
@@ -192,16 +204,18 @@ from traigent.observability import (
     observe,
     set_default_observability_client,
 )
-from traigent.projects import ProjectManagementClient, ProjectManagementConfig
+from traigent.projects import (
+    ProjectDTO,
+    ProjectListResponse,
+    ProjectManagementClient,
+    ProjectManagementConfig,
+)
 from traigent.prompts import (
     ChatPromptMessage,
     PromptDetail,
     PromptListResponse,
     PromptManagementClient,
     PromptManagementConfig,
-    PromptPlaygroundConfig,
-    PromptPlaygroundResult,
-    PromptPlaygroundTokenUsage,
     PromptSummary,
     PromptType,
     PromptVersionRecord,
@@ -335,21 +349,20 @@ __all__ = [
     "OptimizationState",
     # Thread context helpers
     "copy_context_to_thread",
-    "CoreMetricsClient",
-    "CoreMetricsConfig",
+    # Multi-agent workflow cost tracking (DTO hardening)
     "EnterpriseAdminClient",
     "EnterpriseAdminConfig",
-    "ObservabilityClient",
-    "ObservabilityConfig",
-    "ProjectManagementClient",
-    "ProjectManagementConfig",
-    "EvaluationClient",
-    "EvaluationConfig",
-    "PromptManagementClient",
-    "PromptManagementConfig",
-    "PromptPlaygroundConfig",
-    "PromptPlaygroundResult",
-    "PromptPlaygroundTokenUsage",
+    "AgentCostBreakdown",
+    "WorkflowCostSummary",
+    "MeasuresDict",
+    "CoreMetricsClient",
+    "CoreMetricsConfig",
+    "CoreEntityCountsDTO",
+    "CoreExperimentTrendDTO",
+    "CoreMetricsOverviewDTO",
+    "DailyCountPointDTO",
+    "FineTuningExportDTO",
+    "MeasureAggregateSummaryDTO",
     "SSOProviderType",
     "TenantDTO",
     "TenantListResponse",
@@ -358,6 +371,8 @@ __all__ = [
     "TenantMembershipRole",
     "TenantMembershipStatus",
     "TenantSSOConfigDTO",
+    "EvaluationClient",
+    "EvaluationConfig",
     "AnnotationQueueDTO",
     "AnnotationQueueItemDTO",
     "AnnotationQueueItemListResponse",
@@ -377,36 +392,6 @@ __all__ = [
     "ScoreRecordDTO",
     "ScoreRecordListResponse",
     "ScoreSource",
-    "CorrelationIds",
-    "ObserveContext",
-    "ObservationDTO",
-    "ObservationRecord",
-    "ObservationType",
-    "PaginationInfo",
-    "SessionDTO",
-    "SessionListResponse",
-    "SessionRecord",
-    "ThumbRating",
-    "TraceCollaborationState",
-    "TraceCommentRecord",
-    "TraceCommentsResponse",
-    "TraceDTO",
-    "TraceFeedbackRecord",
-    "TraceFeedbackResponse",
-    "TraceFeedbackSummary",
-    "TraceListResponse",
-    "TraceObservationsResponse",
-    "TraceRecord",
-    "get_default_observability_client",
-    "observe",
-    "set_default_observability_client",
-    "ChatPromptMessage",
-    "PromptDetail",
-    "PromptListResponse",
-    "PromptSummary",
-    "PromptType",
-    "PromptVersionRecord",
-    "ResolvedPrompt",
     "TraigentMetadata",
     "is_traigent_metadata",
     # Exceptions and warnings
@@ -439,6 +424,40 @@ __all__ = [
     "max_tokens_constraint",
     "PlotGenerator",
     "create_quick_plot",
+    "CorrelationIds",
+    "ObserveContext",
+    "ObservabilityClient",
+    "ObservabilityConfig",
+    "ObservationDTO",
+    "ObservationRecord",
+    "ObservationType",
+    "PaginationInfo",
+    "SessionListResponse",
+    "SessionRecord",
+    "SessionDTO",
+    "ThumbRating",
+    "TraceCollaborationState",
+    "TraceCommentRecord",
+    "TraceCommentsResponse",
+    "TraceDTO",
+    "TraceFeedbackRecord",
+    "TraceFeedbackResponse",
+    "TraceFeedbackSummary",
+    "TraceListResponse",
+    "TraceObservationsResponse",
+    "TraceRecord",
+    "get_default_observability_client",
+    "observe",
+    "set_default_observability_client",
+    "PromptManagementClient",
+    "PromptManagementConfig",
+    "PromptType",
+    "ChatPromptMessage",
+    "PromptSummary",
+    "PromptDetail",
+    "PromptVersionRecord",
+    "PromptListResponse",
+    "ResolvedPrompt",
     # Result types
     "OptimizationResult",
     "TrialError",

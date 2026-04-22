@@ -21,9 +21,6 @@ class ObservabilityConfig:
 
     backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
-    jwt_token: str | None = field(
-        default_factory=lambda: os.getenv("TRAIGENT_JWT_TOKEN")
-    )
     tenant_id: str | None = field(
         default_factory=lambda: read_optional_env(TENANT_ENV_VAR)
     )
@@ -97,8 +94,6 @@ class ObservabilityConfig:
         }
         if self.api_key:
             headers["X-API-Key"] = self.api_key
-        if self.jwt_token:
-            headers["Authorization"] = f"Bearer {self.jwt_token}"
         if self.tenant_id:
             headers[TENANT_HEADER_NAME] = self.tenant_id
         return headers

@@ -163,7 +163,7 @@ class ProjectManagementClient:
             json.dumps(payload).encode("utf-8") if payload is not None else None
         )
         http_request = request.Request(
-            self._build_request_url(path),
+            f"{self.config.backend_origin}{self.config.api_path}{path}",
             data=encoded_payload,
             headers=self.config.build_headers(),
             method=method,
@@ -200,11 +200,6 @@ class ProjectManagementClient:
             raise TraigentConnectionError(
                 f"Failed to connect to project backend at {self.config.backend_origin}"
             ) from exc
-
-    def _build_request_url(self, path: str) -> str:
-        if path and not path.startswith(("/", "?")):
-            raise ValueError("Project request path must start with '/' or '?'")
-        return f"{self.config.backend_origin}{self.config.api_path}{path}"
 
     @staticmethod
     def _unwrap_data(payload: dict[str, Any], label: str) -> dict[str, Any]:

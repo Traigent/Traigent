@@ -187,6 +187,20 @@ def mock_state_graph() -> MockStateGraph:
 class TestSpanPayload:
     """Tests for SpanPayload dataclass."""
 
+    class _ScalarLike:
+        def __init__(self, value: int) -> None:
+            self._value = value
+
+        def item(self) -> int:
+            return self._value
+
+    class _BrokenScalarLike:
+        def item(self) -> int:
+            raise TypeError("broken scalar")
+
+        def __str__(self) -> str:
+            return "broken-scalar"
+
     def test_to_dict_required_fields(self) -> None:
         """Test to_dict includes all required fields."""
         span = SpanPayload(
@@ -234,6 +248,61 @@ class TestSpanPayload:
         assert result["node_id"] == "node_1"
         assert result["error_message"] == "Test error"
         assert result["metadata"] == {"key": "value"}
+
+    def test_to_dict_coerces_scalar_like_values(self) -> None:
+        """Test to_dict converts numpy-style scalars into plain JSON values."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={"strategy_id": self._ScalarLike(2)},
+            input_data={"nested": [self._ScalarLike(3)]},
+            output_data={"value": self._ScalarLike(4)},
+        )
+
+        result = span.to_dict()
+
+        assert result["metadata"] == {"strategy_id": 2}
+        assert result["input_data"] == {"nested": [3]}
+        assert result["output_data"] == {"value": 4}
+
+    def test_to_dict_coerces_tuple_and_broken_scalar_values(self) -> None:
+        """Test tuples and scalar conversion failures still produce JSON-safe values."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={
+                "pair": (self._ScalarLike(5), self._BrokenScalarLike()),
+            },
+        )
+
+        result = span.to_dict()
+
+        assert result["metadata"] == {"pair": [5, "broken-scalar"]}
+
+    def test_to_dict_coerces_sets_and_frozensets(self) -> None:
+        """Test set-like containers are coerced to stable JSON-safe lists."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Test Span",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            metadata={"tags": {"alpha", "beta"}, "frozen": frozenset({"x", "y"})},
+        )
+
+        result = span.to_dict()
+
+        assert result["metadata"]["tags"] == ["alpha", "beta"]
+        assert result["metadata"]["frozen"] == ["x", "y"]
 
     def test_to_dict_excludes_none_optionals(self) -> None:
         """Test to_dict excludes optional fields when None."""

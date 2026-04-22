@@ -171,6 +171,7 @@ def _add_measures_to_metadata(
     example_results: list[Any] | None,
     primary_objective: str,
     dataset_name: str,
+    content_scores: dict[str, dict[int, float]] | None,
     privacy_on: bool,
     mode_enum: ExecutionMode,
     execution_mode: str,
@@ -188,7 +189,7 @@ def _add_measures_to_metadata(
 
     if include_full_measures:
         measures = _build_measures_full(
-            example_results, primary_objective, dataset_name
+            example_results, primary_objective, dataset_name, content_scores
         )
         trial_metadata["measures"] = measures
         logger.debug(
@@ -199,7 +200,7 @@ def _add_measures_to_metadata(
         _log_measures_debug(measures)
     elif privacy_on:
         measures = _build_measures_privacy(
-            example_results, primary_objective, dataset_name
+            example_results, primary_objective, dataset_name, content_scores
         )
         trial_metadata["measures"] = measures
         logger.debug(
@@ -255,6 +256,7 @@ def build_backend_metadata(
     - Summary statistics (if available and not in cloud mode)
     - Per-example measures (respecting privacy settings)
     - Stable example IDs (format: ex_{hash}_{index})
+    - Content-based scores (uniqueness, novelty)
     - Additional metrics beyond primary objective
 
     Args:
@@ -262,14 +264,12 @@ def build_backend_metadata(
         primary_objective: Primary optimization objective name
         traigent_config: Global configuration for execution mode and privacy
         dataset_name: Name of the dataset (used for stable example ID generation)
-        content_scores: Deprecated and ignored. Content analytics are uploaded
-            once per run via the dedicated feature-upload path.
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score (0.0-1.0). Pre-computed by ContentScorer.
 
     Returns:
         Metadata dict ready for backend submission
     """
-    _ = content_scores
-
     trial_metadata: dict[str, Any] = {
         "duration": trial_result.duration,
         "trial_id": trial_result.trial_id,
@@ -297,6 +297,7 @@ def build_backend_metadata(
         example_results,
         primary_objective,
         dataset_name,
+        content_scores,
         privacy_on,
         mode_enum,
         traigent_config.execution_mode,
@@ -338,22 +339,18 @@ def _calculate_fallback_score(example_result: Any) -> float | None:
     return None
 
 
-def _add_execution_time_metrics(
-    metrics_dict: dict[str, Any], example_result: Any
+def _add_content_scores(
+    metrics_dict: dict[str, Any],
+    content_scores: dict[str, dict[int, float]] | None,
+    idx: int,
 ) -> None:
-    """Add explicit and legacy timing metrics for compatibility.
-
-    `execution_time` on example results is tracked internally in seconds. The
-    canonical optimization payload key is `response_time_ms`, but the legacy
-    `response_time` key remains for one compatibility window.
-    """
-    execution_time = getattr(example_result, "execution_time", None)
-    if execution_time is None or not isinstance(execution_time, (int, float)):
+    """Add content uniqueness and novelty scores to metrics dict."""
+    if not content_scores:
         return
-
-    response_time_seconds = float(execution_time)
-    metrics_dict["response_time_ms"] = response_time_seconds * 1000.0
-    metrics_dict["response_time"] = response_time_seconds
+    if "uniqueness" in content_scores:
+        metrics_dict["content_uniqueness"] = content_scores["uniqueness"].get(idx, 0.5)
+    if "novelty" in content_scores:
+        metrics_dict["content_novelty"] = content_scores["novelty"].get(idx, 0.5)
 
 
 def _build_single_measure_full(
@@ -361,6 +358,7 @@ def _build_single_measure_full(
     idx: int,
     dataset_hash: str,
     primary_objective: str,
+    content_scores: dict[str, dict[int, float]] | None,
 ) -> dict[str, Any]:
     """Build a single full measure for non-privacy mode."""
     example_id = generate_stable_example_id(dataset_hash, idx)
@@ -381,7 +379,11 @@ def _build_single_measure_full(
     if example_score is not None:
         metrics_dict["score"] = float(example_score)
 
-    _add_execution_time_metrics(metrics_dict, example_result)
+    # Add execution time
+    if hasattr(example_result, "execution_time"):
+        metrics_dict["response_time"] = example_result.execution_time
+
+    _add_content_scores(metrics_dict, content_scores, idx)
 
     measure_result = {"example_id": example_id, "metrics": metrics_dict}
     _validate_measure_dict(measure_result, idx)
@@ -393,8 +395,9 @@ def _build_measures_full(
     example_results: list[Any],
     primary_objective: str,
     dataset_name: str = "dataset",
+    content_scores: dict[str, dict[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build full per-example measures with stable IDs (non-privacy mode).
+    """Build full per-example measures with stable IDs and content scores (non-privacy mode).
 
     Returns nested format where example_id is at top level and all numeric
     metrics are in a 'metrics' sub-object:
@@ -407,6 +410,9 @@ def _build_measures_full(
         example_results: List of example evaluation results
         primary_objective: Primary optimization objective name
         dataset_name: Name of the dataset (for stable example ID generation)
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score
+
     Returns:
         List of nested measure dicts with example_id and metrics sub-object
 
@@ -415,7 +421,9 @@ def _build_measures_full(
     """
     dataset_hash = compute_dataset_hash(dataset_name)
     return [
-        _build_single_measure_full(example_result, idx, dataset_hash, primary_objective)
+        _build_single_measure_full(
+            example_result, idx, dataset_hash, primary_objective, content_scores
+        )
         for idx, example_result in enumerate(example_results)
     ]
 
@@ -441,6 +449,7 @@ def _build_single_measure_privacy(
     idx: int,
     dataset_hash: str,
     primary_objective: str,
+    content_scores: dict[str, dict[int, float]] | None,
 ) -> dict[str, Any]:
     """Build a single sanitized measure for privacy mode."""
     example_id = generate_stable_example_id(dataset_hash, idx)
@@ -454,11 +463,15 @@ def _build_single_measure_privacy(
     if example_score is not None:
         metrics_dict["score"] = float(example_score)
 
-    _add_execution_time_metrics(metrics_dict, example_result)
+    # Add execution time
+    if hasattr(example_result, "execution_time"):
+        metrics_dict["response_time"] = example_result.execution_time
 
     # Add privacy-safe token and cost metrics
     if eval_metrics:
         _add_privacy_safe_metrics(metrics_dict, eval_metrics)
+
+    _add_content_scores(metrics_dict, content_scores, idx)
 
     measure_result = {"example_id": example_id, "metrics": metrics_dict}
     _validate_measure_dict(measure_result, idx)
@@ -469,6 +482,7 @@ def _build_measures_privacy(
     example_results: list[Any],
     primary_objective: str,
     dataset_name: str = "dataset",
+    content_scores: dict[str, dict[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build sanitized per-example measures with stable IDs (privacy mode).
 
@@ -476,16 +490,20 @@ def _build_measures_privacy(
     metrics are in a 'metrics' sub-object:
         {
             "example_id": "ex_a3f4b2c8_0",
-            "metrics": {"score": 0.85, "response_time_ms": 1200.0, ...}
+            "metrics": {"score": 0.85, "response_time": 1.2, ...}
         }
 
     Only includes in metrics:
-    - Score, explicit response_time_ms, legacy response_time, tokens, and cost metrics
+    - Score, response time, tokens, and cost metrics
+    - Content scores (privacy-safe: numeric only, no raw text)
 
     Args:
         example_results: List of example evaluation results
         primary_objective: Primary optimization objective name
         dataset_name: Name of the dataset (for stable example ID generation)
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score
+
     Returns:
         List of nested sanitized measure dicts
 
@@ -495,7 +513,7 @@ def _build_measures_privacy(
     dataset_hash = compute_dataset_hash(dataset_name)
     return [
         _build_single_measure_privacy(
-            example_result, idx, dataset_hash, primary_objective
+            example_result, idx, dataset_hash, primary_objective, content_scores
         )
         for idx, example_result in enumerate(example_results)
     ]

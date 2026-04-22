@@ -113,6 +113,25 @@ class SpanType(StrEnum):
 # =============================================================================
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce numpy-style scalars into JSON-serializable primitives."""
+
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(item) for item in sorted(value, key=repr)]
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except Exception:
+            return str(value)
+    return value
+
+
 @dataclass
 class SpanPayload:
     """Span data payload for backend ingestion.
@@ -175,11 +194,11 @@ class SpanPayload:
         if self.decision_reason:
             result["decision_reason"] = self.decision_reason
         if self.input_data:
-            result["input_data"] = self.input_data
+            result["input_data"] = _json_safe(self.input_data)
         if self.output_data:
-            result["output_data"] = self.output_data
+            result["output_data"] = _json_safe(self.output_data)
         if self.metadata:
-            result["metadata"] = self.metadata
+            result["metadata"] = _json_safe(self.metadata)
 
         return result
 
@@ -201,7 +220,7 @@ class WorkflowNode:
             "type": self.type,
             "display_name": self.display_name,
             "tunable_params": self.tunable_params,
-            "metadata": self.metadata,
+            "metadata": _json_safe(self.metadata),
         }
 
 
@@ -225,7 +244,7 @@ class WorkflowEdge:
         if self.condition:
             result["condition"] = self.condition
         if self.metadata:
-            result["metadata"] = self.metadata
+            result["metadata"] = _json_safe(self.metadata)
         return result
 
 
@@ -1153,11 +1172,8 @@ class WorkflowTracesTracker:
             auto_send: Automatically send spans at end of trial context
             batch_size: Number of spans to batch before sending
         """
-        self.backend_url = (
-            backend_url
-            or os.environ.get("TRAIGENT_BACKEND_URL")
-            or BackendConfig.get_cloud_backend_url()
-        )
+        resolved_backend_url = backend_url or os.environ.get("TRAIGENT_BACKEND_URL")
+        self.backend_url: str = resolved_backend_url or "http://localhost:5000"
         self.auth_token = (
             auth_token
             or os.environ.get("TRAIGENT_API_KEY")
@@ -1168,7 +1184,7 @@ class WorkflowTracesTracker:
 
         self.client = WorkflowTracesClient(
             self.backend_url,
-            self.auth_token,  # type: ignore[arg-type]
+            self.auth_token,
         )
 
         # ContextVar-based storage for trial context.

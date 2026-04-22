@@ -35,7 +35,9 @@ from traigent.cloud.auth import (
     AuthManager,
     InvalidCredentialsError,
 )
-from traigent.config.backend_config import SIGNUP_URL, BackendConfig
+from traigent.config.backend_config import BackendConfig
+from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
+from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -291,16 +293,29 @@ class TraigentAuthCLI:
 
         # Step 1: Direct login call for better error visibility
         login_url = f"{self.backend_api_url}/auth/login"
+        tenant_id = read_optional_env(TENANT_ENV_VAR)
+        project_id = read_optional_project_env()
+        if not tenant_id:
+            message = (
+                f"{TENANT_ENV_VAR} is required for org-bound SDK authentication. "
+                "Set it to the organization id before running `traigent auth login`."
+            )
+            if project_id:
+                message += f" {PROJECT_ENV_VAR} is set, but project-bound keys also require a tenant."
+            raise AuthenticationError(message)
+        login_headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK-CLI/1.0",
+            TENANT_HEADER_NAME: tenant_id,
+        }
+
         console.print(f"[dim]POST {login_url}[/dim]")
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 login_url,
                 json={"email": email, "password": password},
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": "Traigent-SDK-CLI/1.0",
-                },
+                headers=login_headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 response_text = await response.text()
@@ -364,6 +379,25 @@ class TraigentAuthCLI:
         hostname = platform.node() or "unknown"
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         key_name = f"Traigent SDK CLI ({hostname[:20]} {timestamp})"
+        key_payload = {
+            "key_name": key_name,
+            "permissions": [
+                "read",
+                "write",
+                "experiment.read",
+                "experiment.write",
+                "session.read",
+                "session.write",
+            ],
+        }
+        if project_id:
+            key_payload["project_id"] = project_id
+        key_headers = {
+            "Authorization": f"Bearer {jwt_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK-CLI/1.0",
+            TENANT_HEADER_NAME: tenant_id,
+        }
 
         console.print(f"\n[dim]POST {api_key_url}[/dim]")
         console.print(f"[dim]Creating API key: {key_name}[/dim]")
@@ -371,22 +405,8 @@ class TraigentAuthCLI:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 api_key_url,
-                json={
-                    "key_name": key_name,
-                    "permissions": [
-                        "read",
-                        "write",
-                        "experiment.read",
-                        "experiment.write",
-                        "session.read",
-                        "session.write",
-                    ],
-                },
-                headers={
-                    "Authorization": f"Bearer {jwt_token}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Traigent-SDK-CLI/1.0",
-                },
+                json=key_payload,
+                headers=key_headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 response_text = await response.text()

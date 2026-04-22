@@ -1,14 +1,12 @@
-"""Sync-friendly observability client built on a buffered batch transport."""
+"""Sync-friendly observability client built on the async batch transport."""
 
 from __future__ import annotations
 
+import asyncio
 import atexit
-import copy
-import io
 import json
 import threading
 import uuid
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -16,7 +14,7 @@ from typing import Any, cast
 from urllib import error, request
 from urllib.parse import urlencode
 
-from traigent.cloud.async_batch_transport import BatchFlushResult
+from traigent.cloud.async_batch_transport import AsyncBatchTransport
 from traigent.observability.config import ObservabilityConfig
 from traigent.observability.dtos import (
     CorrelationIds,
@@ -44,7 +42,6 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
-from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
 
 logger = get_logger(__name__)
 
@@ -82,167 +79,6 @@ class _TraceState:
         return payload_trace.to_dict()
 
 
-class _SyncBatchTransport:
-    """Thread-safe batch transport that avoids cross-thread asyncio coordination."""
-
-    def __init__(
-        self,
-        sender: Callable[[list[dict[str, Any]]], dict[str, Any] | None],
-        *,
-        batch_size: int,
-        max_buffer_age: float,
-        max_queue_size: int,
-    ) -> None:
-        self._sender = sender
-        self.batch_size = batch_size
-        self.max_buffer_age = max_buffer_age
-        self.max_queue_size = max_queue_size
-        self._retry_handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
-        self._buffer: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        self._lock = threading.RLock()
-        self._timer: threading.Timer | None = None
-        self._closed = False
-        self._errors: list[str] = []
-        self._warnings: list[str] = []
-        self._stats: dict[str, int] = {
-            "submitted_items": 0,
-            "sent_items": 0,
-            "dropped_items": 0,
-            "successful_batches": 0,
-            "failed_batches": 0,
-            "pending_items": 0,
-        }
-
-    def submit(self, item_id: str, payload: dict[str, Any]) -> bool:
-        send_now = False
-        with self._lock:
-            if self._closed:
-                return False
-
-            if item_id in self._buffer:
-                self._buffer.pop(item_id, None)
-            elif len(self._buffer) >= self.max_queue_size:
-                self._stats["dropped_items"] += 1
-                self._append_error(
-                    f"transport queue full; dropped payload for item '{item_id}'"
-                )
-                return False
-
-            self._buffer[item_id] = copy.deepcopy(payload)
-            self._stats["submitted_items"] += 1
-            self._stats["pending_items"] = len(self._buffer)
-
-            if len(self._buffer) >= self.batch_size:
-                self._cancel_timer_locked()
-                send_now = True
-            else:
-                self._ensure_timer_locked()
-
-        if send_now:
-            self._send_available()
-        return True
-
-    def flush(self) -> BatchFlushResult:
-        self._cancel_timer()
-        self._send_available()
-        return self._build_result()
-
-    def close(self) -> BatchFlushResult:
-        with self._lock:
-            self._closed = True
-        return self.flush()
-
-    def get_stats(self) -> dict[str, Any]:
-        with self._lock:
-            snapshot: dict[str, Any] = dict(self._stats)
-        snapshot["errors"] = list(self._errors)
-        snapshot["warnings"] = list(self._warnings)
-        return snapshot
-
-    def _ensure_timer_locked(self) -> None:
-        if self._timer is not None and self._timer.is_alive():
-            return
-        self._timer = threading.Timer(self.max_buffer_age, self._flush_from_timer)
-        self._timer.daemon = True
-        self._timer.start()
-
-    def _cancel_timer_locked(self) -> None:
-        timer = self._timer
-        self._timer = None
-        if timer is not None and timer is not threading.current_thread():
-            timer.cancel()
-
-    def _cancel_timer(self) -> None:
-        with self._lock:
-            self._cancel_timer_locked()
-
-    def _flush_from_timer(self) -> None:
-        try:
-            self.flush()
-        except Exception as exc:
-            self._append_error(f"timer flush failed: {exc}")
-
-    def _send_available(self) -> None:
-        while True:
-            with self._lock:
-                if not self._buffer:
-                    self._stats["pending_items"] = 0
-                    return
-
-                batch_items = []
-                for _ in range(min(self.batch_size, len(self._buffer))):
-                    batch_items.append(self._buffer.popitem(last=False))
-                self._stats["pending_items"] = len(self._buffer)
-
-            self._send_batch(batch_items)
-
-    def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
-        payloads = [payload for _, payload in batch_items]
-        result = self._retry_handler.execute_with_result(self._sender, payloads)
-
-        if result.success:
-            if isinstance(result.result, dict):
-                for warning in result.result.get("warnings") or []:
-                    self._append_warning(str(warning))
-            with self._lock:
-                self._stats["successful_batches"] += 1
-                self._stats["sent_items"] += len(payloads)
-            return
-
-        with self._lock:
-            self._stats["failed_batches"] += 1
-            self._stats["dropped_items"] += len(payloads)
-        self._append_error(str(result.error or "batch delivery failed"))
-        logger.warning(
-            "Observability transport dropped %d payloads after retries: %s",
-            len(payloads),
-            result.error,
-        )
-
-    def _build_result(self) -> BatchFlushResult:
-        with self._lock:
-            return BatchFlushResult(
-                success=self._stats["failed_batches"] == 0,
-                items_sent=self._stats["sent_items"],
-                items_pending=self._stats["pending_items"],
-                items_dropped=self._stats["dropped_items"],
-                successful_batches=self._stats["successful_batches"],
-                failed_batches=self._stats["failed_batches"],
-                errors=list(self._errors),
-                warnings=list(self._warnings),
-            )
-
-    def _append_error(self, message: str) -> None:
-        self._errors.append(message)
-        if len(self._errors) > 20:
-            self._errors = self._errors[-20:]
-
-    def _append_warning(self, message: str) -> None:
-        self._warnings.append(message)
-        if len(self._warnings) > 50:
-            self._warnings = self._warnings[-50:]
-
-
 class ObservabilityClient:
     """Client for capturing and shipping generic application traces.
 
@@ -267,7 +103,24 @@ class ObservabilityClient:
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
         self._closed = False
-        self._transport = self._create_transport()
+
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            name="traigent-observability",
+            daemon=True,
+        )
+        self._thread.start()
+        try:
+            self._transport = self._run_in_loop(
+                self._create_transport(),
+                timeout=self.config.flush_timeout,
+            )
+        except Exception:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=1)
+            self._loop.close()
+            raise
 
         if self.config.enable_atexit_flush:
             atexit.register(self._atexit_close)
@@ -469,7 +322,7 @@ class ObservabilityClient:
         for trace_id in trace_ids:
             self._queue_trace_snapshot(trace_id)
 
-        result = self._transport.flush()
+        result = self._run_in_loop(self._transport.flush(), timeout=timeout)
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -500,8 +353,13 @@ class ObservabilityClient:
                 warnings=[],
             )
 
+        timeout = timeout or self.config.flush_timeout
         self._closed = True
-        result = self._transport.close()
+        try:
+            result = self._run_in_loop(self._transport.close(), timeout=timeout)
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=timeout)
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -657,21 +515,21 @@ class ObservabilityClient:
         payload = self._request_json("GET", f"/sessions/{session_id}")
         return SessionRecord.from_dict(self._unwrap_data(payload, "session detail"))
 
-    def _create_transport(self) -> _SyncBatchTransport:
-        return _SyncBatchTransport(
+    async def _create_transport(self) -> AsyncBatchTransport:
+        return AsyncBatchTransport(
             self._send_payload_batch,
             batch_size=self.config.batch_size,
             max_buffer_age=self.config.max_buffer_age,
             max_queue_size=self.config.max_queue_size,
         )
 
-    def _send_payload_batch(
+    async def _send_payload_batch(
         self, traces: list[dict[str, Any]]
     ) -> dict[str, Any] | None:
         if self._sender_override is not None:
-            return self._sender_override(traces)
+            return await asyncio.to_thread(self._sender_override, traces)
 
-        return self._post_batch_sync(traces)
+        return await asyncio.to_thread(self._post_batch_sync, traces)
 
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
         payload = json.dumps({"traces": traces}).encode("utf-8")
@@ -695,7 +553,7 @@ class ObservabilityClient:
                     )
                 return self._parse_ingest_response(body)
         except error.HTTPError as exc:
-            body = self._read_http_error_body(exc)
+            body = exc.read().decode("utf-8") if exc.fp else ""
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability ingest rejected with status {exc.code}"
@@ -711,8 +569,8 @@ class ObservabilityClient:
             ) from exc
 
     def _log_ingest_warnings(self, body: str) -> None:
-        payload = self._decode_ingest_response(body)
-        self._log_ingest_warnings_from_data(payload)
+        parsed = self._parse_ingest_response(body)
+        self._log_ingest_warnings_from_data(parsed)
 
     def _log_ingest_warnings_from_data(self, payload: dict[str, Any] | None) -> None:
         warnings = (payload or {}).get("warnings")
@@ -723,11 +581,6 @@ class ObservabilityClient:
             logger.warning("Observability ingest warning: %s", warning)
 
     def _parse_ingest_response(self, body: str) -> dict[str, Any] | None:
-        data = self._decode_ingest_response(body)
-        self._log_ingest_warnings_from_data(data)
-        return data
-
-    def _decode_ingest_response(self, body: str) -> dict[str, Any] | None:
         if not body:
             return None
         try:
@@ -737,6 +590,7 @@ class ObservabilityClient:
         data = parsed.get("data")
         if not isinstance(data, dict):
             return None
+        self._log_ingest_warnings_from_data(data)
         return data
 
     def _request_json(
@@ -784,7 +638,7 @@ class ObservabilityClient:
                     )
                 return parsed
         except error.HTTPError as exc:
-            body = self._read_http_error_body(exc)
+            body = exc.read().decode("utf-8") if exc.fp else ""
             if exc.code in {401, 403}:
                 raise AuthenticationError(
                     f"Observability request rejected with status {exc.code}"
@@ -811,7 +665,7 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = state.to_payload()
-        self._transport.submit(trace_id, payload)
+        self._run_in_loop(self._transport.submit(trace_id, payload), timeout=5.0)
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str] = {}
@@ -840,18 +694,13 @@ class ObservabilityClient:
             raise ClientError(f"{field_name} must be JSON serializable") from exc
         return value
 
-    def _read_http_error_body(self, exc: error.HTTPError) -> str:
-        try:
-            if exc.fp is None:
-                return ""
-            body = exc.read()
-            if isinstance(body, bytes):
-                return body.decode("utf-8")
-            if isinstance(body, io.BytesIO):
-                return body.getvalue().decode("utf-8")
-            return str(body)
-        finally:
-            exc.close()
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def _run_in_loop(self, coroutine, *, timeout: float):
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        return future.result(timeout=timeout)
 
     def _coerce_session(
         self, session: SessionDTO | dict[str, Any] | None

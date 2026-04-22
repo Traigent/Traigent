@@ -10,29 +10,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
 
-from traigent.config.context import (
-    applied_config_context,
-    config_context,
-    get_trial_context,
-)
 from traigent.observability.client import ObservabilityClient
-from traigent.observability.dtos import ObservationType, to_jsonable, utc_now
+from traigent.observability.dtos import ObservationType, utc_now
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-_SENSITIVE_KEY_FRAGMENTS = (
-    "api_key",
-    "apikey",
-    "auth",
-    "credential",
-    "password",
-    "private_key",
-    "secret",
-    "token",
-)
-_ACTIVE_CONFIG_METADATA_KEY = "traigent_active_config"
-_OPTIMIZATION_CONTEXT_METADATA_KEY = "traigent_optimization_context"
 
 _current_client: contextvars.ContextVar[ObservabilityClient | None] = (
     contextvars.ContextVar(
@@ -56,90 +38,6 @@ _default_client_lock = threading.Lock()
 
 def _redacted_input_payload() -> dict[str, bool]:
     return {"redacted": True}
-
-
-def _is_sensitive_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return any(fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS)
-
-
-def _coerce_mapping_payload(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        candidate = to_dict()
-        if isinstance(candidate, dict):
-            return candidate
-    return None
-
-
-def _sanitize_metadata_value(value: Any, *, key: str | None = None) -> Any:
-    if key is not None and _is_sensitive_key(key):
-        return "[REDACTED]"
-
-    mapping = _coerce_mapping_payload(value)
-    if mapping is not None:
-        sanitized: dict[str, Any] = {}
-        for raw_key, raw_value in mapping.items():
-            normalized_key = str(raw_key)
-            if normalized_key.startswith("_"):
-                continue
-            sanitized_value = _sanitize_metadata_value(raw_value, key=normalized_key)
-            sanitized[normalized_key] = sanitized_value
-        return sanitized
-
-    if isinstance(value, (list, tuple, set)):
-        return [_sanitize_metadata_value(item) for item in value]
-
-    return to_jsonable(value)
-
-
-def _build_observe_enrichment_metadata() -> dict[str, Any]:
-    raw_applied_config = applied_config_context.get(None)
-    raw_active_config = config_context.get(None)
-    active_config_source: str | None = None
-
-    active_config = _sanitize_metadata_value(raw_applied_config)
-    if isinstance(active_config, dict) and active_config:
-        active_config_source = "applied-config"
-    else:
-        fallback_config = _sanitize_metadata_value(raw_active_config)
-        if isinstance(fallback_config, dict) and fallback_config:
-            active_config = fallback_config
-            active_config_source = "context-config"
-        else:
-            active_config = None
-
-    raw_trial_context = get_trial_context()
-    optimization_context: dict[str, Any] = {}
-    if isinstance(raw_trial_context, dict):
-        for raw_key, raw_value in raw_trial_context.items():
-            normalized_key = str(raw_key)
-            if normalized_key.startswith("_") or raw_value is None:
-                continue
-            optimization_context[normalized_key] = _sanitize_metadata_value(
-                raw_value, key=normalized_key
-            )
-
-    if isinstance(active_config, dict) and active_config:
-        config_snapshot = optimization_context.get("config_snapshot")
-        if config_snapshot == active_config:
-            optimization_context.pop("config_snapshot", None)
-
-    if raw_trial_context is not None:
-        optimization_context["config_source"] = "trial-config"
-    elif active_config_source is not None:
-        optimization_context["config_source"] = active_config_source
-
-    enriched: dict[str, Any] = {}
-    if isinstance(active_config, dict) and active_config:
-        enriched[_ACTIVE_CONFIG_METADATA_KEY] = active_config
-    if optimization_context:
-        enriched[_OPTIMIZATION_CONTEXT_METADATA_KEY] = optimization_context
-    return enriched
 
 
 def get_default_observability_client() -> ObservabilityClient:
@@ -168,9 +66,6 @@ class ObserveContext:
         observation_type: ObservationType | str = ObservationType.SPAN,
         input_data: Any = None,
         metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        user_id: str | None = None,
-        custom_trace_id: str | None = None,
         environment: str | None = None,
         release: str | None = None,
         tags: list[str] | None = None,
@@ -185,9 +80,6 @@ class ObserveContext:
         )
         self.input_data = input_data
         self.metadata = dict(metadata or {})
-        self.session_id = session_id
-        self.user_id = user_id
-        self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
         self.tags = list(tags or [])
@@ -202,7 +94,6 @@ class ObserveContext:
         self._client_token: contextvars.Token[ObservabilityClient | None] | None = None
         self._finished = False
         self._result: Any = None
-        self._enriched_metadata = _build_observe_enrichment_metadata()
 
     def __enter__(self) -> ObserveContext:
         self._started_at = utc_now()
@@ -213,26 +104,18 @@ class ObserveContext:
 
         trace_id = _current_trace_id.get()
         if trace_id is None:
-            trace_metadata = {"source": "observe"}
-            trace_metadata.update(self.metadata)
-            trace_metadata.update(self._enriched_metadata)
             trace_id = client.start_trace(
                 self.name,
-                session_id=self.session_id,
-                user_id=self.user_id,
                 environment=self.environment,
                 release=self.release,
                 tags=self.tags,
-                metadata=trace_metadata,
+                metadata={"source": "observe"},
                 started_at=self._started_at,
                 input_data=self.input_data,
-                custom_trace_id=self.custom_trace_id,
             )
             self._created_trace = True
             self._trace_token = _current_trace_id.set(trace_id)
 
-        observation_metadata = dict(self.metadata)
-        observation_metadata.update(self._enriched_metadata)
         stack = _current_observation_stack.get()
         parent_observation_id = stack[-1] if stack else None
         self._observation_id = client.record_observation(
@@ -244,7 +127,7 @@ class ObserveContext:
             status="running",
             started_at=self._started_at,
             input_data=self.input_data,
-            metadata=observation_metadata,
+            metadata=self.metadata,
         )
         self._trace_id = trace_id
         self._stack_token = _current_observation_stack.set(
@@ -273,7 +156,6 @@ class ObserveContext:
         ended_at = utc_now()
         status = "failed" if error is not None else "completed"
         metadata = dict(self.metadata)
-        metadata.update(self._enriched_metadata)
         if error is not None:
             metadata["error_type"] = type(error).__name__
             metadata["error_message"] = str(error)
@@ -316,33 +198,20 @@ class _ObserveFactory:
         client: ObservabilityClient | None,
         observation_type: ObservationType | str,
         metadata: dict[str, Any] | None,
-        session_id: str | None = None,
-        user_id: str | None = None,
-        custom_trace_id: str | None = None,
-        environment: str | None = None,
-        release: str | None = None,
-        tags: list[str] | None = None,
-        redact_input: bool = False,
+        environment: str | None,
+        release: str | None,
+        tags: list[str] | None,
+        redact_input: bool,
     ) -> None:
         self.name = name
         self.client = client
         self.observation_type = observation_type
         self.metadata = metadata
-        self.session_id = session_id
-        self.user_id = user_id
-        self.custom_trace_id = custom_trace_id
         self.environment = environment
         self.release = release
         self.tags = tags
         self.redact_input = redact_input
         self._context: ObserveContext | None = None
-
-    def _require_context(self) -> ObserveContext:
-        if self._context is None:
-            raise RuntimeError(
-                "observe context has not been entered; __exit__ called before __enter__"
-            )
-        return self._context
 
     def __call__(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
@@ -362,9 +231,6 @@ class _ObserveFactory:
                     observation_type=self.observation_type,
                     input_data=input_data,
                     metadata=self.metadata,
-                    session_id=self.session_id,
-                    user_id=self.user_id,
-                    custom_trace_id=self.custom_trace_id,
                     environment=self.environment,
                     release=self.release,
                     tags=self.tags,
@@ -389,9 +255,6 @@ class _ObserveFactory:
                 observation_type=self.observation_type,
                 input_data=input_data,
                 metadata=self.metadata,
-                session_id=self.session_id,
-                user_id=self.user_id,
-                custom_trace_id=self.custom_trace_id,
                 environment=self.environment,
                 release=self.release,
                 tags=self.tags,
@@ -409,9 +272,6 @@ class _ObserveFactory:
             client=self.client,
             observation_type=self.observation_type,
             metadata=self.metadata,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
             tags=self.tags,
@@ -420,7 +280,8 @@ class _ObserveFactory:
         return self._context.__enter__()
 
     def __exit__(self, exc_type, exc, exc_tb) -> bool:
-        return self._require_context().__exit__(exc_type, exc, exc_tb)
+        assert self._context is not None
+        return self._context.__exit__(exc_type, exc, exc_tb)
 
     async def __aenter__(self) -> ObserveContext:
         self._context = ObserveContext(
@@ -428,9 +289,6 @@ class _ObserveFactory:
             client=self.client,
             observation_type=self.observation_type,
             metadata=self.metadata,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            custom_trace_id=self.custom_trace_id,
             environment=self.environment,
             release=self.release,
             tags=self.tags,
@@ -439,7 +297,8 @@ class _ObserveFactory:
         return await self._context.__aenter__()
 
     async def __aexit__(self, exc_type, exc, exc_tb) -> bool:
-        return await self._require_context().__aexit__(exc_type, exc, exc_tb)
+        assert self._context is not None
+        return await self._context.__aexit__(exc_type, exc, exc_tb)
 
 
 def observe(
@@ -448,9 +307,6 @@ def observe(
     client: ObservabilityClient | None = None,
     observation_type: ObservationType | str = ObservationType.SPAN,
     metadata: dict[str, Any] | None = None,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    custom_trace_id: str | None = None,
     environment: str | None = None,
     release: str | None = None,
     tags: list[str] | None = None,
@@ -471,9 +327,6 @@ def observe(
         client=client,
         observation_type=observation_type,
         metadata=metadata,
-        session_id=session_id,
-        user_id=user_id,
-        custom_trace_id=custom_trace_id,
         environment=environment,
         release=release,
         tags=tags,

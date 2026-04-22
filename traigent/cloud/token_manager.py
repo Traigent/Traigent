@@ -320,9 +320,7 @@ class TokenManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.build_api_base(
-            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-        )
+        backend_api_url = BackendConfig.get_backend_api_url()
         refresh_url = f"{backend_api_url}/auth/refresh"
 
         client = ResilientClient(

@@ -274,7 +274,9 @@ class ApiOperations:
                 "examples": [],  # Privacy mode - no actual data sent
                 "metadata": session_request.dataset_metadata,
             },
-            "search_space": session_request.configuration_space,
+            "search_space": self._normalize_session_configuration_space(
+                session_request.configuration_space or {}
+            ),
             "optimization_config": {
                 "algorithm": "grid",
                 "max_trials": max_trials,
@@ -290,6 +292,73 @@ class ApiOperations:
                 **metadata,
             },
         }
+
+    def _normalize_session_configuration_space(
+        self, configuration_space: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Translate legacy SDK config space shapes into the typed session contract.
+
+        The backend session API now expects each configuration space entry to be an
+        object with a ``type`` field. Existing optimization decorators still emit the
+        older compact shapes used throughout the SDK:
+
+        - ``[a, b, c]`` for categorical choices
+        - ``(low, high)`` for simple numeric ranges
+        - already-typed dictionaries for advanced ranges
+
+        To keep those existing optimization paths working, convert compact shapes
+        here before the request is posted.
+        """
+
+        normalized: dict[str, Any] = {}
+
+        for name, definition in (configuration_space or {}).items():
+            if isinstance(definition, dict):
+                if "type" in definition:
+                    normalized[name] = dict(definition)
+                else:
+                    normalized[name] = {
+                        "type": "categorical",
+                        "choices": list(definition.values()),
+                    }
+                continue
+
+            if isinstance(definition, tuple) and len(definition) == 2:
+                low, high = definition
+                if all(
+                    isinstance(value, int) and not isinstance(value, bool)
+                    for value in (low, high)
+                ):
+                    normalized[name] = {
+                        "type": "int",
+                        "low": low,
+                        "high": high,
+                    }
+                    continue
+                if all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in (low, high)
+                ):
+                    normalized[name] = {
+                        "type": "float",
+                        "low": float(low),
+                        "high": float(high),
+                    }
+                    continue
+
+            if isinstance(definition, list):
+                normalized[name] = {
+                    "type": "categorical",
+                    "choices": list(definition),
+                }
+                continue
+
+            normalized[name] = {
+                "type": "categorical",
+                "choices": [definition],
+            }
+
+        return normalized
 
     def _build_connector(self) -> Any | None:
         """Create an aiohttp connector when custom transport settings are required."""

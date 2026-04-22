@@ -13,7 +13,6 @@ from traigent.prompts.dtos import (
     PromptAnalytics,
     PromptDetail,
     PromptListResponse,
-    PromptPlaygroundResult,
     PromptType,
     ResolvedPrompt,
 )
@@ -95,55 +94,6 @@ class PromptManagementClient:
             f"/{self._quote_name(name)}/analytics{query}",
         )
         return PromptAnalytics.from_dict(self._unwrap_data(payload, "prompt analytics"))
-
-    def run_playground(
-        self,
-        name: str,
-        *,
-        version: int | None = None,
-        label: str | None = "latest",
-        prompt_text: str | None = None,
-        chat_messages: list[ChatPromptMessage | dict] | None = None,
-        variables: dict[str, Any] | None = None,
-        provider: str | None = None,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        dry_run: bool = False,
-        metadata: dict[str, Any] | None = None,
-    ) -> PromptPlaygroundResult:
-        payload: dict[str, Any] = {
-            "variables": dict(variables or {}),
-            "dry_run": dry_run,
-            "metadata": dict(metadata or {}),
-        }
-        if version is not None:
-            payload["version"] = version
-        elif label is not None:
-            payload["label"] = label
-        if prompt_text is not None:
-            payload["prompt_text"] = prompt_text
-        if chat_messages is not None:
-            payload["chat_messages"] = [
-                self._serialize_message(message) for message in chat_messages
-            ]
-        if provider is not None:
-            payload["provider"] = provider
-        if model is not None:
-            payload["model"] = model
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-
-        response = self._request_json(
-            "POST",
-            f"/{self._quote_name(name)}/playground/run",
-            payload,
-        )
-        return PromptPlaygroundResult.from_dict(
-            self._unwrap_data(response, "prompt playground")
-        )
 
     def create_text_prompt(
         self,
@@ -267,8 +217,16 @@ class PromptManagementClient:
             with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
+                status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
-                return json.loads(body) if body else {}
+                parsed = json.loads(body) if body else {}
+                if status_code >= 400:
+                    raise ClientError(
+                        f"Prompt request failed with status {status_code}",
+                        status_code=status_code,
+                        details={"body": body},
+                    )
+                return parsed
         except error.HTTPError as exc:
             try:
                 body = exc.read().decode("utf-8") if exc.fp else ""
@@ -305,7 +263,7 @@ class PromptManagementClient:
         return "?" + urlencode(serialized)
 
     def _quote_name(self, name: str) -> str:
-        return quote(name, safe="")
+        return quote(name, safe="/")
 
     def _serialize_message(self, message: ChatPromptMessage | dict) -> dict:
         if isinstance(message, ChatPromptMessage):
