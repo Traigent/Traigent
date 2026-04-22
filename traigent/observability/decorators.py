@@ -280,7 +280,10 @@ class _ObserveFactory:
         return self._context.__enter__()
 
     def __exit__(self, exc_type, exc, exc_tb) -> bool:
-        assert self._context is not None
+        if self._context is None:
+            raise RuntimeError(
+                "observe context has not been entered; __exit__ called before __enter__"
+            )
         return self._context.__exit__(exc_type, exc, exc_tb)
 
     async def __aenter__(self) -> ObserveContext:
@@ -297,7 +300,10 @@ class _ObserveFactory:
         return await self._context.__aenter__()
 
     async def __aexit__(self, exc_type, exc, exc_tb) -> bool:
-        assert self._context is not None
+        if self._context is None:
+            raise RuntimeError(
+                "observe context has not been entered; __aexit__ called before __aenter__"
+            )
         return await self._context.__aexit__(exc_type, exc, exc_tb)
 
 

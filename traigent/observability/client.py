@@ -7,10 +7,12 @@ import atexit
 import json
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 from urllib import error, request
 from urllib.parse import urlencode
 
@@ -44,6 +46,7 @@ from traigent.utils.exceptions import (
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+T = TypeVar("T")
 
 
 def _new_trace_id() -> str:
@@ -101,6 +104,7 @@ class ObservabilityClient:
         self._sender_override = sender
         self._request_sender_override = request_sender
         self._trace_states: dict[str, _TraceState] = {}
+        self._submit_futures: set[Future[bool]] = set()
         self._lock = threading.RLock()
         self._closed = False
 
@@ -322,6 +326,7 @@ class ObservabilityClient:
         for trace_id in trace_ids:
             self._queue_trace_snapshot(trace_id)
 
+        self._wait_for_pending_submits(timeout=timeout)
         result = self._run_in_loop(self._transport.flush(), timeout=timeout)
         return FlushResult(
             success=result.success,
@@ -356,6 +361,7 @@ class ObservabilityClient:
         timeout = timeout or self.config.flush_timeout
         self._closed = True
         try:
+            self._wait_for_pending_submits(timeout=timeout)
             result = self._run_in_loop(self._transport.close(), timeout=timeout)
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
@@ -665,7 +671,42 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = state.to_payload()
-        self._run_in_loop(self._transport.submit(trace_id, payload), timeout=5.0)
+        future = asyncio.run_coroutine_threadsafe(
+            self._transport.submit(trace_id, payload),
+            self._loop,
+        )
+        with self._lock:
+            self._submit_futures.add(future)
+        future.add_done_callback(
+            lambda done: self._complete_trace_submit(done, trace_id)
+        )
+
+    def _complete_trace_submit(self, done: Future[bool], trace_id: str) -> None:
+        with self._lock:
+            self._submit_futures.discard(done)
+        try:
+            queued = done.result()
+        except Exception as exc:
+            logger.warning(
+                "Observability trace submit failed for %s: %s", trace_id, exc
+            )
+            return
+        if not queued:
+            logger.debug("Observability trace submit skipped for %s", trace_id)
+
+    def _wait_for_pending_submits(self, *, timeout: float) -> None:
+        with self._lock:
+            pending = list(self._submit_futures)
+        for future in pending:
+            try:
+                future.result(timeout=timeout)
+            except FutureTimeoutError:
+                logger.warning("Timed out waiting for observability trace submit")
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Observability trace submit failed while flushing: %s", exc
+                )
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str] = {}
@@ -698,7 +739,7 @@ class ObservabilityClient:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def _run_in_loop(self, coroutine, *, timeout: float):
+    def _run_in_loop(self, coroutine: Awaitable[T], *, timeout: float) -> T:
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         return future.result(timeout=timeout)
 

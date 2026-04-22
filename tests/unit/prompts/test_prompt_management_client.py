@@ -146,7 +146,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     assert calls[0][2]["prompt_type"] == "chat"
     assert calls[1] == (
         "POST",
-        "/chat/support-agent/versions",
+        "/chat%2Fsupport-agent/versions",
         {
             "config": {"model": "gpt-4.1"},
             "commit_message": "Premium support variant",
@@ -161,7 +161,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     )
     assert calls[2] == (
         "PATCH",
-        "/chat/support-agent/labels",
+        "/chat%2Fsupport-agent/labels",
         {"labels": {"production": 1, "staging": 2}},
     )
     assert created.prompt_type == PromptType.CHAT
@@ -173,7 +173,7 @@ def test_prompt_management_client_resolves_prompt_versions():
     def request_sender(method: str, path: str, payload: dict | None):
         assert method == "GET"
         assert payload is None
-        assert path == "/ops/runbook/resolve?version=2"
+        assert path == "/ops%2Frunbook/resolve?version=2"
         return {
             "data": {
                 "name": "ops/runbook",
@@ -207,7 +207,7 @@ def test_prompt_management_client_fetches_prompt_analytics():
     def request_sender(method: str, path: str, payload: dict | None):
         assert method == "GET"
         assert payload is None
-        assert path == "/support/welcome/analytics?recent_limit=10&recent_page=2"
+        assert path == "/support%2Fwelcome/analytics?recent_limit=10&recent_page=2"
         return {
             "data": {
                 "prompt_id": "prompt_1",

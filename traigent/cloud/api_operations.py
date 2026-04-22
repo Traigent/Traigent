@@ -316,10 +316,30 @@ class ApiOperations:
             if isinstance(definition, dict):
                 if "type" in definition:
                     normalized[name] = dict(definition)
+                elif {"low", "high"}.issubset(definition):
+                    low, high = definition["low"], definition["high"]
+                    if all(
+                        isinstance(value, int) and not isinstance(value, bool)
+                        for value in (low, high)
+                    ):
+                        normalized[name] = {"type": "int", "low": low, "high": high}
+                    elif all(
+                        isinstance(value, (int, float)) and not isinstance(value, bool)
+                        for value in (low, high)
+                    ):
+                        normalized[name] = {
+                            "type": "float",
+                            "low": float(low),
+                            "high": float(high),
+                        }
+                    else:
+                        raise ValueError(
+                            f"configuration_space['{name}'] low/high values must be numeric"
+                        )
                 else:
                     normalized[name] = {
                         "type": "categorical",
-                        "choices": list(definition.values()),
+                        "choices": list(definition.keys()),
                     }
                 continue
 

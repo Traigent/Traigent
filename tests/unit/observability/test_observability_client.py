@@ -163,8 +163,8 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     client.end_trace(trace_a)
     client.end_trace(trace_b)
 
-    stats = client.get_stats()
     result = client.close()
+    stats = client.get_stats()
 
     assert stats["dropped_items"] >= 1
     assert result.items_dropped >= 1

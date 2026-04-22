@@ -263,7 +263,7 @@ class PromptManagementClient:
         return "?" + urlencode(serialized)
 
     def _quote_name(self, name: str) -> str:
-        return quote(name, safe="/")
+        return quote(name, safe="")
 
     def _serialize_message(self, message: ChatPromptMessage | dict) -> dict:
         if isinstance(message, ChatPromptMessage):
