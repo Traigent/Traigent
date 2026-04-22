@@ -1,0 +1,183 @@
+version: 2
+# Dependabot setup (2026-04-22):
+#   - Greenfield config for the Traigent SDK — previously no dependabot at
+#     all. This session's manual CVE sweep (litellm, aiohttp, cryptography,
+#     mlflow, langchain-core) was work Dependabot Security Updates would
+#     have automated.
+#   - Security Updates are enabled separately at the repo level (Settings →
+#     Code security), not in this file.
+#   - Targets develop so PRs flow through the normal develop → main promote
+#     cycle rather than landing directly on the default branch.
+#   - Monthly cadence + low PR limit to keep the queue quiet.
+#   - Patch/minor-only groups so a breaking major doesn't nuke the whole
+#     group PR.
+#   - Holds majors on libraries where upgrades are historically non-semver
+#     (LLM providers, OTel, base images, CI actions) — hand-reviewed.
+updates:
+  # Python dependencies — pyproject.toml + requirements/*.txt + uv.lock.
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+      - "automated"
+
+    groups:
+      # LLM providers — the most CVE-active slice of this codebase
+      # (litellm, openai, anthropic have all shipped security fixes in the
+      # last quarter). Group only minor/patch so a breaking major of one
+      # doesn't block the others.
+      llm-providers:
+        patterns:
+          - "litellm*"
+          - "openai*"
+          - "anthropic*"
+          - "google-generativeai*"
+          - "google-genai*"
+        update-types:
+          - "minor"
+          - "patch"
+      # LangChain family — tends to ship breaking minors (1.x → 2.x); keep
+      # grouped on patches only to avoid surprise upgrades.
+      langchain:
+        patterns:
+          - "langchain*"
+          - "langsmith*"
+        update-types:
+          - "patch"
+      # Auth / crypto / session — high-signal security dependencies.
+      auth-security:
+        patterns:
+          - "cryptography*"
+          - "pyjwt*"
+          - "passlib*"
+          - "bcrypt*"
+          - "python-multipart"
+          - "python-jose*"
+        update-types:
+          - "minor"
+          - "patch"
+      # API / async plumbing.
+      api-framework:
+        patterns:
+          - "pydantic*"
+          - "pydantic-settings*"
+          - "aiohttp*"
+          - "httpx*"
+          - "requests*"
+          - "starlette*"
+          - "fastapi*"
+          - "uvicorn*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Optimization core.
+      optimization:
+        patterns:
+          - "optuna*"
+          - "mlflow*"
+          - "wandb*"
+          - "scikit-learn*"
+          - "numpy*"
+          - "pandas*"
+          - "scipy*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Test tooling.
+      testing-frameworks:
+        patterns:
+          - "pytest*"
+          - "hypothesis*"
+          - "respx*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Dev tooling catch-all, patch-only so one breaking minor in 20 tools
+      # doesn't fail them all.
+      dev-tools:
+        dependency-type: "development"
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+
+    ignore:
+      # Python language majors.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major"]
+      # LLM-provider majors have shipped real breaking APIs (openai 1.x → 2.x
+      # restructured the client; litellm cap history shows the same).
+      # Security updates still flow via the separate Security Updates path.
+      - dependency-name: "openai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "litellm"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "anthropic"
+        update-types: ["version-update:semver-major"]
+      # LangChain has shipped minor-version breaking changes (1.x → 2.x);
+      # hold both major and minor for manual review.
+      - dependency-name: "langchain"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "langchain-core"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "langchain-community"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # OpenTelemetry: historically non-semver-compatible jumps.
+      - dependency-name: "opentelemetry-*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "opentelemetry-api"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "opentelemetry-sdk"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions — monthly, majors held for manual audit.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "github-actions"
+      - "automated"
+    ignore:
+      - dependency-name: "SonarSource/sonarqube-scan-action"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "codecov/codecov-action"
+        update-types: ["version-update:semver-major"]
+
+  # Docker — monthly, base-image majors held for hand-review.
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "docker"
+      - "automated"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "alpine"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "debian"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ubuntu"
+        update-types: ["version-update:semver-major"]
