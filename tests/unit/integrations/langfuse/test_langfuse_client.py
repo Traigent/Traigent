@@ -6,7 +6,7 @@ Run with: TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/langfuse/ -v
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

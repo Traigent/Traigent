@@ -8,7 +8,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from traigent.evaluators.base import Dataset
 from traigent.evaluators.metrics import MetricsEvaluationResult

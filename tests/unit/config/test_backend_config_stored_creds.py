@@ -7,12 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from traigent.config.backend_config import (
-    DEFAULT_CLOUD_URL,
-    SIGNUP_URL,
-    BackendConfig,
-    get_no_credentials_hint,
-)
+from traigent.config.backend_config import BackendConfig
 
 
 class TestBackendConfigStoredApiKey:

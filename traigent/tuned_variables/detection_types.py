@@ -177,26 +177,7 @@ class DetectionResult:
         )
         filtered = _filter_candidates(self.candidates, threshold, include, exclude)
 
-        config: dict[str, Any] = {}
-        for c in self.candidates:
-            if c.suggested_range is None:
-                continue
-            if confidence_order[c.confidence] < min_order:
-                continue
-            if include_set is not None and c.name not in include_set:
-                continue
-            if c.name in exclude_set:
-                continue
-
-            if format == "normalized":
-                config[c.name] = c.suggested_range.kwargs
-            elif format == "ranges":
-                config[c.name] = c.suggested_range.to_parameter_range()
-            else:
-                raise ValueError(
-                    f"format must be 'normalized' or 'ranges', got {format!r}"
-                )
-        return config
+        return {c.name: _candidate_to_config_value(c, format) for c in filtered}
 
 
 _CONFIDENCE_ORDER = {

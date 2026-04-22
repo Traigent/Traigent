@@ -160,7 +160,11 @@ def test_project_management_client_crud_and_list() -> None:
     )
 
     assert calls[0] == ("GET", "?page=1&per_page=20&search=alp", None)
-    assert calls[1] == ("POST", "", {"name": "Alpha", "slug": "alpha", "description": None})
+    assert calls[1] == (
+        "POST",
+        "",
+        {"name": "Alpha", "slug": "alpha", "description": None},
+    )
     assert calls[2] == ("GET", "/project_alpha", None)
     assert calls[3] == ("PATCH", "/project_alpha", {"description": "Primary project"})
     assert calls[4] == ("GET", "/project_alpha/policies/rate-limits", None)
@@ -204,9 +208,13 @@ def test_project_management_client_validates_override_response_shape() -> None:
 
 
 def test_project_management_client_rejects_missing_data_payload() -> None:
-    client = ProjectManagementClient(request_sender=lambda *_args, **_kwargs: {"data": []})
+    client = ProjectManagementClient(
+        request_sender=lambda *_args, **_kwargs: {"data": []}
+    )
 
-    with pytest.raises(ClientError, match="Unexpected response structure for project list"):
+    with pytest.raises(
+        ClientError, match="Unexpected response structure for project list"
+    ):
         client.list_projects()
 
 

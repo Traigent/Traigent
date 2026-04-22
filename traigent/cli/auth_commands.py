@@ -35,7 +35,7 @@ from traigent.cloud.auth import (
     AuthManager,
     InvalidCredentialsError,
 )
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.utils.logging import get_logger

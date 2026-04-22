@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -188,7 +188,9 @@ def test_observe_decorator_creates_nested_observations():
     )
     set_default_observability_client(client)
 
-    @observe("inner-operation", client=client, observation_type=ObservationType.TOOL_CALL)
+    @observe(
+        "inner-operation", client=client, observation_type=ObservationType.TOOL_CALL
+    )
     def inner(value: int) -> int:
         return value + 1
 
@@ -357,14 +359,20 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
             return {
                 "data": {
                     "is_bookmarked": bool(payload.get("is_bookmarked")),
-                    "bookmarked_at": "2026-03-10T14:13:00+00:00"
-                    if payload.get("is_bookmarked")
-                    else None,
-                    "bookmarked_by": "sdk-user" if payload.get("is_bookmarked") else None,
+                    "bookmarked_at": (
+                        "2026-03-10T14:13:00+00:00"
+                        if payload.get("is_bookmarked")
+                        else None
+                    ),
+                    "bookmarked_by": (
+                        "sdk-user" if payload.get("is_bookmarked") else None
+                    ),
                     "is_published": bool(payload.get("is_published")),
-                    "published_at": "2026-03-10T14:14:00+00:00"
-                    if payload.get("is_published")
-                    else None,
+                    "published_at": (
+                        "2026-03-10T14:14:00+00:00"
+                        if payload.get("is_published")
+                        else None
+                    ),
                     "published_by": "sdk-user" if payload.get("is_published") else None,
                     "comment_count": 2,
                     "feedback_summary": {"up_count": 1, "down_count": 0},
@@ -416,7 +424,11 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
     assert published.is_published is True
     assert request_calls == [
         ("GET", "/traces/trace_sdk/comments", None),
-        ("POST", "/traces/trace_sdk/comments", {"content": "Ship this after QA review."}),
+        (
+            "POST",
+            "/traces/trace_sdk/comments",
+            {"content": "Ship this after QA review."},
+        ),
         (
             "PUT",
             "/traces/trace_sdk/feedback",
@@ -589,7 +601,7 @@ def test_observability_client_query_helpers_follow_backend_contract():
         per_page=10,
         environment="production",
         tags=["demo"],
-        start_time_from=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        start_time_from=datetime(2026, 3, 10, 12, 0, 0, tzinfo=UTC),
     )
     trace = client.get_trace("trace_sdk_query")
     observations = client.get_trace_observations("trace_sdk_query")
@@ -621,7 +633,10 @@ def test_observability_client_rejects_collaboration_requests_after_close():
             max_queue_size=10,
         ),
         sender=lambda traces: None,
-        request_sender=lambda method, path, payload: request_calls.append((method, path, payload)) or {"data": {}},
+        request_sender=lambda method, path, payload: request_calls.append(
+            (method, path, payload)
+        )
+        or {"data": {}},
     )
     client.close()
 
@@ -645,7 +660,9 @@ def test_observability_client_validates_feedback_correction_output():
     )
 
     with pytest.raises(ClientError, match="correction_output"):
-        client.submit_feedback("trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}})
+        client.submit_feedback(
+            "trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}}
+        )
 
     client.close()
 
@@ -709,7 +726,7 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
         def read(self):
             return (
                 b'{"data":{"warnings":["Prompt reference could not be resolved for trace '
-                b'\'trace_warn\': support/missing (label=latest)"]}}'
+                b"'trace_warn': support/missing (label=latest)\"]}}"
             )
 
     client = ObservabilityClient(
@@ -729,7 +746,9 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
     )
 
     with caplog.at_level(logging.WARNING):
-        client._post_batch_sync([{"id": "trace_warn", "name": "warn-trace", "observations": []}])
+        client._post_batch_sync(
+            [{"id": "trace_warn", "name": "warn-trace", "observations": []}]
+        )
 
     client.close()
 

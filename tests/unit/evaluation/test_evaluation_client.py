@@ -210,14 +210,18 @@ def test_evaluation_client_scores_polling_and_benchmark_helpers(monkeypatch):
                     "status": status,
                     "source": "evaluator",
                     "input_snapshot": {},
-                    "output_payload": {"numeric_value": 0.9} if status == "completed" else None,
+                    "output_payload": (
+                        {"numeric_value": 0.9} if status == "completed" else None
+                    ),
                     "score_record_ids": ["score_1"] if status == "completed" else [],
                     "input_tokens": 10,
                     "output_tokens": 5,
                     "total_tokens": 15,
                     "cost_usd": 0.002,
                     "latency_ms": 120,
-                    "observability_trace_id": "trace_evalrun_1" if status == "completed" else None,
+                    "observability_trace_id": (
+                        "trace_evalrun_1" if status == "completed" else None
+                    ),
                     "created_at": "2026-03-10T12:00:00+00:00",
                     "updated_at": "2026-03-10T12:01:00+00:00",
                 }
@@ -301,7 +305,9 @@ def test_evaluation_client_scores_polling_and_benchmark_helpers(monkeypatch):
     }
     judge_config = client.judge_config_from_benchmark_payload(benchmark_payload)
     execute_result = client.execute_evaluator("evaluator_1", target=target)
-    completed_run = client.wait_for_evaluator_run("evalrun_1", max_attempts=3, interval_seconds=0.01)
+    completed_run = client.wait_for_evaluator_run(
+        "evalrun_1", max_attempts=3, interval_seconds=0.01
+    )
     created_score = client.create_score(
         measure_id="quality_score",
         target=target,
@@ -513,7 +519,9 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
                     "updated_at": "2026-03-10T12:00:00+00:00",
                 }
             }
-        if method == "GET" and path.startswith("/api/v1beta/annotation-queues/queue_1/items?"):
+        if method == "GET" and path.startswith(
+            "/api/v1beta/annotation-queues/queue_1/items?"
+        ):
             return {
                 "data": {
                     "items": [
@@ -685,6 +693,8 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
 
 
 def test_get_next_annotation_queue_item_returns_none_for_empty_queue():
-    client = EvaluationClient(request_sender=lambda method, path, payload: {"data": None})
+    client = EvaluationClient(
+        request_sender=lambda method, path, payload: {"data": None}
+    )
 
     assert client.get_next_annotation_queue_item("queue_1") is None

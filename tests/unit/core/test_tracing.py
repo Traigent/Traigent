@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from traigent.core import tracing
 from traigent.core.tracing import (
     SecureIdGenerator,
@@ -400,6 +398,7 @@ class TestGetTracer:
             assert result1 is None
             assert result2 is None
 
+
 class TestSetErrorStatus:
     """Tests for fallback error-status handling."""
 
@@ -411,7 +410,9 @@ class TestSetErrorStatus:
 
         span.set_status.assert_called_once_with(status="ERROR", description="broken")
 
-    def test_set_error_status_falls_back_to_simple_error_status_on_type_error(self) -> None:
+    def test_set_error_status_falls_back_to_simple_error_status_on_type_error(
+        self,
+    ) -> None:
         span = MagicMock()
         span.set_status.side_effect = [TypeError("unsupported kwargs"), None]
 

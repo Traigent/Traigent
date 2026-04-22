@@ -67,10 +67,16 @@ def test_prompt_management_client_lists_and_gets_prompts():
 
     client = PromptManagementClient(request_sender=request_sender)
 
-    prompt_list = client.list_prompts(search="support", prompt_type=PromptType.TEXT, label="production")
+    prompt_list = client.list_prompts(
+        search="support", prompt_type=PromptType.TEXT, label="production"
+    )
     detail = client.get_prompt("support/welcome")
 
-    assert calls[0] == ("GET", "?page=1&per_page=20&search=support&prompt_type=text&label=production", None)
+    assert calls[0] == (
+        "GET",
+        "?page=1&per_page=20&search=support&prompt_type=text&label=production",
+        None,
+    )
     assert prompt_list.items[0].name == "support/welcome"
     assert detail.versions[0].prompt_text == "Hello {{ customer_name }}"
 
@@ -269,7 +275,9 @@ def test_prompt_management_client_fetches_prompt_analytics():
         }
 
     client = PromptManagementClient(request_sender=request_sender)
-    analytics = client.get_prompt_analytics("support/welcome", recent_limit=10, recent_page=2)
+    analytics = client.get_prompt_analytics(
+        "support/welcome", recent_limit=10, recent_page=2
+    )
 
     assert analytics.totals.link_count == 2
     assert analytics.versions[0].version == 2
@@ -313,5 +321,7 @@ def test_prompt_management_client_raises_connection_error_on_url_error(monkeypat
 
     monkeypatch.setattr("traigent.prompts.client.request.urlopen", raise_url_error)
 
-    with pytest.raises(TraigentConnectionError, match="Failed to connect to prompt backend"):
+    with pytest.raises(
+        TraigentConnectionError, match="Failed to connect to prompt backend"
+    ):
         client.list_prompts()

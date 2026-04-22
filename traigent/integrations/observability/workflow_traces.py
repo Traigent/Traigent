@@ -1173,7 +1173,9 @@ class WorkflowTracesTracker:
             batch_size: Number of spans to batch before sending
         """
         resolved_backend_url = backend_url or os.environ.get("TRAIGENT_BACKEND_URL")
-        self.backend_url: str = resolved_backend_url or "http://localhost:5000"
+        self.backend_url: str = (
+            resolved_backend_url or BackendConfig.get_cloud_backend_url()
+        )
         self.auth_token = (
             auth_token
             or os.environ.get("TRAIGENT_API_KEY")
