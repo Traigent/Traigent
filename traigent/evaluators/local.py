@@ -35,7 +35,7 @@ from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_captur
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-_LANGCHAIN_PATCH_ATTEMPTED = False
+_METADATA_PATCHES_ATTEMPTED = False
 
 
 @dataclass
@@ -139,12 +139,12 @@ def _ensure_metadata_capture_patches() -> None:
     Importing the SDK should not emit optional-integration warnings just because
     LocalEvaluator is imported as part of broader package initialization.
     """
-    global _LANGCHAIN_PATCH_ATTEMPTED
-    if _LANGCHAIN_PATCH_ATTEMPTED:
+    global _METADATA_PATCHES_ATTEMPTED
+    if _METADATA_PATCHES_ATTEMPTED:
         return
     patch_langchain_for_metadata_capture()
     patch_litellm_for_metadata_capture()
-    _LANGCHAIN_PATCH_ATTEMPTED = True
+    _METADATA_PATCHES_ATTEMPTED = True
 
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease

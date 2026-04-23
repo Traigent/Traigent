@@ -56,6 +56,11 @@ def patch_litellm_for_metadata_capture() -> bool:
             response = original_completion(*args, **kwargs)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
+            # Skip capture for streaming responses — usage is not populated
+            # until the stream is fully consumed in user code after we return.
+            if kwargs.get("stream", False):
+                return response
+
             # Inject timing into response for the handler chain
             response.response_time_ms = response_time_ms
 
@@ -91,6 +96,11 @@ def patch_litellm_for_metadata_capture() -> bool:
             start_time = time.perf_counter()
             response = await original_acompletion(*args, **kwargs)
             response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            # Skip capture for streaming responses — usage is not populated
+            # until the stream is fully consumed in user code after we return.
+            if kwargs.get("stream", False):
+                return response
 
             # Inject timing into response for the handler chain
             response.response_time_ms = response_time_ms
