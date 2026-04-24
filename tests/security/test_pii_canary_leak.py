@@ -1,7 +1,6 @@
 """End-to-end PII canary leak test for the optimization pipeline.
 
-This is the P0-1 safety net referenced in
-``/home/nimrodbu/.claude/plans/gpt-will-work-on-declarative-chipmunk.md``.
+This is the P0-1 safety net for the declarative-chipmunk redaction plan.
 
 It seeds a set of *canary* PII patterns (fake email, CC, SSN, API key) into an
 optimization run and, after the run completes, scans every persistence target
@@ -279,7 +278,7 @@ def canary_evaluator() -> _EchoCanaryEvaluator:
         "once redaction is live and all record_gap() calls become "
         "record_hit() paths with zero hits."
     ),
-    strict=False,
+    strict=True,
 )
 @pytest.mark.asyncio
 async def test_canaries_do_not_leak_through_optimization_pipeline(
