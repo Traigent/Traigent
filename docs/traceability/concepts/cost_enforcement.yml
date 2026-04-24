@@ -106,7 +106,7 @@ operational_principle:
   - "A permit is acquired before any trial that may incur LLM costs."
   - "Permits use single-release semantics: mark_released() returns True only on first call."
   - "The sum of active permit amounts always equals reserved_cost (I8 invariant)."
-  - "Budget bound: accumulated_cost + reserved_cost <= limit at all times (I4 invariant)."
+  - "Admission-time spend bound: before launching new work, accumulated_cost + reserved_cost + estimated_cost <= limit (I4 admission guard). Actual cost may exceed estimates after a permitted trial completes."
   - "All state mutations occur atomically under a single RLock."
   - "Mock mode bypasses all tracking to enable zero-cost development/testing."
   - "Denied permits have id=-1, amount=0.0, active=False (I7 invariant)."
@@ -126,9 +126,9 @@ invariants:
     description: "len(active_permits) == in_flight_count"
     expression: "len(self._active_permits) == self._in_flight_count"
   - id: I4
-    name: budget_bound
-    description: "accumulated_cost + reserved_cost <= limit + ε"
-    expression: "self._accumulated_cost + self._reserved_cost <= self.config.limit + 0.0001"
+    name: admission_budget_bound
+    description: "Permit acquisition grants only when projected accumulated_cost + reserved_cost + estimated_cost <= limit. Actual completed-trial cost may exceed the estimate, including while other permits remain in flight."
+    expression: "projected_cost <= self.config.limit before granting a permit"
   - id: I5
     name: released_permits_inactive
     description: "All released permits have active=False"

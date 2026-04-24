@@ -202,7 +202,8 @@ async def optimize(
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
 | `cost_limit` | Maximum USD spending for this run. |
 | `cost_approved` | Skip cost approval prompt. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
+| `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Deprecated aliases for metric-limit controls. Use `cost_limit` for hard USD spend control. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
 | `order` | Alias for `parameter_order` (grid search only). |

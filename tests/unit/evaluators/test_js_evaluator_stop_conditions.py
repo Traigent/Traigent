@@ -1,13 +1,13 @@
 """Tests for stop conditions with JS evaluator in sequential and parallel modes.
 
-This module verifies that stop conditions (max_trials, plateau, budget) work
+This module verifies that stop conditions (max_trials, plateau, metric limit) work
 correctly when using the JS runtime, both with single-worker sequential
 execution and multi-worker parallel execution.
 
 Test Coverage:
 - MaxTrialsStopCondition with JS evaluator (sequential and parallel)
 - PlateauStopCondition with JS evaluator (sequential and parallel)
-- BudgetStopCondition with JS evaluator (sequential and parallel)
+- MetricLimitStopCondition with JS evaluator (sequential and parallel)
 - Cooperative cancellation when stop condition triggers
 - Partial results when trials are in-flight during stop
 """
@@ -24,8 +24,8 @@ from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.parallel_execution_manager import ParallelExecutionManager
 from traigent.core.stop_conditions import (
-    BudgetStopCondition,
     MaxTrialsStopCondition,
+    MetricLimitStopCondition,
     PlateauAfterNStopCondition,
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -173,7 +173,7 @@ class TestMaxTrialsSequential:
             return "result"
 
         # Run 3 sequential evaluations
-        for i in range(3):
+        for _i in range(3):
             await evaluator.evaluate(
                 func=dummy_func,
                 config={"temperature": 0.7},
@@ -526,12 +526,12 @@ class TestPlateauStopCondition:
 
 
 # =============================================================================
-# BudgetStopCondition Tests
+# MetricLimitStopCondition Tests
 # =============================================================================
 
 
-class TestBudgetStopCondition:
-    """Tests for budget stop condition with JS evaluator."""
+class TestMetricLimitStopCondition:
+    """Tests for metric-limit stop condition with JS evaluator."""
 
     @pytest.mark.asyncio
     async def test_budget_stops_sequential(self, sample_dataset, mock_bridge):
@@ -550,7 +550,10 @@ class TestBudgetStopCondition:
         evaluator = JSEvaluator(js_module="./test.js")
         evaluator._bridge = mock_bridge
 
-        stop_condition = BudgetStopCondition(budget=budget_limit, metric_name="cost")
+        stop_condition = MetricLimitStopCondition(
+            limit=budget_limit,
+            metric_name="cost",
+        )
         trial_history = []
 
         async def dummy_func(**kwargs):
@@ -623,11 +626,11 @@ class TestBudgetStopCondition:
         # Run multiple batches
         for batch in range(5):
 
-            async def run_trial_with_pool():
+            async def run_trial_with_pool(batch_id=batch):
                 nonlocal completed_trials
                 result = await evaluator.evaluate(
                     func=dummy_func,
-                    config={"batch": batch},
+                    config={"batch": batch_id},
                     dataset=sample_dataset,
                 )
                 completed_trials += 1
@@ -680,7 +683,7 @@ class TestCooperativeCancellation:
                     trial_completion_allowed.wait(),
                     timeout=0.1,  # Short timeout for test
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Trial was cancelled/timed out
                 return make_js_trial_result(
                     trial_id=trial_id,
@@ -825,7 +828,7 @@ class TestStopConditionIntegration:
                 ]
             ),
         )
-        budget = BudgetStopCondition(budget=1.0, metric_name="cost")
+        budget = MetricLimitStopCondition(limit=1.0, metric_name="cost")
 
         stop_conditions = [max_trials, plateau, budget]
         trial_history = []
@@ -911,7 +914,7 @@ class TestEndToEndOrchestratorFlow:
         )
 
         max_trials_condition = MaxTrialsStopCondition(max_trials=10)
-        budget_condition = BudgetStopCondition(budget=0.06, metric_name="cost")
+        budget_condition = MetricLimitStopCondition(limit=0.06, metric_name="cost")
         stop_conditions = [max_trials_condition, budget_condition]
 
         trial_history: list[TrialResult] = []
@@ -926,10 +929,10 @@ class TestEndToEndOrchestratorFlow:
             batch_num += 1
 
             # Create trial coroutines for this batch
-            async def run_trial(idx):
+            async def run_trial(idx, batch_id=batch_num):
                 return await evaluator.evaluate(
                     func=dummy_func,
-                    config={"batch": batch_num, "idx": idx},
+                    config={"batch": batch_id, "idx": idx},
                     dataset=sample_dataset,
                 )
 
@@ -961,8 +964,8 @@ class TestEndToEndOrchestratorFlow:
                 if sc.should_stop(trial_history):
                     if isinstance(sc, MaxTrialsStopCondition):
                         stop_reason = "max_trials"
-                    elif isinstance(sc, BudgetStopCondition):
-                        stop_reason = "budget"
+                    elif isinstance(sc, MetricLimitStopCondition):
+                        stop_reason = "metric_limit"
                     break
 
             if stop_reason:
@@ -970,7 +973,7 @@ class TestEndToEndOrchestratorFlow:
 
             # Also stop if all trials cancelled (budget exhausted pre-emptively)
             if cancelled == len(coroutines):
-                stop_reason = "budget_exhausted"
+                stop_reason = "cost_limit"
                 break
 
             # Safety limit
@@ -980,9 +983,9 @@ class TestEndToEndOrchestratorFlow:
 
         # Verify orchestration behavior
         assert stop_reason in (
-            "budget",
-            "budget_exhausted",
-        ), f"Expected budget stop, got {stop_reason}"
+            "metric_limit",
+            "cost_limit",
+        ), f"Expected cost or metric limit stop, got {stop_reason}"
         assert (
             len(trial_history) <= 6
         ), f"Budget should limit trials, got {len(trial_history)}"
@@ -1294,7 +1297,7 @@ class TestOutOfOrderCompletion:
             process_pool=mock_pool,
         )
 
-        budget_condition = BudgetStopCondition(budget=0.08, metric_name="cost")
+        budget_condition = MetricLimitStopCondition(limit=0.08, metric_name="cost")
         trial_history = []
 
         async def dummy_func(**kwargs):

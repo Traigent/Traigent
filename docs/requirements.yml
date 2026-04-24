@@ -286,16 +286,17 @@
   status: active
 
 - id: REQ-COST-020
-  name: "Cost tracking invariants"
-  title: "Cost enforcement maintains critical invariants"
+  name: "Cost tracking safety properties"
+  title: "Cost enforcement maintains critical safety properties"
   description: >
-    Cost enforcement system must maintain 8 invariants to ensure correct
-    budget tracking and prevent financial harm from bugs.
+    Cost enforcement system must maintain runtime state invariants and
+    admission-time guards to ensure correct budget tracking and prevent
+    financial harm from bugs.
   acceptance_criteria:
     - I1: in_flight_count >= 0 (never negative).
     - I2: reserved_cost >= 0 (never negative).
     - I3: len(active_permits) == in_flight_count (consistency).
-    - I4: accumulated + reserved <= limit + ε (budget bound).
+    - I4: Permit acquisition grants only when projected accumulated + reserved + estimated <= limit; completed actual cost may exceed estimates, including while other admitted permits are still in flight.
     - I5: Released permits have active=False.
     - I6: Permit IDs monotonically increasing.
     - I7: Denied permits have id=-1, amount=0, active=False.

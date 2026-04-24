@@ -109,6 +109,7 @@ async def test_sample_budget_enforcement_variants(
     )
 
     assert orchestrator._stop_reason == "max_samples_reached"  # noqa: SLF001
+    assert result.stop_reason == "max_samples_reached"
     assert result.status.name == "COMPLETED"
 
     assert sum(consumed) == TOTAL_BUDGET
@@ -148,6 +149,7 @@ async def test_sample_budget_enforcement_parameter_injection() -> None:
     )
 
     assert orchestrator._stop_reason == "max_samples_reached"  # noqa: SLF001
+    assert result.stop_reason == "max_samples_reached"
     assert result.status.name == "COMPLETED"
 
     assert sum(consumed) == TOTAL_BUDGET

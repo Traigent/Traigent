@@ -788,6 +788,23 @@ class TestCostEnforcerInFlightReservation:
         assert status.reserved_cost_usd == 0.0
         assert status.accumulated_cost_usd == 0.15
 
+    def test_actual_cost_overrun_denies_future_permits(self) -> None:
+        """Actual cost may exceed estimate, but future permits are denied."""
+        config = CostEnforcerConfig(limit=0.10, estimated_cost_per_trial=0.05)
+        enforcer = CostEnforcer(config=config)
+
+        permit = enforcer.acquire_permit()
+        assert permit.is_granted
+
+        enforcer.track_cost(0.20, permit=permit)
+        status = enforcer.get_status()
+        assert status.accumulated_cost_usd == pytest.approx(0.20)
+        assert status.reserved_cost_usd == 0.0
+        assert status.limit_reached is True
+
+        next_permit = enforcer.acquire_permit()
+        assert not next_permit.is_granted
+
     def test_release_permit_without_tracking(self) -> None:
         """release_permit releases reservation without tracking cost."""
         config = CostEnforcerConfig(limit=1.0, estimated_cost_per_trial=0.2)
@@ -1608,6 +1625,29 @@ class TestCostEnforcerInvariants:
 
         enforcer.release_permit(permit2)
         enforcer.assert_invariants()
+
+    def test_invariants_allow_parallel_actual_overrun_with_active_permit(self) -> None:
+        """A completed overrun can coexist with other admitted in-flight work."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=0.10, estimated_cost_per_trial=0.05)
+        )
+
+        permit1 = enforcer.acquire_permit()
+        permit2 = enforcer.acquire_permit()
+        assert permit1.is_granted
+        assert permit2.is_granted
+
+        enforcer.track_cost(0.20, permit=permit1)
+        status = enforcer.get_status()
+        assert status.accumulated_cost_usd == pytest.approx(0.20)
+        assert status.reserved_cost_usd == pytest.approx(0.05)
+        assert status.in_flight_count == 1
+        assert status.limit_reached is True
+
+        enforcer.assert_invariants()
+
+        next_permit = enforcer.acquire_permit()
+        assert not next_permit.is_granted
 
 
 class TestCostEnforcerEdgeCases:

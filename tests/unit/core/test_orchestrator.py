@@ -15,6 +15,7 @@ Tests cover:
 """
 
 import asyncio
+import math
 import time
 import uuid
 from collections.abc import Callable
@@ -1543,8 +1544,8 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) <= 4
 
     @pytest.mark.asyncio
-    async def test_budget_stop_condition(self, sample_dataset):
-        """Budget stop condition halts optimization once limit is reached."""
+    async def test_metric_limit_stop_condition(self, sample_dataset):
+        """Metric limit halts optimization once the named metric is reached."""
 
         config_space = {"param1": (0, 1)}
         optimizer = MockOptimizer(config_space, ["total_cost"])
@@ -1599,12 +1600,13 @@ class TestOptimizationOrchestrator:
             max_trials=20,
             config=TraigentConfig.edge_analytics_mode(),
             objectives=["total_cost"],
-            budget_limit=0.15,
+            metric_limit=0.15,
+            metric_name="total_cost",
         )
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
-        assert orchestrator._stop_reason == "cost_limit"
+        assert orchestrator._stop_reason == "metric_limit"
         total_cost = sum(tr.metrics.get("total_cost", 0.0) for tr in result.trials)
         assert total_cost >= 0.15
         assert len(result.trials) <= 4
@@ -1811,6 +1813,240 @@ class TestStopReasonInResult:
         assert result.stop_reason == "timeout"
 
     @pytest.mark.asyncio
+    async def test_stop_reason_timeout_parallel(self, sample_dataset):
+        """Parallel timeout is checked between batches and reports timeout."""
+        parallel_trials = 3
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(100)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_evaluation_delay(0.08)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=100,
+            parallel_trials=parallel_trials,
+            timeout=0.05,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "timeout"
+        assert orchestrator._stop_reason == "timeout"
+        assert 1 <= len(result.trials) <= parallel_trials
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_max_samples_reached(self, sample_dataset):
+        """stop_reason is 'max_samples_reached' when sample budget is reached."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            max_total_examples=3,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "max_samples_reached"
+        assert orchestrator._stop_reason == "max_samples_reached"
+        assert len(result.trials) == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_metric_limit(self, sample_dataset):
+        """stop_reason is 'metric_limit' when cumulative metric limit is reached."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["total_cost"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["total_cost"])
+        evaluator.set_metrics({"total_cost": 0.06, "accuracy": 0.5})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            metric_limit=0.15,
+            metric_name="total_cost",
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "metric_limit"
+        assert orchestrator._stop_reason == "metric_limit"
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_metric_limit_parallel_overshoot_is_bounded(self, sample_dataset):
+        """Parallel metric_limit is post-batch and may overshoot by one batch."""
+        metric_limit = 0.10
+        metric_per_trial = 0.06
+        parallel_trials = 3
+
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["total_cost"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["total_cost"])
+        evaluator.set_metrics({"total_cost": metric_per_trial, "accuracy": 0.5})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            parallel_trials=parallel_trials,
+            metric_limit=metric_limit,
+            metric_name="total_cost",
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        sequential_threshold_trials = math.ceil(metric_limit / metric_per_trial)
+        max_after_batch = sequential_threshold_trials + parallel_trials - 1
+        total_metric = sum(
+            trial.metrics.get("total_cost", 0.0) for trial in result.trials
+        )
+
+        assert result.stop_reason == "metric_limit"
+        assert orchestrator._stop_reason == "metric_limit"
+        assert total_metric >= metric_limit
+        assert sequential_threshold_trials <= len(result.trials) <= max_after_batch
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_plateau_parallel(self, sample_dataset):
+        """Parallel plateau is post-batch and reports the public stop reason."""
+        plateau_window = 3
+        parallel_trials = 3
+
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(20)
+
+        class ConstantEvaluator(BaseEvaluator):
+            async def evaluate(
+                self,
+                func,
+                config,
+                dataset,
+                *,
+                sample_lease=None,
+                progress_callback=None,
+            ) -> EvaluationResult:
+                allowed = 0
+                for idx, _example in enumerate(dataset.examples):
+                    if sample_lease and not sample_lease.try_take(1):
+                        break
+                    allowed += 1
+                    if progress_callback is not None:
+                        progress_callback(
+                            idx,
+                            {
+                                "success": True,
+                                "metrics": {"accuracy": 0.6},
+                                "output": "stub",
+                            },
+                        )
+
+                metrics = {"accuracy": 0.6, "examples_attempted": allowed}
+                result = EvaluationResult(
+                    config=config,
+                    example_results=[],
+                    aggregated_metrics=metrics,
+                    total_examples=allowed,
+                    successful_examples=allowed,
+                    duration=0.01,
+                    metrics=metrics,
+                )
+                result.sample_budget_exhausted = bool(sample_lease) and allowed < len(
+                    dataset.examples
+                )
+                result.examples_consumed = allowed
+                return result
+
+        evaluator = ConstantEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=20,
+            parallel_trials=parallel_trials,
+            config=TraigentConfig.edge_analytics_mode(),
+            objectives=["accuracy"],
+            plateau_window=plateau_window,
+            plateau_epsilon=0.0,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        max_after_batch = plateau_window + parallel_trials - 1
+        assert result.stop_reason == "plateau"
+        assert orchestrator._stop_reason == "plateau"
+        assert plateau_window <= len(result.trials) <= max_after_batch
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_hypervolume_convergence(self, sample_dataset):
+        """Built-in hypervolume convergence reports a specific public reason."""
+
+        class ConstantEvaluator(BaseEvaluator):
+            async def evaluate(
+                self,
+                func,
+                config,
+                dataset,
+                *,
+                sample_lease=None,
+                progress_callback=None,
+            ) -> EvaluationResult:
+                metrics = {
+                    "accuracy": 0.6,
+                    "examples_attempted": len(dataset.examples),
+                }
+                return EvaluationResult(
+                    config=config,
+                    example_results=[],
+                    aggregated_metrics=metrics,
+                    total_examples=len(dataset.examples),
+                    successful_examples=len(dataset.examples),
+                    duration=0.01,
+                    metrics=metrics,
+                )
+
+        schema = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+        )
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(20)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=ConstantEvaluator(metrics=["accuracy"]),
+            max_trials=20,
+            config=TraigentConfig.edge_analytics_mode(),
+            objective_schema=schema,
+            convergence_metric="hypervolume_improvement",
+            convergence_window=2,
+            convergence_threshold=0.01,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "convergence"
+        assert orchestrator._stop_reason == "convergence"
+        assert len(result.trials) >= 3
+
+    @pytest.mark.asyncio
     async def test_stop_reason_optimizer_stop(self, sample_dataset):
         """stop_reason is 'optimizer' when optimizer requests stop."""
         config_space = {"param1": (0, 1)}
@@ -1853,6 +2089,63 @@ class TestStopReasonInResult:
         # When optimizer provides no suggestions, stop_reason is "optimizer"
         assert result.stop_reason == "optimizer"
         assert len(result.trials) == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_cost_limit(self, sample_dataset, monkeypatch):
+        """stop_reason is 'cost_limit' when the spend guard stops the run."""
+        # Disable mock-LLM bypass so CostEnforcer tracks real permits.
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "cost_limit"
+        assert orchestrator._stop_reason == "cost_limit"
+        assert len(result.trials) >= 1
+        assert orchestrator.cost_enforcer.get_status().limit_reached is True
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_cost_limit_parallel(self, sample_dataset, monkeypatch):
+        """Parallel cost-limit cancellation still reports public stop_reason."""
+        # Disable mock-LLM bypass so CostEnforcer tracks real permits.
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_metrics({"accuracy": 0.5, "cost": 0.06})
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            parallel_trials=2,
+            config=TraigentConfig.edge_analytics_mode(),
+            cost_limit=0.12,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "cost_limit"
+        assert orchestrator._stop_reason == "cost_limit"
+        assert 1 <= len(result.trials) <= 3
+        assert orchestrator.cost_enforcer.get_status().limit_reached is True
 
 
 class TestUsageAnalyticsSubmission:

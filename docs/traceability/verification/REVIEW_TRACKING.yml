@@ -23,7 +23,7 @@ metadata:
   completed: 26
   gaps_found: 0
   partial_matches: 0
-  last_updated: "2025-12-06T21:29:07Z"
+  last_updated: "2026-04-24T10:25:19Z"
 
 # =============================================================================
 # CATEGORY A: State Variables (CRITICAL - 7 items)
@@ -266,10 +266,10 @@ items:
 
   - id: INV-004
     category: C
-    element: "I4: budget bound"
-    description: "Verify I4 invariant check in _verify_invariants()"
-    alloy_location: "lines 89-93: I4_BudgetBound predicate"
-    code_location: "lines 976-984 in _verify_invariants()"
+    element: "I4: admission budget bound"
+    description: "Verify I4 admission-time permit check"
+    alloy_location: "I4_AdmissionBudgetBound predicate and NoOverAdmission assertion"
+    code_location: "_acquire_permit_locked() projected-cost check"
     status: completed
     agent_id: "Claude Code"
     agent_model: "Claude Opus 4.5"
@@ -277,7 +277,7 @@ items:
     completed_at: "2025-12-06T15:05:00Z"
     result: match
     gap_id: null
-    notes: "Functional match: Alloy uses exact 'leq[total, e.limit]', Python uses 'total > limit + epsilon' with epsilon=0.0001. Epsilon is appropriate for float precision."
+    notes: "Functional match: Alloy now models I4 as an admission property, not a global state invariant. Python grants permits only when accumulated + reserved + estimated <= limit; after track_cost(), actual cost may exceed the estimate and therefore the configured limit, including while other admitted permits remain in flight. Alloy integer arithmetic uses .plus/.minus operators so acquire/track transitions are executable."
 
   - id: INV-005
     category: C
@@ -459,6 +459,6 @@ items:
 # Agents Participating:
 #   - Gemini 3 Pro (Preview): 7 state variables, 4 operations
 #   - gpt-5-codex: 1 operation (OP-003)
-#   - Claude Opus 4.5: 8 invariants, 1 permit class, 5 edge cases
+#   - Claude Opus 4.5: safety properties, 1 permit class, 5 edge cases
 #
 # =============================================================================

@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Cost enforcement invariant checks now treat the cost-limit bound as an admission-time permit rule. `assert_invariants()` still detects stranded permits and reservation drift, but it no longer flags valid post-trial actual-cost overruns while other admitted permits remain in flight.
+- `metric_limit` in parallel mode is evaluated after each batch and may overshoot by up to `parallel_trials - 1` trials; use `cost_limit` when a hard spend bound is required.
+- Deprecated `budget_limit` stop-condition aliases now report `OptimizationResult.stop_reason="metric_limit"` instead of `"cost_limit"`. Use `cost_limit` for hard USD spend control and `metric_limit` with `metric_name` for soft cumulative metric stopping.
+- Built-in hypervolume convergence now reports `OptimizationResult.stop_reason="convergence"`; arbitrary custom stop conditions still report the generic `"condition"` reason unless explicitly mapped.
+
 ## [0.11.2] - 2026-04-01
 
 ### Fixed

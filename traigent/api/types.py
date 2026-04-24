@@ -105,8 +105,10 @@ StopReason = Literal[
     "max_samples_reached",
     "timeout",
     "cost_limit",
+    "metric_limit",
     "optimizer",
     "plateau",
+    "convergence",
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
@@ -511,8 +513,10 @@ class OptimizationResult:
             - "max_samples_reached": Hit the max samples/examples limit
             - "timeout": Exceeded the timeout duration
             - "cost_limit": Hit the cost budget limit
+            - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)
+            - "convergence": Built-in hypervolume convergence condition triggered
             - "user_cancelled": User cancelled or declined cost approval
             - "condition": Generic stop condition was triggered
             - "error": Optimization failed due to an exception
