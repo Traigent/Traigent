@@ -1732,7 +1732,8 @@ def optimize(  # NOSONAR(S107)
                 arguments. Values provided here merge with the explicit parameters.
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``metric_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+                ``metric_limit`` (deprecated alias: ``budget_limit``), ``plateau_window``,
+                ``cost_limit``, and ``cost_approved``.
                 Tuned-variable detection controls are also available via runtime
                 overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
                 (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
