@@ -41,7 +41,7 @@ dependencies = [
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
     "backoff>=2.2.0",
-    "litellm>=1.83.0,<2.0",  # CVE-2026-35029/35030, GHSA-69x8-hrgq-fjj8 fixed in 1.83.0 (see #652)
+    "litellm>=1.83.7,<2.0",  # GHSA-xqmj-j6mv-4862 (prompt template SSTI) fixed in 1.83.7; prior: GHSA-69x8-hrgq-fjj8 (see #652)
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
