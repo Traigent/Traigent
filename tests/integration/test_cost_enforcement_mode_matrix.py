@@ -1,7 +1,8 @@
 """Mode matrix tests for cost enforcement invariants.
 
-This test module provides EXPLICIT EVIDENCE that CostEnforcer invariants (I1-I8)
-hold across all combinations of injection modes and execution modes.
+This test module provides EXPLICIT EVIDENCE that CostEnforcer runtime state
+invariants and the I4 admission guard hold across all combinations of injection
+modes and execution modes.
 
 ARCHITECTURAL INSIGHT - Orthogonality by Design
 ===============================================
@@ -31,11 +32,11 @@ CostEnforcer behavior - which is exactly what we want to demonstrate.
 Reference: docs/traceability/verification/REVIEW_TRACKING.yml
 Addresses: Mode coverage evidence gap identified in formal verification review
 
-Invariants verified:
+Safety properties verified:
 - I1: in_flight_count >= 0
 - I2: reserved_cost >= 0
 - I3: len(active_permits) == in_flight_count
-- I4: accumulated + reserved <= limit + epsilon (during reservation phase)
+- I4: admission-time projected cost is checked before permits are granted
 - I5: Released permits have active=False
 - I6: Permit IDs monotonically increasing
 - I7: Denied permits have id=-1, amount=0
@@ -133,7 +134,7 @@ class MockOptimizer(BaseOptimizer):
 
 
 def verify_invariants(enforcer: CostEnforcer, context: str) -> None:
-    """Verify all 8 invariants hold for the given CostEnforcer.
+    """Verify runtime state invariants hold for the given CostEnforcer.
 
     Args:
         enforcer: CostEnforcer instance to verify
@@ -155,18 +156,6 @@ def verify_invariants(enforcer: CostEnforcer, context: str) -> None:
             f"[{context}] I3 violated: active_permits={len(enforcer._active_permits)}, "
             f"in_flight_count={enforcer._in_flight_count}"
         )
-
-        # I4: accumulated + reserved <= limit + epsilon
-        # NOTE: This invariant holds DURING reservation phase. Post-execution,
-        # accumulated cost may exceed limit if actual costs differ from estimates.
-        # This is expected behavior for best-effort budget enforcement.
-        # We only check I4 when there are active reservations.
-        if enforcer._in_flight_count > 0:
-            total = enforcer._accumulated_cost + enforcer._reserved_cost
-            assert total <= enforcer.config.limit + EPSILON, (
-                f"[{context}] I4 violated: accumulated={enforcer._accumulated_cost}, "
-                f"reserved={enforcer._reserved_cost}, limit={enforcer.config.limit}"
-            )
 
         # I5: All permits in _active_permits have active=True
         for permit in enforcer._active_permits.values():
@@ -245,14 +234,14 @@ EXECUTION_MODES = [
 
 
 class TestCostEnforcerModeMatrix:
-    """Verify CostEnforcer invariants hold across all mode combinations."""
+    """Verify CostEnforcer safety properties across all mode combinations."""
 
     @pytest.mark.parametrize("execution_mode", EXECUTION_MODES)
     @pytest.mark.asyncio
     async def test_invariants_hold_for_execution_mode(
         self, execution_mode: ExecutionMode, sample_dataset: Dataset
     ) -> None:
-        """Verify I1-I8 hold for each execution mode."""
+        """Verify runtime invariants hold for each execution mode."""
         context = f"execution_mode={execution_mode.value}"
 
         config = TraigentConfig(execution_mode=execution_mode.value)
@@ -292,7 +281,7 @@ class TestCostEnforcerModeMatrix:
     async def test_invariants_hold_for_injection_mode(
         self, injection_mode: InjectionMode, sample_dataset: Dataset
     ) -> None:
-        """Verify I1-I8 hold for each injection mode.
+        """Verify runtime invariants hold for each injection mode.
 
         ORTHOGONALITY PROOF: These tests intentionally run identical code paths
         because CostEnforcer is injection-mode agnostic by design. The fact that
@@ -353,7 +342,7 @@ class TestCostEnforcerModeMatrix:
         injection_mode: InjectionMode,
         sample_dataset: Dataset,
     ) -> None:
-        """Verify I1-I8 hold for representative mode combinations.
+        """Verify runtime invariants hold for representative mode combinations.
 
         This is a pairwise sampling of the mode matrix to provide explicit
         evidence that the orthogonality assumption holds.
@@ -433,14 +422,14 @@ class TestCostEnforcerWithCostLimit:
 
 
 class TestCostEnforcerParallelModes:
-    """Verify invariants hold in parallel execution across modes."""
+    """Verify runtime invariants hold in parallel execution across modes."""
 
     @pytest.mark.parametrize("execution_mode", EXECUTION_MODES)
     @pytest.mark.asyncio
     async def test_parallel_invariants_per_mode(
         self, execution_mode: ExecutionMode, sample_dataset: Dataset
     ) -> None:
-        """Verify I1-I8 hold with parallel execution in all modes."""
+        """Verify runtime invariants hold with parallel execution in all modes."""
         context = f"parallel: execution_mode={execution_mode.value}"
 
         config = TraigentConfig(execution_mode=execution_mode.value)

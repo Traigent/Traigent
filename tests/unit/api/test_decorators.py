@@ -210,6 +210,21 @@ class TestOptimizeDecorator:
         assert isinstance(ai_function, OptimizedFunction)
         assert ai_function.kwargs["cost_limit"] == 5.0
 
+    def test_decorator_accepts_metric_limit_runtime_override(self):
+        """metric_limit should be accepted with a required metric_name."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            metric_limit=50_000,
+            metric_name="total_tokens",
+        )
+        def ai_function(prompt: str) -> str:
+            return prompt
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.kwargs["metric_limit"] == 50_000
+        assert ai_function.kwargs["metric_name"] == "total_tokens"
+
     def test_decorator_with_auto_optimize(self):
         """Test decorator with auto optimization enabled."""
 

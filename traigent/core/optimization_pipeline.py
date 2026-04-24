@@ -670,6 +670,9 @@ def collect_orchestrator_kwargs(
     }
 
     optional_keys = [
+        "metric_limit",
+        "metric_name",
+        "metric_include_pruned",
         "budget_limit",
         "budget_metric",
         "budget_include_pruned",

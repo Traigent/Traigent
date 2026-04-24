@@ -13,11 +13,11 @@ if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.stop_conditions import (
-    BudgetStopCondition,
     CostLimitStopCondition,
     HypervolumeConvergenceStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
+    MetricLimitStopCondition,
     PlateauAfterNStopCondition,
     StopCondition,
 )
@@ -37,9 +37,9 @@ class StopConditionManager:
         plateau_window: int | None,
         plateau_epsilon: float | None,
         objective_schema: ObjectiveSchema | None,
-        budget_limit: float | None,
-        budget_metric: str,
-        include_pruned: bool,
+        metric_limit: float | None,
+        metric_name: str | None,
+        metric_include_pruned: bool,
     ) -> None:
         self._conditions: list[StopCondition] = []
 
@@ -70,12 +70,14 @@ class StopConditionManager:
                 )
             )
 
-        if budget_limit is not None:
+        if metric_limit is not None:
+            if not metric_name:
+                raise ValueError("metric_name is required when metric_limit is set")
             self._conditions.append(
-                BudgetStopCondition(
-                    budget=budget_limit,
-                    metric_name=budget_metric,
-                    include_pruned=include_pruned,
+                MetricLimitStopCondition(
+                    limit=metric_limit,
+                    metric_name=metric_name,
+                    include_pruned=metric_include_pruned,
                 )
             )
 

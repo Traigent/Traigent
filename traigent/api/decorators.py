@@ -389,6 +389,9 @@ _REMOVED_PARAMETERS = frozenset(
 )
 _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
     (
+        "metric_limit",
+        "metric_name",
+        "metric_include_pruned",
         "budget_limit",
         "budget_metric",
         "budget_include_pruned",
@@ -1718,6 +1721,10 @@ def optimize(  # NOSONAR(S107)
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00.
             cost_approved: Skip cost approval prompt. Use with caution in production.
+            metric_limit: Soft cumulative stop for a named completed-trial metric.
+                Requires metric_name. Use for counters such as total tokens or
+                cumulative latency, not hard money-spend control.
+            metric_name: Metric summed by metric_limit.
 
         Additional controls:
             legacy: Adapter for the legacy decorator signature. Accepts either a
@@ -1725,7 +1732,7 @@ def optimize(  # NOSONAR(S107)
                 arguments. Values provided here merge with the explicit parameters.
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+                ``metric_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
                 Tuned-variable detection controls are also available via runtime
                 overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
                 (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``

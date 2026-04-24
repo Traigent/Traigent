@@ -31,16 +31,14 @@ location:
   alloy_file: "docs/traceability/alloy/cost_enforcement.als"
   alloy_lines: [91, 92, 93]  # List of relevant line numbers
   alloy_snippet: |
-    let total = addFloat[e.accumulated_cost[t], e.reserved_cost[t]] |
-        leq[total, e.limit]
+    I4_AdmissionBudgetBound[e, t, estimated]
 
   code_file: "traigent/core/cost_enforcement.py"
-  code_lines: [976, 977, 978, 979, 980, 981, 982, 983, 984]
+  code_lines: [901, 902, 903]
   code_snippet: |
-    total = self._accumulated_cost + self._reserved_cost
-    epsilon = 0.0001
-    if total > self.config.limit + epsilon:
-        violations.append(...)
+    total_committed = self._accumulated_cost + self._reserved_cost
+    if total_committed + reserved_amount > self.config.limit:
+        return Permit(id=-1, amount=0.0, active=False)
 
 description: |
   Detailed description of the gap or discrepancy.

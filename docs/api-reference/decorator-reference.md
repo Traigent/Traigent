@@ -562,16 +562,19 @@ The `**runtime_overrides` parameter accepts additional settings:
 )
 ```
 
-**Budget Controls**:
+**Metric-Limit Controls**:
 
 ```python
 @traigent.optimize(
-    budget_limit=1000,  # Max samples
-    budget_metric="samples",
-    budget_include_pruned=True,
+    metric_limit=1000,  # Soft cumulative metric stop
+    metric_name="samples",
+    metric_include_pruned=True,
     ...
 )
 ```
+
+`budget_limit` / `budget_metric` / `budget_include_pruned` are deprecated aliases
+for compatibility. Use `cost_limit` for hard USD spend control.
 
 **Stop Conditions**:
 

@@ -26,12 +26,80 @@ Built-in implementations:
 |-----------|---------|--------------|
 | `MaxTrialsStopCondition` | Enforces a hard trial budget. | Uses `max_trials`. |
 | `PlateauAfterNStopCondition` | Stops when the best weighted score changes by at most `epsilon` for `window_size` successive trials. | `plateau_window`, `plateau_epsilon`. |
-| `BudgetStopCondition` | Stops when the cumulative value of a metric exceeds a budget (defaults to `total_cost`, falling back to `cost` or `total_example_cost`). | `budget_limit`, `budget_metric`, `budget_include_pruned`. |
+| `MetricLimitStopCondition` | Soft stop when the cumulative value of a named completed-trial metric reaches a limit. | `metric_limit`, `metric_name`, `metric_include_pruned`. |
+| `CostLimitStopCondition` | Hard money-spend guard backed by `CostEnforcer` permits before execution starts. Parallel-safe. | `cost_limit`, `cost_approved`. |
+| `HypervolumeConvergenceStopCondition` | Stops when hypervolume improvement remains below a threshold across a sliding window. | `convergence_metric="hypervolume_improvement"`, `convergence_window`, `convergence_threshold`. |
+
+`budget_limit` remains as a deprecated alias for `metric_limit` for compatibility.
+New code should not use it.
+
+## Cost limit vs metric limit
+
+Use `cost_limit` for user-facing spend control. It reserves cost before each trial
+through `CostEnforcer`, works with parallel execution, and prevents launching new
+work when remaining approved spend is insufficient.
+
+Use `metric_limit` for non-cost cumulative metrics where post-hoc summation is the
+right semantic: total tokens, cumulative latency, number of failed cases, or a
+custom evaluator counter. Because it observes completed `TrialResult` metrics, it
+can stop only before the next trial or batch item. In parallel mode, already
+running trials may finish after the limit is reached.
+
+`metric_name` is required with `metric_limit`:
+
+```python
+@traigent.optimize(
+    eval_dataset="qa.jsonl",
+    configuration_space={"temperature": [0.0, 0.5, 0.9]},
+    metric_limit=50_000,
+    metric_name="total_tokens",
+)
+def chat(question: str) -> str:
+    ...
+```
+
+Legacy migration:
+
+```python
+# Deprecated compatibility path. Emits a DeprecationWarning.
+@traigent.optimize(
+    eval_dataset="qa.jsonl",
+    configuration_space={"temperature": [0.0, 0.5, 0.9]},
+    budget_limit=50_000,
+    budget_metric="total_tokens",
+)
+def chat(question: str) -> str:
+    ...
+```
+
+If a legacy `budget_limit` call omits the metric name, Traigent defaults to
+`total_cost` for compatibility and warns that money spend control should use
+`cost_limit` instead.
 
 The orchestrator instantiates the conditions during construction via
-`_build_stop_conditions()` and calls `reset()` for every run so state never leaks
+`_configure_stop_conditions()` and calls `reset()` for every run so state never leaks
 between optimizations. `_should_stop()` evaluates all configured conditions before
 fallback logic (timeout or optimizer-provided stop signals).
+
+## Vendor-error pause semantics
+
+When every trial in a parallel batch fails with a vendor-classifiable error
+(rate limit, quota, service unavailable, insufficient funds), the orchestrator
+prompts the configured `PausePromptAdapter` (if any) before deciding whether to
+stop with `stop_reason = "vendor_error"`. In non-interactive runs, or when no
+adapter is configured, the run stops — matching sequential mode.
+
+"Resume" currently means **continue after recording the failed batch** — the
+failed `TrialResult`s are committed to the history before the vendor check runs,
+so the optimizer moves on to the next set of configs rather than retrying the
+same batch. Callers who need retry-the-same-batch semantics would need to move
+the vendor check ahead of result commit, or add explicit retry bookkeeping.
+
+When a batch mixes categories (e.g. some rate_limit, some insufficient_funds),
+the most severe category is surfaced to the adapter via category precedence:
+`INSUFFICIENT_FUNDS` < `QUOTA_EXHAUSTED` < `SERVICE_UNAVAILABLE` < `RATE_LIMIT`.
+This prevents offering "resume" when at least one trial failed for a
+non-recoverable reason.
 
 ## Objective weighting
 
@@ -73,7 +141,8 @@ they were declared in `@optimize`.
     configuration_space={"model": ["openai/gpt-4.1-nano", "openai/gpt-4.1"]},
     plateau_window=5,
     plateau_epsilon=1e-5,
-    budget_limit=0.5,
+    cost_limit=0.5,
+    cost_approved=True,
 )
 def answer_math(question: str) -> str:
     ...
@@ -104,7 +173,8 @@ class Summarizer:
     eval_dataset="scenarios.jsonl",
     configuration_space={"model": ["openai/gpt-4o", "openai/gpt-4o-mini"]},
     injection_mode="seamless",
-    budget_limit=1.25,
+    metric_limit=100_000,
+    metric_name="total_tokens",
 )
 def plan_trip(itinerary: str) -> str:
     ...
@@ -113,6 +183,10 @@ def plan_trip(itinerary: str) -> str:
 All four examples share the same stop-condition machinery with no additional
 plumbing.
 
+Built-in convergence stops report `OptimizationResult.stop_reason = "convergence"`.
+Custom stop-condition instances still report the generic `"condition"` reason
+unless they are explicitly mapped into the public `StopReason` contract.
+
 ## Testing & coverage
 
 Unit coverage lives under:
@@ -120,8 +194,8 @@ Unit coverage lives under:
 * `tests/unit/core/test_stop_conditions.py` – verifies:
   - Max-trial threshold (including invalid inputs).
   - Plateau detection, weight handling, reset semantics, and parameter validation.
-  - Budget enforcement, metadata fallback, and pruned-trial filtering.
-* `tests/unit/core/test_orchestrator.py` – integration tests for plateau and budget
+  - Metric-limit enforcement, compatibility fallback, and pruned-trial filtering.
+* `tests/unit/core/test_orchestrator.py` – integration tests for plateau and metric limit
   within the orchestrator, ensuring early termination and reasonable counts in
   sequential runs.
 
@@ -129,7 +203,7 @@ To run:
 
 ```bash
 pytest tests/unit/core/test_stop_conditions.py
-pytest tests/unit/core/test_orchestrator.py -k "plateau or budget"
+pytest tests/unit/core/test_orchestrator.py -k "plateau or metric_limit"
 ```
 
 *(Note: the shared environment used for development lacks `pytest`; run locally

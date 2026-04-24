@@ -28,6 +28,20 @@ logger = get_logger(__name__)
 T = TypeVar("T")
 
 
+def _close_unstarted_coroutine(coro: Any) -> None:
+    """Close a coroutine object that will not be executed.
+
+    ``run_with_cost_permits`` receives already-created coroutine objects. When a
+    permit is denied, that coroutine is intentionally skipped; closing it avoids
+    "coroutine was never awaited" warnings and releases any coroutine-local
+    resources held before first execution.
+    """
+
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
+
+
 @dataclass
 class ParallelBatchCaps:
     """Calculated caps for parallel batch execution."""
@@ -370,29 +384,52 @@ class ParallelExecutionManager:
             """
             nonlocal cancelled_count
 
-            # Check permit before acquiring semaphore to fail fast
-            permit = await self.acquire_cost_permit()
-            if not permit.is_granted:
-                # Increment cancelled count, don't execute - no permit was acquired
-                cancelled_count += 1
-                logger.info(
-                    "Trial at index %d cancelled due to cost limit reached",
-                    index,
-                )
-                # Return with denied permit (no permit was acquired)
-                return (index, cancel_sentinel, permit)
-
-            # Permit acquired, execute with concurrency control
-            # On exception, release the permit
+            permit: Permit | None = None
+            coroutine_started = False
             try:
+                # Check permit before acquiring semaphore to fail fast
+                permit = await self.acquire_cost_permit()
+                if not permit.is_granted:
+                    # Increment cancelled count, don't execute - no permit was acquired
+                    cancelled_count += 1
+                    _close_unstarted_coroutine(coro)
+                    logger.info(
+                        "Trial at index %d cancelled due to cost limit reached",
+                        index,
+                    )
+                    # Return with denied permit (no permit was acquired)
+                    return (index, cancel_sentinel, permit)
+
+                # Permit acquired, execute with concurrency control
+                # On exception, release the permit
                 async with self._semaphore:  # type: ignore[union-attr]
+                    coroutine_started = True
                     result = await coro
                     # Success: return with the permit for track_cost_async
                     return (index, result, permit)
+            except asyncio.CancelledError:
+                if not coroutine_started:
+                    _close_unstarted_coroutine(coro)
+                if (
+                    permit is not None
+                    and permit.is_granted
+                    and self.cost_enforcer is not None
+                ):
+                    await self.cost_enforcer.release_permit_async(permit)
+                    logger.debug(
+                        "Released permit %d for trial %d after cancellation",
+                        permit.id,
+                        index,
+                    )
+                raise
             except BaseException as e:
                 # Release the permit on exception - the trial failed after permit
                 # was granted, so we need to release the reservation
-                if self.cost_enforcer is not None:
+                if (
+                    permit is not None
+                    and permit.is_granted
+                    and self.cost_enforcer is not None
+                ):
                     await self.cost_enforcer.release_permit_async(permit)
                     logger.debug(
                         "Released permit %d for trial %d after exception: %s",

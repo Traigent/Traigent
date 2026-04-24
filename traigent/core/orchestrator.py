@@ -11,6 +11,7 @@ import math
 import sys
 import time
 import uuid
+import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -47,6 +48,7 @@ from traigent.core.cost_enforcement import (
     Permit,
 )
 from traigent.core.cost_estimator import CostEstimator
+from traigent.core.exception_handler import VendorErrorCategory
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
@@ -430,13 +432,80 @@ class OptimizationOrchestrator:
                 type(default_config).__name__,
             )
 
-    def _get_budget_limit(self) -> float | None:
-        """Extract and validate budget limit from config."""
+    @staticmethod
+    def _coerce_positive_limit(value: Any, *, name: str) -> float:
+        limit = float(value)
+        if limit <= 0:
+            raise ValueError(f"{name} must be a positive number")
+        return limit
+
+    def _warn_deprecated_budget_limit(self) -> None:
+        warnings.warn(
+            "budget_limit is deprecated. Use metric_limit with metric_name for "
+            "soft cumulative metric stopping. For money spend, use cost_limit.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    def _resolve_metric_limit_config(self) -> tuple[float | None, str | None, bool]:
+        """Resolve new metric_limit config plus deprecated budget_limit aliases."""
+        raw_metric_limit = self.config.get("metric_limit")
         raw_budget_limit = self.config.get("budget_limit")
+
+        if raw_metric_limit is not None and raw_budget_limit is not None:
+            raise ValueError("Specify only one of metric_limit or budget_limit")
+
+        metric_include_pruned = bool(
+            self.config.get(
+                "metric_include_pruned",
+                self.config.get("budget_include_pruned", True),
+            )
+        )
+
+        if raw_metric_limit is not None:
+            metric_name = self.config.get("metric_name")
+            if metric_name is None and "budget_metric" in self.config:
+                warnings.warn(
+                    "budget_metric is deprecated; use metric_name with metric_limit.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                metric_name = self.config.get("budget_metric")
+            if metric_name is None:
+                raise ValueError("metric_name is required when metric_limit is set")
+            if "budget_include_pruned" in self.config:
+                warnings.warn(
+                    "budget_include_pruned is deprecated; use metric_include_pruned.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+            return (
+                self._coerce_positive_limit(raw_metric_limit, name="metric_limit"),
+                str(metric_name),
+                metric_include_pruned,
+            )
+
         if raw_budget_limit is None:
-            return None
-        budget_limit = float(raw_budget_limit)
-        return budget_limit if budget_limit > 0 else None
+            return (None, None, metric_include_pruned)
+
+        self._warn_deprecated_budget_limit()
+        metric_name = self.config.get("metric_name")
+        if metric_name is None:
+            metric_name = self.config.get("budget_metric")
+        if metric_name is None:
+            warnings.warn(
+                "budget_limit without metric_name defaults to total_cost for "
+                "compatibility. If this is money spend control, use cost_limit.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            metric_name = "total_cost"
+
+        return (
+            self._coerce_positive_limit(raw_budget_limit, name="budget_limit"),
+            str(metric_name),
+            metric_include_pruned,
+        )
 
     def _setup_convergence_condition(self) -> None:
         """Configure hypervolume-based convergence if specified in config."""
@@ -490,6 +559,9 @@ class OptimizationOrchestrator:
             else None
         )
         samples_include_pruned = bool(self.config.get("samples_include_pruned", True))
+        metric_limit, metric_name, metric_include_pruned = (
+            self._resolve_metric_limit_config()
+        )
 
         self._stop_condition_manager = StopConditionManager(
             max_trials=self._max_trials,
@@ -498,9 +570,9 @@ class OptimizationOrchestrator:
             plateau_window=plateau_window or None,
             plateau_epsilon=plateau_epsilon,
             objective_schema=self.objective_schema,
-            budget_limit=self._get_budget_limit(),
-            budget_metric=str(self.config.get("budget_metric", "total_cost")),
-            include_pruned=bool(self.config.get("budget_include_pruned", True)),
+            metric_limit=metric_limit,
+            metric_name=metric_name,
+            metric_include_pruned=metric_include_pruned,
         )
 
         self._setup_convergence_condition()
@@ -2005,30 +2077,74 @@ class OptimizationOrchestrator:
         When all trials in a batch fail with vendor-like errors (rate limit,
         quota, service unavailable), prompt the user to resume or stop.
 
+        Handles both paths the parallel executor can produce:
+        - Raised exceptions (VendorPauseError or vendor-classifiable exceptions)
+          carried in ``PermittedTrialResult.result``.
+        - Failed ``TrialResult`` objects with a vendor-classifiable
+          ``error_message``.
+
         Returns:
             True if the user chose to stop, False otherwise.
         """
-        if self._prompt_adapter is None or not results:
+        if not results:
             return False
 
         from traigent.core.exception_handler import classify_vendor_error
 
-        vendor_failures = 0
-        for r in results:
-            trial = getattr(r, "result", r)
+        # Non-recoverable categories get priority so we don't offer "resume" on
+        # insufficient funds just because rate_limit happened to come first.
+        category_priority = {
+            VendorErrorCategory.INSUFFICIENT_FUNDS: 0,
+            VendorErrorCategory.QUOTA_EXHAUSTED: 1,
+            VendorErrorCategory.SERVICE_UNAVAILABLE: 2,
+            VendorErrorCategory.RATE_LIMIT: 3,
+        }
+
+        def _classify(r: PermittedTrialResult) -> VendorErrorCategory | None:
+            payload = getattr(r, "result", r)
+            if isinstance(payload, VendorPauseError):
+                if payload.category is not None:
+                    return payload.category
+                # category is declared optional; cascade through original_error
+                # then the message so an opaquely-wrapped original doesn't drop
+                # the trial from the vendor count.
+                if payload.original_error is not None:
+                    category = classify_vendor_error(payload.original_error)
+                    if category is not None:
+                        return category
+                return classify_vendor_error(RuntimeError(str(payload)))
+            if isinstance(payload, Exception):
+                return classify_vendor_error(payload)
             if (
-                isinstance(trial, TrialResult)
-                and trial.status == TrialStatus.FAILED
-                and trial.error_message
-                and classify_vendor_error(RuntimeError(trial.error_message)) is not None
+                isinstance(payload, TrialResult)
+                and payload.status == TrialStatus.FAILED
+                and payload.error_message
             ):
-                vendor_failures += 1
+                return classify_vendor_error(RuntimeError(payload.error_message))
+            return None
+
+        vendor_failures = 0
+        best_category: VendorErrorCategory | None = None
+        for r in results:
+            category = _classify(r)
+            if category is None:
+                continue
+            vendor_failures += 1
+            if best_category is None or category_priority.get(
+                category, len(category_priority)
+            ) < category_priority.get(best_category, len(category_priority)):
+                best_category = category
 
         if vendor_failures == 0 or vendor_failures < len(results):
             return False
 
+        # Pass a category through so _handle_vendor_pause consults the prompt
+        # adapter (when present) or defaults to "break" — matching sequential
+        # mode semantics. Without a category the adapter would always be
+        # bypassed and the user's "resume" preference ignored.
         exc = VendorPauseError(
             f"All {vendor_failures} parallel trials failed with vendor errors",
+            category=best_category,
         )
         decision = await self._handle_vendor_pause(exc)
         return decision == "break"
@@ -2331,7 +2447,8 @@ class OptimizationOrchestrator:
                     "plateau": "plateau",
                     "cost_limit": "cost_limit",
                     "timeout": "timeout",
-                    "budget": "cost_limit",
+                    "metric_limit": "metric_limit",
+                    "convergence": "convergence",
                 }
                 self._stop_reason = reason_mapping.get(reason, "condition")
             logger.info("Stopping: %s condition triggered", self._stop_reason)
