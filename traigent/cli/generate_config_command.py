@@ -243,6 +243,8 @@ def _output_tvl(result, path: Path):
 
     spec = result.to_tvl_spec(module_name=safe_source.stem)
     tvl_path = safe_source.with_suffix(".tvl.yml")
+    # nosec - safe_source is constrained to TRAIGENT_CONFIG_BASE_DIR above
+    # (line 238); tvl_path is derived via with_suffix on a validated path.
     tvl_path.write_text(yaml.dump(spec, default_flow_style=False, sort_keys=False))
     click.echo(f"TVL spec written to: {tvl_path}")
 

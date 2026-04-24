@@ -8,3 +8,33 @@ tests/**/*.py:assert
 # Ignore test credential patterns in test files
 # These are intentionally fake credentials for testing purposes
 tests/**/*.py:generic-api-key
+
+# ----------------------------------------------------------------------------
+# Path-traversal false-positives — see inline `# nosec` comments at each call
+# site for the per-instance rationale. All listed paths are scripts whose
+# `path` argument is either a developer-provided CLI flag (and therefore not
+# attacker-controllable in the threat model), or an internal helper called
+# only with paths the module itself constructs from validated/fixed roots.
+# ----------------------------------------------------------------------------
+
+# Internal docs-audit helpers (write_json / asset markdown writer): `path` is
+# main()-supplied under args.output_dir.
+scripts/documentation/audit_docs_consistency.py:path-traversal
+
+# Developer-facing CLI for duplicate detection; --output is the user's choice.
+scripts/analysis/duplicate_detector.py:path-traversal
+
+# Auto-tune helper that already calls validate_path() before writing.
+scripts/auto_tune/security_utils.py:path-traversal
+
+# CLI tool for TVL spec validation; intentionally reads the user's file argument.
+traigent/tvl/__main__.py:path-traversal
+
+# generate-config CLI; safe_source is constrained to TRAIGENT_CONFIG_BASE_DIR.
+traigent/cli/generate_config_command.py:path-traversal
+
+# Local storage lock file path is computed by the storage module itself.
+traigent/storage/local_storage.py:path-traversal
+
+# wandb integration: trial filename derived from int(trial_number).
+traigent/integrations/observability/wandb.py:path-traversal

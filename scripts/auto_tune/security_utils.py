@@ -446,6 +446,8 @@ def safe_file_write(path: Union[Path, str], content: str, backup: bool = True):
     # Write with atomic operation
     temp_path = path.with_suffix(f"{path.suffix}.tmp")
     try:
+        # nosec - path is validated above (line 438) via validate_path();
+        # temp_path is derived from the validated path.
         with open(temp_path, "w") as f:
             f.write(content)
         temp_path.rename(path)

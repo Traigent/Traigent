@@ -279,8 +279,10 @@ class TraigentWandBTracker:
             "timestamp": timestamp_iso,
         }
 
-        # Save trial as JSON artifact
-        trial_file = f"trial_{trial_number}.json"
+        # Save trial as JSON artifact. Coerce trial_number through int() so
+        # the formatted filename can never carry path-traversal segments even
+        # if a caller violates the int type contract.
+        trial_file = f"trial_{int(trial_number)}.json"
         artifact_written = False
         try:
             with open(trial_file, "w", encoding="utf-8") as f:
