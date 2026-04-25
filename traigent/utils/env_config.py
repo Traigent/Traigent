@@ -30,7 +30,11 @@ if os.environ.get("TRAIGENT_MOCK_MODE"):
 
 # Load environment variables from .env file if it exists
 env_file = Path(__file__).parent.parent.parent / ".env"
-if env_file.exists():
+if env_file.exists() and os.environ.get("TRAIGENT_SKIP_DOTENV", "").lower() not in (
+    "1",
+    "true",
+    "yes",
+):
     load_dotenv(env_file)
 
 _MIN_JWT_SECRET_LENGTH = 32
