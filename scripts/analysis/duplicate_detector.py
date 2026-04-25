@@ -186,6 +186,8 @@ def generate_report(
     report_content = "\n".join(report_lines)
 
     if output_file:
+        # nosec - developer-facing CLI; output_file is the user's --output arg
+        # and they own the destination by definition.
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(report_content)
         print(f"Report saved to {output_file}")

@@ -171,7 +171,7 @@ class ProjectManagementClient:
         try:
             with request.urlopen(
                 http_request, timeout=self.config.request_timeout
-            ) as response:  # nosec B310
+            ) as response:  # nosec B310 - backend_origin is caller-configured API endpoint
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 parsed = json.loads(body) if body else {}

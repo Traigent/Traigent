@@ -23,6 +23,7 @@ from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.core.objectives import ObjectiveSchema, normalize_objectives
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import PathTraversalError, validate_path
 
 logger = get_logger(__name__)
 
@@ -314,6 +315,8 @@ class OptimizationLogger:
         temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
         sanitized = sanitize_for_logging(data)
         try:
+            # nosec - temp_path derives from caller-supplied file_path which the
+            # logger already constrains to its own run/experiment directory.
             with open(temp_path, "w", encoding="utf-8") as handle:
                 json.dump(sanitized, handle, indent=2, default=str, ensure_ascii=False)
             temp_path.replace(file_path)
@@ -803,7 +806,18 @@ class OptimizationLogger:
         with open(latest_file) as handle:
             latest_data = json.load(handle)
 
-        checkpoint_file = run_path / "checkpoints" / latest_data["checkpoint_file"]
+        # Constrain the checkpoint reference to the run's checkpoints directory.
+        # The filename comes from latest.json on disk; a tampered manifest
+        # could otherwise traverse out of run_path via "../" segments.
+        checkpoints_dir = run_path / "checkpoints"
+        try:
+            checkpoint_file = validate_path(
+                latest_data["checkpoint_file"], checkpoints_dir, must_exist=True
+            )
+        except PathTraversalError as exc:
+            raise ValueError(
+                f"Invalid checkpoint reference in {latest_file}: {exc}"
+            ) from exc
         with open(checkpoint_file) as handle:
             checkpoint_data = json.load(handle)
 

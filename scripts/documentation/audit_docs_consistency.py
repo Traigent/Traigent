@@ -409,6 +409,8 @@ def build_records() -> tuple[list[DocRecord], list[dict], list[CommandRecord]]:
 
 
 def write_json(path: Path, payload: object) -> None:
+    # nosec - internal docs-audit helper; path is set by main() to a fixed
+    # output filename under args.output_dir, never user-controlled.
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
@@ -506,6 +508,8 @@ def write_tracking(
         lines.append(
             f"| `{asset['path']}` | `{asset['suffix']}` | {asset['size_bytes']} |"
         )
+    # nosec - internal docs-audit helper; path is set by main() to a fixed
+    # output filename under args.output_dir, never user-controlled.
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

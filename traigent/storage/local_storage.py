@@ -143,6 +143,8 @@ class LocalStorageManager:
     def _read_lock_pid(self, lock_path: Path) -> int | None:
         """Read owning PID from lock file, if present."""
         try:
+            # nosec - lock_path is computed internally by LocalStorage from
+            # self.storage_path and a fixed lock filename; never user-controlled.
             with open(lock_path, encoding="utf-8") as lock_file:
                 raw_value = lock_file.read().strip()
         except OSError:
