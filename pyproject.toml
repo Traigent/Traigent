@@ -67,10 +67,10 @@ bayesian = [
 # Framework integrations (Sprint 6)
 integrations = [
     "langchain>=0.0.200",
-    "langchain-core>=1.2.22",  # CVE-2026-26013 fix
+    "langchain-core>=1.2.28",  # CVE-2026-26013 + CVE-2026-40087 (improper template neutralization) fix
     "langchain-community>=0.3.27",
     "langchain-anthropic>=0.2.0",
-    "langchain-openai>=0.3.30",
+    "langchain-openai>=1.1.14",  # GHSA-r7w7-9xr2-qq2r (SSRF) fix
     "langchain-chroma>=0.2.5",
     "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
     "langchain-google-genai>=2.1.4",  # Google Gemini support via LangChain

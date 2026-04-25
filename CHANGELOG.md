@@ -8,6 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 - Bump `litellm` floor from `>=1.83.0` to `>=1.83.7` to fix [GHSA-xqmj-j6mv-4862](https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862) — prompt-template SSTI in `POST /prompts/test` that could run arbitrary code in the LiteLLM Proxy process. 1.83.7 renders templates in a sandboxed Jinja environment.
+- Bump `langchain-core` floor `>=1.2.22` → `>=1.2.28` (CVE-2026-40087 — improper element neutralization in templates).
+- Bump `langchain-openai` floor `>=0.3.30` → `>=1.1.14` (GHSA-r7w7-9xr2-qq2r — SSRF). Major-version-line bump; lock currently resolves to 1.2.x.
+- Lock-only bumps for transitive deps to clear Aikido CVEs: `fonttools` 4.60.1 → 4.62.1 (CVE-2025-66034), `langgraph-checkpoint` 3.0.0 → 4.0.2 (CVE-2026-27794, unsafe deserialization → RCE), `filelock` 3.20.0 → 3.29.0 (CVE-2025-68146, CVE-2026-22701), `sqlparse` 0.5.3 → 0.5.5 (GHSA-27jp-wm6q-gp25), `pygments` 2.19.2 → 2.20.0 (CVE-2026-4539). Two further uv.lock advisories — `ragas` (CVE-2026-6587, SSRF) and `diskcache` (CVE-2025-69872, code injection) — have no upstream patch yet and remain open; tracked separately.
+
+### Migration notes
+- **`langgraph-checkpoint` 3.x → 4.x:** the 4.0 release drops default deserialization of payloads serialized with the legacy `"json"` serde mode. Users running `langgraph` with a persistent checkpoint saver (SQLite, Postgres, Redis, etc.) whose stored state contains JSON-format blobs will see deserialization failures unless they configure `serde` with an explicit `allowed_json_modules` list. Traigent does not bind `langgraph-checkpoint` directly — it arrives transitively through the `langgraph` dependency — so this only affects projects that also use `langgraph` checkpointers in their own code. See [CVE-2026-27794](https://github.com/langchain-ai/langgraph/security/advisories) for the underlying RCE that motivated removing the default.
 
 ### Changed
 - Cost enforcement invariant checks now treat the cost-limit bound as an admission-time permit rule. `assert_invariants()` still detects stranded permits and reservation drift, but it no longer flags valid post-trial actual-cost overruns while other admitted permits remain in flight.
