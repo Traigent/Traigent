@@ -4,7 +4,7 @@ set -euo pipefail
 python -m pip install --upgrade pip
 
 private_deps_token="${TRAIGENT_PRIVATE_DEPS_TOKEN:-${TRAIGENT_SCHEMA_TOKEN:-${TRAIGENT_SCHEMAS_PAT:-}}}"
-schema_ref="${TRAIGENT_SCHEMA_REF:-7d8539f45e978c5148e4335e8250843f097e3b67}"
+schema_ref="${TRAIGENT_SCHEMA_REF:-96c30d3c6f4f0ab32748093357bbedfab89b80a5}"
 install_schema="${TRAIGENT_INSTALL_SCHEMA:-}"
 
 for arg in "$@"; do

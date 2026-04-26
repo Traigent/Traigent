@@ -34,6 +34,7 @@ if env_file.exists() and os.environ.get("TRAIGENT_SKIP_DOTENV", "").lower() not 
     "1",
     "true",
     "yes",
+    "on",
 ):
     load_dotenv(env_file)
 
