@@ -6188,6 +6188,9 @@ integrations = [
     { name = "rank-bm25" },
     { name = "wandb" },
 ]
+internal-schema = [
+    { name = "traigent-schema" },
+]
 ml = [
     { name = "matplotlib" },
     { name = "numpy" },
@@ -6354,13 +6357,24 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
+    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=96c30d3c6f4f0ab32748093357bbedfab89b80a5" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
 ]
-provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+
+[[package]]
+name = "traigent-schema"
+version = "4.0.0"
+source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=96c30d3c6f4f0ab32748093357bbedfab89b80a5#96c30d3c6f4f0ab32748093357bbedfab89b80a5" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "pyyaml" },
+    { name = "referencing" },
+]
 
 [[package]]
 name = "typer"

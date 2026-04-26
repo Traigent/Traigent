@@ -125,6 +125,11 @@ hybrid = [
     "mcp>=1.27.0",  # CVE-2025-66416, AIKIDO-2026-10472 fix (claude-code-sdk dependency)
 ]
 
+# Internal schema validation support for DTO strict-validation paths.
+internal_schema = [
+    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@96c30d3c6f4f0ab32748093357bbedfab89b80a5",
+]
+
 # Testing dependencies
 test = [
     "pytest>=9.0.3",
