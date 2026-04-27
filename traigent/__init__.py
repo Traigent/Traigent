@@ -192,6 +192,8 @@ from traigent.observability import (
     observe,
     set_default_observability_client,
 )
+from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.projects import ProjectManagementClient, ProjectManagementConfig
 from traigent.prompts import (
     ChatPromptMessage,
@@ -341,6 +343,10 @@ __all__ = [
     "EnterpriseAdminConfig",
     "ObservabilityClient",
     "ObservabilityConfig",
+    "BenchmarkClient",
+    "BenchmarkClientConfig",
+    "Dataset",
+    "EvaluationExample",
     "ProjectManagementClient",
     "ProjectManagementConfig",
     "EvaluationClient",
