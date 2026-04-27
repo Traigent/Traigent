@@ -206,9 +206,8 @@ def _generate_covering_combos(
 
 
 def _expected_mode(combo: dict[str, Any]) -> ExecutionMode:
-    # Note: cloud/hybrid raise ConfigurationError (not yet supported)
-    # standard/privacy have been removed from the enum
-    # All paths now lead to edge_analytics (only supported mode)
+    # CTD auto-detection cases still resolve to local execution; explicit
+    # hybrid/backend tracking is covered by dedicated execution-mode tests.
     return ExecutionMode.EDGE_ANALYTICS
 
 

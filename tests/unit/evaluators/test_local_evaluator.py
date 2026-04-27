@@ -264,8 +264,8 @@ class TestLocalEvaluatorTokenEstimation:
     async def test_execution_modes_token_handling(self, sample_dataset):
         """Test token metrics handling with edge_analytics execution mode.
 
-        Note: Only edge_analytics is currently supported. privacy/standard
-        were removed, cloud/hybrid are not yet supported.
+        Local evaluator token accounting is independent of backend-tracked
+        hybrid sessions; this test exercises the local execution path.
         """
 
         async def test_function(text: str) -> str:

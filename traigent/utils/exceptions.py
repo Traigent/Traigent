@@ -48,7 +48,7 @@ class ConfigurationError(TraigentError):
 
     This error is raised when:
     - Configuration values are invalid or malformed
-    - Configuration features are not yet supported (e.g., cloud/hybrid execution modes)
+    - Configuration features are not yet supported (e.g., cloud remote execution)
     - Required configuration is missing
 
     Set TRAIGENT_DEBUG=1 to see full tracebacks.

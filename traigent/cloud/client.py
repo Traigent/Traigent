@@ -50,6 +50,11 @@ logger = get_logger(__name__)
 _SESSION_NOT_INITIALIZED = "Session not initialized"
 _CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
 _AGENT_SPEC_REQUIRED = "agent_spec is required"
+CLOUD_REMOTE_EXECUTION_UNAVAILABLE = (
+    "Cloud remote execution is not available yet; use hybrid for "
+    "portal-tracked optimization. Supported modes are local/edge_analytics "
+    "and hybrid."
+)
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -617,101 +622,22 @@ class TraigentCloudClient(BaseTraigentClient):
         *,
         local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
-        """Run optimization using Traigent Cloud Service.
+        """Fail closed for remote cloud optimization.
 
-        Args:
-            function_name: Name of function being optimized
-            dataset: Evaluation dataset
-            configuration_space: Parameter search space
-            objectives: Optimization objectives
-            max_trials: Maximum optimization trials
-            target_cost_reduction: Target cost reduction (0.0-1.0)
-            local_function: Callable to use for local fallback optimization.
-
-        Returns:
-            CloudOptimizationResult with optimization results
-
-        Raises:
-            CloudServiceError: If cloud optimization fails and fallback disabled
+        Remote cloud execution is reserved for a future implementation. The
+        working portal-visible path today is hybrid mode: trials execute
+        locally and metrics are submitted to the backend session API.
         """
-        start_time = time.time()
-
-        try:
-            # Check if aiohttp is available
-            if not AIOHTTP_AVAILABLE:
-                raise CloudServiceError("aiohttp not available, using fallback")
-
-            # Check authentication
-            auth_status = self.auth.is_authenticated()
-            if inspect.isawaitable(auth_status):
-                auth_status = await auth_status
-
-            if not auth_status:
-                raise CloudServiceError("Not authenticated with Traigent Cloud Service")
-
-            # Smart dataset subset selection for cost optimization
-            original_size = len(dataset.examples)
-            subset_dataset = await self.subset_selector.select_optimal_subset(
-                dataset, target_reduction=target_cost_reduction
-            )
-            subset_size = len(subset_dataset.examples)
-
-            logger.info(
-                f"Smart subset selection: {original_size} → {subset_size} examples "
-                f"({(1 - subset_size / original_size) * 100:.1f}% reduction)"
-            )
-
-            # Prepare optimization request
-            request_data = {
-                "function_name": function_name,
-                "dataset": self._serialize_dataset(subset_dataset),
-                "configuration_space": configuration_space,
-                "objectives": objectives,
-                "max_trials": max_trials,
-                "target_cost_reduction": target_cost_reduction,
-                "client_version": "0.1.0",
-            }
-
-            # Submit optimization to cloud
-            result = await self._submit_optimization(request_data)
-
-            # Track usage for billing
-            await self.usage_tracker.record_optimization(
-                function_name=function_name,
-                trials_count=result["trials_count"],
-                dataset_size=subset_size,
-                optimization_time=time.time() - start_time,
-            )
-
-            # Calculate actual cost reduction
-            cost_reduction = 1 - (subset_size / original_size)
-
-            return CloudOptimizationResult(
-                best_config=result["best_config"],
-                best_metrics=result["best_metrics"],
-                trials_count=result["trials_count"],
-                cost_reduction=cost_reduction,
-                optimization_time=time.time() - start_time,
-                subset_used=True,
-                subset_size=subset_size,
-            )
-
-        except Exception as e:
-            await self._reset_http_session("cloud optimization failure")
-            logger.warning(f"Cloud optimization failed: {e}")
-
-            if self.enable_fallback:
-                logger.info("Falling back to local optimization")
-                return await self._fallback_optimization(
-                    function_name,
-                    dataset,
-                    configuration_space,
-                    objectives,
-                    max_trials,
-                    local_function=local_function,
-                )
-            else:
-                raise CloudServiceError(f"Cloud optimization failed: {e}") from None
+        _ = (
+            function_name,
+            dataset,
+            configuration_space,
+            objectives,
+            max_trials,
+            target_cost_reduction,
+            local_function,
+        )
+        raise CloudServiceError(CLOUD_REMOTE_EXECUTION_UNAVAILABLE)
 
     async def _submit_optimization(
         self, request_data: dict[str, Any]

@@ -8,21 +8,16 @@ executed in the cloud with full data transmission.
 
 from typing import TYPE_CHECKING, Any
 
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import CLOUD_REMOTE_EXECUTION_UNAVAILABLE, CloudServiceError
 from traigent.cloud.models import (
-    AgentExecutionRequest,
     AgentExecutionResponse,
-    AgentOptimizationRequest,
     AgentOptimizationResponse,
     AgentSpecification,
 )
 from traigent.evaluators.base import Dataset
-from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
-
-logger = get_logger(__name__)
 
 
 class CloudOperations:
@@ -58,50 +53,10 @@ class CloudOperations:
         Returns:
             Agent optimization response with session details
         """
-        logger.info(f"Starting cloud SaaS optimization for agent {agent_spec.name}")
-
-        try:
-            # Create backend agent and experiment
-            (
-                experiment_id,
-                experiment_run_id,
-            ) = await self.client._create_backend_agent_experiment(
-                agent_spec, dataset, configuration_space, objectives, max_trials
-            )
-
-            # Submit to cloud for execution
-            request = AgentOptimizationRequest(
-                agent_spec=agent_spec,
-                dataset=dataset,
-                configuration_space=configuration_space,
-                objectives=objectives,
-                max_trials=max_trials,
-                user_id=user_id,
-                billing_tier="cloud",
-            )
-
-            response = await self.client._submit_agent_optimization(request)
-
-            # Create session mapping
-            if agent_spec.name is None:
-                raise ValueError("Agent name is required")
-            self.client.session_bridge.create_session_mapping(
-                session_id=response.session_id,
-                experiment_id=experiment_id,
-                experiment_run_id=experiment_run_id,
-                function_name=agent_spec.name,
-                configuration_space=configuration_space,
-                objectives=objectives,
-            )
-
-            logger.info(
-                f"Started cloud optimization: {response.session_id} -> {experiment_id}"
-            )
-            return response
-
-        except Exception as e:
-            logger.error(f"Failed to start agent optimization: {e}")
-            raise CloudServiceError(f"Failed to start optimization: {e}") from None
+        _ = (agent_spec, dataset, configuration_space, objectives, max_trials, user_id)
+        raise CloudServiceError(
+            f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} (start_agent_optimization)"
+        )
 
     async def execute_agent(
         self,
@@ -119,17 +74,5 @@ class CloudOperations:
         Returns:
             Agent execution response
         """
-        logger.debug(f"Executing agent {agent_spec.name}")
-
-        try:
-            request = AgentExecutionRequest(
-                agent_spec=agent_spec,
-                input_data=input_data,
-                config_overrides=config_overrides,
-            )
-
-            return await self.client._execute_cloud_agent(request)
-
-        except Exception as e:
-            logger.error(f"Failed to execute agent: {e}")
-            raise CloudServiceError(f"Failed to execute agent: {e}") from None
+        _ = (agent_spec, input_data, config_overrides)
+        raise CloudServiceError(f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} (execute_agent)")

@@ -469,7 +469,7 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" (only supported mode in OSS)
+- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "cloud" is reserved for future remote execution.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration

@@ -71,8 +71,8 @@ class TraigentClient:
 
     This client automatically detects and uses the appropriate execution mode:
     - Local: Everything runs locally (no backend connection)
-    - Hybrid: Local execution with metric submission to backend
-    - SaaS: Full backend execution
+    - Hybrid: Local execution with metric submission to backend/portal tracking
+    - Cloud: Reserved for future remote execution; not available yet
     """
 
     def __init__(
@@ -91,7 +91,7 @@ class TraigentClient:
             agent_builder: Agent builder instance for local execution
 
         Note:
-            Cloud module is only required for 'hybrid', 'standard', and 'cloud' modes.
+            Cloud module is only required for 'hybrid' mode.
             Edge analytics mode works without cloud dependencies installed.
         """
         from traigent.config.backend_config import BackendConfig
@@ -165,7 +165,7 @@ class TraigentClient:
             )
 
         # Determine execution strategy
-        if self.execution_mode == ExecutionMode.STANDARD:
+        if self.execution_mode == ExecutionMode.HYBRID:
             return await self._optimize_hybrid(
                 function,
                 dataset,
@@ -176,14 +176,11 @@ class TraigentClient:
                 config_defaults,
             )
         elif self.execution_mode == ExecutionMode.CLOUD:
-            return await self._optimize_saas(
-                function,
-                dataset,
-                configuration_space,
-                objectives,
-                max_trials,
-                optimization_config or {},
-                config_defaults,
+            from traigent.cloud.client import CLOUD_REMOTE_EXECUTION_UNAVAILABLE
+
+            raise OptimizationError(
+                f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} "
+                "Cloud mode will be enabled when remote agent execution is implemented."
             )
         else:
             # Edge Analytics mode
@@ -206,11 +203,11 @@ class TraigentClient:
         optimization_config: dict[str, Any | None],
         config_defaults: dict[str, Any],
     ) -> dict[str, Any]:
-        """Standard mode: local execution with backend orchestration.
+        """Hybrid mode: local execution with backend orchestration/tracking.
 
         Data never leaves the client, only metrics are submitted.
         """
-        logger.info("Starting standard mode optimization")
+        logger.info("Starting hybrid mode optimization")
 
         async with self.backend_client:
             # Create hybrid session
@@ -238,7 +235,7 @@ class TraigentClient:
             async with OptimizerDirectClient(endpoint, token) as optimizer:
                 # Initialize local execution adapter
                 if not self.agent_builder:
-                    raise ValueError("Agent builder required for standard mode")
+                    raise ValueError("Agent builder required for hybrid mode")
 
                 adapter = LocalExecutionAdapter(self.agent_builder)
 
@@ -302,7 +299,7 @@ class TraigentClient:
                 if best_result and not final_results.get("best_configuration"):
                     final_results["best_configuration"] = best_result
 
-                final_results["execution_mode"] = "standard"
+                final_results["execution_mode"] = "hybrid"
                 final_results["completed_trials"] = completed_trials
 
                 return final_results
@@ -675,7 +672,8 @@ class TraigentClient:
         if requested_mode != "auto":
             return validate_execution_mode(requested_mode)
 
-        # Auto-detection: only edge_analytics is currently supported
+        # Auto-detection remains conservative; users can request hybrid explicitly
+        # when they want backend/portal tracking.
         return ExecutionMode.EDGE_ANALYTICS
 
     def _check_privacy_requirements(self) -> bool:

@@ -1067,7 +1067,7 @@ class BackendIntegratedClient:
             experiment_run_id, status
         )
 
-    # Cloud API methods (mock implementations in api_operations)
+    # Cloud API methods (remote execution not implemented; fail closed in api_operations)
     async def _create_cloud_session(
         self, request: SessionCreationRequest
     ) -> SessionCreationResponse:

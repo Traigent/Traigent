@@ -1,7 +1,7 @@
 """Integration tests for summary_stats mode in privacy/local execution."""
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -142,22 +142,30 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key",  # pragma: allowlist secret
+            api_key="tg_" + ("a" * 61),  # pragma: allowlist secret
             backend_config=backend_config,
             enable_fallback=True,
         )
+        backend_client.auth_manager.augment_headers = AsyncMock(return_value={})
 
         # Mock the aiohttp session
         with patch(
-            "traigent.cloud.backend_client.aiohttp.ClientSession"
+            "traigent.cloud.trial_operations.aiohttp.ClientSession"
         ) as mock_session_class:
-            mock_session = MagicMock()
-            mock_response = MagicMock()
+            mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.__aenter__.return_value = mock_response
-            mock_session.post.return_value = mock_response
-            mock_session.__aenter__.return_value = mock_session
-            mock_session_class.return_value = mock_session
+
+            mock_post_context = AsyncMock()
+            mock_post_context.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_post_context.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.post = MagicMock(return_value=mock_post_context)
+
+            mock_session_context = AsyncMock()
+            mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_context.__aexit__ = AsyncMock(return_value=False)
+            mock_session_class.return_value = mock_session_context
 
             # Create summary_stats data
             summary_stats = {
@@ -207,7 +215,7 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key",  # pragma: allowlist secret
+            api_key="tg_" + ("a" * 61),  # pragma: allowlist secret
             backend_config=backend_config,
             enable_fallback=True,
         )
@@ -287,9 +295,10 @@ class TestExecutionModeHandling:
         # validate_execution_mode provides strict validation
         from traigent.config.types import validate_execution_mode
 
-        for mode in ["cloud", "hybrid"]:
-            with pytest.raises(ConfigurationError, match="not yet supported"):
-                validate_execution_mode(mode)
+        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
+            validate_execution_mode("cloud")
+
+        assert validate_execution_mode("hybrid").value == "hybrid"
 
         for mode in ["privacy", "standard"]:
             with pytest.raises(ConfigurationError, match="No such mode"):

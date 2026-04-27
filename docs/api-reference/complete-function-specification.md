@@ -91,7 +91,7 @@ def my_agent(question: str) -> str:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` is supported today; `"cloud"`, `"hybrid"`, `"standard"` are reserved for managed backends. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. |
+| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` runs locally. `"hybrid"` runs trials locally and submits sessions/trial metrics to the backend for portal tracking. `"cloud"` is reserved for future remote execution and fails closed with guidance to use `"hybrid"`. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
@@ -108,11 +108,11 @@ def my_agent(question: str) -> str:
 
 **Usage Notes**
 
-- The default execution mode is `"edge_analytics"` and is the only supported mode in the open-source build. Other modes are present for forward compatibility but require a managed backend.
+- The default execution mode is `"edge_analytics"`. Use `"hybrid"` for portal-tracked optimization with local trial execution.
 - Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`, `MockModeOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
-- `privacy_enabled=True` applies in local/edge contexts; cloud/hybrid execution is not available yet in OSS builds.
+- `privacy_enabled=True` applies in local and hybrid contexts. `cloud` remote execution is not available yet.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
 - Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
 - Inline tuned-variable definitions accept `Range`, `IntRange`, `LogRange`, `Choices`, or numeric `(low, high)` tuples. Inline lists are not recognized; use `Choices([...])` instead.

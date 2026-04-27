@@ -388,11 +388,7 @@ class OptimizedFunction:
             mode_enum = resolve_execution_mode(
                 effective_mode, default=resolve_execution_mode(self.execution_mode)
             )
-        return mode_enum in {
-            ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
-            ExecutionMode.HYBRID,
-        }
+        return mode_enum is ExecutionMode.CLOUD
 
     def _setup_configuration_space(self, configuration_space, config_space) -> None:
         """Setup configuration space with backward compatibility."""
@@ -1641,6 +1637,11 @@ class OptimizedFunction:
         if not use_cloud:
             return None
 
+        from traigent.cloud.client import (
+            CLOUD_REMOTE_EXECUTION_UNAVAILABLE,
+            CloudServiceError,
+        )
+
         try:
             return await self._optimize_with_cloud_service(
                 dataset,
@@ -1651,6 +1652,12 @@ class OptimizedFunction:
             )
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
+        except CloudServiceError as e:
+            if CLOUD_REMOTE_EXECUTION_UNAVAILABLE in str(e):
+                raise
+            if self.cloud_fallback_policy == "never":
+                raise
+            logger.warning("Cloud optimization failed, falling back to local: %s", e)
         except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
             if self.cloud_fallback_policy == "never":
                 raise
@@ -1878,7 +1885,7 @@ class OptimizedFunction:
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
-            self._cloud_client = TraigentCloudClient(enable_fallback=True)
+            self._cloud_client = TraigentCloudClient(enable_fallback=False)
 
         if max_trials is not None and max_trials <= 0:
             logger.info("Cloud optimization skipped due to max_trials=0.")

@@ -334,14 +334,14 @@ class TestPrivacyFirstOptimization:
                 assert exp_id == "exp_456"
                 assert run_id == "run_789"
 
-                # Verify session creation call
-                mock_cloud.assert_called_once()
-                session_request = mock_cloud.call_args[0][0]
-                assert session_request.function_name == "test_function"
-                assert session_request.billing_tier == "privacy"
+                # Cloud remote execution is not used for hybrid/backend tracking.
+                mock_cloud.assert_not_called()
 
                 # Verify session API call
                 mock_session_api.assert_called_once()
+                session_request = mock_session_api.call_args[0][0]
+                assert session_request.function_name == "test_function"
+                assert session_request.billing_tier == "privacy"
 
                 # Verify session mapping creation
                 mock_bridge.create_session_mapping.assert_called_once()
@@ -362,7 +362,7 @@ class TestPrivacyFirstOptimization:
         async def run_test():
             with patch.object(
                 backend_client,
-                "_create_cloud_session",
+                "_create_traigent_session_via_api",
                 side_effect=Exception("Network error"),
             ):
                 with pytest.raises(CloudServiceError, match="Failed to create session"):
@@ -512,7 +512,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-                mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
 
@@ -526,14 +525,8 @@ class TestPrivacyFirstOptimization:
 
                 assert success is True
 
-                # Verify cloud submission
-                mock_cloud.assert_called_once()
-                submission = mock_cloud.call_args[0][0]
-                assert submission.session_id == session_id
-                assert submission.trial_id == trial_id
-                assert submission.metrics == {"accuracy": 0.85, "latency": 1.2}
-                assert submission.duration == 30.5
-                assert submission.status == TrialStatus.COMPLETED
+                # Cloud remote submission is not used for hybrid/backend tracking.
+                mock_cloud.assert_not_called()
 
                 # Verify session submission
                 mock_session.assert_called_once()
@@ -566,7 +559,6 @@ class TestPrivacyFirstOptimization:
                 ) as mock_session,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-                mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
                 mock_bridge.get_trial_mapping.return_value = "config_789"
 
@@ -581,10 +573,8 @@ class TestPrivacyFirstOptimization:
 
                 assert success is True
 
-                # Verify error status
-                submission = mock_cloud.call_args[0][0]
-                assert submission.status == TrialStatus.FAILED
-                assert submission.error_message == "Execution failed"
+                # Cloud remote submission is not used for hybrid/backend tracking.
+                mock_cloud.assert_not_called()
 
                 # Verify session submission with error
                 session_args = mock_session.call_args[0]
@@ -601,7 +591,7 @@ class TestPrivacyFirstOptimization:
         async def run_test():
             with patch.object(
                 backend_client,
-                "_submit_cloud_trial_results",
+                "_submit_trial_result_via_session",
                 side_effect=Exception("Network error"),
             ):
                 success = await backend_client.submit_privacy_trial_results(
@@ -624,7 +614,7 @@ class TestCloudSaaSOptimization:
     def test_start_agent_optimization(
         self, backend_client, agent_specification, sample_dataset
     ):
-        """Test starting agent optimization."""
+        """Test cloud agent optimization fails closed."""
 
         async def run_test():
             with (
@@ -636,41 +626,19 @@ class TestCloudSaaSOptimization:
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
             ):
-                # Mock responses
-                mock_backend.return_value = ("exp_123", "run_456")
-                mock_cloud.return_value = MagicMock(
-                    session_id="agent_session_789",
-                    optimization_id="opt_123",
-                    status="started",
-                )
+                with pytest.raises(CloudServiceError, match="use hybrid"):
+                    await backend_client.start_agent_optimization(
+                        agent_spec=agent_specification,
+                        dataset=sample_dataset,
+                        configuration_space={"temperature": [0.3, 0.7, 1.0]},
+                        objectives=["accuracy", "cost"],
+                        max_trials=30,
+                        user_id="test_user",
+                    )
 
-                response = await backend_client.start_agent_optimization(
-                    agent_spec=agent_specification,
-                    dataset=sample_dataset,
-                    configuration_space={"temperature": [0.3, 0.7, 1.0]},
-                    objectives=["accuracy", "cost"],
-                    max_trials=30,
-                    user_id="test_user",
-                )
-
-                assert response.session_id == "agent_session_789"
-                assert response.optimization_id == "opt_123"
-                assert response.status == "started"
-
-                # Verify backend experiment creation
-                mock_backend.assert_called_once()
-                backend_args = mock_backend.call_args[0]
-                assert backend_args[0] == agent_specification
-                assert backend_args[1] == sample_dataset
-
-                # Verify cloud submission
-                mock_cloud.assert_called_once()
-                cloud_request = mock_cloud.call_args[0][0]
-                assert cloud_request.agent_spec == agent_specification
-                assert cloud_request.billing_tier == "cloud"
-
-                # Verify session mapping
-                mock_bridge.create_session_mapping.assert_called_once()
+                mock_backend.assert_not_called()
+                mock_cloud.assert_not_called()
+                mock_bridge.create_session_mapping.assert_not_called()
 
         import asyncio
 
@@ -679,7 +647,7 @@ class TestCloudSaaSOptimization:
     def test_start_agent_optimization_error_handling(
         self, backend_client, agent_specification, sample_dataset
     ):
-        """Test error handling in agent optimization."""
+        """Test cloud not-implemented guidance in agent optimization."""
 
         async def run_test():
             with patch.object(
@@ -687,9 +655,7 @@ class TestCloudSaaSOptimization:
                 "_create_backend_agent_experiment",
                 side_effect=Exception("Backend error"),
             ):
-                with pytest.raises(
-                    CloudServiceError, match="Failed to start optimization"
-                ):
+                with pytest.raises(CloudServiceError, match="use hybrid"):
                     await backend_client.start_agent_optimization(
                         agent_spec=agent_specification,
                         dataset=sample_dataset,
@@ -702,49 +668,37 @@ class TestCloudSaaSOptimization:
         asyncio.run(run_test())
 
     def test_execute_agent(self, backend_client, agent_specification):
-        """Test agent execution."""
+        """Test cloud agent execution fails closed."""
 
         async def run_test():
             with patch.object(backend_client, "_execute_cloud_agent") as mock_execute:
-                mock_execute.return_value = MagicMock(
-                    output="Test response", duration=2.5, tokens_used=75, cost=0.002
-                )
+                with pytest.raises(CloudServiceError, match="use hybrid"):
+                    await backend_client.execute_agent(
+                        agent_spec=agent_specification,
+                        input_data={"query": "What is AI?"},
+                        config_overrides={"temperature": 0.8},
+                    )
 
-                response = await backend_client.execute_agent(
-                    agent_spec=agent_specification,
-                    input_data={"query": "What is AI?"},
-                    config_overrides={"temperature": 0.8},
-                )
-
-                assert response.output == "Test response"
-                assert response.duration == 2.5
-                assert response.tokens_used == 75
-                assert response.cost == 0.002
-
-                # Verify execution request
-                mock_execute.assert_called_once()
-                execution_request = mock_execute.call_args[0][0]
-                assert execution_request.agent_spec == agent_specification
-                assert execution_request.input_data == {"query": "What is AI?"}
-                assert execution_request.config_overrides == {"temperature": 0.8}
+                mock_execute.assert_not_called()
 
         import asyncio
 
         asyncio.run(run_test())
 
     def test_execute_agent_error_handling(self, backend_client, agent_specification):
-        """Test error handling in agent execution."""
+        """Test cloud agent execution does not reach legacy error path."""
 
         async def run_test():
             with patch.object(
                 backend_client,
                 "_execute_cloud_agent",
                 side_effect=Exception("Execution error"),
-            ):
-                with pytest.raises(CloudServiceError, match="Failed to execute agent"):
+            ) as mock_execute:
+                with pytest.raises(CloudServiceError, match="use hybrid"):
                     await backend_client.execute_agent(
                         agent_spec=agent_specification, input_data={"query": "test"}
                     )
+                mock_execute.assert_not_called()
 
         import asyncio
 
@@ -856,10 +810,10 @@ class TestBackendAPIIntegration:
 
 
 class TestCloudServiceIntegration:
-    """Test cloud service integration placeholder methods."""
+    """Test cloud service integration remote methods."""
 
-    def test_cloud_service_placeholders(self, backend_client):
-        """Test cloud service placeholder methods."""
+    def test_cloud_service_methods_fail_closed(self, backend_client):
+        """Test cloud remote methods do not return synthetic success."""
 
         async def run_test():
             # Test session creation
@@ -869,21 +823,15 @@ class TestCloudServiceIntegration:
                 objectives=["accuracy"],
                 dataset_metadata={},
             )
-            session_response = await backend_client._create_cloud_session(
-                session_request
-            )
-            assert "session_" in session_response.session_id
-            assert session_response.status == OptimizationSessionStatus.CREATED
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client._create_cloud_session(session_request)
 
             # Test trial suggestion
             from traigent.cloud.models import NextTrialRequest
 
             trial_request = NextTrialRequest(session_id="session_123")
-            trial_response = await backend_client._get_cloud_trial_suggestion(
-                trial_request
-            )
-            assert trial_response.suggestion is not None
-            assert trial_response.should_continue is True
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client._get_cloud_trial_suggestion(trial_request)
 
             # Test trial results submission
             trial_submission = TrialResultSubmission(
@@ -893,7 +841,8 @@ class TestCloudServiceIntegration:
                 duration=30.0,
                 status=TrialStatus.COMPLETED,
             )
-            await backend_client._submit_cloud_trial_results(trial_submission)
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client._submit_cloud_trial_results(trial_submission)
 
             # Test agent optimization submission
             from traigent.cloud.models import AgentOptimizationRequest
@@ -904,11 +853,8 @@ class TestCloudServiceIntegration:
                 configuration_space={},
                 objectives=["accuracy"],
             )
-            agent_response = await backend_client._submit_agent_optimization(
-                agent_request
-            )
-            assert "agent_session_" in agent_response.session_id
-            assert agent_response.status == "started"
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client._submit_agent_optimization(agent_request)
 
             # Test agent execution
             from traigent.cloud.models import AgentExecutionRequest
@@ -916,9 +862,8 @@ class TestCloudServiceIntegration:
             exec_request = AgentExecutionRequest(
                 agent_spec=MagicMock(), input_data={"query": "test"}
             )
-            exec_response = await backend_client._execute_cloud_agent(exec_request)
-            assert exec_response.output == "Mock agent response"
-            assert exec_response.duration == 1.5
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client._execute_cloud_agent(exec_request)
 
         import asyncio
 
@@ -1167,7 +1112,7 @@ class TestEdgeCases:
         asyncio.run(run_test())
 
     def test_empty_dataset_handling(self, backend_client, agent_specification):
-        """Test handling of empty datasets."""
+        """Test agent optimization fails before legacy backend/cloud setup."""
 
         async def run_test():
             empty_dataset = Dataset(examples=[], name="empty")
@@ -1183,18 +1128,16 @@ class TestEdgeCases:
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(session_id="session_123")
 
-                response = await backend_client.start_agent_optimization(
-                    agent_spec=agent_specification,
-                    dataset=empty_dataset,
-                    configuration_space={"temperature": [0.7]},
-                    objectives=["accuracy"],
-                )
+                with pytest.raises(CloudServiceError, match="use hybrid"):
+                    await backend_client.start_agent_optimization(
+                        agent_spec=agent_specification,
+                        dataset=empty_dataset,
+                        configuration_space={"temperature": [0.7]},
+                        objectives=["accuracy"],
+                    )
 
-                assert response.session_id == "session_123"
-
-                # Verify empty dataset was passed
-                backend_args = mock_backend.call_args[0]
-                assert len(backend_args[1].examples) == 0
+                mock_backend.assert_not_called()
+                mock_cloud.assert_not_called()
 
         import asyncio
 
