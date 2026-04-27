@@ -114,6 +114,9 @@ class BenchmarkClient:
             A :class:`Dataset` containing the generated examples, ready for use
             with ``@traigent.optimize(eval_dataset=dataset)``.
         """
+        if not 1 <= count <= 100:
+            raise ValueError("count must be between 1 and 100")
+
         payload: dict[str, Any] = {
             "description": description,
             "count": count,
@@ -153,18 +156,14 @@ class BenchmarkClient:
                 raise AuthenticationError(
                     f"Authentication failed ({e.code}): {body}"
                 ) from e
-            raise ClientError(
-                f"Benchmark generation failed ({e.code}): {body}"
-            ) from e
+            raise ClientError(f"Benchmark generation failed ({e.code}): {body}") from e
         except error.URLError as e:
             raise TraigentConnectionError(
                 f"Cannot reach backend at {self.config.backend_origin}: {e.reason}"
             ) from e
 
     @staticmethod
-    def _response_to_dataset(
-        response: dict[str, Any], description: str
-    ) -> Dataset:
+    def _response_to_dataset(response: dict[str, Any], description: str) -> Dataset:
         data = response.get("data", response)
         examples_raw = data.get("examples", [])
         benchmark = data.get("benchmark", {})
