@@ -22,8 +22,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from traigent.cloud.auth import AuthManager, AuthMode, UnifiedAuthConfig
+from traigent.cloud.auth import (
+    AuthenticationError,
+    AuthManager,
+    AuthMode,
+    UnifiedAuthConfig,
+)
 from traigent.cloud.billing import UsageTracker
+from traigent.cloud.client import CloudServiceError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -146,9 +152,18 @@ class BackendAuthManager:
         merged_headers = dict(headers)
         # Auth errors are intentionally NOT caught here: callers must see
         # the rejection rather than receive a silently-unauthenticated
-        # header dict. Other unexpected errors are still logged to keep
-        # diagnostic context and re-raised for the same reason.
-        auth_headers = await self.auth.get_headers(target=target)
+        # header dict. Other unexpected errors are wrapped so callers see a
+        # cloud-layer failure with diagnostic context instead of a raw helper
+        # exception.
+        try:
+            auth_headers = await self.auth.get_headers(target=target)
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            logger.warning("Could not augment backend auth headers: %s", exc)
+            raise CloudServiceError(
+                f"Failed to augment backend auth headers: {exc}"
+            ) from exc
 
         for key, value in auth_headers.items():
             if key not in merged_headers:

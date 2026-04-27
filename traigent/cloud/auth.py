@@ -1398,11 +1398,20 @@ class AuthManager:
         headers = {"X-API-Key": api_key}
 
         if not AIOHTTP_AVAILABLE:
-            return await asyncio.to_thread(
-                self._validate_api_key_with_backend_sync,
-                url,
-                headers,
-            )
+            try:
+                return await asyncio.to_thread(
+                    self._validate_api_key_with_backend_sync,
+                    url,
+                    headers,
+                )
+            except ImportError:
+                return "requests library not available for backend validation"
+            except Exception as exc:  # pragma: no cover - defensive thread boundary
+                logger.debug(
+                    "auth.api_key.validate_transport_error",
+                    extra={"error": str(exc)},
+                )
+                return f"transport error: {exc.__class__.__name__}"
 
         try:
             async with aiohttp.ClientSession(

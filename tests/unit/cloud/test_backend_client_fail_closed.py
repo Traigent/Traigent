@@ -22,7 +22,7 @@ After the round-4 fix:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -32,6 +32,8 @@ from traigent.cloud.auth import (
     InvalidCredentialsError,
 )
 from traigent.cloud.backend_client import BackendIntegratedClient
+from traigent.cloud.backend_components import BackendAuthManager
+from traigent.cloud.client import CloudServiceError
 
 _VALID_LOOKING_KEY = "tg_" + "x" * 61
 
@@ -119,6 +121,26 @@ async def test_no_session_fallback_helper_remains():
         assert not hasattr(client, "_build_session_fallback_headers")
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_backend_auth_manager_propagates_auth_errors():
+    """``augment_headers`` must not swallow backend-rejected credentials."""
+    manager = BackendAuthManager(api_key=_VALID_LOOKING_KEY)
+    manager.auth.get_headers = AsyncMock(side_effect=AuthenticationError("rejected"))
+
+    with pytest.raises(AuthenticationError):
+        await manager.augment_headers({"X-Request-ID": "req"})
+
+
+@pytest.mark.asyncio
+async def test_backend_auth_manager_wraps_unexpected_errors():
+    """Unexpected auth helper errors fail closed as cloud service errors."""
+    manager = BackendAuthManager(api_key=_VALID_LOOKING_KEY)
+    manager.auth.get_headers = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(CloudServiceError, match="Failed to augment backend auth headers"):
+        await manager.augment_headers({"X-Request-ID": "req"})
 
 
 @pytest.mark.asyncio

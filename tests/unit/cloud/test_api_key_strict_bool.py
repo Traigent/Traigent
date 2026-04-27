@@ -134,6 +134,24 @@ async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
 
 
 @pytest.mark.asyncio
+async def test_validate_fails_closed_when_requests_fallback_missing():
+    """Missing aiohttp and requests must return a validation failure reason."""
+    manager = AuthManager()
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch.object(
+            manager,
+            "_validate_api_key_with_backend_sync",
+            side_effect=ImportError("requests missing"),
+        ),
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "requests library not available for backend validation"
+
+
+@pytest.mark.asyncio
 async def test_validate_rejects_invalid_backend_validation_url():
     """Backend key validation must not send credentials to unsupported URL schemes."""
     manager = AuthManager()

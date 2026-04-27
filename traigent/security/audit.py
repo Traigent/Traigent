@@ -777,7 +777,13 @@ class AuditStorage:
 
 
 class AuditLogIntegrity:
-    """Ensures audit log integrity and tamper detection."""
+    """Audit log integrity summary and future tamper-detection entry point.
+
+    ``AuditStorage.verify_integrity()`` can return event-count/hash metadata
+    today. Active tamper detection is not implemented in this release, so
+    ``AuditLogIntegrity.verify_integrity()`` intentionally raises
+    ``NotImplementedError`` instead of returning a misleading boolean.
+    """
 
     def __init__(self, event_count: int = 0, log_hash: str | None = None) -> None:
         """Initialize audit log integrity manager."""
@@ -791,5 +797,5 @@ class AuditLogIntegrity:
         return hashlib.sha256(event_data.encode()).hexdigest()
 
     def verify_integrity(self) -> bool:
-        """Verify audit log integrity."""
+        """Raise until active tamper detection is implemented."""
         raise NotImplementedError(_TAMPER_DETECTION_NOT_IMPLEMENTED)
