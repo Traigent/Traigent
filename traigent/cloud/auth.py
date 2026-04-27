@@ -1087,14 +1087,11 @@ class AuthManager:
                 error_message="Invalid API key format",
             )
 
-        # Structured warning: never log the key value, only a non-reversible
-        # preview so operators can correlate without leaking secrets.
-        key_preview = self._mask_api_key(api_key_value)
+        # Structured warning: never log the key value or any value derived from it.
         logger.warning(
             "auth.api_key.validate_start",
             extra={
                 "auth_mode": AuthMode.API_KEY.value,
-                "key_preview": key_preview,
             },
         )
 
@@ -1107,7 +1104,6 @@ class AuthManager:
                 "auth.api_key.validate_failed",
                 extra={
                     "auth_mode": AuthMode.API_KEY.value,
-                    "key_preview": key_preview,
                     "reason": validation_error,
                 },
             )
