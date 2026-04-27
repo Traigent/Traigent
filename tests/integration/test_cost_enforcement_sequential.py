@@ -442,49 +442,47 @@ class TestBudgetScenarios:
 
 
 class TestMockModeIntegration:
-    """Tests for mock mode integration."""
+    """Tests pinning that TRAIGENT_MOCK_LLM no longer bypasses cost enforcement.
 
-    def test_mock_mode_bypasses_tracking(self) -> None:
-        """Verify mock mode bypasses all cost tracking."""
+    S2-B Round 3 removed the mock-mode bypass from CostEnforcer because a
+    leaked env var in production could silently disable cost limits and
+    billing accounting. Cost enforcement now always runs.
+    """
+
+    def test_mock_mode_does_not_bypass_tracking(self) -> None:
+        """TRAIGENT_MOCK_LLM=true must not bypass tracking or limits."""
         os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
         try:
             enforcer = CostEnforcer(
                 CostEnforcerConfig(
-                    limit=0.01,  # Very low limit
+                    limit=1.0,
                     estimated_cost_per_trial=0.10,
                 )
             )
 
-            # In mock mode, should always get permit (id=0)
-            for _ in range(100):  # Would far exceed limit normally
-                permit = enforcer.acquire_permit()
-                assert permit.is_granted
-                assert permit.id == 0  # Mock permit ID
-                enforcer.track_cost(1.0, permit=permit)  # High cost
+            # Real permit IDs (>=1), real accounting.
+            permit = enforcer.acquire_permit()
+            assert permit.is_granted
+            assert permit.id != 0, "Mock-mode bypass must not return id=0 permits"
 
-            # Nothing was actually tracked in mock mode
-            assert abs(enforcer._accumulated_cost) < FLOAT_TOLERANCE
+            enforcer.track_cost(0.25, permit=permit)
+            assert abs(enforcer._accumulated_cost - 0.25) < FLOAT_TOLERANCE
             assert enforcer._in_flight_count == 0
         finally:
             os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
-    def test_mock_mode_cached_at_init(self) -> None:
-        """Verify mock mode is cached at init time."""
-        os.environ["TRAIGENT_MOCK_LLM"] = "false"
-
-        enforcer = CostEnforcer(CostEnforcerConfig(limit=0.10))
-
-        # Change env var after init
+    def test_mock_mode_env_var_is_ignored_at_init(self) -> None:
+        """Setting TRAIGENT_MOCK_LLM at init must not change behavior."""
         os.environ["TRAIGENT_MOCK_LLM"] = "true"
+        try:
+            enforcer = CostEnforcer(CostEnforcerConfig(limit=0.10))
 
-        # Should still use real tracking (cached at init)
-        permit = enforcer.acquire_permit()
-        assert permit.id != 0  # Not mock permit ID
-        assert enforcer._in_flight_count == 1
+            permit = enforcer.acquire_permit()
+            assert permit.id != 0  # Real permit, not bypass id=0
+            assert enforcer._in_flight_count == 1
 
-        enforcer.track_cost(0.05, permit=permit)
-        assert abs(enforcer._accumulated_cost - 0.05) < FLOAT_TOLERANCE
-
-        # Cleanup
-        os.environ["TRAIGENT_MOCK_LLM"] = "false"
+            enforcer.track_cost(0.05, permit=permit)
+            assert abs(enforcer._accumulated_cost - 0.05) < FLOAT_TOLERANCE
+        finally:
+            os.environ["TRAIGENT_MOCK_LLM"] = "false"

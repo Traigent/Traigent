@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -32,20 +33,23 @@ logger = get_logger(__name__)
 # Protocol version must match traigent-js/src/cli/protocol.ts
 PROTOCOL_VERSION = "1.0"
 
-# Note: We intentionally do NOT use atexit handlers for process cleanup.
+# Process-group cleanup design:
 #
-# Reason: atexit handlers with os.killpg() are dangerous because:
-# 1. asyncio subprocess.returncode is only updated after wait() is called
-# 2. The process might have exited but returncode is still None
-# 3. The PID could be reused by the system for a different process
-# 4. os.killpg() would then kill a completely different process group!
+# We intentionally do NOT use atexit handlers for process cleanup. atexit
+# cleanup can run long after the child exited, when a reused PID or process
+# group could point at unrelated work.
 #
-# Instead, we rely on:
-# - Explicit cleanup: JSBridge.stop() and context manager __aexit__
-# - Direct child termination: We only signal the spawned JS process, avoiding
-#   process-group signals that can destabilize local desktop environments
-# - OS cleanup: If the JS runner has child processes, the OS is responsible
-#   for reaping any remaining descendants after parent exit
+# Instead, JSBridge captures the child's process group immediately after spawn
+# and uses it only from explicit stop/terminate paths. This lets us terminate
+# Node.js plus descendants such as npx, transpilers, and worker subprocesses
+# without relying on terminal-driven cleanup.
+
+_PROCESS_GROUPS_SUPPORTED = (
+    os.name == "posix"
+    and hasattr(os, "getpgid")
+    and hasattr(os, "getpgrp")
+    and hasattr(os, "killpg")
+)
 
 
 # Default timeout for trial execution (5 minutes)
@@ -154,6 +158,7 @@ class JSBridge:
         """
         self._config = config
         self._process: asyncio.subprocess.Process | None = None
+        self._pgid: int | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -243,7 +248,9 @@ class JSBridge:
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
                     cwd=self._config.cwd,
+                    start_new_session=_PROCESS_GROUPS_SUPPORTED,
                 )
+                self._pgid = self._capture_process_group_id(self._process)
             except FileNotFoundError as e:
                 raise JSProcessError(
                     f"Failed to start Node.js process: {e}. "
@@ -327,6 +334,59 @@ class JSBridge:
         with suppress(asyncio.CancelledError):
             await task
 
+    def _capture_process_group_id(
+        self, process: asyncio.subprocess.Process
+    ) -> int | None:
+        """Return a safe process group id for group termination, if available."""
+        if not _PROCESS_GROUPS_SUPPORTED:
+            return None
+
+        try:
+            pgid = os.getpgid(process.pid)
+            current_pgid = os.getpgrp()
+        except (AttributeError, ProcessLookupError, OSError, TypeError):
+            return None
+
+        if pgid == current_pgid:
+            logger.warning(
+                "JS bridge process joined the caller process group; "
+                "falling back to direct child termination"
+            )
+            return None
+
+        return pgid
+
+    def _signal_process_tree(self, *, force: bool = False) -> None:
+        """Signal the captured process group, falling back to the direct child."""
+        if self._process is None:
+            return
+
+        if self._pgid is not None and _PROCESS_GROUPS_SUPPORTED:
+            sig = (
+                getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM
+            )
+            try:
+                os.killpg(self._pgid, sig)
+                return
+            except ProcessLookupError:
+                return
+            except OSError as e:
+                logger.debug(
+                    "Failed to signal JS process group %s; falling back to child: %s",
+                    self._pgid,
+                    e,
+                )
+
+        try:
+            if force:
+                self._process.kill()
+            else:
+                self._process.terminate()
+        except ProcessLookupError:
+            return
+        except OSError as e:
+            logger.debug("Failed to signal JS process: %s", e)
+
     async def cancel_active_trial(self) -> None:
         """Request cooperative cancellation for the active trial, if any."""
         if not self._started or self._process is None:
@@ -362,6 +422,7 @@ class JSBridge:
         await self._cancel_task(self._stderr_task)
 
         self._process = None
+        self._pgid = None
         self._reader_task = None
         self._stderr_task = None
         self._started = False
@@ -375,21 +436,22 @@ class JSBridge:
         await self._finalize_shutdown()
 
     async def _terminate_process(self) -> None:
-        """Terminate the Node.js process with graceful fallback to force kill."""
+        """Terminate the Node.js process tree with graceful fallback to force kill."""
         if self._process is None:
             return
 
         try:
-            self._process.terminate()
+            self._signal_process_tree(force=False)
 
-            # Wait for graceful termination
-            try:
-                async with asyncio.timeout(5.0):
-                    await self._process.wait()
-            except TimeoutError:
-                logger.warning("JS process did not terminate, sending kill()")
-                self._process.kill()
-                await self._process.wait()
+            if not await self._wait_for_process_exit(5.0):
+                logger.warning(
+                    "JS process tree did not terminate after SIGTERM; forcing kill"
+                )
+                self._signal_process_tree(force=True)
+                if not await self._wait_for_process_exit(5.0):
+                    raise JSProcessError(
+                        "JS process tree did not exit after force kill"
+                    )
         except ProcessLookupError:
             pass  # Already dead
 

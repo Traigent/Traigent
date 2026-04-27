@@ -21,24 +21,15 @@ try:
 
     CRYPTO_AVAILABLE = True
     Fernet = _Fernet
-except ImportError:
-    CRYPTO_AVAILABLE = False
-    AESGCM = object
-
-    # Mock classes for when cryptography is not available
-    class Fernet:  # type: ignore[no-redef]
-        @staticmethod
-        def generate_key():
-            return b"mock_key"
-
-        def __init__(self, key) -> None:
-            self.key = key
-
-        def encrypt(self, data):
-            return b"encrypted_" + data
-
-        def decrypt(self, data):
-            return data[10:]  # Remove "encrypted_" prefix
+except ImportError as exc:  # pragma: no cover - fail-closed import guard
+    # SECURITY: Do not provide a silent mock fallback. Fake "encrypted_" prefix
+    # encryption masquerading as real crypto is a serious security issue. Fail
+    # closed and force callers to install the real cryptography library.
+    raise ImportError(
+        "Encryption requires `cryptography>=46.0`. "
+        "Install with `pip install cryptography`. "
+        "The fake fallback was removed in favor of fail-closed behavior."
+    ) from exc
 
 
 from ..utils.logging import get_logger
@@ -210,25 +201,15 @@ class EncryptionManager:
                 self._zeroize_key_buffer(key_buffer)
         else:
             self._zeroize_key_buffer(key_buffer)
-            # Mock encryption: ONLY allowed in test/mock mode
-            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
-                "true",
-                "1",
+            # SECURITY: No mock-encryption fallback. The previous fallback was
+            # gated by TRAIGENT_MOCK_LLM and emitted ``b"mock_" + plaintext``,
+            # which is not encryption at all and silently exposed plaintext as
+            # ciphertext if the env var was ever set in production. Always
+            # require real crypto.
+            raise RuntimeError(
+                "Encryption requires the 'cryptography' package. "
+                "Install it with: pip install 'traigent[security]'"
             )
-            if not mock_mode:
-                raise RuntimeError(
-                    "Encryption requires the 'cryptography' package. "
-                    "Install it with: pip install 'traigent[security]'"
-                )
-            logger.warning(
-                "Using mock encryption - cryptography library not available. "
-                "This is only safe in test/mock mode."
-            )
-            iv = os.urandom(12)
-            ciphertext = (
-                b"mock_" + data_bytes
-            )  # NOSONAR — test-only, gated by TRAIGENT_MOCK_LLM
-            tag = os.urandom(16)
 
         return {
             "ciphertext": ciphertext,
@@ -303,25 +284,16 @@ class EncryptionManager:
                 self._zeroize_key_buffer(key_buffer)
         else:
             self._zeroize_key_buffer(key_buffer)
-            # Mock decryption: ONLY allowed in test/mock mode
-            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
-                "true",
-                "1",
+            # SECURITY: No mock-decryption fallback. The previous fallback was
+            # gated by TRAIGENT_MOCK_LLM and stripped ``b"mock_"`` /
+            # ``b"encrypted_"`` prefixes (or simply returned the input) — i.e.
+            # it never decrypted anything, but masquerading as decrypt() it
+            # would silently surface attacker-supplied data on a system with
+            # the env var set. Always require real crypto.
+            raise RuntimeError(
+                "Decryption requires the 'cryptography' package. "
+                "Install it with: pip install 'traigent[security]'"
             )
-            if not mock_mode:
-                raise RuntimeError(
-                    "Decryption requires the 'cryptography' package. "
-                    "Install it with: pip install 'traigent[security]'"
-                )
-            logger.warning(
-                "Using mock decryption - cryptography library not available. "
-                "This is only safe in test/mock mode."
-            )
-            if ciphertext.startswith(b"mock_"):  # NOSONAR — test-only mock decryption
-                return ciphertext[5:]
-            if ciphertext.startswith(b"encrypted_"):  # NOSONAR — legacy mock compat
-                return ciphertext[10:]
-            return ciphertext
 
     def encrypt_file(
         self,

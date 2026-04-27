@@ -1670,26 +1670,18 @@ class OptimizedFunction:
     def _apply_mock_config_overrides(
         self, algorithm: str, optimizer_kwargs: dict[str, Any]
     ) -> str:
-        """Apply mock config overrides to algorithm and optimizer_kwargs."""
-        mock_config = getattr(self, "mock_mode_config", None) or {}
-        if not isinstance(mock_config, dict):
-            return algorithm
+        """No-op retained for backward compatibility.
 
-        # Override algorithm if specified in mock config
-        mock_optimizer = mock_config.get("optimizer")
-        if mock_optimizer and isinstance(mock_optimizer, str):
-            algorithm = mock_optimizer
-            logger.debug("Using optimizer '%s' from mock_mode_config", mock_optimizer)
-
-        # Extract and pass random_seed to optimizer for reproducibility
-        random_seed = mock_config.get("random_seed")
-        if random_seed is not None:
-            optimizer_kwargs["random_seed"] = random_seed
-            logger.debug(
-                "Passing random_seed=%s to optimizer from mock_mode_config",
-                random_seed,
-            )
-
+        Historically this method consulted ``self.mock_mode_config`` to
+        override the optimizer algorithm and to inject ``random_seed`` into
+        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
+        flag, ``mock_mode_config`` is now fully inert: callers may still pass
+        the parameter through public APIs, but it must not change optimizer
+        selection or seeding. A stray production config in the past silently
+        rerouted real optimizations to a different algorithm with a fixed
+        seed, so we now ignore it entirely. Real seeding should go through
+        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
+        """
         return algorithm
 
     async def _execute_optimization(

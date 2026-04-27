@@ -887,16 +887,19 @@ class AuthManager:
             auth_result = await self.authenticate()
             if not auth_result.success or self._credentials is None:
                 self._authenticated = False
-                # Fall back to raw API key headers when full auth fails
-                # but an API key is available (e.g., local dev mode).
-                fallback = self._get_api_key_headers()
-                if fallback:
-                    self._add_common_headers(fallback, target)
-                    return fallback
-                return {}
+                # Fail closed: never emit headers built from an unverified or
+                # backend-rejected API key. Doing so would defeat backend
+                # validation by allowing the SDK to send the raw key anyway.
+                raise InvalidCredentialsError(
+                    auth_result.error_message
+                    or "Authentication failed; refusing to emit auth headers."
+                )
 
         if not self._credentials:
-            return {}
+            self._authenticated = False
+            raise InvalidCredentialsError(
+                "Authentication state is invalid; refusing to emit auth headers."
+            )
 
         # Generate headers based on authentication mode
         mode = self._credentials.mode
@@ -1059,7 +1062,14 @@ class AuthManager:
     # Authentication Mode Implementations
 
     async def _authenticate_api_key(self, credentials: AuthCredentials) -> AuthResult:
-        """Authenticate using API key."""
+        """Authenticate using API key.
+
+        Validates the supplied key against the configured backend. Format-only
+        checks are not sufficient — historically this path silently trusted any
+        well-formatted key, which allowed forged credentials to authenticate
+        offline. Backend validation is now required; transport errors are
+        surfaced as authentication failures rather than fake-passes.
+        """
         api_key_value = credentials.api_key or self._get_api_key_for_internal_use()
 
         if not api_key_value:
@@ -1077,8 +1087,36 @@ class AuthManager:
                 error_message="Invalid API key format",
             )
 
-        # For API key auth, we trust the key if format is valid
-        # Real validation would happen server-side
+        # Structured warning: never log the key value, only a non-reversible
+        # preview so operators can correlate without leaking secrets.
+        key_preview = self._mask_api_key(api_key_value)
+        logger.warning(
+            "auth.api_key.validate_start",
+            extra={
+                "auth_mode": AuthMode.API_KEY.value,
+                "key_preview": key_preview,
+            },
+        )
+
+        # Server-side validation. If the SDK cannot reach the backend we MUST
+        # fail closed — issuing a header on a network error would let any
+        # well-formatted string authenticate.
+        validation_error = await self._validate_api_key_with_backend(api_key_value)
+        if validation_error is not None:
+            logger.warning(
+                "auth.api_key.validate_failed",
+                extra={
+                    "auth_mode": AuthMode.API_KEY.value,
+                    "key_preview": key_preview,
+                    "reason": validation_error,
+                },
+            )
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=f"API key validation failed: {validation_error}",
+            )
+
         self._clear_secure_tokens()
         expires_at = credentials.expires_at
         expires_dt: datetime | None
@@ -1249,8 +1287,80 @@ class AuthManager:
     async def _authenticate_development(
         self, credentials: AuthCredentials
     ) -> AuthResult:
-        """Authenticate using development mode."""
-        # Development mode - always succeed for testing
+        """Authenticate using development mode.
+
+        Development mode is intended for local testing only and historically
+        succeeded unconditionally — any caller could authenticate without any
+        credential. This is now gated behind an explicit shared secret in the
+        ``TRAIGENT_DEV_AUTH_TOKEN`` environment variable. The supplied
+        credential (``credentials.metadata['dev_token']`` or the JWT/api-key
+        slot) is compared in constant time against the env value. If the env
+        var is not set, development auth is rejected with a migration-friendly
+        error message rather than silently passing.
+        """
+        logger.warning(
+            "auth.development.attempt",
+            extra={
+                "auth_mode": AuthMode.DEVELOPMENT.value,
+                "dev_user": credentials.metadata.get("dev_user", "developer"),
+            },
+        )
+
+        expected_token = os.getenv("TRAIGENT_DEV_AUTH_TOKEN", "").strip()
+        if not expected_token:
+            logger.warning(
+                "auth.development.env_missing",
+                extra={"auth_mode": AuthMode.DEVELOPMENT.value},
+            )
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=(
+                    "Development authentication is disabled: set "
+                    "TRAIGENT_DEV_AUTH_TOKEN to use development auth mode "
+                    "and supply the same value via "
+                    "AuthCredentials.metadata['dev_token']."
+                ),
+            )
+
+        # Accept the dev token from any of the conventional credential slots so
+        # existing callers can migrate by setting the env var without rewiring
+        # how they construct AuthCredentials.
+        supplied_token = (
+            credentials.metadata.get("dev_token")
+            or credentials.api_key
+            or credentials.jwt_token
+            or credentials.service_key
+            or ""
+        )
+        if not isinstance(supplied_token, str) or not supplied_token:
+            logger.warning(
+                "auth.development.no_token_supplied",
+                extra={"auth_mode": AuthMode.DEVELOPMENT.value},
+            )
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=(
+                    "Development authentication requires a credential: pass "
+                    "the value of TRAIGENT_DEV_AUTH_TOKEN as "
+                    "AuthCredentials.metadata['dev_token']."
+                ),
+            )
+
+        if not hmac.compare_digest(
+            supplied_token.encode("utf-8"), expected_token.encode("utf-8")
+        ):
+            logger.warning(
+                "auth.development.token_mismatch",
+                extra={"auth_mode": AuthMode.DEVELOPMENT.value},
+            )
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message="Development authentication token does not match TRAIGENT_DEV_AUTH_TOKEN",
+            )
+
         headers = {
             "X-Development-Mode": "true",
             "X-Dev-User": credentials.metadata.get("dev_user", "developer"),
@@ -1262,6 +1372,60 @@ class AuthManager:
             credentials=credentials,
             headers=headers,
         )
+
+    async def _validate_api_key_with_backend(self, api_key: str) -> str | None:
+        """Call the backend ``/keys/validate`` endpoint to validate ``api_key``.
+
+        Returns ``None`` on success or a short error reason string on failure.
+        Never logs the key value. Network/transport errors are treated as
+        validation failures (fail-closed) so a missing backend cannot be used
+        to bypass authentication.
+        """
+        if not AIOHTTP_AVAILABLE:
+            return "aiohttp not available for backend validation"
+
+        from traigent.config.backend_config import BackendConfig
+
+        try:
+            backend_api_url = BackendConfig.build_api_base(
+                self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+            )
+        except Exception as exc:  # pragma: no cover - misconfiguration
+            return f"backend URL unavailable: {exc}"
+
+        if not backend_api_url:
+            return "backend URL not configured"
+
+        url = f"{backend_api_url.rstrip('/')}/keys/validate"
+        headers = {"X-API-Key": api_key}
+
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.post(url, headers=headers) as response:
+                    if response.status == 200:
+                        try:
+                            data = await response.json(content_type=None)
+                        except Exception:
+                            return "backend returned non-JSON success body"
+                        if isinstance(data, dict) and data.get("valid") is True:
+                            return None
+                        return "backend reported key invalid"
+                    if response.status in (401, 403):
+                        return "unauthorized"
+                    if response.status == 429:
+                        return "rate limited"
+                    return f"backend returned status {response.status}"
+        except TimeoutError:
+            return "backend validation timed out"
+        except Exception as exc:  # pragma: no cover - exercised via unit tests
+            # Note: log the exception type/message but never the key.
+            logger.debug(
+                "auth.api_key.validate_transport_error",
+                extra={"error": str(exc)},
+            )
+            return f"transport error: {exc.__class__.__name__}"
 
     # Helper Methods
 
@@ -1672,3 +1836,8 @@ def constant_time_compare(a: str, b: str) -> bool:
         True if strings are equal
     """
     return hmac.compare_digest(a.encode(), b.encode())
+
+
+# Public alias retained for callers (and tests) that import the manager under
+# its descriptive name. ``AuthManager`` is the canonical implementation.
+UnifiedAuthManager = AuthManager

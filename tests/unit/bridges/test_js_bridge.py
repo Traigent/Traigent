@@ -531,6 +531,7 @@ def mock_subprocess():
     """Create a basic mock subprocess."""
     mock = AsyncMock()
     mock.returncode = None
+    mock.pid = 12345
     mock.stdin = MagicMock()
     mock.stdin.write = MagicMock()
     mock.stdin.drain = AsyncMock()
@@ -558,6 +559,7 @@ def mock_subprocess_factory():
     ):
         mock_process = MagicMock()
         mock_process.returncode = None
+        mock_process.pid = 12345
         mock_process.wait = AsyncMock(return_value=0)
         mock_process.terminate = MagicMock()
         mock_process.kill = MagicMock()

@@ -188,15 +188,26 @@ class TestBackendIntegratedClient:
             assert client is not None
 
     def test_async_context_manager(self, backend_client):
-        """Test async context manager functionality."""
+        """Test async context manager functionality.
+
+        B4 ROUND 4: ``__aenter__`` now propagates ``AuthenticationError``
+        instead of silently swallowing it. Mock the backend-side API-key
+        validation so the auth path completes successfully and the
+        context manager mechanics can be exercised.
+        """
+        from traigent.cloud.auth import AuthManager
+
+        async def _ok(self, api_key):  # noqa: ARG001
+            return None
 
         async def run_test():
-            async with backend_client as client:
-                assert client is backend_client
-                # Session initialization is mocked, so we can't test actual session
+            with patch.object(AuthManager, "_validate_api_key_with_backend", new=_ok):
+                async with backend_client as client:
+                    assert client is backend_client
+                    # Session initialization is mocked, so we can't test actual session
 
-            # Session should be None after exit (if it was created)
-            assert backend_client._session is None
+                # Session should be None after exit (if it was created)
+                assert backend_client._session is None
 
         import asyncio
 

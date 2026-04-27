@@ -11,8 +11,18 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud.auth import AuthManager
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
+
+
+async def _stub_validate(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for offline lifecycle tests."""
+    return None
+
+
+def _patch_backend_validate():
+    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_stub_validate)
 
 
 def require(condition: bool, message: str = "Assertion failed") -> None:
@@ -49,7 +59,9 @@ class TestSessionExpiryAndRefresh:
             session.close = AsyncMock()
             return session
 
-        with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
+        with _patch_backend_validate(), patch(
+            "traigent.cloud.client.AIOHTTP_AVAILABLE", True
+        ):
             with patch(
                 "traigent.cloud.client.aiohttp.ClientSession",
                 side_effect=mock_session_constructor,
@@ -734,22 +746,28 @@ class TestBackendClientAuthLifecycle:
                         task_1 = client_1.create_hybrid_session("problem 1", {}, {})
                         task_2 = client_2.create_hybrid_session("problem 2", {}, {})
 
-                        await asyncio.gather(task_1, task_2, return_exceptions=True)
+                        results = await asyncio.gather(
+                            task_1, task_2, return_exceptions=True
+                        )
 
-                        # Verify both clients handled auth appropriately
-                        require(len(session_data) == 2)
+                        # B4 ROUND 4: client 2 must fail closed instead of
+                        # falling back to raw-key headers. Only client 1
+                        # builds a session with auth headers.
+                        require(len(session_data) == 1)
 
-                        # Client 1 should have primary auth
                         headers_1 = session_data[0]["headers"]
                         require("Authorization" in headers_1)
                         require("Bearer client-1-token" in headers_1["Authorization"])
 
-                        # Client 2 should fall back to the explicit API key when
-                        # auth header generation fails.
-                        headers_2 = session_data[1]["headers"]
-                        require("Content-Type" in headers_2)
-                        require(headers_2.get("X-API-Key") == "key-2")
-                        require(headers_2.get("Authorization") == "Bearer key-2")
+                        # The raw fallback key MUST NOT appear in any session.
+                        for entry in session_data:
+                            require(entry["headers"].get("X-API-Key") != "key-2")
+                            require(entry["headers"].get("Authorization")
+                                    != "Bearer key-2")
+
+                        # Client 2's task must have raised, not silently
+                        # produced a session.
+                        require(isinstance(results[1], Exception))
 
                         # Verify appropriate auth calls were made
                         require("client_1_auth" in auth_calls)

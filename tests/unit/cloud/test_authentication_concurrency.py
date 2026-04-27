@@ -381,7 +381,16 @@ class TestBackendClientConcurrency:
 
     @pytest.mark.asyncio
     async def test_backend_client_auth_fallback_race_condition(self):
-        """Test that auth fallback in BackendIntegratedClient is thread-safe."""
+        """B4 ROUND 4: Concurrent auth-failure callers all fail closed.
+
+        Pre-round-4, auth failures during ``_ensure_session`` silently
+        rebuilt headers from the raw stored API key. This regression
+        test originally asserted that behavior. After round 4, every
+        concurrent caller must observe the auth failure (as
+        ``CloudServiceError`` for generic exceptions) and no session
+        with raw-key headers may be created.
+        """
+        from traigent.cloud.client import CloudServiceError
 
         config = BackendClientConfig(backend_base_url="http://test.com")
 
@@ -421,17 +430,23 @@ class TestBackendClientConcurrency:
                         )
                         client.auth = mock_auth_instance
 
-                        # Launch concurrent calls - all should fallback to API key
+                        # Launch concurrent calls - every caller must see
+                        # the auth failure surfaced as CloudServiceError.
                         tasks = [client._ensure_session() for _ in range(5)]
-                        await asyncio.gather(*tasks)
+                        results = await asyncio.gather(
+                            *tasks, return_exceptions=True
+                        )
 
-                        # Verify only one session was created
-                        assert len(session_creations) == 1
+                        # All concurrent attempts must have failed closed.
+                        assert len(results) == 5
+                        for r in results:
+                            assert isinstance(r, CloudServiceError), r
 
-                        # Verify fallback headers were used
-                        headers = session_creations[0]
-                        assert "X-API-Key" in headers
-                        assert headers["X-API-Key"] == "fallback-api-key"
+                        # No session should have been created with the raw
+                        # fallback key as auth headers.
+                        for headers in session_creations:
+                            assert "X-API-Key" not in headers
+                            assert "Authorization" not in headers
 
 
 class TestSessionLifecycleConcurrency:

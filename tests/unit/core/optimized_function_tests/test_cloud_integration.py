@@ -7,8 +7,28 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud.auth import AuthManager
 from traigent.cloud.client import CloudServiceError
 from traigent.core.optimized_function import OptimizedFunction
+
+
+async def _stub_validate_backend(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for offline tests.
+
+    B4 round 3 made ``get_auth_headers()`` fail closed when the backend
+    rejects a key. Tests that simulate cloud paths but never expect a real
+    backend call must stub this hook.
+    """
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _patch_backend_validate_autouse():
+    """Auto-applied: keep backend validation offline for all tests in this module."""
+    with patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate_backend
+    ):
+        yield
 
 
 class TestCloudIntegration:

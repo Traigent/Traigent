@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.cloud.auth import AuthManager
 from traigent.cloud.client import (
     CloudOptimizationResult,
     CloudServiceError,
@@ -12,6 +13,24 @@ from traigent.cloud.client import (
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
+
+
+async def _stub_validate(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for offline tests."""
+    return None
+
+
+def _patch_backend_validate():
+    """Patch ``AuthManager._validate_api_key_with_backend`` for offline tests.
+
+    B4 round 3 made ``get_auth_headers()`` fail closed when authentication
+    fails, so any test that calls a method which builds auth headers must
+    either authenticate against a working backend or stub the backend
+    validation hook.
+    """
+    return patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate
+    )
 
 
 @pytest.fixture
@@ -87,11 +106,12 @@ class TestTraigentCloudClient:
         """Test async context manager functionality."""
 
         async def run_test():
-            async with mock_cloud_client as client:
-                assert client._session is not None
+            with _patch_backend_validate():
+                async with mock_cloud_client as client:
+                    assert client._session is not None
 
-            # Session should be closed after exit
-            assert mock_cloud_client._session is None
+                # Session should be closed after exit
+                assert mock_cloud_client._session is None
 
         asyncio.run(run_test())
 
@@ -297,14 +317,15 @@ class TestTraigentCloudClient:
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            result = await mock_cloud_client._submit_optimization(
-                {
-                    "function_name": "test",
-                    "dataset": {},
-                    "configuration_space": {},
-                    "objectives": ["accuracy"],
-                }
-            )
+            with _patch_backend_validate():
+                result = await mock_cloud_client._submit_optimization(
+                    {
+                        "function_name": "test",
+                        "dataset": {},
+                        "configuration_space": {},
+                        "objectives": ["accuracy"],
+                    }
+                )
 
             assert result["best_config"] == {"param": "value"}
             assert result["best_metrics"] == {"accuracy": 0.9}
@@ -338,7 +359,9 @@ class TestTraigentCloudClient:
             ]
             mock_cloud_client._session = mock_session
 
-            with patch("asyncio.sleep", new_callable=AsyncMock):
+            with _patch_backend_validate(), patch(
+                "asyncio.sleep", new_callable=AsyncMock
+            ):
                 result = await mock_cloud_client._submit_optimization({})
 
             assert result["trials_count"] == 10
@@ -357,8 +380,9 @@ class TestTraigentCloudClient:
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            with pytest.raises(CloudServiceError, match="HTTP 500"):
-                await mock_cloud_client._submit_optimization({})
+            with _patch_backend_validate():
+                with pytest.raises(CloudServiceError, match="HTTP 500"):
+                    await mock_cloud_client._submit_optimization({})
 
         asyncio.run(run_test())
 
@@ -407,7 +431,8 @@ class TestTraigentCloudClient:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            status = await mock_cloud_client.check_service_status()
+            with _patch_backend_validate():
+                status = await mock_cloud_client.check_service_status()
             assert status["status"] == "healthy"
             assert "uptime" in status
 

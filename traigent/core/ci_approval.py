@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from traigent.config.types import TraigentConfig
-from traigent.utils.env_config import is_mock_llm, is_production
 from traigent.utils.exceptions import ConfigurationError, OptimizationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_open, validate_path
@@ -173,13 +172,11 @@ def check_ci_approval(traigent_config: TraigentConfig) -> None:
     if not traigent_config.is_edge_analytics_mode():
         return
 
-    if is_mock_llm():
-        msg = "Skipping CI approval in mock LLM mode"
-        if is_production():
-            logger.warning(f"{msg} while ENVIRONMENT=production.")
-        else:
-            logger.info(f"{msg}.")
-        return
+    # NOTE: ``TRAIGENT_MOCK_LLM`` no longer bypasses the CI approval gate
+    # (S2-B retirement). Bypassing a security control based on an env var
+    # was unsafe in production deployments where the variable could leak in.
+    # CI runs that legitimately need to skip approval should use
+    # ``TRAIGENT_RUN_APPROVED=1`` (signed token) explicitly.
 
     if not _is_ci_environment():
         return

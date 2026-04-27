@@ -24,7 +24,6 @@ from traigent.config.types import ExecutionMode, TraigentConfig, resolve_executi
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
-from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_config_space
 
@@ -262,34 +261,28 @@ def resolve_effective_parallel_config(
 def resolve_custom_evaluator(
     custom_evaluator: Callable[..., Any] | None,
     *,
-    mock_mode_config: dict[str, Any] | None,
+    mock_mode_config: dict[str, Any] | None,  # noqa: ARG001 - retained for API compat
     decorator_custom_evaluator: Callable[..., Any] | None,
 ) -> Callable[..., Any] | None:
-    """Resolve the effective custom evaluator based on mock mode settings.
+    """Resolve the effective custom evaluator.
+
+    The user-provided custom evaluator (from either the ``@optimize`` decorator
+    or the ``optimize()`` call) is always honoured. ``mock_mode_config`` is
+    accepted for backward compatibility with the public API but is otherwise
+    ignored: it previously combined with the now-retired ``TRAIGENT_MOCK_LLM``
+    env var to silently swap a user-supplied evaluator for ``LocalEvaluator``,
+    which was unsafe in production environments where the env var leaked.
 
     Args:
-        custom_evaluator: Custom evaluator from optimize() call
-        mock_mode_config: Mock mode configuration
-        decorator_custom_evaluator: Custom evaluator from decorator
+        custom_evaluator: Custom evaluator from optimize() call.
+        mock_mode_config: Ignored. Retained for backward-compatible signatures.
+        decorator_custom_evaluator: Custom evaluator from decorator.
 
     Returns:
         The custom evaluator to use, or None if LocalEvaluator should be used.
     """
-    mock_mode_env = is_mock_llm()
-    mock_config = mock_mode_config or {}
-    mock_enabled = mock_config.get("enabled", True)
-    override_evaluator = mock_config.get("override_evaluator", True)
-
     provided_custom_evaluator = custom_evaluator or decorator_custom_evaluator
-    has_custom = provided_custom_evaluator is not None
-
-    if mock_mode_env and mock_enabled and override_evaluator and has_custom:
-        logger.info(
-            "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
-        )
-        return None
-
-    return provided_custom_evaluator if has_custom else None
+    return provided_custom_evaluator if provided_custom_evaluator is not None else None
 
 
 def build_metric_functions(
