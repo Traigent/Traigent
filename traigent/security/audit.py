@@ -488,7 +488,12 @@ class AuditLogger:
 
 
 class ComplianceReporter:
-    """Generates compliance reports for various standards."""
+    """Compliance report entry points.
+
+    Report generation is intentionally fail-loud until the real reporting
+    subsystem ships; callers must handle ``NotImplementedError`` instead of
+    consuming synthetic compliance data.
+    """
 
     def __init__(self, audit_logger: AuditLogger) -> None:
         """Initialize compliance reporter."""
@@ -497,13 +502,13 @@ class ComplianceReporter:
     def generate_soc2_report(
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
-        """Generate SOC 2 Type II compliance report."""
+        """Raise until SOC 2 Type II report generation is implemented."""
         raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def generate_gdpr_report(
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
-        """Generate GDPR compliance report."""
+        """Raise until GDPR report generation is implemented."""
         raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _test_access_control(self, events: list[AuditEvent]) -> dict[str, Any]:
@@ -537,7 +542,7 @@ class ComplianceReporter:
         end_date: datetime,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Generate compliance report for specified framework."""
+        """Raise until real compliance report generation is implemented."""
         if framework in (
             ComplianceFramework.SOC2,
             ComplianceFramework.ISO27001,

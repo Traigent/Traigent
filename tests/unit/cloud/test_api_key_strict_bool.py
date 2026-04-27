@@ -54,7 +54,7 @@ class _FakeSession:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    def post(self, url, headers=None):  # noqa: ARG002
+    def post(self, url, headers=None, allow_redirects=None):  # noqa: ARG002
         return _FakeResponse(self._payload)
 
 
@@ -130,3 +130,17 @@ async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
 
     assert reason is None
     post.assert_called_once()
+    assert post.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_invalid_backend_validation_url():
+    """Backend key validation must not send credentials to unsupported URL schemes."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "ftp://backend.example"
+
+    with patch("requests.post") as post:
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL is invalid"
+    post.assert_not_called()

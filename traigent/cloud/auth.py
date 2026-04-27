@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
@@ -1390,6 +1391,10 @@ class AuthManager:
             return "backend URL not configured"
 
         url = f"{backend_api_url.rstrip('/')}/keys/validate"
+        unsafe_url_reason = self._validate_backend_validation_url(url)
+        if unsafe_url_reason:
+            return unsafe_url_reason
+
         headers = {"X-API-Key": api_key}
 
         if not AIOHTTP_AVAILABLE:
@@ -1403,7 +1408,11 @@ class AuthManager:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as session:
-                async with session.post(url, headers=headers) as response:
+                async with session.post(
+                    url,
+                    headers=headers,
+                    allow_redirects=False,
+                ) as response:
                     if response.status == 200:
                         try:
                             data = await response.json(content_type=None)
@@ -1442,6 +1451,16 @@ class AuthManager:
             return "rate limited"
         return f"backend returned status {status}"
 
+    @staticmethod
+    def _validate_backend_validation_url(url: str) -> str | None:
+        """Validate the configured backend URL before sending credentials to it."""
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return "backend validation URL is invalid"
+        if parsed.username or parsed.password:
+            return "backend validation URL must not include credentials"
+        return None
+
     def _validate_api_key_with_backend_sync(
         self,
         url: str,
@@ -1451,7 +1470,12 @@ class AuthManager:
         import requests
 
         try:
-            response = requests.post(url, headers=headers, timeout=15)
+            response = requests.post(
+                url,
+                headers=headers,
+                timeout=15,
+                allow_redirects=False,
+            )
         except requests.Timeout:
             return "backend validation timed out"
         except requests.RequestException as exc:
