@@ -1305,9 +1305,15 @@ class AuthManager:
 
         expected_token = os.getenv("TRAIGENT_DEV_AUTH_TOKEN", "").strip()
         if not expected_token:
-            logger.warning(
+            logger.error(
                 "auth.development.env_missing",
-                extra={"auth_mode": AuthMode.DEVELOPMENT.value},
+                extra={
+                    "auth_mode": AuthMode.DEVELOPMENT.value,
+                    "migration": (
+                        "Set TRAIGENT_DEV_AUTH_TOKEN and pass the same value via "
+                        "AuthCredentials.metadata['dev_token']."
+                    ),
+                },
             )
             return AuthResult(
                 success=False,
