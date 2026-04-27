@@ -412,6 +412,27 @@ async def test_terminate_process_raises_after_failed_force_kill() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminate_finalizes_shutdown_after_failed_force_kill() -> None:
+    bridge = _make_bridge()
+    bridge._process = _make_mock_process()
+    bridge._pgid = 67890
+    bridge._started = True
+    bridge._terminate_process = AsyncMock(
+        side_effect=JSProcessError("JS process tree did not exit after force kill")
+    )
+
+    with pytest.raises(JSProcessError, match="did not exit after force kill"):
+        await bridge._terminate()
+
+    bridge._terminate_process.assert_awaited_once()
+    assert bridge._process is None
+    assert bridge._pgid is None
+    assert bridge._started is False
+    assert bridge._reader_task is None
+    assert bridge._stderr_task is None
+
+
+@pytest.mark.asyncio
 async def test_terminate_process_ignores_direct_process_lookup_error() -> None:
     bridge = _make_bridge()
     bridge._process = _make_mock_process()

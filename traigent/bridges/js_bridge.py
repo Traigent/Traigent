@@ -430,10 +430,17 @@ class JSBridge:
 
     async def _terminate(self) -> None:
         """Force terminate the Node.js process and all its children."""
-        if self._process is not None:
-            await self._terminate_process()
+        terminate_error: JSProcessError | None = None
+        try:
+            if self._process is not None:
+                await self._terminate_process()
+        except JSProcessError as exc:
+            terminate_error = exc
+        finally:
+            await self._finalize_shutdown()
 
-        await self._finalize_shutdown()
+        if terminate_error is not None:
+            raise terminate_error
 
     async def _terminate_process(self) -> None:
         """Terminate the Node.js process tree with graceful fallback to force kill."""

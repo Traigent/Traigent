@@ -1377,9 +1377,6 @@ class AuthManager:
         validation failures (fail-closed) so a missing backend cannot be used
         to bypass authentication.
         """
-        if not AIOHTTP_AVAILABLE:
-            return "aiohttp not available for backend validation"
-
         from traigent.config.backend_config import BackendConfig
 
         try:
@@ -1395,6 +1392,13 @@ class AuthManager:
         url = f"{backend_api_url.rstrip('/')}/keys/validate"
         headers = {"X-API-Key": api_key}
 
+        if not AIOHTTP_AVAILABLE:
+            return await asyncio.to_thread(
+                self._validate_api_key_with_backend_sync,
+                url,
+                headers,
+            )
+
         try:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=15)
@@ -1405,14 +1409,14 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
-                        if isinstance(data, dict) and data.get("valid") is True:
-                            return None
-                        return "backend reported key invalid"
-                    if response.status in (401, 403):
-                        return "unauthorized"
-                    if response.status == 429:
-                        return "rate limited"
-                    return f"backend returned status {response.status}"
+                        return self._interpret_backend_key_validation_response(
+                            response.status,
+                            data,
+                        )
+                    return self._interpret_backend_key_validation_response(
+                        response.status,
+                        None,
+                    )
         except TimeoutError:
             return "backend validation timed out"
         except Exception as exc:  # pragma: no cover - exercised via unit tests
@@ -1422,6 +1426,49 @@ class AuthManager:
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
+
+    @staticmethod
+    def _interpret_backend_key_validation_response(
+        status: int,
+        data: Any | None,
+    ) -> str | None:
+        if status == 200:
+            if isinstance(data, dict) and data.get("valid") is True:
+                return None
+            return "backend reported key invalid"
+        if status in (401, 403):
+            return "unauthorized"
+        if status == 429:
+            return "rate limited"
+        return f"backend returned status {status}"
+
+    def _validate_api_key_with_backend_sync(
+        self,
+        url: str,
+        headers: dict[str, str],
+    ) -> str | None:
+        """Requests fallback for backend key validation when aiohttp is unavailable."""
+        import requests
+
+        try:
+            response = requests.post(url, headers=headers, timeout=15)
+        except requests.Timeout:
+            return "backend validation timed out"
+        except requests.RequestException as exc:
+            logger.debug(
+                "auth.api_key.validate_transport_error",
+                extra={"error": str(exc)},
+            )
+            return f"transport error: {exc.__class__.__name__}"
+
+        status = int(response.status_code)
+        if status == 200:
+            try:
+                data = response.json()
+            except Exception:
+                return "backend returned non-JSON success body"
+            return self._interpret_backend_key_validation_response(status, data)
+        return self._interpret_backend_key_validation_response(status, None)
 
     # Helper Methods
 

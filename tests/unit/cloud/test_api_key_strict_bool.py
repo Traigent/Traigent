@@ -17,6 +17,7 @@ non-empty string ``"false"`` is truthy in Python. The fix tightens this to
 """
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -65,6 +66,17 @@ def _patch_aiohttp(payload):
     return patch("traigent.cloud.auth.aiohttp", fake_aiohttp)
 
 
+class _RequestsResponse:
+    """Minimal requests response stub for the no-aiohttp fallback path."""
+
+    def __init__(self, status: int, body: bytes):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        return json.loads(self._body.decode("utf-8"))
+
+
 @pytest.mark.asyncio
 async def test_validate_rejects_string_false_payload():
     """A backend returning ``{"valid": "false"}`` must NOT authenticate."""
@@ -100,3 +112,21 @@ async def test_validate_accepts_strict_true_payload():
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
     assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
+    """Missing aiohttp must not block API-key validation when the stdlib can call backend."""
+    manager = AuthManager()
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch(
+            "requests.post",
+            return_value=_RequestsResponse(200, b'{"valid": true}'),
+        ) as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is None
+    post.assert_called_once()
