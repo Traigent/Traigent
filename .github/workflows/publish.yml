@@ -42,13 +42,16 @@ jobs:
 
     - name: Verify tag is on main branch
       if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        GIT_SHA: ${{ github.sha }}
+        GIT_REF_NAME: ${{ github.ref_name }}
       run: |
         git fetch origin main
-        if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
-          echo "Error: tag ${{ github.ref_name }} is not on the main branch. Only tag from main."
+        if ! git merge-base --is-ancestor "$GIT_SHA" origin/main; then
+          echo "Error: tag $GIT_REF_NAME is not on the main branch. Only tag from main."
           exit 1
         fi
-        echo "Tag ${{ github.ref_name }} is on main — proceeding."
+        echo "Tag $GIT_REF_NAME is on main — proceeding."
 
     - name: Set up Python
       uses: actions/setup-python@v6
@@ -73,8 +76,9 @@ jobs:
         echo "package_version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Verify version consistency
+      env:
+        VERSION_PYPROJECT: ${{ steps.package_version.outputs.package_version }}
       run: |
-        VERSION_PYPROJECT=${{ steps.package_version.outputs.package_version }}
         echo "pyproject.toml version: $VERSION_PYPROJECT"
 
         # If triggered by a tag, verify the tag matches the package version
@@ -140,14 +144,18 @@ jobs:
 
     - name: Create deployment summary
       if: always()
+      env:
+        ENVIRONMENT: ${{ (github.event_name == 'push' && 'pypi (auto from tag)') || github.event.inputs.environment || 'unknown' }}
+        TRIGGER: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        JOB_STATUS: ${{ job.status }}
       run: |
-        ENVIRONMENT="${{ (github.event_name == 'push' && 'pypi (auto from tag)') || github.event.inputs.environment || 'unknown' }}"
-        echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: $(python -c "import traigent; print(traigent.__version__)")" >> $GITHUB_STEP_SUMMARY
-        echo "- **Environment**: ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Ref**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Version**: $(python -c "import traigent; print(traigent.__version__)")" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Environment**: $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Trigger**: $TRIGGER" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Ref**: $REF" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Status**: $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
 
   verify-publication:
     needs: publish
@@ -166,8 +174,9 @@ jobs:
     - name: Test installation from PyPI
       env:
         EXPECTED_VERSION: ${{ needs.publish.outputs.package_version }}
+        PUBLISH_ENVIRONMENT: ${{ github.event.inputs.environment }}
       run: |
-        if [ "${{ github.event.inputs.environment }}" = "testpypi" ]; then
+        if [ "$PUBLISH_ENVIRONMENT" = "testpypi" ]; then
           PACKAGE_LABEL="TestPyPI"
           PACKAGE_API_URL="https://test.pypi.org/pypi/traigent/json"
           INSTALL_ARGS=(--index-url "https://test.pypi.org/simple/" --extra-index-url "https://pypi.org/simple/")
