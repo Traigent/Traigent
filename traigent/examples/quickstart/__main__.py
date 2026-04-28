@@ -21,15 +21,6 @@ configure_quickstart_env(os.environ)
 _PACKAGE_DIR = str(Path(__file__).resolve().parent)
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", _PACKAGE_DIR)
 
-# NOTE: This uses LangChain's ChatOpenAI rather than the litellm calls shown
-# in the documentation. That is intentional and temporary: Traigent's mock
-# interceptor (TRAIGENT_MOCK_LLM=true) only patches LangChain's ChatOpenAI at
-# this point - it does not yet intercept raw litellm/openai calls.
-# Once the interceptor adds raw litellm support this file will be updated to
-# match the litellm style shown in the docs.
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-
 import traigent
 from traigent.api.decorators import EvaluationOptions
 
@@ -46,6 +37,21 @@ _SYSTEM_PROMPT = (
 # In mock mode the LLM returns a fixed placeholder string, so contains_accuracy
 # would always score 0.  Let the built-in mock simulation handle accuracy instead.
 _mock_mode = is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
+
+if not _mock_mode:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+
+_MOCK_ANSWERS = {
+    "What is the capital of France?": "Paris",
+    "What is 2 + 2?": "4",
+    "Who wrote Romeo and Juliet?": "William Shakespeare",
+    "What is the largest planet in our solar system?": "Jupiter",
+    "What year did World War II end?": "1945",
+    "What is the chemical symbol for water?": "H2O",
+    "Who painted the Mona Lisa?": "Leonardo da Vinci",
+    "What is the speed of light?": "299,792,458 meters per second",
+}
 
 
 def contains_accuracy(output: str, expected: str) -> float:
@@ -65,6 +71,9 @@ def contains_accuracy(output: str, expected: str) -> float:
 def answer(question: str) -> str:
     """Call an LLM with the current trial's config."""
     cfg = traigent.get_config()
+    if _mock_mode:
+        return _MOCK_ANSWERS.get(question, "Mock answer")
+
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
     response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
     return str(response.content)
