@@ -123,7 +123,9 @@ def my_agent(query: str) -> str:
 
 Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local).
 
-`execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported in this build; they will raise `NotYetSupported` when optimization runs.
+`execution_mode="hybrid"` runs trials locally while sending session and trial metrics to the backend so results appear in the Traigent portal.
+
+`execution_mode="cloud"` is reserved for future remote execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 

@@ -388,11 +388,7 @@ class OptimizedFunction:
             mode_enum = resolve_execution_mode(
                 effective_mode, default=resolve_execution_mode(self.execution_mode)
             )
-        return mode_enum in {
-            ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
-            ExecutionMode.HYBRID,
-        }
+        return mode_enum is ExecutionMode.CLOUD
 
     def _setup_configuration_space(self, configuration_space, config_space) -> None:
         """Setup configuration space with backward compatibility."""
@@ -1641,6 +1637,11 @@ class OptimizedFunction:
         if not use_cloud:
             return None
 
+        from traigent.cloud.client import (
+            CloudRemoteExecutionUnavailableError,
+            CloudServiceError,
+        )
+
         try:
             return await self._optimize_with_cloud_service(
                 dataset,
@@ -1651,6 +1652,12 @@ class OptimizedFunction:
             )
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
+        except CloudRemoteExecutionUnavailableError:
+            raise
+        except CloudServiceError as e:
+            if self.cloud_fallback_policy == "never":
+                raise
+            logger.warning("Cloud optimization failed, falling back to local: %s", e)
         except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
             if self.cloud_fallback_policy == "never":
                 raise
@@ -1670,26 +1677,18 @@ class OptimizedFunction:
     def _apply_mock_config_overrides(
         self, algorithm: str, optimizer_kwargs: dict[str, Any]
     ) -> str:
-        """Apply mock config overrides to algorithm and optimizer_kwargs."""
-        mock_config = getattr(self, "mock_mode_config", None) or {}
-        if not isinstance(mock_config, dict):
-            return algorithm
+        """No-op retained for backward compatibility.
 
-        # Override algorithm if specified in mock config
-        mock_optimizer = mock_config.get("optimizer")
-        if mock_optimizer and isinstance(mock_optimizer, str):
-            algorithm = mock_optimizer
-            logger.debug("Using optimizer '%s' from mock_mode_config", mock_optimizer)
-
-        # Extract and pass random_seed to optimizer for reproducibility
-        random_seed = mock_config.get("random_seed")
-        if random_seed is not None:
-            optimizer_kwargs["random_seed"] = random_seed
-            logger.debug(
-                "Passing random_seed=%s to optimizer from mock_mode_config",
-                random_seed,
-            )
-
+        Historically this method consulted ``self.mock_mode_config`` to
+        override the optimizer algorithm and to inject ``random_seed`` into
+        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
+        flag, ``mock_mode_config`` is now fully inert: callers may still pass
+        the parameter through public APIs, but it must not change optimizer
+        selection or seeding. A stray production config in the past silently
+        rerouted real optimizations to a different algorithm with a fixed
+        seed, so we now ignore it entirely. Real seeding should go through
+        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
+        """
         return algorithm
 
     async def _execute_optimization(
@@ -1886,7 +1885,7 @@ class OptimizedFunction:
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
-            self._cloud_client = TraigentCloudClient(enable_fallback=True)
+            self._cloud_client = TraigentCloudClient(enable_fallback=False)
 
         if max_trials is not None and max_trials <= 0:
             logger.info("Cloud optimization skipped due to max_trials=0.")

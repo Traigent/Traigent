@@ -9,6 +9,7 @@ import json
 import re
 import threading
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -17,6 +18,18 @@ from typing import Any
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_COMPLIANCE_NOT_IMPLEMENTED = (
+    "Compliance reporting subsystem is not yet implemented; do not call in production"
+)
+_PERSISTENT_STORAGE_NOT_IMPLEMENTED = (
+    "Persistent audit storage is not yet implemented; AuditStorage accepts "
+    "storage_path for compatibility but stores events in memory"
+)
+_TAMPER_DETECTION_NOT_IMPLEMENTED = (
+    "Tamper-detection is not yet implemented; verify_integrity will be available "
+    "in a future release"
+)
 
 
 class AuditSeverity(Enum):
@@ -475,7 +488,12 @@ class AuditLogger:
 
 
 class ComplianceReporter:
-    """Generates compliance reports for various standards."""
+    """Compliance report entry points.
+
+    Report generation is intentionally fail-loud until the real reporting
+    subsystem ships; callers must handle ``NotImplementedError`` instead of
+    consuming synthetic compliance data.
+    """
 
     def __init__(self, audit_logger: AuditLogger) -> None:
         """Initialize compliance reporter."""
@@ -484,132 +502,38 @@ class ComplianceReporter:
     def generate_soc2_report(
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
-        """Generate SOC 2 Type II compliance report."""
-        events = [
-            e for e in self.audit_logger.events if start_date <= e.timestamp <= end_date
-        ]
-
-        return {
-            "report_type": "SOC 2 Type II",
-            "period": f"{start_date.isoformat()} to {end_date.isoformat()}",
-            "total_events": len(events),
-            "security_events": len(
-                [e for e in events if "security" in e.event_type.value]
-            ),
-            "access_events": len([e for e in events if "access" in e.event_type.value]),
-            "data_events": len([e for e in events if "data" in e.event_type.value]),
-            "controls_tested": {
-                "access_control": self._test_access_control(events),
-                "change_management": self._test_change_management(events),
-                "data_protection": self._test_data_protection(events),
-                "monitoring": self._test_monitoring(events),
-            },
-        }
+        """Raise until SOC 2 Type II report generation is implemented."""
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def generate_gdpr_report(
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
-        """Generate GDPR compliance report."""
-        events = [
-            e for e in self.audit_logger.events if start_date <= e.timestamp <= end_date
-        ]
-
-        data_events = [
-            e
-            for e in events
-            if e.event_type
-            in [
-                AuditEventType.DATA_CREATED,
-                AuditEventType.DATA_READ,
-                AuditEventType.DATA_UPDATED,
-                AuditEventType.DATA_DELETED,
-                AuditEventType.DATA_EXPORTED,
-            ]
-        ]
-
-        return {
-            "report_type": "GDPR Compliance",
-            "period": f"{start_date.isoformat()} to {end_date.isoformat()}",
-            "data_processing_activities": len(data_events),
-            "data_exports": len(
-                [e for e in events if e.event_type == AuditEventType.DATA_EXPORTED]
-            ),
-            "deletion_requests": len(
-                [e for e in events if e.event_type == AuditEventType.DATA_DELETED]
-            ),
-            "consent_management": self._analyze_consent_management(events),
-            "data_breach_incidents": self._analyze_security_incidents(events),
-        }
+        """Raise until GDPR report generation is implemented."""
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _test_access_control(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test access control effectiveness."""
-        access_events = [e for e in events if "access" in e.event_type.value]
-        denied_events = [e for e in access_events if e.result == "denied"]
-
-        return {
-            "total_access_attempts": len(access_events),
-            "denied_attempts": len(denied_events),
-            "denial_rate": len(denied_events) / max(1, len(access_events)),
-            "status": "compliant" if len(denied_events) > 0 else "review_required",
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _test_change_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test change management controls."""
-        config_events = [
-            e for e in events if e.event_type == AuditEventType.CONFIGURATION_CHANGED
-        ]
-
-        return {
-            "configuration_changes": len(config_events),
-            "authorized_changes": len([e for e in config_events if e.user_id]),
-            "status": "compliant",
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _test_data_protection(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test data protection controls."""
-        data_events = [e for e in events if "data" in e.event_type.value]
-
-        return {
-            "data_operations": len(data_events),
-            "encrypted_operations": len(
-                [e for e in data_events if e.details.get("encrypted", False)]
-            ),
-            "status": "compliant",
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _test_monitoring(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test monitoring effectiveness."""
-        security_events = [e for e in events if "security" in e.event_type.value]
-
-        return {
-            "security_events_detected": len(security_events),
-            "response_time_avg": "< 5 minutes",  # Simplified
-            "status": "compliant",
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _analyze_consent_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze consent management for GDPR."""
-        return {
-            "consent_recorded": True,
-            "consent_withdrawals": 0,
-            "legal_basis_documented": True,
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _analyze_security_incidents(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze security incidents."""
-        security_events = [
-            e
-            for e in events
-            if e.event_type
-            in [AuditEventType.SECURITY_VIOLATION, AuditEventType.SUSPICIOUS_ACTIVITY]
-        ]
-
-        return {
-            "total_incidents": len(security_events),
-            "high_severity": 0,
-            "breach_notification_required": False,
-            "incidents_resolved": len(security_events),
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def generate_report(
         self,
@@ -618,77 +542,33 @@ class ComplianceReporter:
         end_date: datetime,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Generate compliance report for specified framework."""
-        if framework == ComplianceFramework.SOC2:
-            return self._generate_soc2_report(start_date, end_date, tenant_id)
-        elif framework == ComplianceFramework.ISO27001:
-            return self._generate_iso27001_report(start_date, end_date, tenant_id)
-        elif framework == ComplianceFramework.GDPR:
-            return self._generate_gdpr_report(start_date, end_date, tenant_id)
-        else:
-            raise ValueError(f"Unsupported compliance framework: {framework}") from None
+        """Raise until real compliance report generation is implemented."""
+        if framework in (
+            ComplianceFramework.SOC2,
+            ComplianceFramework.ISO27001,
+            ComplianceFramework.GDPR,
+        ):
+            raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+
+        raise ValueError(f"Unsupported compliance framework: {framework}") from None
 
     def _generate_soc2_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate SOC 2 Type II compliance report."""
-        events = self._get_events_for_period(start_date, end_date, tenant_id)
-
-        return {
-            "framework": "SOC 2 Type II",
-            "period": f"{start_date.isoformat()} to {end_date.isoformat()}",
-            "total_events": len(events),
-            "trust_service_criteria": {
-                "security": self._test_access_control(events),
-                "availability": self._test_monitoring(events),
-                "processing_integrity": self._test_change_management(events),
-                "confidentiality": self._test_data_protection(events),
-                "privacy": self._test_data_protection(events),
-            },
-            "summary": {"compliant": True, "recommendations": [], "tested_controls": 5},
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _generate_iso27001_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate ISO 27001 compliance report."""
-        events = self._get_events_for_period(start_date, end_date, tenant_id)
-
-        return {
-            "framework": "ISO 27001:2013",
-            "period": f"{start_date.isoformat()} to {end_date.isoformat()}",
-            "total_events": len(events),
-            "control_objectives": {
-                "access_control": self._test_access_control(events),
-                "incident_management": self._analyze_security_incidents(events),
-                "information_security": self._test_data_protection(events),
-                "business_continuity": self._test_monitoring(events),
-            },
-            "summary": {"compliant": True, "risk_level": "low", "controls_tested": 4},
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _generate_gdpr_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate GDPR compliance report."""
-        events = self._get_events_for_period(start_date, end_date, tenant_id)
-
-        return {
-            "framework": "GDPR (EU) 2016/679",
-            "period": f"{start_date.isoformat()} to {end_date.isoformat()}",
-            "total_events": len(events),
-            "data_protection_principles": {
-                "lawfulness": self._analyze_consent_management(events),
-                "data_subject_rights": self._analyze_data_subject_requests(events),
-                "data_security": self._test_data_protection(events),
-                "breach_notification": self._analyze_security_incidents(events),
-            },
-            "summary": {
-                "compliant": True,
-                "data_subject_requests": 0,
-                "breach_notifications": 0,
-            },
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def _get_events_for_period(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
@@ -709,62 +589,11 @@ class ComplianceReporter:
         self, events: list[AuditEvent]
     ) -> dict[str, Any]:
         """Analyze data subject requests for GDPR."""
-        gdpr_events = [e for e in events if e.event_type == AuditEventType.GDPR_REQUEST]
-
-        return {
-            "total_requests": len(gdpr_events),
-            "fulfilled_requests": len(gdpr_events),  # Assume all fulfilled for testing
-            "average_response_time": "< 30 days",
-            "compliant": True,
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
     def get_compliance_dashboard(self) -> dict[str, Any]:
         """Generate compliance dashboard with metrics."""
-        # Get events from storage to include manually added test events
-        all_events = self.audit_logger.storage.events
-        recent_events = [
-            e
-            for e in all_events
-            if e.timestamp >= datetime.now(UTC) - timedelta(days=30)
-        ]
-
-        critical_events = [
-            e for e in recent_events if e.severity == AuditSeverity.CRITICAL
-        ]
-        failed_logins = [
-            e for e in recent_events if e.event_type == AuditEventType.LOGIN_FAILURE
-        ]
-        data_events = [e for e in recent_events if "data" in e.event_type.value.lower()]
-
-        # Calculate compliance score (simplified)
-        total_critical = len(critical_events)
-        compliance_score = max(
-            0, 100 - (total_critical * 10)
-        )  # Deduct points for critical events
-
-        return {
-            "period": "Last 30 days",
-            "metrics": {
-                "total_events": len(recent_events),
-                "critical_events": total_critical,
-                "failed_logins": len(failed_logins),
-                "data_access_events": len(data_events),
-                "compliance_score": compliance_score,
-            },
-            "frameworks_status": {
-                "soc2": "compliant",
-                "gdpr": "compliant",
-                "iso27001": "compliant",
-            },
-            "recent_alerts": [
-                {
-                    "severity": e.severity.value if e.severity else "low",
-                    "message": e.message,
-                    "timestamp": e.timestamp.isoformat(),
-                }
-                for e in critical_events[:5]  # Show last 5 critical events
-            ],
-        }
+        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
 
 
 class SecurityMonitor:
@@ -872,9 +701,15 @@ class EventProcessor:
 
 
 class AuditStorage:
-    """Storage backend for audit events."""
+    """In-memory storage backend for audit events.
 
-    def __init__(self, storage_path: str = "audit_logs") -> None:
+    ``storage_path`` is accepted for backward compatibility with callers that
+    previously constructed ``AuditStorage("audit_logs")``. This class does not
+    implement file-backed persistence yet; it records the configured path for
+    diagnostics while keeping events in memory.
+    """
+
+    def __init__(self, storage_path: str | None = "audit_logs") -> None:
         """Initialize storage backend."""
         self.storage_path = storage_path
         self.events: list[Any] = []  # In-memory storage for testing
@@ -887,6 +722,12 @@ class AuditStorage:
         self, start_time: datetime | None = None, end_time: datetime | None = None
     ) -> list[AuditEvent]:
         """Retrieve audit events."""
+        if start_time is not None or end_time is not None:
+            warnings.warn(
+                "AuditStorage.retrieve_events ignores time filters; use get_events() "
+                "for filtered in-memory reads",
+                stacklevel=2,
+            )
         return self.events
 
     def get_events(
@@ -940,7 +781,13 @@ class AuditStorage:
 
 
 class AuditLogIntegrity:
-    """Ensures audit log integrity and tamper detection."""
+    """Audit log integrity summary and future tamper-detection entry point.
+
+    ``AuditStorage.verify_integrity()`` can return event-count/hash metadata
+    today. Active tamper detection is not implemented in this release, so
+    ``AuditLogIntegrity.verify_integrity()`` intentionally raises
+    ``NotImplementedError`` instead of returning a misleading boolean.
+    """
 
     def __init__(self, event_count: int = 0, log_hash: str | None = None) -> None:
         """Initialize audit log integrity manager."""
@@ -954,5 +801,5 @@ class AuditLogIntegrity:
         return hashlib.sha256(event_data.encode()).hexdigest()
 
     def verify_integrity(self) -> bool:
-        """Verify audit log integrity."""
-        return True
+        """Raise until active tamper detection is implemented."""
+        raise NotImplementedError(_TAMPER_DETECTION_NOT_IMPLEMENTED)

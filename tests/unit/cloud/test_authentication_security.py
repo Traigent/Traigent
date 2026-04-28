@@ -34,6 +34,23 @@ def _fake_api_key(length: int = 61) -> str:
     )
 
 
+_DEV_TOKEN = "test-security-dev-token"
+
+
+def _dev_env():
+    """Set TRAIGENT_DEV_AUTH_TOKEN for development-mode flow tests."""
+    return patch.dict(
+        "os.environ", {"TRAIGENT_DEV_AUTH_TOKEN": _DEV_TOKEN}, clear=False
+    )
+
+
+def _dev_credentials(**metadata) -> AuthCredentials:
+    """Build a DEVELOPMENT-mode credential carrying the shared dev token."""
+    md = {"dev_token": _DEV_TOKEN}
+    md.update(metadata)
+    return AuthCredentials(mode=AuthMode.DEVELOPMENT, metadata=md)
+
+
 class TestCredentialSecurity:
     """Test credential storage and handling security."""
 
@@ -250,22 +267,21 @@ class TestCredentialSecurity:
         # An attacker provides a session ID, then tries to use it
 
         # First, authenticate normally
-        credentials = AuthCredentials(
-            mode=AuthMode.DEVELOPMENT, metadata={"dev_user": "legitimate_user"}
-        )
+        credentials = _dev_credentials(dev_user="legitimate_user")
 
-        result1 = asyncio.run(auth_manager.authenticate(credentials))
-        assert result1.success
+        with _dev_env():
+            result1 = asyncio.run(auth_manager.authenticate(credentials))
+            assert result1.success
 
-        # Get initial headers
-        headers1 = asyncio.run(auth_manager.get_auth_headers())
+            # Get initial headers
+            headers1 = asyncio.run(auth_manager.get_auth_headers())
 
-        # Simulate logout and re-authentication
-        asyncio.run(auth_manager.logout())
+            # Simulate logout and re-authentication
+            asyncio.run(auth_manager.logout())
 
-        # Re-authenticate - should get different session context
-        result2 = asyncio.run(auth_manager.authenticate(credentials))
-        assert result2.success
+            # Re-authenticate - should get different session context
+            result2 = asyncio.run(auth_manager.authenticate(credentials))
+            assert result2.success
 
         headers2 = asyncio.run(auth_manager.get_auth_headers())
 
@@ -379,20 +395,19 @@ class TestAuthenticationFlows:
         config = UnifiedAuthConfig()
         auth_manager = AuthManager(config)
 
-        credentials = AuthCredentials(
-            mode=AuthMode.DEVELOPMENT, metadata={"dev_user": "concurrent_test"}
-        )
+        credentials = _dev_credentials(dev_user="concurrent_test")
 
-        # Perform multiple concurrent authentication attempts
-        tasks = [auth_manager.authenticate(credentials) for _ in range(10)]
-        results = await asyncio.gather(*tasks)
+        with _dev_env():
+            # Perform multiple concurrent authentication attempts
+            tasks = [auth_manager.authenticate(credentials) for _ in range(10)]
+            results = await asyncio.gather(*tasks)
 
-        # All should succeed
-        assert all(result.success for result in results)
+            # All should succeed
+            assert all(result.success for result in results)
 
-        # Should be consistently authenticated
-        is_authenticated = await auth_manager.is_authenticated()
-        assert is_authenticated
+            # Should be consistently authenticated
+            is_authenticated = await auth_manager.is_authenticated()
+            assert is_authenticated
 
     @pytest.mark.asyncio
     async def test_token_refresh_security(self):
@@ -401,12 +416,11 @@ class TestAuthenticationFlows:
         auth_manager = AuthManager(config)
 
         # Use development mode for simpler testing
-        credentials = AuthCredentials(
-            mode=AuthMode.DEVELOPMENT, metadata={"dev_user": "test_user_for_refresh"}
-        )
+        credentials = _dev_credentials(dev_user="test_user_for_refresh")
 
         # Authenticate first
-        result = await auth_manager.authenticate(credentials)
+        with _dev_env():
+            result = await auth_manager.authenticate(credentials)
         assert result.success
 
         # Force token refresh (may not be implemented in current version)
@@ -654,13 +668,11 @@ class TestEnvironmentSecurity:
 
     def test_development_mode_security_warnings(self):
         """Test that development mode provides appropriate security warnings."""
-        with patch("traigent.cloud.auth.logger") as mock_logger:
+        with patch("traigent.cloud.auth.logger") as mock_logger, _dev_env():
             config = UnifiedAuthConfig(default_mode=AuthMode.DEVELOPMENT)
             auth_manager = AuthManager(config)
 
-            credentials = AuthCredentials(
-                mode=AuthMode.DEVELOPMENT, metadata={"dev_user": "test_developer"}
-            )
+            credentials = _dev_credentials(dev_user="test_developer")
 
             result = asyncio.run(auth_manager.authenticate(credentials))
             assert result.success

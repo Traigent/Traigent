@@ -1,28 +1,15 @@
-"""Subprocess wrapper for running JS-related tests safely.
+"""Subprocess wrapper for running JS-related tests with captured output.
 
 This module runs JS-related tests (bridges, JS evaluators) in a subprocess with
-output captured, avoiding the VSCode terminal rendering issue that can trigger
-system crashes due to GPU-related instability.
+output captured. This avoids rendering heavy async output directly in the VSCode
+terminal, while JSBridge owns process isolation and cleanup.
 
-The following tests are excluded from VSCode test discovery and must be run
-via this wrapper:
-- tests/unit/bridges/ (JSBridge, JSProcessPool)
-- tests/unit/evaluators/test_js_evaluator*.py (JSEvaluator tests)
-
-IMPORTANT: This file is EXCLUDED from VSCode test discovery (.vscode/settings.json)
-to prevent system crashes. Run JS tests from the terminal only:
+Preferred captured-output command:
 
     pytest tests/unit/test_bridge_wrapper.py -v
 
-The wrapper captures all output, so even if tests produce heavy async output,
-it won't be rendered to the terminal until after completion (and only on failure).
-
-WARNING: DO NOT run JS tests directly! Always use this wrapper:
-    WRONG:  pytest tests/unit/bridges/ -v          # May crash system!
-    RIGHT:  pytest tests/unit/test_bridge_wrapper.py -v
-
-NOTE: In CI (GitHub Actions), these tests run directly without this wrapper
-since headless environments don't have terminal rendering issues.
+Direct bridge/evaluator test invocation is allowed; use the wrapper when you
+want subprocess isolation for the test runner output itself.
 """
 
 from __future__ import annotations
@@ -73,8 +60,7 @@ def _run_tests_safely(test_paths: list, test_name: str, timeout: int = 300):
             # Ensure tests run in mock mode
             "TRAIGENT_MOCK_LLM": "true",
             "TRAIGENT_OFFLINE_MODE": "true",
-            # Signal to conftest.py that we're running via subprocess wrapper
-            # This enables the JS tests which are otherwise skipped
+            # Signal to nested JS test conftests that this is a subprocess run.
             "TRAIGENT_JS_TEST_SUBPROCESS": "1",
         },
     )

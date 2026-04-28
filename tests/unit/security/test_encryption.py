@@ -626,61 +626,47 @@ class TestSecureStorage:
         assert decrypted == "Secret One-Time Token"
 
 
-class TestEncryptionMockMode:
-    """Test mock encryption behavior and security guards."""
+class TestEncryptionFailsClosedWithoutCrypto:
+    """Encryption must fail closed when ``cryptography`` is unavailable.
 
-    def test_mock_encrypt_decrypt_roundtrip(self):
-        """Test mock encryption produces b'mock_' prefix and round-trips."""
+    Previously the encrypt()/decrypt() methods had a TRAIGENT_MOCK_LLM-gated
+    fallback that returned ``b"mock_" + plaintext`` (encrypt) and stripped
+    that prefix on decrypt — which is not encryption at all and silently
+    leaked plaintext-as-ciphertext if the env var was set in production.
+    The fallback is now removed entirely; both methods raise RuntimeError
+    when crypto is not available, regardless of any env var.
+    """
+
+    def test_encrypt_raises_without_crypto(self):
+        """encrypt() must raise when cryptography is unavailable, no env override."""
         key_manager = KeyManager()
         em = EncryptionManager(key_manager)
-        em.crypto_available = False  # Force mock path
+        em.crypto_available = False
+        with pytest.raises(RuntimeError, match="requires the 'cryptography' package"):
+            em.encrypt("sensitive data")
 
-        result = em.encrypt("hello world")
-        assert result["ciphertext"].startswith(b"mock_")
-
-        decrypted = em.decrypt(result)
-        assert decrypted == b"hello world"
-
-    def test_decrypt_legacy_encrypted_prefix(self):
-        """Test backward compatibility with old b'encrypted_' prefix."""
+    def test_decrypt_raises_without_crypto(self):
+        """decrypt() must raise when cryptography is unavailable, no env override."""
         key_manager = KeyManager()
         em = EncryptionManager(key_manager)
-        em.crypto_available = False  # Force mock path
-
+        em.crypto_available = False
         key_id = key_manager.generate_key("AES-256")
-        legacy_result = {
-            "ciphertext": b"encrypted_" + b"test data",
+        encrypted = {
+            "ciphertext": b"mock_test",
             "iv": os.urandom(12),
             "tag": os.urandom(16),
             "key_id": key_id,
         }
-        decrypted = em.decrypt(legacy_result)
-        assert decrypted == b"test data"
+        with pytest.raises(RuntimeError, match="requires the 'cryptography' package"):
+            em.decrypt(encrypted)
 
-    def test_decrypt_raw_ciphertext_passthrough(self):
-        """Test that ciphertext without known prefix is returned as-is in mock."""
-        key_manager = KeyManager()
-        em = EncryptionManager(key_manager)
-        em.crypto_available = False  # Force mock path
-
-        key_id = key_manager.generate_key("AES-256")
-        raw_result = {
-            "ciphertext": b"raw bytes here",
-            "iv": os.urandom(12),
-            "tag": os.urandom(16),
-            "key_id": key_id,
-        }
-        decrypted = em.decrypt(raw_result)
-        assert decrypted == b"raw bytes here"
-
-    def test_encrypt_rejects_non_mock_mode(self):
-        """Test encryption raises RuntimeError when not in mock mode and crypto unavailable."""
+    def test_encrypt_ignores_traigent_mock_llm(self):
+        """Setting TRAIGENT_MOCK_LLM=true must NOT enable mock encryption."""
         import unittest.mock
 
         key_manager = KeyManager()
-
         with unittest.mock.patch.dict(
-            os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=False
+            os.environ, {"TRAIGENT_MOCK_LLM": "true"}, clear=False
         ):
             em = EncryptionManager(key_manager)
             em.crypto_available = False
@@ -689,14 +675,13 @@ class TestEncryptionMockMode:
             ):
                 em.encrypt("sensitive data")
 
-    def test_decrypt_rejects_non_mock_mode(self):
-        """Test decryption raises RuntimeError when not in mock mode and crypto unavailable."""
+    def test_decrypt_ignores_traigent_mock_llm(self):
+        """Setting TRAIGENT_MOCK_LLM=true must NOT enable mock decryption."""
         import unittest.mock
 
         key_manager = KeyManager()
-
         with unittest.mock.patch.dict(
-            os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=False
+            os.environ, {"TRAIGENT_MOCK_LLM": "true"}, clear=False
         ):
             em = EncryptionManager(key_manager)
             em.crypto_available = False

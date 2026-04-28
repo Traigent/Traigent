@@ -277,7 +277,13 @@ class CredentialResolver:
 
             elif mode == AuthMode.DEVELOPMENT:
                 dev_user = os.getenv("TRAIGENT_DEV_USER", "developer")
-                return AuthCredentials(mode=mode, metadata={"dev_user": dev_user})
+                dev_token = os.getenv("TRAIGENT_DEV_AUTH_TOKEN", "").strip()
+                dev_metadata: dict[str, Any] = {"dev_user": dev_user}
+                # Pass-through the dev token so AuthManager._authenticate_development
+                # can validate the supplied credential against the env value.
+                if dev_token:
+                    dev_metadata["dev_token"] = dev_token
+                return AuthCredentials(mode=mode, metadata=dev_metadata)
 
             return None
 

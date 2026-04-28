@@ -7,24 +7,24 @@ including session creation, status updates, and configuration run management.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud.auth import AuthenticationError
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
     AgentOptimizationRequest,
     AgentOptimizationResponse,
-    DatasetSubsetIndices,
     NextTrialRequest,
     NextTrialResponse,
-    OptimizationSessionStatus,
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
-    TrialSuggestion,
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
@@ -224,11 +224,10 @@ class ApiOperations:
             )
 
         if not AIOHTTP_AVAILABLE:
-            logger.warning("aiohttp not available, using fallback IDs")
-            return (
-                f"session_{int(time.time())}",
-                f"exp_{int(time.time())}",
-                f"run_{int(time.time())}",
+            raise CloudServiceError(
+                "aiohttp is required for backend session creation. Install "
+                "traigent[hybrid] or set TRAIGENT_OFFLINE_MODE=true for "
+                "explicit offline local-only mode."
             )
 
         try:
@@ -635,9 +634,9 @@ class ApiOperations:
             if backend_status not in valid_statuses:
                 logger.warning(
                     f"Unexpected status '{status}' (mapped to '{backend_status}'), "
-                    f"using COMPLETED as default"
+                    "using FAILED as default"
                 )
-                backend_status = "COMPLETED"
+                backend_status = "FAILED"
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -673,111 +672,44 @@ class ApiOperations:
 
     # Cloud API Methods
 
+    def _raise_cloud_remote_unavailable(self, operation: str) -> NoReturn:
+        """Raise the standard not-implemented error for remote cloud execution."""
+        raise CloudRemoteExecutionUnavailableError(operation)
+
     async def create_cloud_session(
         self, request: SessionCreationRequest
     ) -> SessionCreationResponse:
-        """Create cloud session for optimization.
-
-        Mock implementation for now - would connect to actual cloud API.
-        """
-        logger.debug("Creating cloud session (mock implementation)")
-
-        # Mock response
-        return SessionCreationResponse(
-            session_id=f"cloud_session_{int(time.time())}",
-            status=OptimizationSessionStatus.CREATED,
-            optimization_strategy=request.optimization_strategy or {},
-            metadata={
-                "created_at": time.time(),
-                "billing_tier": request.billing_tier,
-            },
-        )
+        """Create cloud session for optimization."""
+        _ = request
+        self._raise_cloud_remote_unavailable("create_cloud_session")
 
     async def get_cloud_trial_suggestion(
         self, request: NextTrialRequest
     ) -> NextTrialResponse:
-        """Get next trial suggestion from cloud optimizer.
-
-        Mock implementation for now - would connect to actual cloud API.
-        """
-        logger.debug("Getting cloud trial suggestion (mock implementation)")
-
-        # Mock response - no suggestion means optimization is complete
-        suggestion = TrialSuggestion(
-            trial_id=f"trial_{int(time.time())}",
-            session_id=request.session_id,
-            trial_number=1,
-            config={"param": 0},
-            dataset_subset=DatasetSubsetIndices(
-                indices=[0],
-                selection_strategy="mock",
-                confidence_level=0.9,
-                estimated_representativeness=0.9,
-            ),
-            exploration_type="exploration",
-        )
-
-        return NextTrialResponse(
-            suggestion=suggestion,
-            should_continue=True,
-            session_status=OptimizationSessionStatus.ACTIVE,
-            metadata={
-                "mock": True,
-                "session_id": request.session_id,
-            },
-        )
+        """Get next trial suggestion from cloud optimizer."""
+        _ = request
+        self._raise_cloud_remote_unavailable("get_cloud_trial_suggestion")
 
     async def submit_cloud_trial_results(
         self, submission: TrialResultSubmission
     ) -> None:
-        """Submit trial results to cloud service.
-
-        Mock implementation for now - would connect to actual cloud API.
-        """
-        logger.debug(f"Submitting cloud trial results for {submission.trial_id} (mock)")
-        # Mock implementation - just log
-        pass
+        """Submit trial results to cloud service."""
+        _ = submission
+        self._raise_cloud_remote_unavailable("submit_cloud_trial_results")
 
     async def submit_agent_optimization(
         self, request: AgentOptimizationRequest
     ) -> AgentOptimizationResponse:
-        """Submit agent for cloud optimization.
-
-        Mock implementation for now - would connect to actual cloud API.
-        """
-        agent_name = getattr(request.agent_spec, "name", "unknown")
-        logger.debug(f"Submitting agent optimization for {agent_name} (mock)")
-
-        # Mock response
-        return AgentOptimizationResponse(
-            session_id=f"agent_session_{int(time.time())}",
-            optimization_id=f"opt_{int(time.time())}",
-            status="started",
-            estimated_duration=300.0,
-            next_steps=["await_results"],
-        )
+        """Submit agent for cloud optimization."""
+        _ = request
+        self._raise_cloud_remote_unavailable("submit_agent_optimization")
 
     async def execute_cloud_agent(
         self, request: AgentExecutionRequest
     ) -> AgentExecutionResponse:
-        """Execute agent in cloud.
-
-        Mock implementation for now - would connect to actual cloud API.
-        """
-        agent_name = getattr(request.agent_spec, "name", "unknown")
-        logger.debug(f"Executing cloud agent {agent_name} (mock)")
-
-        # Mock response
-        return AgentExecutionResponse(
-            output="Mock agent response",
-            duration=1.5,
-            tokens_used=50,
-            cost=0.001,
-            metadata={
-                "status": "COMPLETED",
-                "session_id": getattr(request.agent_spec, "id", "mock_session"),
-            },
-        )
+        """Execute agent in cloud."""
+        _ = request
+        self._raise_cloud_remote_unavailable("execute_cloud_agent")
 
     # Deprecated methods that should not be used
 

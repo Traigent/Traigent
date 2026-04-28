@@ -1,7 +1,7 @@
 """Unit tests for traigent.traigent_client.
 
 Tests for TraigentClient which provides high-level optimization
-with multiple execution modes (edge analytics, standard/hybrid, cloud/SaaS).
+with multiple execution modes (edge analytics, hybrid, cloud).
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-CLOUD-HYBRID FUNC-INVOKERS REQ-CLOUD-009 REQ-INV-006 SYNC-CloudHybrid
@@ -104,8 +104,22 @@ class TestDetermineExecutionMode:
 
     def test_explicit_cloud_mode_raises(self) -> None:
         """Test explicit cloud mode raises ConfigurationError (not yet supported)."""
-        with pytest.raises(ConfigurationError, match="not yet supported"):
+        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
             TraigentClient(execution_mode="cloud")
+
+    @patch("traigent.traigent_client.BackendIntegratedClient")
+    @patch("traigent.config.backend_config.BackendConfig")
+    def test_explicit_hybrid_mode_supported(
+        self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
+    ) -> None:
+        """Test explicit hybrid mode initializes backend tracking."""
+        mock_backend_config.get_api_key.return_value = "key"
+        mock_backend_config.get_backend_url.return_value = "https://url"
+
+        client = TraigentClient(execution_mode="hybrid")
+
+        assert client.execution_mode == ExecutionMode.HYBRID
+        mock_backend_client.assert_called_once()
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -128,7 +142,7 @@ class TestDetermineExecutionMode:
     ) -> None:
         """Test auto mode with TRAIGENT_FORCE_HYBRID defaults to edge_analytics.
 
-        Cloud/hybrid modes are not yet supported, so auto always resolves to edge_analytics.
+        Cloud remote execution is not yet supported, so auto resolves to edge_analytics.
         """
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
@@ -455,22 +469,19 @@ class TestOptimizeValidation:
                     )
 
 
-@pytest.mark.skip(
-    reason="standard mode not yet supported — re-enable when mode is implemented"
-)
 class TestOptimizeHybrid:
-    """Tests for hybrid/standard mode optimization."""
+    """Tests for hybrid mode optimization."""
 
     @pytest.fixture
     def mock_client(self) -> TraigentClient:
-        """Create a mock TraigentClient in standard mode."""
+        """Create a mock TraigentClient in hybrid mode."""
         with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 mock_builder = Mock()
                 return TraigentClient(
-                    execution_mode="standard", agent_builder=mock_builder
+                    execution_mode="hybrid", agent_builder=mock_builder
                 )
 
     @pytest.mark.asyncio
@@ -533,7 +544,7 @@ class TestOptimizeHybrid:
                     test_func, dataset, config_space, objectives, max_trials=5
                 )
 
-                assert result["execution_mode"] == "standard"
+                assert result["execution_mode"] == "hybrid"
                 assert result["completed_trials"] == 1
 
     @pytest.mark.asyncio

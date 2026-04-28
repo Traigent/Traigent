@@ -7,6 +7,8 @@ shutdown paths that are otherwise hard to cover without the JS runtime.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -27,6 +29,7 @@ def _make_bridge(**config_overrides: object) -> JSBridge:
 
 def _make_mock_process() -> MagicMock:
     process = MagicMock(returncode=None)
+    process.pid = 12345
     process.stdin = MagicMock()
     process.stdin.write = MagicMock()
     process.stdin.drain = AsyncMock()
@@ -38,6 +41,14 @@ def _make_mock_process() -> MagicMock:
     process.terminate = MagicMock()
     process.kill = MagicMock()
     return process
+
+
+_HAS_POSIX_PROCESS_GROUPS = (
+    os.name == "posix"
+    and hasattr(os, "getpgid")
+    and hasattr(os, "getpgrp")
+    and hasattr(os, "killpg")
+)
 
 
 @pytest.mark.asyncio
@@ -52,6 +63,30 @@ async def test_start_tracks_background_tasks_without_spawning_node() -> None:
     assert bridge._process is process
     assert bridge._reader_task is not None
     assert bridge._stderr_task is not None
+
+    await bridge._finalize_shutdown()
+
+
+@pytest.mark.skipif(
+    not _HAS_POSIX_PROCESS_GROUPS, reason="POSIX process groups are unavailable"
+)
+@pytest.mark.asyncio
+async def test_start_captures_process_group_before_health_check() -> None:
+    bridge = _make_bridge()
+    bridge.ping = AsyncMock(return_value={"ok": True})
+    process = _make_mock_process()
+    create_process = AsyncMock(return_value=process)
+
+    with (
+        patch("asyncio.create_subprocess_exec", create_process),
+        patch("os.getpgid", return_value=67890) as getpgid,
+        patch("os.getpgrp", return_value=11111),
+    ):
+        await bridge.start()
+
+    assert create_process.call_args.kwargs["start_new_session"] is True
+    assert bridge._pgid == 67890
+    getpgid.assert_called_once_with(process.pid)
 
     await bridge._finalize_shutdown()
 
@@ -324,13 +359,35 @@ async def test_finalize_shutdown_clears_state() -> None:
     assert bridge._reader_task is None
     assert bridge._stderr_task is None
     assert bridge._active_trial_id is None
+    assert bridge._pgid is None
     assert bridge._started is False
 
 
+@pytest.mark.skipif(
+    not _HAS_POSIX_PROCESS_GROUPS, reason="POSIX process groups are unavailable"
+)
 @pytest.mark.asyncio
-async def test_terminate_process_uses_kill_after_timeout() -> None:
+async def test_terminate_process_uses_process_group_after_timeout() -> None:
     bridge = _make_bridge()
-    bridge._process = MagicMock(returncode=None)
+    bridge._process = _make_mock_process()
+    bridge._pgid = 67890
+    bridge._process.wait = AsyncMock(side_effect=[TimeoutError(), 0])
+
+    with patch("os.killpg") as killpg:
+        await bridge._terminate_process()
+
+    killpg.assert_has_calls(
+        [call(67890, signal.SIGTERM), call(67890, signal.SIGKILL)]
+    )
+    bridge._process.terminate.assert_not_called()
+    bridge._process.kill.assert_not_called()
+    assert bridge._process.wait.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_falls_back_to_child_without_pgid() -> None:
+    bridge = _make_bridge()
+    bridge._process = _make_mock_process()
     bridge._process.wait = AsyncMock(side_effect=[TimeoutError(), 0])
 
     await bridge._terminate_process()
@@ -341,7 +398,42 @@ async def test_terminate_process_uses_kill_after_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminate_process_ignores_process_lookup_error() -> None:
+async def test_terminate_process_raises_after_failed_force_kill() -> None:
+    bridge = _make_bridge()
+    bridge._process = _make_mock_process()
+    bridge._process.wait = AsyncMock(side_effect=TimeoutError())
+
+    with pytest.raises(JSProcessError, match="did not exit after force kill"):
+        await bridge._terminate_process()
+
+    bridge._process.terminate.assert_called_once()
+    bridge._process.kill.assert_called_once()
+    assert bridge._process.wait.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_terminate_finalizes_shutdown_after_failed_force_kill() -> None:
+    bridge = _make_bridge()
+    bridge._process = _make_mock_process()
+    bridge._pgid = 67890
+    bridge._started = True
+    bridge._terminate_process = AsyncMock(
+        side_effect=JSProcessError("JS process tree did not exit after force kill")
+    )
+
+    with pytest.raises(JSProcessError, match="did not exit after force kill"):
+        await bridge._terminate()
+
+    bridge._terminate_process.assert_awaited_once()
+    assert bridge._process is None
+    assert bridge._pgid is None
+    assert bridge._started is False
+    assert bridge._reader_task is None
+    assert bridge._stderr_task is None
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_ignores_direct_process_lookup_error() -> None:
     bridge = _make_bridge()
     bridge._process = _make_mock_process()
     bridge._process.terminate.side_effect = ProcessLookupError()

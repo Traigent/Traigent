@@ -9,7 +9,10 @@ from traigent.cloud.api_operations import (
     AIOHTTP_AVAILABLE,
     ApiOperations,
 )
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentOptimizationRequest,
@@ -517,8 +520,8 @@ class TestCreateCloudSession:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_returns_session_response(self):
-        """Test returns valid session response."""
+    async def test_raises_not_implemented(self):
+        """Test remote cloud session creation fails closed."""
         request = SessionCreationRequest(
             function_name="test_func",
             configuration_space={"param": [1, 2, 3]},
@@ -526,9 +529,8 @@ class TestCreateCloudSession:
             max_trials=10,
             billing_tier="standard",
         )
-        response = await self.ops.create_cloud_session(request)
-        assert "cloud_session_" in response.session_id
-        assert response.metadata["billing_tier"] == "standard"
+        with pytest.raises(CloudRemoteExecutionUnavailableError, match="use hybrid"):
+            await self.ops.create_cloud_session(request)
 
 
 class TestGetCloudTrialSuggestion:
@@ -540,16 +542,14 @@ class TestGetCloudTrialSuggestion:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_returns_trial_suggestion(self):
-        """Test returns valid trial suggestion."""
+    async def test_raises_not_implemented(self):
+        """Test remote cloud trial suggestions fail closed."""
         request = NextTrialRequest(
             session_id="session_123",
             previous_results=None,
         )
-        response = await self.ops.get_cloud_trial_suggestion(request)
-        assert response.suggestion is not None
-        assert "trial_" in response.suggestion.trial_id
-        assert response.should_continue is True
+        with pytest.raises(CloudServiceError, match="use hybrid"):
+            await self.ops.get_cloud_trial_suggestion(request)
 
 
 class TestSubmitCloudTrialResults:
@@ -561,8 +561,8 @@ class TestSubmitCloudTrialResults:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_submits_without_error(self):
-        """Test submits without raising errors."""
+    async def test_raises_not_implemented(self):
+        """Test remote cloud trial submission fails closed."""
         from traigent.cloud.models import TrialStatus
 
         submission = TrialResultSubmission(
@@ -572,8 +572,8 @@ class TestSubmitCloudTrialResults:
             duration=1.5,
             status=TrialStatus.COMPLETED,
         )
-        # Should not raise
-        await self.ops.submit_cloud_trial_results(submission)
+        with pytest.raises(CloudServiceError, match="use hybrid"):
+            await self.ops.submit_cloud_trial_results(submission)
 
 
 class TestSubmitAgentOptimization:
@@ -585,8 +585,8 @@ class TestSubmitAgentOptimization:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_returns_optimization_response(self):
-        """Test returns valid optimization response."""
+    async def test_raises_not_implemented(self):
+        """Test remote agent optimization fails closed."""
         agent_spec = Mock()
         agent_spec.name = "test_agent"
         request = AgentOptimizationRequest(
@@ -596,10 +596,8 @@ class TestSubmitAgentOptimization:
             objectives=["maximize"],
             max_trials=10,
         )
-        response = await self.ops.submit_agent_optimization(request)
-        assert "agent_session_" in response.session_id
-        assert "opt_" in response.optimization_id
-        assert response.status == "started"
+        with pytest.raises(CloudServiceError, match="use hybrid"):
+            await self.ops.submit_agent_optimization(request)
 
 
 class TestExecuteCloudAgent:
@@ -611,8 +609,8 @@ class TestExecuteCloudAgent:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_returns_execution_response(self):
-        """Test returns valid execution response."""
+    async def test_raises_not_implemented(self):
+        """Test remote agent execution fails closed."""
         agent_spec = Mock()
         agent_spec.name = "test_agent"
         agent_spec.id = "agent_123"
@@ -620,10 +618,8 @@ class TestExecuteCloudAgent:
             agent_spec=agent_spec,
             input_data={"query": "test"},
         )
-        response = await self.ops.execute_cloud_agent(request)
-        assert response.output == "Mock agent response"
-        assert abs(response.duration - 1.5) < 0.01  # Avoid floating point comparison
-        assert response.tokens_used == 50
+        with pytest.raises(CloudServiceError, match="use hybrid"):
+            await self.ops.execute_cloud_agent(request)
 
 
 class TestDeprecatedMethods:
@@ -696,8 +692,8 @@ class TestAiohttpNotAvailable:
         self.ops = ApiOperations(mock_client)
 
     @pytest.mark.asyncio
-    async def test_create_session_without_aiohttp_returns_fallback_ids(self):
-        """Test session creation returns fallback IDs when aiohttp not available."""
+    async def test_create_session_without_aiohttp_fails_closed(self):
+        """Test session creation fails closed when aiohttp is unavailable."""
         with (
             patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", False),
             patch(
@@ -710,12 +706,8 @@ class TestAiohttpNotAvailable:
                 objectives=["maximize"],
                 max_trials=10,
             )
-            session_id, exp_id, run_id = await self.ops.create_traigent_session_via_api(
-                request
-            )
-            assert "session_" in session_id
-            assert "exp_" in exp_id
-            assert "run_" in run_id
+            with pytest.raises(CloudServiceError, match="aiohttp is required"):
+                await self.ops.create_traigent_session_via_api(request)
 
 
 class TestHandleConnectorError:
@@ -801,6 +793,10 @@ class TestPostSessionCreation:
             assert session_id == "session_123"
             assert exp_id == "exp_123"
             assert run_id == "run_123"
+            assert (
+                mock_session.post.call_args.args[0]
+                == "https://api.example.com/sessions"
+            )
 
 
 class TestParseSessionResponse:
@@ -1237,8 +1233,8 @@ class TestUpdateExperimentRunStatusSuccess:
             )
 
     @pytest.mark.asyncio
-    async def test_invalid_status_uses_completed_default(self):
-        """Test invalid status defaults to COMPLETED."""
+    async def test_invalid_status_uses_failed_default(self):
+        """Test invalid status defaults to FAILED, not completed."""
         mock_response = AsyncMock()
         mock_response.status = 200
 
@@ -1261,6 +1257,7 @@ class TestUpdateExperimentRunStatusSuccess:
             await self.ops.update_experiment_run_status_on_completion(
                 "run_123", "unknown_status"
             )
+            assert mock_session.put.call_args.kwargs["json"]["status"] == "FAILED"
 
     @pytest.mark.asyncio
     async def test_failed_update_logs_warning(self):

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import inspect
 import math
-import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +22,6 @@ from traigent.evaluators.metrics_tracker import (
     MetricsTracker,
     extract_llm_metrics,
 )
-from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     clear_captured_responses,
@@ -146,6 +144,7 @@ def _ensure_metadata_capture_patches() -> None:
     patch_litellm_for_metadata_capture()
     _METADATA_PATCHES_ATTEMPTED = True
 
+
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
@@ -200,16 +199,16 @@ class LocalEvaluator(BaseEvaluator):
             self.execution_mode_enum.value if self.execution_mode_enum else None
         )
         self.privacy_enabled = privacy_enabled
+        # ``mock_mode_config`` is retained as an accepted parameter for
+        # backward compatibility with public APIs that thread it through
+        # (e.g. ``@traigent.optimize(mock_mode_config=...)``), but it no
+        # longer drives any evaluator behaviour. The previous behaviour
+        # (TRAIGENT_MOCK_LLM-gated fabricated accuracy via
+        # ``_compute_mock_accuracy``) was removed because a stray env var
+        # in production caused real evaluations to be silently replaced
+        # with random.uniform()-based fake scores.
         self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
-        self._mock_mode_warning_shown = (
-            False  # Track if we've shown the mock mode warning
-        )
-
-        # Create seeded random instance for mock mode reproducibility
-        self._mock_random = random.Random()
-        if self.mock_mode_config.get("random_seed") is not None:
-            self._mock_random.seed(self.mock_mode_config["random_seed"])
 
     def _extract_prompt_info(
         self,
@@ -1389,38 +1388,6 @@ class LocalEvaluator(BaseEvaluator):
 
         return result
 
-    def _compute_mock_accuracy(
-        self, actual_output: Any, base_accuracy: float, variance: float
-    ) -> float:
-        """Compute simulated accuracy for mock mode.
-
-        Args:
-            actual_output: Output from function
-            base_accuracy: Base accuracy value (e.g., 0.75)
-            variance: Variance range for randomization
-
-        Returns:
-            Simulated accuracy value between 0.0 and 1.0
-        """
-        if actual_output is None:
-            return 0.0
-
-        adjusted_accuracy = base_accuracy
-        # Simulate better accuracy for certain outputs
-        if isinstance(actual_output, str):
-            if len(actual_output) > 20:  # Longer outputs generally better
-                adjusted_accuracy += 0.05
-            sentiment_words = ["positive", "negative", "neutral"]
-            if any(word in actual_output.lower() for word in sentiment_words):
-                adjusted_accuracy += 0.03  # Sentiment-like outputs
-
-        # Add random variance (using seeded random for reproducibility)
-        half_variance = variance / 2
-        raw_accuracy = adjusted_accuracy + self._mock_random.uniform(
-            -half_variance, half_variance
-        )
-        return min(1.0, max(0.0, raw_accuracy))
-
     def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
         """Compute real accuracy by comparing actual vs expected output.
 
@@ -1469,46 +1436,21 @@ class LocalEvaluator(BaseEvaluator):
         """
         metrics = {}
 
-        # Check if we're in mock LLM mode and if it should be applied
-        mock_mode_env = is_mock_llm()
-
-        # Check configuration for mock mode settings
-        mock_enabled = self.mock_mode_config.get("enabled", True)
-        override_evaluator = self.mock_mode_config.get("override_evaluator", True)
-        base_accuracy_config = self.mock_mode_config.get("base_accuracy", 0.75)
-        variance_config = self.mock_mode_config.get("variance", 0.25)
-
-        # Determine if we should actually use mock mode
-        use_mock = mock_mode_env and mock_enabled and override_evaluator
-
-        # Accuracy (exact match or mock)
+        # SECURITY: Always compute real accuracy. The previous
+        # TRAIGENT_MOCK_LLM-gated branch fabricated accuracy via
+        # ``random.uniform()`` plus output-string heuristics, which would
+        # silently replace real evaluation results with fake scores
+        # whenever the env var was set in a production environment.
         if "accuracy" in self.metrics:
-            if use_mock:
-                self._log_mock_mode_warning(base_accuracy_config, variance_config)
-                metrics["accuracy"] = self._compute_mock_accuracy(
-                    actual_output, base_accuracy_config, variance_config
-                )
-            else:
-                metrics["accuracy"] = self._compute_real_accuracy(
-                    actual_output, expected_output
-                )
+            metrics["accuracy"] = self._compute_real_accuracy(
+                actual_output, expected_output
+            )
 
         # Success (whether function completed without error)
         if "success_rate" in self.metrics:
             metrics["success"] = 1.0 if actual_output is not None else 0.0
 
         return metrics
-
-    def _log_mock_mode_warning(self, base_accuracy: float, variance: float) -> None:
-        """Log a one-time warning about mock mode accuracy."""
-        if not self._mock_mode_warning_shown:
-            logger.warning(
-                "MOCK LLM MODE: Metrics are simulated (base=%.2f ± %.2f). "
-                "Set TRAIGENT_MOCK_LLM=false for real evaluations.",
-                base_accuracy,
-                variance / 2,
-            )
-            self._mock_mode_warning_shown = True
 
     def compute_metrics(
         self,

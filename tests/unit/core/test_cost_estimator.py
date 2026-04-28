@@ -317,12 +317,16 @@ class TestEstimateOptimizationCost:
 
 
 class TestCheckCostApproval:
-    def test_skips_in_mock_mode(self) -> None:
-        enforcer = MagicMock(is_mock_mode=True)
+    def test_does_not_skip_in_mock_mode(self) -> None:
+        """S2-B Round 3: mock-mode bypass was removed; approval always runs."""
+        enforcer = MagicMock()
+        # is_mock_mode is no longer consulted; spec it away so attribute access
+        # would fail and prove the new code path doesn't read it.
+        del enforcer.is_mock_mode
+        enforcer.check_and_approve.return_value = True
         estimator = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
-        # Should not raise
         estimator.check_cost_approval(_FakeDataset())
-        enforcer.check_and_approve.assert_not_called()
+        enforcer.check_and_approve.assert_called_once()
 
     def test_passes_when_approved(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)

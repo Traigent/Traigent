@@ -23,7 +23,8 @@ class ExecutionMode(StrEnum):
       if the backend is unreachable, but insights remain local.
     - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
     - STANDARD: Cloud orchestration with data sharing for balanced performance.
-    - CLOUD: Full SaaS execution where optimization and trials run in the cloud.
+    - CLOUD: Reserved for future remote execution where optimization and trials run
+      in Traigent Cloud. Not available yet.
     - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints.
       Enables optimization of any agentic service that implements the Traigent API contract.
     """
@@ -63,8 +64,12 @@ def resolve_execution_mode(
 
 
 # Currently supported execution modes
-_SUPPORTED_MODES = {ExecutionMode.EDGE_ANALYTICS, ExecutionMode.HYBRID_API}
-_NOT_YET_SUPPORTED_MODES = {ExecutionMode.HYBRID, ExecutionMode.CLOUD}
+_SUPPORTED_MODES = {
+    ExecutionMode.EDGE_ANALYTICS,
+    ExecutionMode.HYBRID,
+    ExecutionMode.HYBRID_API,
+}
+_NOT_YET_SUPPORTED_MODES = {ExecutionMode.CLOUD}
 # PRIVACY and STANDARD are removed — not in either set
 
 
@@ -72,8 +77,8 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     """Resolve *and* validate that an execution mode is currently supported.
 
     Raises :class:`~traigent.utils.exceptions.ConfigurationError` for removed
-    modes (``privacy``, ``standard``) and not-yet-supported modes (``cloud``,
-    ``hybrid``).  Use :func:`resolve_execution_mode` when you only need
+    modes (``privacy``, ``standard``) and not-yet-supported modes (``cloud``).
+    Use :func:`resolve_execution_mode` when you only need
     string-to-enum conversion without support validation.
     """
     from traigent.utils.exceptions import ConfigurationError
@@ -84,7 +89,10 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
         raise ConfigurationError(f"No such mode '{mode}'") from None
 
     if resolved in _NOT_YET_SUPPORTED_MODES:
-        raise ConfigurationError(f"'{resolved.value}' not yet supported")
+        raise ConfigurationError(
+            "Cloud remote execution is not available yet; use hybrid for "
+            "portal-tracked optimization."
+        )
     if resolved not in _SUPPORTED_MODES:
         raise ConfigurationError(f"No such mode '{resolved.value}'")
 
@@ -426,10 +434,7 @@ class TraigentConfig:
 
     def is_cloud_mode(self) -> bool:
         """Check if configuration is set to cloud mode."""
-        return self.execution_mode_enum in {
-            ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
-        }
+        return self.execution_mode_enum is ExecutionMode.CLOUD
 
     def is_privacy_enabled(self) -> bool:
         """Whether privacy mode is enabled (content never logged or transmitted)."""

@@ -199,8 +199,9 @@ class CostEstimator:
         Raises:
             OptimizationAborted: If cost approval is declined
         """
-        if self._cost_enforcer.is_mock_mode:
-            return
+        # S2-B Round 3: cost approval no longer skips on TRAIGENT_MOCK_LLM.
+        # The mock-mode bypass was removed because it could disable approval
+        # if the env var leaked into a production environment.
         estimated_cost = self.estimate_optimization_cost(dataset)
         if not self._cost_enforcer.check_and_approve(estimated_cost):
             from traigent.core.cost_enforcement import OptimizationAborted

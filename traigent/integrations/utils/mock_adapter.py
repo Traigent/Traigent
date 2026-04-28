@@ -2,6 +2,15 @@
 
 Provides a lightweight mock adapter pattern that keeps main plugin
 logic clean by separating mock functionality into dedicated methods.
+
+Security:
+    Mock activation is NEVER controlled by environment variables. Mock
+    responses are only produced when callers explicitly invoke
+    ``MockAdapter.get_mock_response(...)`` (typically from test code that
+    has already patched the LLM client at the integration boundary).
+    ``is_mock_enabled`` always returns ``False`` to guarantee that no
+    production code path can be silently swapped for fake responses by
+    setting an env var such as ``TRAIGENT_MOCK_LLM`` or ``OPENAI_MOCK``.
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
@@ -10,14 +19,13 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
 # Default mock delay in milliseconds (0 = no delay)
-# Set TRAIGENT_MOCK_DELAY_MS to simulate realistic LLM latency
+# Set TRAIGENT_MOCK_DELAY_MS to simulate realistic LLM latency in tests.
 DEFAULT_MOCK_DELAY_MS = 0
 
 
@@ -37,20 +45,6 @@ def _get_mock_delay_ms() -> int:
     except ValueError:
         logger.warning(f"Invalid TRAIGENT_MOCK_DELAY_MS value '{delay_str}', using 0")
         return 0
-
-
-# Environment variable names for each provider
-MOCK_ENV_VARS = {
-    "openai": "OPENAI_MOCK",
-    "azure_openai": "AZURE_OPENAI_MOCK",
-    "anthropic": "ANTHROPIC_MOCK",
-    "gemini": "GEMINI_MOCK",
-    "cohere": "COHERE_MOCK",
-    "huggingface": "HUGGINGFACE_MOCK",
-    "bedrock": "BEDROCK_MOCK",
-    # Global override
-    "traigent": "TRAIGENT_MOCK_LLM",
-}
 
 
 @dataclass
@@ -73,39 +67,37 @@ class MockResponse:
 class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
-    Usage in plugins:
-        if MockAdapter.is_mock_enabled("openai"):
-            return MockAdapter.get_mock_response("openai", **kwargs)
+    Mock activation is **never** auto-enabled via environment variables.
+    Tests that need a mock response must call
+    ``MockAdapter.get_mock_response(...)`` directly (e.g. from inside a
+    ``unittest.mock.patch`` that replaces the real client method).
 
-    This keeps mock logic separate from main plugin code.
+    ``is_mock_enabled`` is preserved as a stub that always returns
+    ``False`` so any production interceptor that previously consulted it
+    will now always take the real-LLM path. Callers wanting mock
+    behaviour from tests must patch the underlying client instead.
     """
 
     _pending_tasks: ClassVar[set[asyncio.Task]] = set()
 
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
-        """Check if mock mode is enabled for a provider.
+        """Always returns ``False``.
 
-        Checks both provider-specific and global mock env vars.
+        Historically this consulted ``TRAIGENT_MOCK_LLM`` and a set of
+        provider-specific ``*_MOCK`` environment variables. That env-toggle
+        was removed because a stray env var in production caused real LLM
+        calls to be silently replaced with canned mock text. Tests must
+        patch the LLM client (or call ``get_mock_response`` directly)
+        rather than relying on a global flag.
 
         Args:
-            provider: Provider name (openai, anthropic, gemini, etc.)
+            provider: Provider name (kept for signature compatibility).
 
         Returns:
-            True if mock mode is enabled.
+            Always ``False``.
         """
-        # Check global mock LLM mode first
-        global_mock = os.getenv("TRAIGENT_MOCK_LLM", "").lower()
-        if global_mock in ("true", "1", "yes"):
-            return True
-
-        # Check provider-specific mock
-        env_var = MOCK_ENV_VARS.get(provider.lower())
-        if env_var:
-            provider_mock = os.getenv(env_var, "").lower()
-            if provider_mock in ("true", "1", "yes"):
-                return True
-
+        del provider  # signature compatibility only
         return False
 
     @classmethod
@@ -148,6 +140,11 @@ class MockAdapter:
         **kwargs: Any,
     ) -> Any:
         """Get a provider-appropriate mock response object.
+
+        This method is intended to be invoked **explicitly** from test
+        code (e.g. inside a ``unittest.mock.patch`` of the real client).
+        It is no longer reachable from any production code path via an
+        environment toggle.
 
         Args:
             provider: Provider name.
@@ -278,33 +275,3 @@ class MockAdapter:
                 "total_tokens": data.total_tokens,
             },
         }
-
-
-def with_mock_support(provider: str) -> Callable:
-    """Decorator to add mock support to a function.
-
-    Usage:
-        @with_mock_support("openai")
-        def create_completion(**kwargs):
-            # Real implementation
-            ...
-
-    Args:
-        provider: Provider name for mock lookup.
-
-    Returns:
-        Decorator function.
-    """
-
-    def decorator(func: Callable) -> Callable:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if MockAdapter.is_mock_enabled(provider):
-                logger.debug(
-                    f"Mock mode enabled for {provider}, returning mock response"
-                )
-                return MockAdapter.get_mock_response(provider, **kwargs)
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

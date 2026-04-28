@@ -55,7 +55,7 @@ class LiteLLMPlugin(LLMPlugin):
         return {
             # LiteLLM routing parameters
             "api_base": "api_base",
-            "api_key": "api_key",
+            "api_key": "api_key",  # pragma: allowlist secret
             "custom_llm_provider": "custom_llm_provider",
             # Response format
             "response_format": "response_format",

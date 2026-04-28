@@ -21,6 +21,7 @@ from urllib.parse import quote, urlparse, urlunparse
 # Import and re-export BackendClientConfig for backward compatibility
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations
+from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SDKBackendBridge, SessionExperimentMapping
 from traigent.cloud.backend_bridges import bridge as _bridge
 from traigent.cloud.backend_components import (
@@ -411,8 +412,15 @@ class BackendIntegratedClient:
         """Async context manager entry."""
         if AIOHTTP_AVAILABLE:
             # Try to get headers, but don't fail if authentication is not available
+            # B4 ROUND 4: ``AuthenticationError`` must propagate -- a
+            # backend-rejected key must NEVER produce an authenticated session,
+            # even one with empty auth headers (which could be paired with a
+            # raw key elsewhere in the stack). Other exceptions (e.g. Edge
+            # Analytics mode without a key) continue with empty headers.
             try:
                 headers = await self.auth_manager.auth.get_headers()
+            except AuthenticationError:
+                raise
             except Exception as e:
                 # In Edge Analytics mode or when no API key is available, continue without auth headers
                 logger.debug(f"No authentication available for context manager: {e}")
@@ -452,15 +460,33 @@ class BackendIntegratedClient:
                     "Client session not initialized and aiohttp not available"
                 )
 
-            # Try to get headers, but don't fail if authentication is not available
+            # B4 ROUND 4: Fail closed on authentication errors. Previously, this
+            # block caught any exception from ``get_headers()`` and silently
+            # rebuilt headers from the raw stored API key (or from the
+            # private ``_get_api_key_headers()`` helper) -- defeating the
+            # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
+            # because the backend-rejected key would still be shipped on the
+            # wire as ``X-API-Key`` / ``Authorization``.
+            #
+            # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
+            # subclass) propagates so the caller sees the rejection. Other
+            # unexpected errors are surfaced as ``CloudServiceError`` rather
+            # than silently swallowed -- still fail-closed for auth, but
+            # without losing diagnostic context.
             try:
                 headers = await self.auth_manager.auth.get_headers()
+            except AuthenticationError:
+                # Do NOT fall back to raw-key headers. Re-raise so callers
+                # see the auth failure instead of getting a session that
+                # silently emits a rejected key.
+                raise
             except Exception as exc:
                 logger.warning("Could not get auth headers: %s", exc)
-                headers = self._build_session_fallback_headers()
-            else:
-                headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-                headers.setdefault("User-Agent", _SDK_USER_AGENT)
+                raise CloudServiceError(
+                    f"Failed to build authenticated session: {exc}"
+                ) from exc
+            headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+            headers.setdefault("User-Agent", _SDK_USER_AGENT)
 
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -468,34 +494,6 @@ class BackendIntegratedClient:
             )
 
             return cast(AioClientSession, self._session)
-
-    def _build_session_fallback_headers(self) -> dict[str, str]:
-        """Build best-effort headers when auth header generation fails."""
-        headers = {
-            "Content-Type": _JSON_CONTENT_TYPE,
-            "User-Agent": _SDK_USER_AGENT,
-        }
-
-        auth = self.auth_manager.auth
-        api_key_headers_getter = getattr(auth, "_get_api_key_headers", None)
-        if callable(api_key_headers_getter):
-            try:
-                fallback_headers = api_key_headers_getter()
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.debug("Could not build API-key fallback headers: %s", exc)
-            else:
-                if isinstance(fallback_headers, dict):
-                    for key, value in fallback_headers.items():
-                        if value:
-                            headers[key] = value
-                    if "X-API-Key" in headers or "Authorization" in headers:
-                        return headers
-
-        if self._api_key_fallback:
-            headers["X-API-Key"] = self._api_key_fallback
-            headers["Authorization"] = f"Bearer {self._api_key_fallback}"
-
-        return headers
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session."""
@@ -709,14 +707,46 @@ class BackendIntegratedClient:
 
         Uses the async auth manager to preserve the canonical header-generation
         path, including JWT refresh behavior when available.
+
+        B4 ROUND 5: Fail closed on auth header generation. Previously this
+        method caught every exception from ``get_headers()`` (including
+        ``AuthenticationError`` raised by the round-3 fail-closed check in
+        ``AuthManager.get_auth_headers()``) and returned bare default
+        headers (``Content-Type`` + ``User-Agent``). The caller --
+        ``upload_example_features()`` -- then issued an UNAUTHENTICATED
+        ``requests.post`` to the backend, defeating round-3/round-4 closure
+        of the auth chain.
+
+        After round 5:
+
+        * ``AuthenticationError`` propagates so the caller surfaces the
+          backend rejection instead of silently shipping an unauthenticated
+          request.
+        * Any other unexpected failure is re-raised as ``CloudServiceError``
+          so callers cannot mistake "header generation blew up" for
+          "everything is fine, here are default headers".
+        * The bare ``default_headers`` short-circuit only fires when there
+          is *legitimately* no auth manager available (e.g. Edge Analytics
+          mode); in that case the caller decides whether to proceed.
         """
         default_headers = {
             "Content-Type": _JSON_CONTENT_TYPE,
             "User-Agent": _SDK_USER_AGENT,
         }
+        # B4 ROUND 6: Tighten the default-headers short-circuit. The bare
+        # defaults are ONLY a legitimate response when the caller is
+        # operating without any auth manager (e.g. anonymous Edge mode).
+        # If we have an auth manager but its ``.auth`` is missing or
+        # lacks ``get_headers``, that is an internal inconsistency -- not
+        # a license to ship an unauthenticated request. Surface it as a
+        # ``CloudServiceError`` so the caller fails closed instead.
+        if getattr(self, "auth_manager", None) is None:
+            return default_headers
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
-            return default_headers
+            raise CloudServiceError(
+                "auth manager is in an invalid state; cannot construct " "auth headers"
+            )
 
         async def _get_headers_async() -> dict[str, str]:
             return cast(dict[str, str], await auth.get_headers(target=target))
@@ -737,9 +767,23 @@ class BackendIntegratedClient:
                     headers = future.result(timeout=min(self.timeout, 30.0))
             except RuntimeError:
                 headers = asyncio.run(_get_headers_async())
+        except AuthenticationError:
+            # Re-raise: a backend-rejected key must NEVER be downgraded to a
+            # silent unauthenticated POST. Callers (e.g.
+            # ``upload_example_features``) catch this and abort before any
+            # network I/O happens.
+            raise
         except Exception as exc:
-            logger.debug("Could not get auth headers for feature upload: %s", exc)
-            return default_headers
+            # Unexpected header-generation failures: surface as
+            # ``CloudServiceError`` rather than swallow into default headers.
+            logger.warning(
+                "Sync auth header generation failed; refusing to send "
+                "unauthenticated request: %s",
+                exc,
+            )
+            raise CloudServiceError(
+                f"Failed to build sync auth headers: {exc}"
+            ) from exc
 
         merged_headers = dict(headers or {})
         merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
@@ -802,7 +846,27 @@ class BackendIntegratedClient:
             )
             return False
 
-        headers = self._get_sync_auth_headers(target="backend")
+        # B4 ROUND 5: Fail closed. If auth header generation raises
+        # (``AuthenticationError`` from a backend-rejected key, or
+        # ``CloudServiceError`` from an unexpected failure), do NOT issue an
+        # unauthenticated POST. Short-circuit and return False -- the
+        # request must never go out without auth.
+        try:
+            headers = self._get_sync_auth_headers(target="backend")
+        except AuthenticationError as exc:
+            logger.debug(
+                "Skipping example feature upload for run %s: auth rejected (%s)",
+                experiment_run_id,
+                exc,
+            )
+            return False
+        except CloudServiceError as exc:
+            logger.debug(
+                "Skipping example feature upload for run %s: header build failed (%s)",
+                experiment_run_id,
+                exc,
+            )
+            return False
         url = self._build_feature_upload_url(experiment_run_id)
         if not url:
             return False
@@ -1003,7 +1067,7 @@ class BackendIntegratedClient:
             experiment_run_id, status
         )
 
-    # Cloud API methods (mock implementations in api_operations)
+    # Cloud API methods (remote execution not implemented; fail closed in api_operations)
     async def _create_cloud_session(
         self, request: SessionCreationRequest
     ) -> SessionCreationResponse:

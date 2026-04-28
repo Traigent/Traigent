@@ -1281,7 +1281,8 @@ def _log_execution_mode_warnings(
     if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
         logger.warning(
             "local_storage_path is ignored when execution_mode='cloud'. "
-            "Cloud mode uses Traigent cloud storage."
+            "Cloud remote execution is not available yet; use hybrid for "
+            "portal-tracked optimization."
         )
 
     if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:

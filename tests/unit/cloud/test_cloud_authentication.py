@@ -18,6 +18,38 @@ from traigent.cloud.auth import (
 )
 
 
+def _mock_backend_validate(success: bool = True):
+    """Patch ``AuthManager._validate_api_key_with_backend`` for offline tests.
+
+    Returns a context manager. Use ``with _mock_backend_validate():`` around
+    code that exercises ``_authenticate_api_key`` so tests do not require a
+    live backend. ``success=False`` simulates a backend rejection.
+    """
+
+    async def _ok(self, api_key):  # noqa: ARG001
+        return None
+
+    async def _fail(self, api_key):  # noqa: ARG001
+        return "mocked-failure"
+
+    return patch.object(
+        AuthManager,
+        "_validate_api_key_with_backend",
+        new=_ok if success else _fail,
+    )
+
+
+# Shared dev-token used by tests exercising AuthMode.DEVELOPMENT.
+_DEV_TOKEN = "test-dev-token-shared-secret"
+
+
+def _dev_env():
+    """Set TRAIGENT_DEV_AUTH_TOKEN for the duration of a test."""
+    return patch.dict(
+        "os.environ", {"TRAIGENT_DEV_AUTH_TOKEN": _DEV_TOKEN}, clear=False
+    )
+
+
 class TestAPIKey:
     """Test cases for APIKey dataclass."""
 
@@ -128,7 +160,8 @@ class TestAuthManager:
     @pytest.mark.asyncio
     async def test_authenticate_success(self):
         manager = AuthManager(api_key="tg_" + "x" * 61)
-        result = await manager.authenticate()
+        with _mock_backend_validate():
+            result = await manager.authenticate()
 
         assert result.success is True
         assert manager._authenticated is True
@@ -154,25 +187,43 @@ class TestAuthManager:
     @pytest.mark.asyncio
     async def test_is_authenticated(self):
         manager = AuthManager(api_key="tg_" + "x" * 61)
-        await manager.authenticate()
+        with _mock_backend_validate():
+            await manager.authenticate()
 
         assert await manager.is_authenticated() is True
 
     @pytest.mark.asyncio
     async def test_get_headers_success(self):
         manager = AuthManager(api_key="tg_" + "x" * 61)
-        await manager.authenticate()
+        with _mock_backend_validate():
+            auth_result = await manager.authenticate()
+            # Explicitly assert authentication succeeded BEFORE asking for headers.
+            assert auth_result.success is True
+            assert await manager.is_authenticated() is True
 
-        headers = await manager.get_auth_headers()
+            headers = await manager.get_auth_headers()
         # API key may be in X-API-Key or Authorization header
         assert "X-API-Key" in headers or "Authorization" in headers
+
+    @pytest.mark.asyncio
+    async def test_get_headers_raises_on_auth_failure(self):
+        """B4: get_auth_headers must fail closed when authenticate() fails.
+
+        Previously, a backend-rejected key still produced X-API-Key /
+        Authorization headers via a fallback path. The fallback was removed,
+        so an AuthenticationError must be raised instead.
+        """
+        manager = AuthManager(api_key="tg_" + "x" * 61)
+        with _mock_backend_validate(success=False):
+            with pytest.raises(AuthenticationError):
+                await manager.get_auth_headers()
 
     @pytest.mark.asyncio
     async def test_get_headers_without_credentials(self):
         with patch.dict("os.environ", {}, clear=True):
             manager = AuthManager()
-            headers = await manager.get_auth_headers()
-            assert headers == {}
+            with pytest.raises(AuthenticationError):
+                await manager.get_auth_headers()
 
     @pytest.mark.asyncio
     async def test_refresh_authentication_without_token(self):
@@ -321,7 +372,8 @@ class TestDemoAuthManager:
     @pytest.mark.asyncio
     async def test_demo_auth_manager_initialization(self):
         manager = AuthManager(api_key=self.DEMO_KEY)
-        result = await manager.authenticate()
+        with _mock_backend_validate():
+            result = await manager.authenticate()
 
         assert result.success is True
         assert manager.has_api_key()
@@ -330,20 +382,23 @@ class TestDemoAuthManager:
     @pytest.mark.asyncio
     async def test_demo_authenticate_always_succeeds(self):
         manager = AuthManager(api_key=self.DEMO_KEY)
-        result = await manager.authenticate()
+        with _mock_backend_validate():
+            result = await manager.authenticate()
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_demo_auth_permissions(self):
         manager = AuthManager(api_key=self.DEMO_KEY)
-        await manager.authenticate()
+        with _mock_backend_validate():
+            await manager.authenticate()
         assert manager._api_key is not None
         assert manager._api_key.has_permission("optimize") is True
 
     @pytest.mark.asyncio
     async def test_demo_auth_headers(self):
         manager = AuthManager(api_key=self.DEMO_KEY)
-        await manager.authenticate()
+        with _mock_backend_validate():
+            await manager.authenticate()
         headers = await manager.get_auth_headers()
         # API key may be in X-API-Key or Authorization header
         assert "X-API-Key" in headers or "Authorization" in headers
@@ -372,7 +427,8 @@ class TestAuthenticationModes:
             mode=AuthMode.API_KEY,
             api_key="tg_" + "x" * 61,
         )
-        result = await manager._authenticate_by_mode(credentials)
+        with _mock_backend_validate():
+            result = await manager._authenticate_by_mode(credentials)
 
         assert result.success is True
         assert result.status == AuthStatus.AUTHENTICATED
@@ -601,14 +657,15 @@ class TestAuthenticationModes:
 
     @pytest.mark.asyncio
     async def test_authenticate_development_success(self):
-        """Test development mode authentication always succeeds."""
+        """Test development mode auth succeeds when env token + creds match."""
         manager = AuthManager()
         credentials = AuthCredentials(
             mode=AuthMode.DEVELOPMENT,
-            metadata={"dev_user": "test_developer"},
+            metadata={"dev_user": "test_developer", "dev_token": _DEV_TOKEN},
         )
 
-        result = await manager._authenticate_development(credentials)
+        with _dev_env():
+            result = await manager._authenticate_development(credentials)
 
         assert result.success is True
         assert result.status == AuthStatus.AUTHENTICATED
@@ -621,13 +678,48 @@ class TestAuthenticationModes:
         manager = AuthManager()
         credentials = AuthCredentials(
             mode=AuthMode.DEVELOPMENT,
-            metadata={},  # No dev_user specified
+            metadata={"dev_token": _DEV_TOKEN},  # No dev_user specified
         )
 
-        result = await manager._authenticate_development(credentials)
+        with _dev_env():
+            result = await manager._authenticate_development(credentials)
 
         assert result.success is True
         assert result.headers["X-Dev-User"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_development_rejects_without_env(self):
+        """Development mode must reject when TRAIGENT_DEV_AUTH_TOKEN is unset."""
+        manager = AuthManager()
+        credentials = AuthCredentials(
+            mode=AuthMode.DEVELOPMENT,
+            metadata={"dev_token": "anything"},
+        )
+
+        with patch.dict("os.environ", {}, clear=False) as _:
+            import os as _os
+
+            _os.environ.pop("TRAIGENT_DEV_AUTH_TOKEN", None)
+            result = await manager._authenticate_development(credentials)
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "TRAIGENT_DEV_AUTH_TOKEN" in (result.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_authenticate_development_rejects_token_mismatch(self):
+        """Development mode rejects when supplied token does not match env."""
+        manager = AuthManager()
+        credentials = AuthCredentials(
+            mode=AuthMode.DEVELOPMENT,
+            metadata={"dev_token": "wrong-token"},
+        )
+
+        with _dev_env():
+            result = await manager._authenticate_development(credentials)
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
 
     @pytest.mark.asyncio
     async def test_authenticate_by_mode_jwt_dispatch(self):
@@ -665,9 +757,11 @@ class TestAuthenticationModes:
         manager = AuthManager()
         credentials = AuthCredentials(
             mode=AuthMode.DEVELOPMENT,
+            metadata={"dev_token": _DEV_TOKEN},
         )
 
-        result = await manager._authenticate_by_mode(credentials)
+        with _dev_env():
+            result = await manager._authenticate_by_mode(credentials)
 
         assert result.success is True
         assert result.headers["X-Development-Mode"] == "true"

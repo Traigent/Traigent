@@ -1,12 +1,11 @@
 """Privacy-first optimization operations for Traigent Cloud Client.
 
 This module handles privacy-preserving optimization operations where data
-remains local and only metrics are transmitted to the cloud.
+remains local and only metrics are transmitted to the backend session API.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
-import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +16,6 @@ from traigent.cloud.models import (
     OptimizationSessionStatus,
     SessionCreationRequest,
     TrialResultSubmission,
-    TrialStatus,
     TrialSuggestion,
 )
 from traigent.utils.logging import get_logger
@@ -48,10 +46,11 @@ class PrivacyOperations:
         max_trials: int = 50,
         user_id: str | None = None,
     ) -> tuple[str, str, str]:
-        """Create privacy-first optimization session with backend experiment tracking.
+        """Create a backend-tracked session for local/hybrid optimization.
 
-        This creates both a cloud session for configuration suggestions and a backend
-        experiment for tracking, while keeping sensitive data local.
+        Hybrid mode executes trials locally and uses the backend session API
+        for portal-visible tracking. It does not create a remote cloud
+        execution session.
 
         Args:
             function_name: Name of function being optimized
@@ -83,7 +82,6 @@ class PrivacyOperations:
         logger.info(f"Creating privacy-first optimization session for {function_name}")
 
         try:
-            # Create cloud session for configuration suggestions
             session_request = SessionCreationRequest(
                 function_name=function_name,
                 configuration_space=configuration_space,
@@ -93,9 +91,6 @@ class PrivacyOperations:
                 user_id=user_id,
                 billing_tier="privacy",  # Special tier for privacy mode
             )
-
-            session_response = await self.client._create_cloud_session(session_request)
-            session_id = session_response.session_id
 
             # Always use session endpoints for tracking
             logger.info("🔄 Creating session via Traigent session endpoints...")
@@ -138,9 +133,9 @@ class PrivacyOperations:
                 objectives=objectives,
                 max_trials=max_trials,
                 status=OptimizationSessionStatus.ACTIVE,
-                created_at=session_response.metadata.get("created_at", time.time()),
+                created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-                optimization_strategy=session_response.optimization_strategy,
+                optimization_strategy={"mode": "local_execution"},
             )
 
             with self.client._active_sessions_lock:
@@ -203,7 +198,9 @@ class PrivacyOperations:
         logger.debug(f"Getting next trial for privacy session {session_id}")
 
         try:
-            # Get suggestion from cloud (no sensitive data transmitted)
+            # Remote suggestions are intentionally disabled until cloud
+            # execution is implemented. Local/hybrid optimization should use
+            # the SDK's local optimizer for suggestions.
             request = NextTrialRequest(
                 session_id=session_id, previous_results=previous_results
             )
@@ -291,18 +288,6 @@ class PrivacyOperations:
         logger.debug(f"Submitting privacy trial results: {session_id}/{trial_id}")
 
         try:
-            # Submit results to cloud (metrics only)
-            submission = TrialResultSubmission(
-                session_id=session_id,
-                trial_id=trial_id,
-                metrics=metrics,
-                duration=duration,
-                status=TrialStatus.FAILED if error_message else TrialStatus.COMPLETED,
-                error_message=error_message,
-            )
-
-            await self.client._submit_cloud_trial_results(submission)
-
             # Submit via session endpoint only - no fallback to config run endpoint
             session_submitted = await self.client._submit_trial_result_via_session(
                 session_id,

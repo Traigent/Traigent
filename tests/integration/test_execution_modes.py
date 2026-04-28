@@ -117,32 +117,33 @@ class TestExecutionModes:
                 api_key="test_key",
             )
 
-    def test_hybrid_mode_raises_configuration_error(self, mock_agent_builder):
-        """Test that 'hybrid' mode (not yet supported) raises ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="'hybrid' not yet supported"):
-            TraigentClient(
+    def test_hybrid_mode_initializes_backend_tracking(self, mock_agent_builder):
+        """Test that 'hybrid' mode is supported for portal-tracked local runs."""
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
+            client = TraigentClient(
                 execution_mode="hybrid",
                 agent_builder=mock_agent_builder,
                 api_key="test_key",
             )
 
+        assert client.execution_mode == ExecutionMode.HYBRID
+
     def test_cloud_mode_raises_configuration_error(self):
         """Test that 'cloud' mode (not yet supported) raises ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="'cloud' not yet supported"):
+        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
             TraigentClient(execution_mode="cloud", api_key="test_key")
 
     def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection.
 
         In the current SDK, 'auto' always resolves to edge_analytics since
-        cloud/hybrid modes are not yet supported.
+        cloud mode is not yet supported.
         """
         # With or without API key, auto defaults to edge_analytics
         client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-        # Even with API key, auto mode defaults to edge_analytics
-        # (cloud/hybrid modes not yet supported)
+        # Even with API key, auto mode defaults to edge_analytics.
         client = TraigentClient(execution_mode="auto", api_key="test_key")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 

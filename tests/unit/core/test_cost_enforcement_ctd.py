@@ -386,11 +386,10 @@ class TestCostEnforcerCTDPairwise:
             _run_parallel_transitions(enforcer, permits, cost_value, should_raise)
 
         status = enforcer.get_status()
-        if case.mock_mode:
-            assert status.trial_count == 0
-            assert status.accumulated_cost_usd == pytest.approx(0.0)
-            return
-
+        # S2-B Round 3: TRAIGENT_MOCK_LLM no longer bypasses cost tracking.
+        # Both mock-on and mock-off branches now exercise the real path, so
+        # trial_count / accumulated_cost_usd / unknown_cost_mode reflect real
+        # bookkeeping regardless of the env flag.
         if case.cost_value == "none" and not case.strict_tracking:
             assert status.unknown_cost_mode is True
 

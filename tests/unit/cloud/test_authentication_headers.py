@@ -9,8 +9,19 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud.auth import AuthManager
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
+
+
+async def _stub_validate(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for header-only tests."""
+    return None
+
+
+def _patch_backend_validate():
+    """Convenience patcher to keep auth offline in header tests."""
+    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_stub_validate)
 
 
 @pytest.fixture
@@ -101,7 +112,9 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test _ensure_session creates session with authentication headers."""
-        with patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs:
+        with _patch_backend_validate(), patch(
+            "traigent.cloud.client.aiohttp.ClientSession"
+        ) as mock_cs:
             mock_session = Mock()
             mock_cs.return_value = mock_session
 
@@ -181,7 +194,9 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test context manager creates session with authentication headers."""
-        with patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs:
+        with _patch_backend_validate(), patch(
+            "traigent.cloud.client.aiohttp.ClientSession"
+        ) as mock_cs:
             mock_session = Mock()
             mock_session.close = AsyncMock()  # Mock close method as async
             mock_cs.return_value = mock_session
@@ -202,25 +217,26 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test execute_agent method includes authentication headers."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Create agent execution request
-        from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
+            # Create agent execution request
+            from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
-        agent_spec = AgentSpecification(
-            name="test_agent",
-            agent_platform="langchain",
-            model_parameters={"model": "gpt-4"},
-        )
+            agent_spec = AgentSpecification(
+                name="test_agent",
+                agent_platform="langchain",
+                model_parameters={"model": "gpt-4"},
+            )
 
-        request = AgentExecutionRequest(
-            agent_spec=agent_spec,
-            input_data={"query": "test query"},
-            config_overrides={"temperature": 0.5},
-        )
+            request = AgentExecutionRequest(
+                agent_spec=agent_spec,
+                input_data={"query": "test query"},
+                config_overrides={"temperature": 0.5},
+            )
 
-        # Execute agent
-        await client.execute_agent(request)
+            # Execute agent
+            await client.execute_agent(request)
 
         # Verify headers were included in the POST request
         mock_aiohttp_session.post.assert_called()
@@ -234,11 +250,12 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test get_agent_optimization_status includes authentication headers."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Get optimization status
-        optimization_id = "opt-test-123"
-        await client.get_agent_optimization_status(optimization_id)
+            # Get optimization status
+            optimization_id = "opt-test-123"
+            await client.get_agent_optimization_status(optimization_id)
 
         # Verify headers were included in the GET request
         mock_aiohttp_session.get.assert_called()
@@ -252,11 +269,12 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test cancel_agent_optimization includes authentication headers."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Cancel optimization
-        optimization_id = "opt-test-456"
-        await client.cancel_agent_optimization(optimization_id)
+            # Cancel optimization
+            optimization_id = "opt-test-456"
+            await client.cancel_agent_optimization(optimization_id)
 
         # Verify headers were included in the POST request
         mock_aiohttp_session.post.assert_called()
@@ -270,30 +288,33 @@ class TestTraigentCloudClientCore:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test optimize_agent (alias for agent_optimize) includes headers."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        from traigent.cloud.models import AgentSpecification
+            from traigent.cloud.models import AgentSpecification
 
-        agent_spec = AgentSpecification(
-            name="optimizer_test",
-            agent_platform="openai",
-            model_parameters={"model": "gpt-3.5-turbo"},
-        )
+            agent_spec = AgentSpecification(
+                name="optimizer_test",
+                agent_platform="openai",
+                model_parameters={"model": "gpt-3.5-turbo"},
+            )
 
-        # Call optimize_agent
-        from traigent.evaluators.base import Dataset, EvaluationExample
+            # Call optimize_agent
+            from traigent.evaluators.base import Dataset, EvaluationExample
 
-        examples = [
-            EvaluationExample(input_data={"input": "test"}, expected_output="output")
-        ]
-        dataset = Dataset(examples)
+            examples = [
+                EvaluationExample(
+                    input_data={"input": "test"}, expected_output="output"
+                )
+            ]
+            dataset = Dataset(examples)
 
-        await client.optimize_agent(
-            agent_spec=agent_spec,
-            dataset=dataset,
-            configuration_space={"temperature": [0.1, 0.9]},
-            objectives=["accuracy", "cost"],
-        )
+            await client.optimize_agent(
+                agent_spec=agent_spec,
+                dataset=dataset,
+                configuration_space={"temperature": [0.1, 0.9]},
+                objectives=["accuracy", "cost"],
+            )
 
         # Verify headers in request
         mock_aiohttp_session.post.assert_called()
@@ -473,8 +494,19 @@ class TestBackendIntegratedClientCore:
             )
 
     @pytest.mark.asyncio
-    async def test_backend_client_ensure_session_with_fallback(self):
-        """Test BackendIntegratedClient _ensure_session handles auth failures gracefully."""
+    async def test_backend_client_ensure_session_fails_closed_on_auth_error(self):
+        """B4 ROUND 4: ``_ensure_session`` must fail closed on auth errors.
+
+        Previously this test asserted that ``_ensure_session`` silently
+        rebuilt headers (Content-Type only, no auth) when ``get_headers``
+        raised -- and worse, when auth raised it would also splice in
+        raw-key headers via ``_build_session_fallback_headers``. After
+        round 4, that fail-open path is removed: any unexpected exception
+        from ``get_headers`` is surfaced as ``CloudServiceError`` (and
+        ``AuthenticationError`` propagates unchanged).
+        """
+        from traigent.cloud.client import CloudServiceError
+
         config = BackendClientConfig(
             backend_base_url="http://test.backend.com",
         )
@@ -500,14 +532,12 @@ class TestBackendIntegratedClientCore:
                     # Properly mock the nested structure: auth_manager.auth
                     client.auth_manager.auth = mock_auth_instance
 
-                    # Call _ensure_session - should fallback to api_key
-                    await client._ensure_session()
+                    # Generic exceptions become CloudServiceError; no
+                    # session is built with fallback headers.
+                    with pytest.raises(CloudServiceError):
+                        await client._ensure_session()
 
-                    # Verify session was created with fallback headers
-                    mock_session_class.assert_called_once()
-                    call_kwargs = mock_session_class.call_args[1]
-                    assert "headers" in call_kwargs
-                    assert call_kwargs["headers"]["Content-Type"] == "application/json"
+                    mock_session_class.assert_not_called()
 
 
 class TestHTTPMethodCoverage:
@@ -518,6 +548,14 @@ class TestHTTPMethodCoverage:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Ensure every HTTP method in TraigentCloudClient includes headers."""
+        with _patch_backend_validate():
+            await self._run_all_client_http_methods_covered(
+                valid_api_key, mock_aiohttp_session
+            )
+
+    async def _run_all_client_http_methods_covered(
+        self, valid_api_key, mock_aiohttp_session
+    ):
         client = TraigentCloudClient(api_key=valid_api_key)
 
         # List of all methods that make HTTP calls
@@ -575,50 +613,53 @@ class TestHTTPMethodCoverage:
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test methods that use AgentSpecification objects."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
+            from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
-        agent_spec = AgentSpecification(
-            name="comprehensive_test",
-            agent_platform="custom",
-            model_parameters={"model": "test-model", "params": {"key": "value"}},
-            metadata={"version": "1.0"},
-        )
+            agent_spec = AgentSpecification(
+                name="comprehensive_test",
+                agent_platform="custom",
+                model_parameters={"model": "test-model", "params": {"key": "value"}},
+                metadata={"version": "1.0"},
+            )
 
-        # Test optimize_agent (full optimization)
-        from traigent.evaluators.base import Dataset, EvaluationExample
+            # Test optimize_agent (full optimization)
+            from traigent.evaluators.base import Dataset, EvaluationExample
 
-        examples = [EvaluationExample(input_data={"input": "q1"}, expected_output="a1")]
-        dataset = Dataset(examples)
+            examples = [
+                EvaluationExample(input_data={"input": "q1"}, expected_output="a1")
+            ]
+            dataset = Dataset(examples)
 
-        await client.optimize_agent(
-            agent_spec=agent_spec,
-            dataset=dataset,
-            configuration_space={"temperature": [0.1, 1.0]},
-            objectives=["accuracy", "latency"],
-            max_trials=5,
-        )
+            await client.optimize_agent(
+                agent_spec=agent_spec,
+                dataset=dataset,
+                configuration_space={"temperature": [0.1, 1.0]},
+                objectives=["accuracy", "latency"],
+                max_trials=5,
+            )
 
-        # Verify POST with headers
-        assert mock_aiohttp_session.post.called
-        call_kwargs = mock_aiohttp_session.post.call_args[1]
-        assert "headers" in call_kwargs
-        headers = call_kwargs["headers"]
-        assert "X-API-Key" in headers or "Authorization" in headers
+            # Verify POST with headers
+            assert mock_aiohttp_session.post.called
+            call_kwargs = mock_aiohttp_session.post.call_args[1]
+            assert "headers" in call_kwargs
+            headers = call_kwargs["headers"]
+            assert "X-API-Key" in headers or "Authorization" in headers
 
-        # Reset
-        mock_aiohttp_session.post.reset_mock()
+            # Reset
+            mock_aiohttp_session.post.reset_mock()
 
-        # Test execute_agent with AgentExecutionRequest
-        exec_request = AgentExecutionRequest(
-            agent_spec=agent_spec,
-            input_data={"prompt": "test prompt"},
-            config_overrides={"max_tokens": 100},
-            execution_context={"user": "test-user"},
-        )
+            # Test execute_agent with AgentExecutionRequest
+            exec_request = AgentExecutionRequest(
+                agent_spec=agent_spec,
+                input_data={"prompt": "test prompt"},
+                config_overrides={"max_tokens": 100},
+                execution_context={"user": "test-user"},
+            )
 
-        await client.execute_agent(exec_request)
+            await client.execute_agent(exec_request)
 
         # Verify POST with headers
         assert mock_aiohttp_session.post.called
@@ -758,7 +799,9 @@ class TestEdgeCasesAndErrorHandling:
     @pytest.mark.asyncio
     async def test_no_aiohttp_raises_error(self, valid_api_key):
         """Test that missing aiohttp raises appropriate error."""
-        with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", False):
+        with _patch_backend_validate(), patch(
+            "traigent.cloud.client.AIOHTTP_AVAILABLE", False
+        ):
             client = TraigentCloudClient(api_key=valid_api_key)
 
             with pytest.raises(CloudServiceError) as exc_info:
@@ -858,25 +901,26 @@ class TestIntegrationScenarios:
 
         mock_aiohttp_session.post = Mock(side_effect=mock_post)
 
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Simulate a full optimization flow
-        await client.create_optimization_session(
-            "test_function",  # request_or_function_name as first positional arg
-            configuration_space={"param": [1, 2, 3]},
-            objectives=["accuracy"],
-        )
+            # Simulate a full optimization flow
+            await client.create_optimization_session(
+                "test_function",  # request_or_function_name as first positional arg
+                configuration_space={"param": [1, 2, 3]},
+                objectives=["accuracy"],
+            )
 
-        await client.get_next_trial(session_id="test-session")
+            await client.get_next_trial(session_id="test-session")
 
-        await client.submit_trial_result(
-            session_id="test-session",
-            trial_id="test-trial",
-            metrics={"accuracy": 0.95},
-            duration=1.5,
-        )
+            await client.submit_trial_result(
+                session_id="test-session",
+                trial_id="test-trial",
+                metrics={"accuracy": 0.95},
+                duration=1.5,
+            )
 
-        await client.finalize_optimization(session_id="test-session")
+            await client.finalize_optimization(session_id="test-session")
 
         # Verify all calls included headers
         assert mock_aiohttp_session.post.call_count == 4
@@ -890,20 +934,21 @@ class TestIntegrationScenarios:
     async def test_manual_session_creation_deprecated(self, valid_api_key):
         """Test that manually setting _session still works but with headers."""
         # This test verifies backward compatibility while ensuring headers are included
-        client = TraigentCloudClient(api_key=valid_api_key)
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Manually create a mock session (simulating old test pattern)
-        mock_session = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"status": "ok"})
-        mock_session.get.return_value.__aenter__.return_value = mock_response
+            # Manually create a mock session (simulating old test pattern)
+            mock_session = AsyncMock()
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={"status": "ok"})
+            mock_session.get.return_value.__aenter__.return_value = mock_response
 
-        # Set session manually (deprecated pattern)
-        client._session = mock_session
+            # Set session manually (deprecated pattern)
+            client._session = mock_session
 
-        # Even with manual session, methods should add headers
-        await client.check_service_status()
+            # Even with manual session, methods should add headers
+            await client.check_service_status()
 
         # Verify headers were still added
         mock_session.get.assert_called_once()
