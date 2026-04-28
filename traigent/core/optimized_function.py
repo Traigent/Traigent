@@ -1638,7 +1638,7 @@ class OptimizedFunction:
             return None
 
         from traigent.cloud.client import (
-            CLOUD_REMOTE_EXECUTION_UNAVAILABLE,
+            CloudRemoteExecutionUnavailableError,
             CloudServiceError,
         )
 
@@ -1652,9 +1652,9 @@ class OptimizedFunction:
             )
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
+        except CloudRemoteExecutionUnavailableError:
+            raise
         except CloudServiceError as e:
-            if CLOUD_REMOTE_EXECUTION_UNAVAILABLE in str(e):
-                raise
             if self.cloud_fallback_policy == "never":
                 raise
             logger.warning("Cloud optimization failed, falling back to local: %s", e)

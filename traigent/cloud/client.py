@@ -637,7 +637,7 @@ class TraigentCloudClient(BaseTraigentClient):
             target_cost_reduction,
             local_function,
         )
-        raise CloudServiceError(CLOUD_REMOTE_EXECUTION_UNAVAILABLE)
+        raise CloudRemoteExecutionUnavailableError()
 
     async def _submit_optimization(
         self, request_data: dict[str, Any]
@@ -1822,6 +1822,20 @@ class CloudServiceError(StandardizedClientError):
 
     def __init__(self, message: str, original_error: Exception | None = None) -> None:
         super().__init__(message, "cloud_service", original_error)
+
+
+class CloudRemoteExecutionUnavailableError(CloudServiceError):
+    """Raised when remote cloud execution endpoints are intentionally unavailable."""
+
+    def __init__(
+        self,
+        operation: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        message = CLOUD_REMOTE_EXECUTION_UNAVAILABLE
+        if operation:
+            message = f"{message} ({operation})"
+        super().__init__(message, original_error)
 
 
 # Backward compatibility aliases

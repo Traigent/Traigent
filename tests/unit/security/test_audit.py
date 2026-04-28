@@ -87,10 +87,22 @@ class TestAuditEvent:
 class TestAuditStorage:
     """Test AuditStorage class"""
 
-    def test_storage_path_fails_loud(self):
-        """Persistent storage paths should not silently use memory storage."""
-        with pytest.raises(NotImplementedError, match=PERSISTENT_STORAGE_NOT_IMPLEMENTED):
-            AuditStorage(storage_path="audit_logs")
+    def test_default_storage_path_keeps_backward_compatible_value(self):
+        """No-arg construction preserves the historical default path."""
+        storage = AuditStorage()
+
+        assert storage.storage_path == "audit_logs"
+        assert storage.events == []
+
+    def test_explicit_storage_path_is_accepted_for_compatibility(self):
+        """Explicit paths remain constructible while storage stays in-memory."""
+        storage = AuditStorage(storage_path="custom_audit_logs")
+        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+
+        storage.store_event(event)
+
+        assert storage.storage_path == "custom_audit_logs"
+        assert storage.get_events() == [event]
 
     def test_store_and_retrieve_events(self):
         """Test storing and retrieving events"""

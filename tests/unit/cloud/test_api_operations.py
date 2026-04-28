@@ -9,7 +9,10 @@ from traigent.cloud.api_operations import (
     AIOHTTP_AVAILABLE,
     ApiOperations,
 )
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentOptimizationRequest,
@@ -526,7 +529,7 @@ class TestCreateCloudSession:
             max_trials=10,
             billing_tier="standard",
         )
-        with pytest.raises(CloudServiceError, match="use hybrid"):
+        with pytest.raises(CloudRemoteExecutionUnavailableError, match="use hybrid"):
             await self.ops.create_cloud_session(request)
 
 

@@ -8,7 +8,7 @@ executed in the cloud with full data transmission.
 
 from typing import TYPE_CHECKING, Any
 
-from traigent.cloud.client import CLOUD_REMOTE_EXECUTION_UNAVAILABLE, CloudServiceError
+from traigent.cloud.client import CloudRemoteExecutionUnavailableError
 from traigent.cloud.models import (
     AgentExecutionResponse,
     AgentOptimizationResponse,
@@ -54,9 +54,7 @@ class CloudOperations:
             Agent optimization response with session details
         """
         _ = (agent_spec, dataset, configuration_space, objectives, max_trials, user_id)
-        raise CloudServiceError(
-            f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} (start_agent_optimization)"
-        )
+        raise CloudRemoteExecutionUnavailableError("start_agent_optimization")
 
     async def execute_agent(
         self,
@@ -75,4 +73,4 @@ class CloudOperations:
             Agent execution response
         """
         _ = (agent_spec, input_data, config_overrides)
-        raise CloudServiceError(f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} (execute_agent)")
+        raise CloudRemoteExecutionUnavailableError("execute_agent")

@@ -23,8 +23,8 @@ _COMPLIANCE_NOT_IMPLEMENTED = (
     "Compliance reporting subsystem is not yet implemented; do not call in production"
 )
 _PERSISTENT_STORAGE_NOT_IMPLEMENTED = (
-    "Persistent audit storage is not yet implemented; "
-    "construct AuditStorage() with no arguments to use the in-memory variant"
+    "Persistent audit storage is not yet implemented; AuditStorage accepts "
+    "storage_path for compatibility but stores events in memory"
 )
 _TAMPER_DETECTION_NOT_IMPLEMENTED = (
     "Tamper-detection is not yet implemented; verify_integrity will be available "
@@ -701,12 +701,16 @@ class EventProcessor:
 
 
 class AuditStorage:
-    """Storage backend for audit events."""
+    """In-memory storage backend for audit events.
 
-    def __init__(self, storage_path: str | None = None) -> None:
+    ``storage_path`` is accepted for backward compatibility with callers that
+    previously constructed ``AuditStorage("audit_logs")``. This class does not
+    implement file-backed persistence yet; it records the configured path for
+    diagnostics while keeping events in memory.
+    """
+
+    def __init__(self, storage_path: str | None = "audit_logs") -> None:
         """Initialize storage backend."""
-        if storage_path is not None:
-            raise NotImplementedError(_PERSISTENT_STORAGE_NOT_IMPLEMENTED)
         self.storage_path = storage_path
         self.events: list[Any] = []  # In-memory storage for testing
 

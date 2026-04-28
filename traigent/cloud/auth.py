@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import inspect
+import ipaddress
 import json
 import logging
 import os
@@ -1474,6 +1475,20 @@ class AuthManager:
             return "backend validation URL is invalid"
         if parsed.username or parsed.password:
             return "backend validation URL must not include credentials"
+        hostname = parsed.hostname
+        if not hostname:
+            return "backend validation URL is invalid"
+        normalized_host = hostname.strip("[]").lower()
+        if normalized_host in {"localhost", "localhost."} or normalized_host.endswith(
+            ".localhost"
+        ):
+            return "backend validation URL host is not allowed"
+        try:
+            host_ip = ipaddress.ip_address(normalized_host)
+        except ValueError:
+            return None
+        if not host_ip.is_global:
+            return "backend validation URL host is not allowed"
         return None
 
     def _validate_api_key_with_backend_sync(

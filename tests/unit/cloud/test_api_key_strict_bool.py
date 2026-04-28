@@ -77,10 +77,17 @@ class _RequestsResponse:
         return json.loads(self._body.decode("utf-8"))
 
 
+def _auth_manager_with_public_backend() -> AuthManager:
+    """Create an auth manager whose validation URL is not localhost-derived."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "https://backend.example.test"
+    return manager
+
+
 @pytest.mark.asyncio
 async def test_validate_rejects_string_false_payload():
     """A backend returning ``{"valid": "false"}`` must NOT authenticate."""
-    manager = AuthManager()
+    manager = _auth_manager_with_public_backend()
 
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
@@ -94,7 +101,7 @@ async def test_validate_rejects_string_false_payload():
 @pytest.mark.asyncio
 async def test_validate_rejects_truthy_int_payload():
     """A backend returning ``{"valid": 1}`` must NOT authenticate (strict bool)."""
-    manager = AuthManager()
+    manager = _auth_manager_with_public_backend()
 
     with _patch_aiohttp({"valid": 1}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
@@ -106,7 +113,7 @@ async def test_validate_rejects_truthy_int_payload():
 @pytest.mark.asyncio
 async def test_validate_accepts_strict_true_payload():
     """A backend returning the literal ``{"valid": True}`` is the only success."""
-    manager = AuthManager()
+    manager = _auth_manager_with_public_backend()
 
     with _patch_aiohttp({"valid": True}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
@@ -117,7 +124,7 @@ async def test_validate_accepts_strict_true_payload():
 @pytest.mark.asyncio
 async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
     """Missing aiohttp must not block API-key validation when the stdlib can call backend."""
-    manager = AuthManager()
+    manager = _auth_manager_with_public_backend()
 
     with (
         patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
@@ -136,7 +143,7 @@ async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
 @pytest.mark.asyncio
 async def test_validate_fails_closed_when_requests_fallback_missing():
     """Missing aiohttp and requests must return a validation failure reason."""
-    manager = AuthManager()
+    manager = _auth_manager_with_public_backend()
 
     with (
         patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
@@ -161,4 +168,29 @@ async def test_validate_rejects_invalid_backend_validation_url():
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
     assert reason == "backend validation URL is invalid"
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "http://169.254.169.254/latest/meta-data",
+        "https://10.0.0.1",
+        "http://127.0.0.1:5000",
+        "http://localhost:5000",
+    ],
+)
+async def test_validate_rejects_non_global_backend_validation_hosts(backend_url):
+    """Backend key validation must not POST credentials to internal hosts."""
+    manager = AuthManager()
+    manager.config.backend_base_url = backend_url
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL host is not allowed"
     post.assert_not_called()

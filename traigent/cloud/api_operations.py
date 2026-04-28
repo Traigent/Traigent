@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud.auth import AuthenticationError
-from traigent.cloud.client import CLOUD_REMOTE_EXECUTION_UNAVAILABLE, CloudServiceError
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
@@ -671,7 +674,7 @@ class ApiOperations:
 
     def _raise_cloud_remote_unavailable(self, operation: str) -> NoReturn:
         """Raise the standard not-implemented error for remote cloud execution."""
-        raise CloudServiceError(f"{CLOUD_REMOTE_EXECUTION_UNAVAILABLE} ({operation})")
+        raise CloudRemoteExecutionUnavailableError(operation)
 
     async def create_cloud_session(
         self, request: SessionCreationRequest
