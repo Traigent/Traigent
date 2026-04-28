@@ -101,6 +101,31 @@ def test_get_env_var_masks_value_in_logs(monkeypatch, caplog):
     assert value not in caplog.text
 
 
+def test_database_and_redis_default_to_local_only_outside_production(monkeypatch):
+    """Local service defaults are allowed for SDK development only."""
+    _reset_env(monkeypatch)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+
+    assert env_config.get_database_url() == "postgresql://localhost:5432/traigent"
+    assert env_config.get_redis_url() == "redis://localhost:6379"
+
+
+def test_database_and_redis_are_required_in_production(monkeypatch):
+    """Production must not silently fall back to localhost services."""
+    _reset_env(monkeypatch)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        env_config.get_database_url()
+
+    with pytest.raises(ValueError, match="REDIS_URL"):
+        env_config.get_redis_url()
+
+
 @pytest.mark.parametrize(
     ("raw_value", "expected"),
     [

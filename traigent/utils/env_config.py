@@ -147,11 +147,15 @@ def get_api_key(provider: str) -> str | None:
 
 def get_database_url() -> str:
     """Get database URL from environment."""
+    if is_production():
+        return get_env_var("DATABASE_URL", required=True)
     return get_env_var("DATABASE_URL", default="postgresql://localhost:5432/traigent")
 
 
 def get_redis_url() -> str:
     """Get Redis URL from environment."""
+    if is_production():
+        return get_env_var("REDIS_URL", required=True)
     return get_env_var("REDIS_URL", default="redis://localhost:6379")
 
 

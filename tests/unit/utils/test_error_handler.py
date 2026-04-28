@@ -283,6 +283,16 @@ class TestErrorHandlerConnectionErrors:
             exc_info.value
         ).lower() or "TRAIGENT_OFFLINE_MODE" in str(exc_info.value)
 
+    def test_handle_connection_error_any_localhost_port(self):
+        """Local backend hints should not depend on a single hardcoded port."""
+        error = ConnectionRefusedError("Connection refused to http://127.0.0.1:8000")
+
+        with pytest.raises(TraigentError) as exc_info:
+            ErrorHandler.handle_connection_error(error)
+
+        assert "backend" in str(exc_info.value).lower()
+        assert "offline mode" in str(exc_info.value).lower()
+
     def test_handle_connection_error_generic(self):
         """Test handling of generic connection error."""
         error = ConnectionError("Connection failed")

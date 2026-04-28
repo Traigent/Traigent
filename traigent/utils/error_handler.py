@@ -6,6 +6,7 @@ Provides helpful error messages with actionable fixes and documentation links.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-ORCH-LIFECYCLE FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-ORCH-003 REQ-CLOUD-009 REQ-SEC-010 SYNC-OptimizationFlow SYNC-CloudHybrid
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -183,7 +184,10 @@ class ErrorHandler:
         """Handle connection errors."""
         error_str = str(error)
 
-        if "localhost:5000" in error_str or "backend" in error_str.lower():
+        if (
+            re.search(r"\b(?:localhost|127\.0\.0\.1)(?::\d+)?\b", error_str)
+            or "backend" in error_str.lower()
+        ):
             raise TraigentError(
                 message="Cannot connect to Traigent backend",
                 fix="1. Start backend: cd backend && python app.py\n"
