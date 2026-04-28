@@ -109,6 +109,8 @@ jobs:
         env:
           TRAIGENT_MOCK_LLM: "true"
           TRAIGENT_OFFLINE_MODE: "true"
+          TRAIGENT_RUN_APPROVED: "1"
+          TRAIGENT_APPROVED_BY: "ci-install-smoke"
         working-directory: /tmp
         run: |
           python -m traigent.examples.quickstart
