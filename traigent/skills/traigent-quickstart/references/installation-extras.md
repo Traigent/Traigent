@@ -13,13 +13,13 @@ Full reference of optional dependency groups available via `pip install 'traigen
 | `pydanticai`    | PydanticAI agent framework                         | pydantic-ai                                                                  |
 | `security`      | Enterprise security features                       | PyJWT, passlib, FastAPI, Starlette, uvicorn, redis, defusedxml, pyotp        |
 | `visualization` | Visualization and plotting                         | matplotlib, plotly                                                           |
-| `hybrid`        | Hybrid mode (external agentic service optimization)| httpx with HTTP/2                                                            |
+| `hybrid`        | Portal-tracked local execution and external hybrid API integrations | httpx with HTTP/2                                                            |
 | `tracing`       | OpenTelemetry tracing                              | opentelemetry-api, opentelemetry-sdk, opentelemetry-exporter-otlp            |
 | `test`          | Testing dependencies                               | pytest, pytest-asyncio, pytest-cov, pytest-mock, pytest-timeout, pytest-xdist, coverage, ragas, rapidfuzz, hypothesis |
 | `dev`           | Development tools (linting + testing)              | pytest suite, black, isort, flake8, mypy, pre-commit, ruff, bandit           |
 | `docs`          | Documentation generation                           | mkdocs, mkdocs-material, mkdocstrings                                        |
 | `ml`            | Machine learning bundle                            | bayesian + analytics + numpy + scipy                                         |
-| `cloud`         | Cloud execution mode                               | security + boto3                                                             |
+| `cloud`         | Reserved dependencies for future remote execution; not needed for portal-tracked `hybrid` runs | security + boto3                                                             |
 | `all`           | All optional features combined                     | analytics, bayesian, integrations, pydanticai, security, visualization, test, tracing, hybrid |
 | `enterprise`    | Enterprise bundle with all production features     | analytics, bayesian, integrations, security, visualization, test, tracing, ml, cloud, hybrid  |
 

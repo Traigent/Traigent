@@ -8,6 +8,10 @@ Use `edge_analytics` (default) to run locally. Use `hybrid` for website-visible 
 
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
+## Migration Note
+
+If you want optimization results in the Traigent website, use `execution_mode="hybrid"`, not `execution_mode="cloud"`. Hybrid is the supported production path for portal-tracked SDK optimization. Cloud is reserved for a future product path where Traigent Cloud runs the remote agent execution itself.
+
 ## Modes at a Glance
 
 | Mode | OSS availability | Status | Notes |
@@ -62,7 +66,7 @@ def my_agent(query: str) -> str:
 
 ## Hybrid Mode
 
-Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session through `/api/v1/sessions`, runs each trial locally, and submits trial metrics through `/api/v1/sessions/{session_id}/results`.
+Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session, runs each trial locally, and submits trial metrics to the backend session/result endpoints so the run appears in the portal.
 
 Use `hybrid` when you want results to appear in the Traigent website. Use `edge_analytics` when you want fully local runs with no backend dependency.
 

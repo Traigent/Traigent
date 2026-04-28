@@ -33,6 +33,8 @@ def summarize(text: str) -> str:
 
 ## Execution mode
 - `edge_analytics` (default and supported) - local execution with analytics.
+- `hybrid` (supported) - local trial execution with backend/portal session and metric tracking.
+- `cloud` (reserved) - future remote execution; currently fails closed with guidance to use `hybrid`.
 - Mock: `TRAIGENT_MOCK_LLM=true` works in OSS/local mode.
 
 ## Quick knobs

@@ -121,15 +121,18 @@
   status: active
 
 - id: REQ-CLOUD-009
-  name: "Cloud/hybrid sync"
-  title: "Cloud and hybrid execution with backend synchronization"
+  name: "Backend/hybrid sync and reserved cloud"
+  title: "Hybrid backend synchronization and future cloud execution"
   description: >
-    Support authenticated access to Traigent backend services for session
-    creation, trial suggestion/submission, dataset conversion, subset selection, and billing.
+    Support authenticated access to Traigent backend services for hybrid
+    session creation, trial/result submission, dataset conversion, subset
+    selection, and billing. Remote cloud execution is reserved for a future
+    product path and must fail closed until implemented.
   acceptance_criteria:
     - Unified auth manager resolves credentials (env, CLI-stored) and emits secure headers.
-    - Backend clients synchronize sessions/trials and recover from transient errors.
-    - Cloud operations handle privacy settings, hybrid modes, and cost tracking.
+    - Hybrid backend clients synchronize sessions/trials and recover from transient errors.
+    - Cloud remote-execution operations raise clear unavailable errors until implemented.
+    - Backend operations handle privacy settings, hybrid modes, and cost tracking.
   tags: [cloud, backend, hybrid]
   priority: high
   type: functional

@@ -18,7 +18,7 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `TRAIGENT_STRICT_VALIDATION`      | `true`          | When `true`, DTO schema validation raises exceptions. When `false`, logs warnings only.             |
 | `ENVIRONMENT`                      | `development`   | Execution environment. Set to `production` for production deployments.                              |
 | `JWT_SECRET_KEY`                   | (none)          | Secret key for JWT token validation. Required for production security features.                     |
-| `TRAIGENT_API_KEY`                | (none)          | API key for Traigent Cloud mode. Required when using `execution_mode="cloud"`.                      |
+| `TRAIGENT_API_KEY`                | (none)          | API key for authenticated backend/portal tracking. Use with `execution_mode="hybrid"` for portal-visible runs. `execution_mode="cloud"` is reserved for future remote execution. |
 
 ## LLM Provider API Keys
 
@@ -63,6 +63,15 @@ export TRAIGENT_STRICT_COST_ACCOUNTING=true
 export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_LOG_LEVEL=WARNING
 python optimize_production.py
+```
+
+### Portal-Tracked Hybrid Runs
+
+```bash
+export TRAIGENT_API_KEY=sk-... # pragma: allowlist secret
+export TRAIGENT_BACKEND_URL=https://portal.traigent.ai
+# In code: ExecutionOptions(execution_mode="hybrid")
+python optimize_with_portal_tracking.py
 ```
 
 ### Debug Mode

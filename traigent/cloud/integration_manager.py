@@ -47,13 +47,9 @@ class IntegrationMode(Enum):
     """Integration execution modes."""
 
     EDGE_ANALYTICS = "edge_analytics"  # Client-side execution with local orchestration
-    PRIVACY = (
-        "privacy"  # Client-side execution, backend orchestration, privacy-preserving
-    )
-    STANDARD = (
-        "standard"  # Client-side execution, backend orchestration, full data sharing
-    )
-    CLOUD = "cloud"  # Full cloud execution
+    PRIVACY = "privacy"  # Client-side execution with privacy-preserving tracking
+    STANDARD = "standard"  # Legacy backend-tracked mode
+    CLOUD = "cloud"  # Reserved future remote execution
 
 
 @dataclass
@@ -395,14 +391,14 @@ class IntegrationManager:
     async def _start_cloud_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:
-        """Start cloud SaaS integration (Model 2).
+        """Start reserved cloud integration (future Model 2 path).
 
         Args:
             optimization_request: SDK optimization request
             integration_id: Integration identifier
 
         Returns:
-            IntegrationResult with cloud workflow details
+            IntegrationResult with cloud workflow details when implemented
         """
         if self._mcp_client is None:
             raise RuntimeError("MCP client not initialized")
@@ -432,7 +428,7 @@ class IntegrationManager:
                 optimization_request
             )
 
-            # Step 3: Start cloud agent optimization
+            # Step 3: Start reserved cloud agent optimization.
             optimization_response = await self._backend_client.start_agent_optimization(
                 agent_spec=optimization_request.agent_specification,
                 dataset=optimization_request.dataset,
@@ -459,7 +455,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Cloud SaaS integration failed: {e}")
+            logger.error(f"Cloud remote integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
 
     async def _start_standard_integration(
@@ -488,7 +484,9 @@ class IntegrationManager:
                 optimization_request, integration_id
             )
         else:
-            logger.info(f"Hybrid mode choosing cloud SaaS for {integration_id}")
+            logger.info(
+                f"Hybrid mode choosing reserved cloud path for {integration_id}"
+            )
             return await self._start_cloud_integration(
                 optimization_request, integration_id
             )
@@ -540,9 +538,11 @@ class IntegrationManager:
                     session_id, previous_results
                 )
             else:
-                # For cloud SaaS, trials are managed by the cloud service
+                # For the reserved cloud path, trials would be managed remotely.
                 suggestion = None
-                logger.info("Cloud SaaS mode: trials managed by cloud service")
+                logger.info(
+                    "Reserved cloud mode: trials managed remotely when implemented"
+                )
 
             # Note: Trial registration is handled differently in the refactored lifecycle manager
             # The refactored manager tracks trials when results are submitted

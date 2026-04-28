@@ -127,6 +127,8 @@ Traigent executes your code locally. The default is `execution_mode="edge_analyt
 
 `execution_mode="cloud"` is reserved for future remote execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
+If you want website-visible results today, use `hybrid`; do not switch to `cloud`.
+
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
 ---

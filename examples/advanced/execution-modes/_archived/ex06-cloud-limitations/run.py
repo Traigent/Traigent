@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runner for Execution Modes - Cloud Limitations (demo)."""
+"""Runner for archived cloud-limitations example; executes locally."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    print("Running Execution Modes - Cloud Limitations (simple classifier)")
+    print("Running archived cloud-limitations example locally")
     print("=" * 60)
 
     opt_result = asyncio.run(simple_classifier.optimize(max_trials=10))

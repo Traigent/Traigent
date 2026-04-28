@@ -1,8 +1,8 @@
-"""Data models for cloud optimization service communication.
+"""Data models for backend integration and reserved cloud APIs.
 
 This module contains all the data classes used for communication between
-the Traigent client and cloud services, supporting both client-side execution
-and agent-based remote execution models.
+the Traigent client and backend services. Agent-based remote execution models
+are reserved for a future cloud release.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013

@@ -1,31 +1,30 @@
 # Choosing the Right Optimization Model
 
-Traigent SDK offers two distinct optimization models. This guide helps you choose the right approach for your use case.
+Traigent SDK currently supports local execution and portal-tracked local execution. This guide separates supported modes from future remote execution paths.
 
-> **OSS note:** The open-source build supports `edge_analytics` only. Interactive and agent optimization require a managed backend (TraigentCloudClient + API key).
+> **Current status:** Use `execution_mode="edge_analytics"` for fully local runs and `execution_mode="hybrid"` for portal-tracked runs where trials still execute locally. `execution_mode="cloud"` and managed remote agent execution are not implemented yet and fail closed with guidance to use `hybrid`.
 
 ## Quick Decision Guide
 
 ```mermaid
 graph TD
-    A[Start] --> B{Can you send function/agent<br/>to cloud?}
-    B -->|Yes| C{Is it a standard<br/>AI agent?}
-    B -->|No| D[Use Model 1:<br/>Interactive Optimization]
-    C -->|Yes| E[Use Model 2:<br/>Agent Optimization]
-    C -->|No| F{Need cloud<br/>optimization power?}
-    F -->|Yes| G[Use Hybrid Approach]
-    F -->|No| D
+    A[Start] --> B{Need results in<br/>Traigent Portal?}
+    B -->|No| C[Use edge_analytics:<br/>local execution]
+    B -->|Yes| D[Use hybrid:<br/>local trials + backend tracking]
+    D --> E{Need remote cloud<br/>agent execution?}
+    E -->|Yes| F[Not available yet:<br/>cloud is reserved]
+    E -->|No| D
 ```
 
 ## Model Comparison
 
-### Model 1: Interactive Optimization (Client-Side Execution)
+### Supported: Local Optimization (`edge_analytics`)
 
 **How it works:**
 
-- Optimization guidance runs in a remote service
-- Function execution happens locally
-- Only configuration suggestions and results are exchanged
+- Optimization and function execution happen locally
+- Results are stored locally unless optional analytics/backend settings are configured
+- No Traigent backend dependency when `TRAIGENT_OFFLINE_MODE=true`
 
 **Best for:**
 
@@ -41,20 +40,19 @@ graph TD
 - Hardware-in-the-loop optimization
 - Real-time systems
 
-### Model 2: Agent Optimization (Cloud-Based Execution)
+### Supported: Hybrid Portal Tracking (`hybrid`)
 
 **How it works:**
 
-- Complete agent specification sent to the managed backend
-- Execution and optimization happen in the cloud
-- Results returned after optimization completes
+- SDK creates a backend-tracked optimization session
+- Trials and LLM calls execute locally
+- Trial metrics are submitted to the backend so results appear in the portal
 
 **Best for:**
 
-- Standard AI agents (LangChain, OpenAI, etc.)
-- When you want parallel cloud execution
-- Complex optimization requiring significant compute
-- Multi-objective optimization scenarios
+- Teams that want website-visible optimization runs
+- Local execution with centralized session and metric tracking
+- Production runs where prompts, inputs, and outputs should remain local
 
 **Example use cases:**
 
@@ -65,20 +63,18 @@ graph TD
 
 ## Detailed Comparison Table
 
-| Aspect                 | Model 1: Interactive       | Model 2: Agent                 | Hybrid Approach       |
+| Aspect                 | `edge_analytics`           | `hybrid`                       | `cloud`               |
 | ---------------------- | -------------------------- | ------------------------------ | --------------------- |
-| **Execution Location** | Local client               | Cloud service                  | Both                  |
-| **Data Privacy**       | ✅ High (data stays local) | ⚠️ Medium (data sent to cloud) | 🔄 Configurable       |
-| **Setup Complexity**   | Medium                     | Low                            | High                  |
-| **Optimization Speed** | Slower (sequential)        | Faster (parallel)              | Fast with flexibility |
-| **Cost**               | Lower (local compute)      | Higher (cloud compute)         | Medium                |
-| **Scalability**        | Limited by local resources | High (cloud scale)             | High                  |
-| **Real-time Support**  | ✅ Yes                     | ❌ No                          | ✅ Yes (Phase 1)      |
-| **Custom Functions**   | ✅ Yes                     | ❌ No                          | ✅ Yes                |
-| **Standard AI Agents** | ⚠️ Requires adapter        | ✅ Native support              | ✅ Yes                |
-| **Network Dependency** | Low (suggestions only)     | High (full execution)          | Medium                |
+| **Current Status**     | Supported                  | Supported                      | Not implemented       |
+| **Execution Location** | Local client               | Local client                   | Future cloud service  |
+| **Portal Visibility**  | Local files by default     | Yes                            | Future path           |
+| **Data Privacy**       | High                       | High for trial execution       | Future policy         |
+| **Setup Complexity**   | Low                        | Medium                         | Not available         |
+| **Network Dependency** | None in offline mode       | Backend required               | Not available         |
 
 ## Implementation Examples
+
+The examples below are reference patterns for advanced remote-guidance APIs. For production SDK usage today, prefer `edge_analytics` or `hybrid` as described above.
 
 ### Model 1: Interactive Optimization
 
@@ -86,7 +82,7 @@ graph TD
 from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Roadmap remote guidance client
 
 # For a custom local function
 async def my_custom_function(text: str, temperature: float) -> str:
@@ -127,14 +123,14 @@ while True:
     )
 ```
 
-### Model 2: Agent Optimization
+### Future: Agent Optimization
 
 ```python
 from traigent.cloud.client import TraigentCloudClient
 from traigent.cloud.models import AgentSpecification
 from traigent.evaluators.base import Dataset, EvaluationExample
 
-cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Roadmap remote execution client
 
 # Define a standard AI agent
 agent_spec = AgentSpecification(
@@ -151,7 +147,7 @@ dataset = Dataset([
     EvaluationExample(input_data={"question": "What is AI?"}, expected_output="Artificial Intelligence"),
 ])
 
-# Start cloud optimization
+# Start remote agent optimization when the cloud path is released
 async with cloud_client:
     response = await cloud_client.optimize_agent(
         agent_spec=agent_spec,
@@ -167,16 +163,16 @@ async with cloud_client:
 # response includes optimization details and best configuration
 ```
 
-### Hybrid Approach
+### Supported Hybrid Approach
 
-Use both models in sequence:
-- Phase 1: Run Interactive Optimization locally to narrow the search.
-- Phase 2: Use Agent Optimization in the cloud to refine on a larger space.
-- Phase 3: Validate the chosen configuration on the full local dataset.
+Use `execution_mode="hybrid"` when you want the supported portal-tracked path:
+- Trials execute locally.
+- The backend stores session metadata and trial metrics.
+- Results appear in the Traigent portal without using the unavailable remote cloud execution path.
 
 ## Decision Factors
 
-### Choose Model 1 When:
+### Choose `edge_analytics` When:
 
 1. **Data Sensitivity is Critical**
 
@@ -198,117 +194,83 @@ Use both models in sequence:
    - Have limited network bandwidth
    - Need to minimize API costs
 
-### Choose Model 2 When:
+### Choose `hybrid` When:
 
-1. **Using Standard AI Platforms**
+1. **Portal Visibility Matters**
 
-   - OpenAI GPT models
-   - LangChain agents
-   - Hugging Face models
-   - Other cloud-based AI services
+   - You want runs to appear in Traigent Portal
+   - Your team needs shared session and trial history
+   - You want backend-stored metrics without remote trial execution
 
-2. **Optimization Requirements**
+2. **Local Execution Still Matters**
 
-   - Need parallel execution
-   - Want sophisticated algorithms
-   - Require multi-objective optimization
-   - Have large configuration spaces
+   - Prompts, inputs, and outputs should stay in your environment
+   - Your optimized function depends on local services, files, or hardware
+   - You want the supported production path for website-visible SDK runs
 
-3. **Resource Availability**
-   - Have good network connectivity
-   - Can afford cloud compute costs
-   - Don't have local compute constraints
-   - Want hands-off optimization
+### Do Not Choose `cloud` Yet
 
-### Choose Hybrid When:
-
-1. **Complex Requirements**
-
-   - Need both privacy and power
-   - Want phased optimization
-   - Require flexible deployment
-   - Have mixed sensitivity data
-
-2. **Optimization Strategy**
-   - Fast initial exploration locally
-   - Cloud refinement for best results
-   - Local validation before deployment
-   - Cost-sensitive optimization
+`execution_mode="cloud"` is reserved for future remote agent execution. It is not available yet, and production cloud paths must fail closed instead of returning synthetic sessions, trial suggestions, agent outputs, or completed statuses.
 
 ## Cost Considerations
 
-### Model 1 Costs:
+### `edge_analytics` Costs:
 
-- **Cloud**: Only optimization suggestions (minimal)
 - **Local**: Your compute/electricity costs
-- **Network**: Minimal data transfer
+- **Network**: None for Traigent backend when `TRAIGENT_OFFLINE_MODE=true`
 
-### Model 2 Costs:
+### `hybrid` Costs:
 
-- **Cloud**: Full execution costs (can be significant)
-- **Local**: Minimal
-- **Network**: Dataset upload costs
-
-### Hybrid Costs:
-
-- **Cloud**: Reduced through intelligent phase management
-- **Local**: Moderate during exploration phase
-- **Network**: Optimized through subset selection
+- **Local**: Your trial execution and LLM provider costs
+- **Backend**: Portal-tracking traffic for sessions and metrics
+- **Network**: No remote execution traffic for prompts/outputs
 
 ## Migration Strategies
 
-### From Model 1 to Model 2:
+### From Local-Only to Portal-Tracked:
 
-1. Wrap your function as an agent specification
-2. Ensure function can be serialized/described
-3. Test with small dataset first
-4. Gradually move execution to cloud
+1. Keep the optimized function and dataset unchanged.
+2. Authenticate with `traigent auth login` or set `TRAIGENT_API_KEY`.
+3. Set `execution_mode="hybrid"`.
+4. Confirm the run appears in Traigent Portal.
 
-### From Model 2 to Model 1:
+### From Accidental Cloud Usage:
 
-1. Create local executor for your agent
-2. Implement evaluation locally
-3. Connect to interactive optimizer
-4. Test latency and accuracy
+1. Replace `execution_mode="cloud"` with `execution_mode="hybrid"` when you want website results.
+2. Use `execution_mode="edge_analytics"` and `TRAIGENT_OFFLINE_MODE=true` when you want no backend dependency.
+3. Treat cloud remote execution docs and APIs as roadmap/reference material until the product path is released.
 
 ## Performance Tips
 
-### Model 1 Performance:
+### Local and Hybrid Performance:
 
-- Use dataset subset suggestions efficiently
 - Batch local executions when possible
 - Cache results for similar configurations
 - Implement parallel local execution
-
-### Model 2 Performance:
-
 - Choose appropriate `parallel_config` settings (e.g., `parallel_config={"trial_concurrency": 4}`)
 - Use early stopping to save costs
 - Start with smaller datasets
-- Enable smart subset selection
 
 ## Security Considerations
 
-### Model 1 Security:
+### `edge_analytics` Security:
 
 - ✅ Data never leaves your environment
 - ✅ Full control over execution
-- ⚠️ Ensure secure connection for suggestions
-- ⚠️ Validate configuration suggestions
 
-### Model 2 Security:
+### `hybrid` Security:
 
-- ⚠️ Review cloud service security policies
-- ⚠️ Understand data retention policies
+- ✅ Trials execute locally
+- ✅ Backend receives session and trial metrics for tracking
+- ⚠️ Confirm privacy settings before enabling portal tracking
 - ✅ Use encryption in transit
-- ✅ Implement access controls
 
 ## Conclusion
 
 Choose based on your primary constraints:
 
-- **Privacy-first**: Model 1
-- **Performance-first**: Model 2
-- **Flexibility-first**: Hybrid
+- **Privacy/local-only**: `edge_analytics`
+- **Website-visible results**: `hybrid`
+- **Remote cloud execution**: reserved for a future release
 
-Remember that you can start with one model and migrate to another as your requirements evolve. The Traigent SDK is designed to support this flexibility.
+For now, users wanting website results should use `hybrid`, not `cloud`.

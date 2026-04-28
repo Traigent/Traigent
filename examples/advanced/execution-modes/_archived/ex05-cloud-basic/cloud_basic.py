@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Execution Modes - Cloud Mode (Basic).
+"""Execution Modes - Archived Cloud Mode (Basic).
 
-Adapted from docs: in OSS extraction we run locally for speed/offline.
+This archived example is retained for historical context. Remote cloud
+execution is not available today, so the runnable function uses Edge Analytics.
 """
 
 from __future__ import annotations
@@ -114,7 +115,7 @@ def _summary_accuracy(
     eval_dataset=DATASET_FILE,
     objectives=["cost", "accuracy"],
     metric_functions={"accuracy": _summary_accuracy},
-    execution_mode="edge_analytics",  # cloud in docs; Edge Analytics here for offline run
+    execution_mode="edge_analytics",  # Cloud mode is reserved; run locally here.
     max_trials=10,
 )
 def text_summarizer(article: str) -> str:

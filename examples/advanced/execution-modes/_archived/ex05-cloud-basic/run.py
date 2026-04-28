@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runner for Execution Modes - Cloud Mode (Basic)."""
+"""Runner for archived cloud-mode example; executes locally."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    print("Running Execution Modes - Cloud (Basic)")
+    print("Running archived cloud-mode example locally")
     print("=" * 60)
 
     opt_result = asyncio.run(text_summarizer.optimize(max_trials=10))

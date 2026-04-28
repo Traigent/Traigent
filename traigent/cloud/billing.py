@@ -1,4 +1,4 @@
-"""Unified Billing and Cost Tracking for Traigent Cloud Service.
+"""Unified billing and cost tracking for Traigent backend/cloud integration.
 
 This module provides comprehensive billing and cost tracking functionality,
 combining usage tracking, billing management, and detailed cost monitoring
@@ -130,7 +130,7 @@ class CostTrackingConfig:
 
 @dataclass
 class UsageRecord:
-    """Record of Traigent Cloud Service usage."""
+    """Record of Traigent backend/cloud usage."""
 
     timestamp: datetime
     function_name: str
@@ -173,7 +173,7 @@ class UsageRecord:
 
 @dataclass
 class BillingPlan:
-    """Traigent Cloud Service billing plan."""
+    """Traigent backend/cloud billing plan."""
 
     name: str
     monthly_credits: int

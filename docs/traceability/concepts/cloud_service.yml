@@ -1,6 +1,6 @@
 id: CONC-CloudService
 name: Cloud Service
-purpose: "Connect to Traigent backend for hybrid/cloud optimization, session sync, and billing-aware operations."
+purpose: "Connect to Traigent backend for hybrid session/result tracking, session sync, and billing-aware operations. Remote cloud execution is reserved for a future release."
 state:
   - name: auth_manager
     type: "AuthManager"
@@ -25,7 +25,7 @@ actions:
         fields:
           - name: error
             type: "AuthenticationError"
-    description: "Resolve credentials (env/CLI) and produce auth headers for cloud operations."
+    description: "Resolve credentials (env/CLI) and produce auth headers for backend operations."
   - name: sync_session
     inputs:
       - name: session_payload
@@ -63,7 +63,8 @@ actions:
             type: "bool"
     description: "Send trial metrics/results back to backend with retry/resilience."
 operational_principle:
-  - "Hybrid/cloud flows should tolerate network errors with retries or fallbacks."
+  - "Hybrid backend flows should tolerate network errors with retries or explicit failures."
+  - "Reserved cloud remote-execution flows must fail closed until implemented."
   - "Privacy flags and billing context must accompany backend interactions when configured."
 version: 1
 status: active

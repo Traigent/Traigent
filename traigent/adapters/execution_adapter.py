@@ -348,7 +348,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
 
 
 class RemoteExecutionAdapter(ExecutionAdapter):
-    """Adapter for remote execution in SaaS mode."""
+    """Adapter scaffold for future remote execution mode."""
 
     def __init__(self, backend_client: Any) -> None:
         """Initialize remote execution adapter.
@@ -363,8 +363,8 @@ class RemoteExecutionAdapter(ExecutionAdapter):
     ) -> dict[str, Any]:
         """Execute configuration remotely.
 
-        In SaaS mode, the actual execution happens on the backend.
-        This adapter just handles the communication.
+        Remote backend execution is reserved for a future cloud path.
+        This adapter only documents the communication shape.
 
         Args:
             agent_spec: Agent specification
@@ -374,7 +374,7 @@ class RemoteExecutionAdapter(ExecutionAdapter):
         Returns:
             Execution results from backend
         """
-        # In SaaS mode, execution is handled by the backend
+        # In future remote mode, execution is handled by the backend.
         # The dataset should already be uploaded and we just reference it
         dataset_id = dataset.get("dataset_id")
         if not dataset_id:

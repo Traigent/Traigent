@@ -117,7 +117,7 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 ### Advanced Category Details
 
-- **execution-modes/**: Learn execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Cloud and hybrid modes coming in a future release.
+- **execution-modes/**: Learn execution patterns. `edge_analytics` keeps runs local; `hybrid` adds backend/portal tracking while trials still execute locally. `cloud` remote execution is reserved for a future release.
 
 - **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
 

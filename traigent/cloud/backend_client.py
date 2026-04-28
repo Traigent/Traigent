@@ -124,16 +124,16 @@ bridge = _bridge
 
 
 class BackendIntegratedClient:
-    """Enhanced cloud client with Traigent Backend integration (Refactored).
+    """Enhanced backend client with Traigent Backend integration (Refactored).
 
     This client supports both execution models:
-    - Model 1: Privacy-first optimization with client-side execution
-    - Model 2: Cloud SaaS optimization with backend agent execution
+    - Hybrid: client-side trial execution with backend session/result tracking
+    - Reserved cloud: future backend agent execution paths that fail closed today
 
     The refactored version delegates specific responsibilities to sub-modules:
     - validators: Data validation functions
     - privacy_operations: Privacy-first optimization operations
-    - cloud_operations: Cloud SaaS optimization operations
+    - cloud_operations: Reserved cloud remote-execution operations
     - session_operations: Session lifecycle management
     - trial_operations: Trial management and result submission
     - api_operations: Backend API integration methods
@@ -155,10 +155,10 @@ class BackendIntegratedClient:
         """Initialize backend integrated client.
 
         Args:
-            api_key: Traigent Cloud API key
-            base_url: Cloud service base URL
+            api_key: Traigent backend API key
+            base_url: Backend service base URL
             backend_config: Backend integration configuration
-            enable_fallback: Fall back to local optimization if cloud fails
+            enable_fallback: Reserved compatibility flag for future cloud behavior
             max_retries: Maximum retry attempts for requests
             timeout: Request timeout in seconds
             enable_rate_limiting: Enable rate limiting
@@ -601,7 +601,7 @@ class BackendIntegratedClient:
             session_id, trial_id, config, metrics, duration, error_message
         )
 
-    # Cloud Operations
+    # Reserved Cloud Operations
     async def start_agent_optimization(
         self,
         agent_spec: AgentSpecification,
@@ -611,7 +611,7 @@ class BackendIntegratedClient:
         max_trials: int = 50,
         user_id: str | None = None,
     ) -> AgentOptimizationResponse:
-        """Start cloud SaaS optimization with full agent execution.
+        """Start reserved cloud agent optimization.
         Delegates to cloud_operations module."""
         return await self._cloud_ops.start_agent_optimization(
             agent_spec, dataset, configuration_space, objectives, max_trials, user_id
@@ -623,7 +623,7 @@ class BackendIntegratedClient:
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
     ) -> AgentExecutionResponse:
-        """Execute agent with specified configuration.
+        """Execute agent through the reserved cloud path.
         Delegates to cloud_operations module."""
         return await self._cloud_ops.execute_agent(
             agent_spec, input_data, config_overrides
@@ -1085,21 +1085,21 @@ class BackendIntegratedClient:
     async def _submit_cloud_trial_results(
         self, submission: TrialResultSubmission
     ) -> None:
-        """Submit trial results to cloud service.
+        """Reserved cloud result path; fails closed in api_operations.
         Delegates to api_operations module."""
         await self._api_ops.submit_cloud_trial_results(submission)
 
     async def _submit_agent_optimization(
         self, request: AgentOptimizationRequest
     ) -> AgentOptimizationResponse:
-        """Submit agent for cloud optimization.
+        """Reserved cloud agent optimization path; fails closed in api_operations.
         Delegates to api_operations module."""
         return await self._api_ops.submit_agent_optimization(request)
 
     async def _execute_cloud_agent(
         self, request: AgentExecutionRequest
     ) -> AgentExecutionResponse:
-        """Execute agent in cloud.
+        """Reserved cloud agent execution path; fails closed in api_operations.
         Delegates to api_operations module."""
         return await self._api_ops.execute_cloud_agent(request)
 

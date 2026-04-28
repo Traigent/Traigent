@@ -135,7 +135,7 @@ identified_gaps:
     name: "No remote evaluator"
     priority: low
     description: "No evaluator for remote/distributed evaluation"
-    recommendation: "Consider RemoteEvaluator for cloud execution"
+    recommendation: "Consider a future RemoteEvaluator only when cloud remote execution is implemented"
 
   - id: GAP-EVAL-003
     type: capability

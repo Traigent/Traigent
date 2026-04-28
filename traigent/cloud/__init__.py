@@ -1,7 +1,7 @@
-"""Traigent Cloud Service integration module.
+"""Traigent backend and reserved cloud integration module.
 
-This module provides the commercial cloud service integration for Traigent SDK,
-enabling smart optimization with dataset subset selection and cost reduction.
+This module provides backend integration for portal-tracked SDK runs. Remote
+cloud execution is reserved for a future release and fails closed today.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid

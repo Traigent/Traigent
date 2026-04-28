@@ -195,7 +195,8 @@ deepeval = [
     "deepeval>=1.0.0",
 ]
 
-# Cloud bundle (cloud execution mode, advanced session management)
+# Cloud bundle reserved for future remote execution support.
+# Portal-tracked SDK runs use the supported hybrid extra/mode today.
 cloud = [
     "traigent[security]",
     "boto3>=1.28.0",

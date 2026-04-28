@@ -1,12 +1,14 @@
 # Interactive Optimization Guide
 
-This guide explains how to use Traigent's interactive optimization model for client-side execution with remote guidance.
+This guide documents Traigent's interactive optimization model for client-side execution with remote guidance.
+
+> **Current status:** The generic `InteractiveOptimizer` can be used with a real `RemoteGuidanceService` implementation, but Traigent Cloud remote guidance is not a supported production path yet. Use `execution_mode="hybrid"` for portal-tracked SDK optimization today; use `execution_mode="edge_analytics"` for fully local runs.
 
 ## Overview
 
-The interactive optimization model enables a hybrid approach where:
+The interactive optimization model enables a remote-guidance approach where:
 
-- **Configuration suggestions** come from the Traigent Cloud Service
+- **Configuration suggestions** come from a remote guidance service
 - **Function execution** happens on your local machine
 - **Results** are reported back to guide the next suggestion
 
@@ -73,11 +75,13 @@ The service provides configurations based on:
 
 ### Step 1: Setup
 
+This example assumes you provide a remote guidance service that implements the `RemoteGuidanceService` protocol. The Traigent Cloud remote-guidance endpoint is roadmap-only until the managed remote execution path is released.
+
 ```python
 from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-# Initialize cloud client
+# Initialize a remote guidance client when that service is available.
 client = TraigentCloudClient(api_key="<API_KEY>")
 
 # Create interactive optimizer

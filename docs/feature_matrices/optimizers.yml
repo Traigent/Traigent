@@ -178,18 +178,18 @@ capabilities:
 
   - id: CAP-OPT-CLOUD
     name: "Cloud Optimizer"
-    description: "Cloud-backed optimizer with async support"
+    description: "Scaffold for future remote cloud optimization"
     implementations:
       - class_name: CloudOptimizer
         code_unit: traigent/optimizers/cloud_optimizer.py
-        status: complete
-        completion: 1.0
+        status: partial
+        completion: 0.5
         implemented_methods:
           - suggest_next_trial
           - suggest_next_trial_async
           - should_stop
           - should_stop_async
-        notes: "Async API for cloud orchestration"
+        notes: "Optimizer interface exists, but production cloud remote execution is not implemented; use hybrid for portal-tracked local execution."
 
   # ---------- Batch/Parallel Optimizers ----------
   - id: CAP-OPT-PARALLEL-BATCH
@@ -239,17 +239,17 @@ capabilities:
 # Summary Statistics
 summary:
   total_implementations: 15
-  complete: 15
-  partial: 0
+  complete: 14
+  partial: 1
   missing: 0
-  coverage_percentage: 100.0
+  coverage_percentage: 96.7
 
 # Feature Support Matrix
 feature_support:
   async_methods:
     full_support:
       - RemoteOptimizer (traigent/optimizers/remote.py)
-      - CloudOptimizer (traigent/optimizers/cloud_optimizer.py)
+      - CloudOptimizer interface methods (traigent/optimizers/cloud_optimizer.py)
     uses_default:
       - RandomSearchOptimizer
       - GridSearchOptimizer

@@ -341,8 +341,8 @@ class SecureToken:
 class AuthManager:
     """Authentication manager for SDK and backend integration.
 
-    This manager handles authentication for both Traigent Cloud services and
-    backend integrations, providing a single entry point for acquiring
+    This manager handles authentication for Traigent backend integration and
+    reserved cloud services, providing a single entry point for acquiring
     credentials and generating request headers.
     """
 
