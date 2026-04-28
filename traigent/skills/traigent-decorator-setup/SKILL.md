@@ -195,7 +195,7 @@ Configure where and how optimization runs execute.
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
-        execution_mode="edge_analytics",  # Local execution, analytics to cloud
+        execution_mode="edge_analytics",  # Local execution
         local_storage_path="./results",
         privacy_enabled=True,
         reps_per_trial=3,              # Repeat each config 3 times
@@ -212,9 +212,9 @@ def my_func(query: str) -> str:
 
 | Mode | Description |
 |---|---|
-| `"edge_analytics"` | Default. Runs locally, sends analytics metadata to cloud. |
-| `"cloud"` | Full cloud execution with remote orchestration. |
-| `"hybrid"` | Split execution between local trials and cloud coordination. |
+| `"edge_analytics"` | Default. Runs locally. Set `TRAIGENT_OFFLINE_MODE=true` for no backend communication. |
+| `"hybrid"` | Supported portal-tracked mode: trials run locally while backend stores sessions and metrics. |
+| `"cloud"` | Reserved for future remote execution. Not available yet; use `hybrid` for portal-tracked optimization. |
 
 ## Config Access Lifecycle
 

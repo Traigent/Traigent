@@ -145,15 +145,20 @@ class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
     Attributes:
-        execution_mode: Execution mode (edge_analytics, cloud, local, hybrid).
+        execution_mode: Execution mode. Use ``edge_analytics`` for local
+            execution, ``hybrid`` for local trials plus backend/portal
+            tracking, or ``hybrid_api`` for external-agent API optimization.
+            ``cloud`` is reserved for future remote execution and currently
+            fails closed with guidance to use ``hybrid``.
         local_storage_path: Path for local result storage.
         minimal_logging: Whether to minimize logging output.
         parallel_config: Configuration for parallel execution.
         privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
-        cloud_fallback_policy: Cloud fallback behavior on execution failure.
-            "auto" or "warn" falls back to local optimization; "never" re-raises.
+        cloud_fallback_policy: Legacy/future cloud fallback behavior. It does
+            not enable ``execution_mode="cloud"`` today; cloud remote execution
+            is not available yet.
         reps_per_trial: Number of repetitions per configuration for statistical stability.
             Running multiple repetitions helps account for LLM non-determinism.
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
@@ -1700,16 +1705,19 @@ def optimize(  # NOSONAR(S107)
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
-            execution_mode: Execution mode ("cloud", "edge_analytics", "privacy",
-                "standard"). Defaults to "edge_analytics".
+            execution_mode: Execution mode. Use "edge_analytics" for local
+                execution, "hybrid" for local trials plus backend/portal
+                tracking, or "hybrid_api" for external-agent API optimization.
+                "cloud" is reserved for future remote execution and fails
+                closed today.
             local_storage_path: Location for Edge Analytics storage. Falls back
                 to ``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent/`` when omitted.
             minimal_logging: Toggle for reduced logging noise in Edge mode.
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             privacy_enabled: Flag enabling hybrid privacy safeguards.
-            cloud_fallback_policy: Cloud failure policy: "auto"/"warn" fallback to
-                local, "never" to fail closed.
+            cloud_fallback_policy: Legacy/future cloud fallback policy. It does
+                not enable cloud remote execution today.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 

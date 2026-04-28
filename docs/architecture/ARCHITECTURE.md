@@ -135,28 +135,28 @@ sequenceDiagram
 
     User->>OF: @traigent.optimize()
     User->>OF: func.optimize(dataset)
-    
+
     OF->>Orch: Initialize optimization
-    
+
     loop Until stopping condition
         Orch->>Opt: suggest_next_trial(history)
         Opt-->>Orch: config candidate
-        
+
         Orch->>Orch: Acquire cost permit
-        
+
         Orch->>Eval: evaluate(config, dataset)
-        
+
         loop For each example
             Eval->>LLM: Execute with config
             LLM-->>Eval: Response + metrics
             Eval->>Eval: Run custom evaluators
         end
-        
+
         Eval-->>Orch: TrialResult (metrics)
         Orch->>Opt: Update with result
         Orch->>Orch: Check stopping conditions
     end
-    
+
     Orch-->>OF: OptimizationResult
     OF-->>User: Best config + insights
 ```
@@ -204,14 +204,14 @@ flowchart TB
 
     subgraph CloudMode["Cloud Mode"]
         direction TB
-        cloud_desc["Full SaaS execution<br/>Backend orchestration<br/>Advanced analytics"]
-        cloud_backend["Traigent Backend"]
-        cloud_storage["Cloud Storage"]
+        cloud_desc["Reserved future remote execution<br/>Not available today<br/>Fails closed"]
+        cloud_backend["Future Traigent Cloud"]
+        cloud_storage["Future Cloud Storage"]
     end
 
     subgraph HybridMode["Hybrid Mode"]
         direction TB
-        hybrid_desc["Local execution<br/>Cloud sync for insights<br/>Best of both worlds"]
+        hybrid_desc["Local trial execution<br/>Backend session/result tracking<br/>Portal-visible results"]
         hybrid_local["Local Execution"]
         hybrid_sync["Backend Sync"]
     end
@@ -389,13 +389,13 @@ from traigent import Range, Choices
     # Define parameter search space
     model=Choices(["gpt-4o", "gpt-4o-mini", "claude-3-sonnet"]),
     temperature=Range(0.0, 1.0),
-    
+
     # Set optimization objectives
     objectives=["accuracy", "cost"],
-    
+
     # Configure evaluation
     evaluation={"eval_dataset": "test_cases.jsonl"},
-    
+
     # Set budget
     exploration={"budget": 50}
 )

@@ -1,8 +1,8 @@
-"""CloudOptimizer implementation for cloud optimization services.
+"""CloudOptimizer scaffold for future remote optimization services.
 
 This module provides the CloudOptimizer class that integrates with remote
-optimization services. Note: Cloud mode is not yet supported in the
-open-source SDK.
+optimization services. Cloud remote execution is not implemented yet; use
+hybrid for portal-tracked local execution.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID REQ-OPT-ALG-004 REQ-CLOUD-009 SYNC-CloudHybrid
@@ -63,15 +63,15 @@ def _run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
 
 
 class CloudOptimizer(BaseOptimizer):
-    """Optimizer that delegates to cloud optimization service.
+    """Optimizer scaffold that delegates to a future remote optimization service.
 
     This optimizer provides:
-    - Advanced optimization algorithms from cloud services
+    - Advanced optimization hooks for future remote services
     - Smart dataset subset selection for cost optimization
     - Enhanced exploration-exploitation strategies
 
     Note:
-        Cloud mode is not yet supported in the open-source SDK.
+        Cloud remote execution is not implemented yet.
         This optimizer is reserved for future enterprise features.
         This is distinct from RemoteOptimizer (in remote.py) which is a simpler
         scaffold. CloudOptimizer provides full session management,
@@ -434,7 +434,7 @@ class CloudOptimizer(BaseOptimizer):
     async def generate_candidates_async(
         self, max_candidates: int, remote_context: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Generate multiple candidate configurations using cloud service.
+        """Generate multiple candidate configurations using a remote service.
 
         This method leverages the remote service's batch suggestion capabilities
         for more efficient candidate generation compared to sequential calls.

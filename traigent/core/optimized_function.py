@@ -1870,7 +1870,11 @@ class OptimizedFunction:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> OptimizationResult:
-        """Run optimization using Traigent Cloud Service.
+        """Run optimization through the reserved Traigent Cloud path.
+
+        Remote cloud execution is not available yet. The cloud client is
+        expected to fail closed with guidance to use hybrid for portal-tracked
+        optimization.
 
         Args:
             dataset: Evaluation dataset
@@ -1879,7 +1883,7 @@ class OptimizedFunction:
             **kwargs: Additional arguments
 
         Returns:
-            OptimizationResult from cloud service
+            OptimizationResult from cloud service when the future path is implemented
         """
         from traigent.cloud.client import TraigentCloudClient
 

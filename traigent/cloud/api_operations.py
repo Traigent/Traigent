@@ -679,35 +679,35 @@ class ApiOperations:
     async def create_cloud_session(
         self, request: SessionCreationRequest
     ) -> SessionCreationResponse:
-        """Create cloud session for optimization."""
+        """Reserved cloud session path; fails closed until remote execution exists."""
         _ = request
         self._raise_cloud_remote_unavailable("create_cloud_session")
 
     async def get_cloud_trial_suggestion(
         self, request: NextTrialRequest
     ) -> NextTrialResponse:
-        """Get next trial suggestion from cloud optimizer."""
+        """Reserved cloud suggestion path; fails closed until remote execution exists."""
         _ = request
         self._raise_cloud_remote_unavailable("get_cloud_trial_suggestion")
 
     async def submit_cloud_trial_results(
         self, submission: TrialResultSubmission
     ) -> None:
-        """Submit trial results to cloud service."""
+        """Reserved cloud result path; fails closed until remote execution exists."""
         _ = submission
         self._raise_cloud_remote_unavailable("submit_cloud_trial_results")
 
     async def submit_agent_optimization(
         self, request: AgentOptimizationRequest
     ) -> AgentOptimizationResponse:
-        """Submit agent for cloud optimization."""
+        """Reserved cloud agent optimization path; fails closed until implemented."""
         _ = request
         self._raise_cloud_remote_unavailable("submit_agent_optimization")
 
     async def execute_cloud_agent(
         self, request: AgentExecutionRequest
     ) -> AgentExecutionResponse:
-        """Execute agent in cloud."""
+        """Reserved cloud agent execution path; fails closed until implemented."""
         _ = request
         self._raise_cloud_remote_unavailable("execute_cloud_agent")
 

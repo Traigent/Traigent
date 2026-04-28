@@ -154,11 +154,11 @@ class BackendSessionManager:
     def create_backend_client(
         traigent_config: TraigentConfig,
     ) -> BackendIntegratedClient | None:
-        """Initialize backend client if cloud features are available.
+        """Initialize backend client if backend integration features are available.
 
-        Returns None when cloud plugin is not installed (graceful degradation).
-        Raises FeatureNotAvailableError only when cloud mode is explicitly
-        requested but plugin is missing.
+        Returns None when backend integration modules are not installed
+        (graceful degradation). Cloud remote execution remains unavailable
+        and is validated elsewhere before use.
 
         Args:
             traigent_config: Global configuration for execution mode and storage
@@ -170,7 +170,7 @@ class BackendSessionManager:
             logger.debug("Offline mode - skipping backend client initialization")
             return None
 
-        # Try to import cloud module - may not be available if cloud plugin not installed
+        # Try to import backend integration module - may not be available in minimal installs.
         try:
             from traigent.cloud.backend_client import (
                 BackendClientConfig,
@@ -178,21 +178,21 @@ class BackendSessionManager:
             )
             from traigent.config.backend_config import BackendConfig
         except ModuleNotFoundError as err:
-            # Cloud module not installed - check if this was the cloud module itself
+            # Backend integration module not installed - check if this was the module itself.
             missing_module = getattr(err, "name", "") or ""
             if missing_module.startswith("traigent.cloud"):
                 if traigent_config.execution_mode == "cloud":
-                    # User explicitly requested cloud mode but plugin not installed
+                    # User explicitly requested reserved cloud mode but plugin not installed.
                     from traigent.utils.exceptions import FeatureNotAvailableError
 
                     raise FeatureNotAvailableError(
-                        "Cloud execution mode",
+                        "Cloud remote execution is not available yet; use hybrid for portal-tracked optimization",
                         plugin_name="traigent-cloud",
                         install_hint="pip install traigent[cloud]",
                     ) from err
-                # For edge_analytics or other modes, gracefully degrade to local-only
+                # For edge_analytics or other modes, gracefully degrade to local-only.
                 logger.info(
-                    f"Cloud module not available for {traigent_config.execution_mode} mode. "
+                    f"Backend integration module not available for {traigent_config.execution_mode} mode. "
                     "Continuing with local storage only."
                 )
                 return None

@@ -22,7 +22,7 @@ class ExecutionMode(StrEnum):
       Non-sensitive telemetry syncs to the backend when available for analytics; runs continue
       if the backend is unreachable, but insights remain local.
     - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
-    - STANDARD: Cloud orchestration with data sharing for balanced performance.
+    - STANDARD: Removed legacy mode.
     - CLOUD: Reserved for future remote execution where optimization and trials run
       in Traigent Cloud. Not available yet.
     - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints.
@@ -194,7 +194,7 @@ class TraigentConfig:
     ] = "edge_analytics"
     local_storage_path: str | None = None
     minimal_logging: bool = True
-    auto_sync: bool = False  # Auto-sync to cloud when API key available
+    auto_sync: bool = False  # Auto-sync to backend/portal when API key is available
     # Privacy toggle: when True, do not log or transmit input/output/prompts (local/hybrid)
     privacy_enabled: bool = False
 
@@ -206,7 +206,7 @@ class TraigentConfig:
 
     # Analytics and telemetry settings
     enable_usage_analytics: bool = (
-        True  # Send privacy-safe usage stats to encourage cloud adoption
+        True  # Send privacy-safe usage stats when backend/portal integration is configured
     )
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
@@ -433,7 +433,7 @@ class TraigentConfig:
         return self.execution_mode_enum is ExecutionMode.EDGE_ANALYTICS
 
     def is_cloud_mode(self) -> bool:
-        """Check if configuration is set to cloud mode."""
+        """Check if configuration is set to reserved cloud mode."""
         return self.execution_mode_enum is ExecutionMode.CLOUD
 
     def is_privacy_enabled(self) -> bool:
@@ -533,7 +533,7 @@ class TraigentConfig:
         Args:
             storage_path: Custom storage path for local data
             minimal_logging: Whether to use minimal logging
-            auto_sync: Whether to auto-sync to cloud when API key is available
+            auto_sync: Whether to auto-sync to backend/portal when an API key is available
             **kwargs: Additional configuration parameters
 
         Returns:

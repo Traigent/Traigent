@@ -37,7 +37,7 @@ Then run your optimization. Debug output includes:
 - Trial execution start/stop/status
 - Metric extraction and scoring
 - Cost tracking per trial
-- Backend communication (if using cloud mode)
+- Backend communication (if using hybrid portal tracking)
 
 ## Common Errors
 
@@ -160,8 +160,8 @@ traigent.utils.exceptions.ProviderValidationError: Provider validation failed:
 
 ```bash
 # Set the correct API keys
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."  # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..."  # pragma: allowlist secret
 ```
 
 ```python
@@ -242,7 +242,7 @@ Test your optimization setup without making real API calls or connecting to the 
 # Mock LLM responses (no API keys needed)
 export TRAIGENT_MOCK_LLM=true
 
-# Skip backend connection (no cloud service needed)
+# Skip backend connection (fully local/offline run)
 export TRAIGENT_OFFLINE_MODE=true
 ```
 

@@ -12,14 +12,14 @@ from traigent.api.decorators import ExecutionOptions
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `execution_mode` | `str` | `"edge_analytics"` | Where to run: `"edge_analytics"`, `"cloud"`, or `"hybrid"`. |
+| `execution_mode` | `str` | `"edge_analytics"` | Where to run: `"edge_analytics"` for local, `"hybrid"` for portal-tracked local execution, or `"cloud"` for the future remote execution path. |
 | `local_storage_path` | `str \| None` | `None` | Directory path for local result storage. |
 | `minimal_logging` | `bool` | `True` | Minimize logging output during optimization. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Parallel execution settings. See ParallelConfig section. |
 | `privacy_enabled` | `bool \| None` | `None` | Enable privacy-preserving mode (no raw data sent to cloud). |
 | `max_total_examples` | `int \| None` | `None` | Cap total examples evaluated across all trials. |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward sample limits. |
-| `cloud_fallback_policy` | `str \| None` | `None` | Behavior on cloud execution failure: `"auto"`, `"warn"`, or `"never"`. |
+| `cloud_fallback_policy` | `str \| None` | `None` | Legacy setting for future cloud execution. `cloud` is not available yet and fails closed. |
 
 ### Repetition Fields
 
@@ -58,7 +58,7 @@ from traigent.api.decorators import ExecutionOptions
 
 ### Edge Analytics (Default)
 
-Optimization runs entirely on your local machine. Only anonymized analytics metadata (trial counts, scores, timing) is sent to the Traigent cloud for dashboards and experiment tracking. Raw data, prompts, and model outputs never leave your environment.
+Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. Raw data, prompts, and model outputs never leave your environment in local mode.
 
 ```python
 @traigent.optimize(
@@ -74,36 +74,15 @@ def my_func(query: str) -> str:
     return call_llm(model=cfg["model"], prompt=query)
 ```
 
-**When to use**: Most use cases. Keeps data local, still get cloud dashboards.
-
-### Cloud
-
-Full remote execution. The Traigent cloud orchestrates trials, manages compute, and stores results. Requires authentication and network connectivity.
-
-```python
-@traigent.optimize(
-    execution=ExecutionOptions(execution_mode="cloud"),
-    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-)
-def my_func(query: str) -> str:
-    cfg = traigent.get_config()
-    return call_llm(model=cfg["model"], prompt=query)
-```
-
-**When to use**: When you want centralized orchestration, team collaboration, or need to run optimization on cloud infrastructure.
+**When to use**: Most local/private use cases.
 
 ### Hybrid
 
-Splits execution between local and cloud. Trials run locally, but the cloud coordinates configuration selection, tracks experiments, and provides advanced analytics.
+Supported portal-tracked execution. Trials run locally, while the backend stores sessions and trial metrics for website visibility.
 
 ```python
 @traigent.optimize(
-    execution=ExecutionOptions(
-        execution_mode="hybrid",
-        hybrid_api_endpoint="https://api.traigent.io/v1/hybrid",
-        hybrid_api_batch_size=4,
-        hybrid_api_batch_parallelism=2,
-    ),
+    execution=ExecutionOptions(execution_mode="hybrid"),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )
 def my_func(query: str) -> str:
@@ -111,17 +90,26 @@ def my_func(query: str) -> str:
     return call_llm(model=cfg["model"], prompt=query)
 ```
 
-**When to use**: When you need cloud-level coordination but want trial execution to happen locally (e.g., for data privacy or custom infrastructure).
+**When to use**: When you want results in the Traigent portal while keeping trial execution local.
+
+### Cloud
+
+Reserved for future remote execution. It is not implemented yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+
+Do not configure new runs with `execution_mode="cloud"` yet. It raises a clear
+unavailable error instead of starting a synthetic remote optimization.
+
+**When to use**: Do not use yet. Choose `hybrid` for portal-tracked optimization.
 
 ### Cloud Fallback Policy
 
-Controls what happens when cloud or hybrid execution fails:
+Cloud fallback policy is retained for compatibility with the future cloud path. It does not make `execution_mode="cloud"` available today:
 
 | Policy | Behavior |
 |---|---|
-| `"auto"` | Silently falls back to local optimization on failure. |
-| `"warn"` | Falls back to local optimization but logs a warning. |
-| `"never"` | Re-raises the exception. No fallback. |
+| `"auto"` | Reserved for future cloud behavior. |
+| `"warn"` | Reserved for future cloud behavior. |
+| `"never"` | Re-raises cloud errors when applicable. |
 
 ## ParallelConfig Integration
 

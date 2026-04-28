@@ -1,10 +1,12 @@
 # Agent Optimization Guide
 
-This guide explains how to optimize AI agents using Traigent SDK's Model 2: Agent Specification-Based Execution.
+This guide describes the planned Model 2 agent-specification API.
+
+> **Current status:** Remote agent optimization in Traigent Cloud is not implemented yet. The `execution_mode="cloud"` path fails closed with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.” Use `execution_mode="hybrid"` for portal-visible SDK runs today; trials still execute locally.
 
 ## Overview
 
-Agent optimization allows you to send complete agent specifications to the Traigent Cloud Service for optimization. This approach is ideal when:
+Agent optimization is reserved for a future remote execution path where complete agent specifications can be optimized by Traigent Cloud. When available, this approach will be ideal when:
 
 - You want to optimize complex agent behaviors beyond simple parameter tuning
 - You're comfortable with sending agent specifications to the cloud
@@ -71,6 +73,8 @@ Common objectives include:
 ## Implementation Steps
 
 ### Step 1: Initialize Cloud Client
+
+The following examples are roadmap/reference examples for the future remote execution API. They should not be used as production instructions until cloud remote execution is released.
 
 ```python
 from traigent.cloud.client import TraigentCloudClient
@@ -451,9 +455,10 @@ except CloudServiceError as e:
 
 | Feature            | Agent Optimization (Model 2)         | Interactive Optimization (Model 1)  |
 | ------------------ | ------------------------------------ | ----------------------------------- |
-| Execution Location | Cloud service                        | Local client                        |
+| Current Status     | Not implemented                      | Requires a real remote guidance service |
+| Execution Location | Future cloud service                 | Local client                        |
 | Data Privacy       | Agent spec sent to cloud             | Only metadata sent                  |
-| Optimization Speed | Faster (parallel cloud execution)    | Slower (sequential local execution) |
+| Optimization Speed | Future remote execution path         | Local execution speed               |
 | Cost               | Higher (cloud compute)               | Lower (local compute)               |
 | Complexity         | Simpler setup                        | More complex integration            |
 | Use Case           | Standard agents, less sensitive data | Custom functions, sensitive data    |

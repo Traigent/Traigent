@@ -91,8 +91,8 @@ class TraigentClient:
             agent_builder: Agent builder instance for local execution
 
         Note:
-            Cloud module is only required for 'hybrid' mode.
-            Edge analytics mode works without cloud dependencies installed.
+            Backend integration dependencies are required for 'hybrid' mode.
+            Edge analytics mode works without backend/cloud dependencies installed.
         """
         from traigent.config.backend_config import BackendConfig
 

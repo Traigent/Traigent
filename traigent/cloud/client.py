@@ -1,4 +1,4 @@
-"""Traigent Cloud Service Client for commercial optimization."""
+"""Traigent backend client with reserved cloud remote-execution methods."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
@@ -183,7 +183,7 @@ class StandardizedClientError(Exception):
 
 @dataclass
 class CloudOptimizationResult:
-    """Result from cloud optimization service."""
+    """Result shape for future remote cloud optimization."""
 
     best_config: dict[str, Any]
     best_metrics: dict[str, float]
@@ -254,7 +254,12 @@ def _get_retry_delay(response: Any) -> float:
 
 
 class TraigentCloudClient(BaseTraigentClient):
-    """Client for Traigent Cloud Service - enables commercial optimization features."""
+    """Client for backend integration APIs and reserved cloud APIs.
+
+    Portal-tracked SDK runs should use hybrid mode. The SDK
+    ``execution_mode="cloud"`` product path fails closed until remote cloud
+    execution is implemented.
+    """
 
     _AUTH_FAILURE_MESSAGE = "Not authenticated with Traigent Cloud Service"
 
@@ -271,7 +276,7 @@ class TraigentCloudClient(BaseTraigentClient):
         Args:
             api_key: Traigent Cloud API key
             base_url: Cloud service base URL
-            enable_fallback: Fall back to local optimization if cloud fails
+            enable_fallback: Reserved compatibility setting for future cloud behavior
             max_retries: Maximum retry attempts for cloud requests
             timeout: Request timeout in seconds
         """
@@ -642,7 +647,7 @@ class TraigentCloudClient(BaseTraigentClient):
     async def _submit_optimization(
         self, request_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Submit optimization request to cloud service."""
+        """Submit optimization request to the reserved remote service."""
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -662,7 +667,7 @@ class TraigentCloudClient(BaseTraigentClient):
                         # Rate limited - convert to retryable error
                         retry_after = response.headers.get("Retry-After")
                         raise RateLimitError(
-                            "Rate limited by cloud service",
+                            "Rate limited by backend service",
                             retry_after=int(retry_after) if retry_after else None,
                         )
                     else:
@@ -704,7 +709,7 @@ class TraigentCloudClient(BaseTraigentClient):
         *,
         local_function: Callable[..., Any] | None = None,
     ) -> CloudOptimizationResult:
-        """Fallback to local optimization when cloud service unavailable."""
+        """Compatibility local fallback used by older remote-service flows."""
         from traigent.core.orchestrator import OptimizationOrchestrator
         from traigent.evaluators.local import LocalEvaluator
         from traigent.optimizers.registry import get_optimizer
@@ -818,7 +823,7 @@ class TraigentCloudClient(BaseTraigentClient):
         return cast(dict[str, Any], await self.usage_tracker.get_usage_stats())
 
     async def check_service_status(self) -> dict[str, Any]:
-        """Check Traigent Cloud Service status."""
+        """Check Traigent backend service status."""
         await self._ensure_session()
         if self._aio_session is None:
             raise CloudServiceError(_SESSION_NOT_INITIALIZED)
@@ -1066,7 +1071,7 @@ class TraigentCloudClient(BaseTraigentClient):
         session_id: str,
         previous_results: list[TrialResultSubmission] | None = None,
     ) -> NextTrialResponse:
-        """Get next trial suggestion from the cloud service.
+        """Get next trial suggestion from the backend service.
 
         Args:
             session_id: Optimization session ID
@@ -1125,7 +1130,7 @@ class TraigentCloudClient(BaseTraigentClient):
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Submit trial results to the cloud service.
+        """Submit trial results to the backend service.
 
         Args:
             session_id: Optimization session ID
@@ -1439,7 +1444,10 @@ class TraigentCloudClient(BaseTraigentClient):
     async def start_agent_optimization(
         self, request: AgentOptimizationRequest
     ) -> AgentOptimizationResponse:
-        """Start agent optimization using cloud service (alternative entry point).
+        """Start agent optimization through the low-level managed endpoint.
+
+        This is not the supported SDK ``execution_mode="cloud"`` path. SDK
+        users wanting portal-visible runs should use ``execution_mode="hybrid"``.
 
         Args:
             request: Agent optimization request
@@ -1477,11 +1485,11 @@ class TraigentCloudClient(BaseTraigentClient):
         target_cost_reduction: float = 0.65,
         optimization_strategy: dict[str, Any] | None = None,
     ) -> AgentOptimizationResponse:
-        """Start agent optimization using cloud service.
+        """Start agent optimization through the low-level managed endpoint.
 
-        This method implements Model 2: Agent Specification-Based Execution where
-        the agent specification and dataset are sent to the cloud service for
-        remote execution and optimization.
+        This low-level client method is for backends that implement the managed
+        agent endpoint. It is not the supported SDK ``execution_mode="cloud"``
+        path; use hybrid for portal-tracked SDK optimization today.
 
         Args:
             agent_spec: Agent specification to optimize
@@ -1563,10 +1571,10 @@ class TraigentCloudClient(BaseTraigentClient):
         config_overrides: dict[str, Any] | None = None,
         execution_context: dict[str, Any] | None = None,
     ) -> AgentExecutionResponse:
-        """Execute agent on cloud service.
+        """Execute agent through the low-level managed endpoint.
 
-        This method allows direct agent execution on the cloud service
-        without optimization, useful for testing or production inference.
+        This method is separate from SDK ``execution_mode="cloud"``. Use hybrid
+        for supported portal-tracked SDK optimization today.
 
         Args:
             agent_spec_or_request: Either AgentExecutionRequest object or agent specification

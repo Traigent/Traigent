@@ -124,8 +124,8 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
 | **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
-| **Connect to Traigent Cloud** | [Cloud Setup](#-traigent-cloud) | 5 min |
-| **Try examples locally, see them on the cloud** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
+| **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
+| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
 
 <details>
@@ -195,14 +195,18 @@ All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 
 ---
 
-### ☁️ Traigent Cloud
+<a id="portal-hybrid-tracking"></a>
 
-Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate.
+### ☁️ Traigent Portal & Hybrid Tracking
+
+Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. The supported portal-visible SDK path today is `execution_mode="hybrid"`: trials run locally, while session and trial metrics are stored in the backend for portal tracking.
+
+`execution_mode="cloud"` is reserved for future remote agent execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
 3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`  <!-- pragma: allowlist secret -->
-4. **Run** — results appear in the portal automatically
+4. **Run with hybrid tracking** — set `execution_mode="hybrid"` for portal-visible optimization
 
 <details>
 <summary>Credential priority and multi-provider setup</summary>
@@ -311,9 +315,9 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | All use cases |
-| **Hybrid** | ✅ Available | ✅ Execution local | All (Random/Grid/Bayesian/Optuna) | Balanced approach |
-| **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Random/Grid/Bayesian | Production, teams |
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | Local/private runs |
+| **Hybrid** (`hybrid`) | ✅ Available | ✅ Trial execution local | All (Random/Grid/Bayesian/Optuna) | Portal-tracked runs |
+| **Cloud** (`cloud`) | 🚧 Reserved | Not available | Future remote execution | Do not use yet |
 
 **[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
 

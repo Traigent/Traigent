@@ -1,7 +1,7 @@
-"""Cloud SaaS optimization operations for Traigent Cloud Client.
+"""Reserved cloud remote-execution operations for Traigent backend clients.
 
-This module handles cloud-based optimization operations where agents are
-executed in the cloud with full data transmission.
+Remote cloud execution is not implemented yet. Operations in this module fail
+closed with guidance to use hybrid for portal-tracked local execution.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class CloudOperations:
-    """Handles cloud SaaS optimization operations."""
+    """Handles reserved cloud remote-execution operations."""
 
     def __init__(self, client: "BackendIntegratedClient"):
         """Initialize cloud operations handler.
@@ -40,7 +40,7 @@ class CloudOperations:
         max_trials: int = 50,
         user_id: str | None = None,
     ) -> AgentOptimizationResponse:
-        """Start cloud SaaS optimization with full agent execution.
+        """Start reserved cloud agent optimization.
 
         Args:
             agent_spec: Complete agent specification
@@ -51,7 +51,7 @@ class CloudOperations:
             user_id: Optional user identifier
 
         Returns:
-            Agent optimization response with session details
+            Agent optimization response with session details when implemented
         """
         _ = (agent_spec, dataset, configuration_space, objectives, max_trials, user_id)
         raise CloudRemoteExecutionUnavailableError("start_agent_optimization")
@@ -62,7 +62,7 @@ class CloudOperations:
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
     ) -> AgentExecutionResponse:
-        """Execute agent with specified configuration.
+        """Execute agent through the reserved cloud path.
 
         Args:
             agent_spec: Agent specification
@@ -70,7 +70,7 @@ class CloudOperations:
             config_overrides: Optional configuration overrides
 
         Returns:
-            Agent execution response
+            Agent execution response when implemented
         """
         _ = (agent_spec, input_data, config_overrides)
         raise CloudRemoteExecutionUnavailableError("execute_agent")
