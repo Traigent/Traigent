@@ -25,10 +25,6 @@ recursive-include traigent *.yaml
 include traigent/py.typed
 prune traigent/experimental
 
-# Agent skills
-recursive-include skills *.md
-include SYNC_MAP.md
-
 # Documentation
 recursive-include docs *.md
 prune docs/demos/node_modules
