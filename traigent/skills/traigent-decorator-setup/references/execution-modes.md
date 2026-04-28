@@ -107,9 +107,9 @@ Cloud fallback policy is retained for compatibility with the future cloud path. 
 
 | Policy | Behavior |
 |---|---|
-| `"auto"` | Reserved for future cloud behavior. |
-| `"warn"` | Reserved for future cloud behavior. |
-| `"never"` | Re-raises cloud errors when applicable. |
+| `"auto"` | Reserved for future cloud behavior; currently inert because cloud mode fails validation before fallback. |
+| `"warn"` | Reserved for future cloud behavior; currently inert because cloud mode fails validation before fallback. |
+| `"never"` | Reserved for future cloud behavior; currently inert because cloud mode fails validation before fallback. |
 
 ## ParallelConfig Integration
 

@@ -188,7 +188,7 @@ class BackendSessionManager:
                     raise FeatureNotAvailableError(
                         "Cloud remote execution is not available yet; use hybrid for portal-tracked optimization",
                         plugin_name="traigent-cloud",
-                        install_hint="pip install traigent[cloud]",
+                        install_hint="Use execution_mode='hybrid' for portal-tracked optimization",
                     ) from err
                 # For edge_analytics or other modes, gracefully degrade to local-only.
                 logger.info(

@@ -38,10 +38,6 @@ _SYSTEM_PROMPT = (
 # would always score 0.  Let the built-in mock simulation handle accuracy instead.
 _mock_mode = is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
-if not _mock_mode:
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
-
 _MOCK_ANSWERS = {
     "What is the capital of France?": "Paris",
     "What is 2 + 2?": "4",
@@ -73,6 +69,9 @@ def answer(question: str) -> str:
     cfg = traigent.get_config()
     if _mock_mode:
         return _MOCK_ANSWERS.get(question, "Mock answer")
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model=cfg["model"], temperature=cfg["temperature"])
     response = llm.invoke([SystemMessage(_SYSTEM_PROMPT), HumanMessage(question)])
