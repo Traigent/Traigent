@@ -10,11 +10,7 @@ from traigent.integrations.utils.message_coercion import (
     coerce_to_gemini_format,
     coerce_to_openai_format,
 )
-from traigent.integrations.utils.mock_adapter import (
-    MockAdapter,
-    MockResponse,
-    with_mock_support,
-)
+from traigent.integrations.utils.mock_adapter import MockAdapter, MockResponse
 from traigent.integrations.utils.parameter_normalizer import (
     Framework,
     ParameterAlias,
@@ -45,5 +41,4 @@ __all__ = [
     # Mock adapter
     "MockAdapter",
     "MockResponse",
-    "with_mock_support",
 ]
