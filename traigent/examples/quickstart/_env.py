@@ -22,9 +22,16 @@ def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
     """Seed env vars LangChain expects and force offline-mode without an
     API key.
 
-    - Seeds a placeholder ``OPENAI_API_KEY`` so :class:`ChatOpenAI` can
-      instantiate. The real LLM call is intercepted by the mock-mode
-      flag set via :func:`traigent.testing.enable_mock_mode_for_quickstart`.
+    - Seeds a placeholder ``OPENAI_API_KEY`` (via ``setdefault``) so
+      :class:`ChatOpenAI` can instantiate. In the canonical invocation
+      path the bootstrap in :mod:`traigent.__init__` has already
+      OVERWRITTEN ``OPENAI_API_KEY`` with the placeholder before this
+      function runs, so the ``setdefault`` here is a no-op in that
+      flow — intentional. If a future entry point ever calls this
+      helper WITHOUT going through the package bootstrap, the
+      placeholder is seeded here as a fallback. The real LLM call is
+      intercepted by the mock-mode flag set via
+      :func:`traigent.testing.enable_mock_mode_for_quickstart`.
     - If no ``TRAIGENT_API_KEY`` is set, prints a clear stderr notice
       and **forces** ``TRAIGENT_OFFLINE_MODE=true`` (override, not
       ``setdefault``). Without a portal key the SDK can't sync results
@@ -34,7 +41,7 @@ def configure_quickstart_env(env: MutableMapping[str, str]) -> None:
       ``TRAIGENT_OFFLINE_MODE`` — the user wants results synced and
       should control offline-mode themselves.
     """
-    env.setdefault("OPENAI_API_KEY", "mock-key-for-demos")
+    env.setdefault("OPENAI_API_KEY", "mock-key-for-demos")  # pragma: allowlist secret
 
     if not env.get("TRAIGENT_API_KEY"):
         print(
