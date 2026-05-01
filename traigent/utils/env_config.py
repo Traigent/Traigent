@@ -109,13 +109,13 @@ _check_mock_llm_prod_guard()
 # caller has explicitly opted out via TRAIGENT_SKIP_DOTENV. Tests and
 # hermetic subprocess smokes set this so the repo's ``.env`` (which
 # typically contains TRAIGENT_BACKEND_URL=localhost:5000 etc.) does
-# NOT leak into a "clean env" run.
+# NOT leak into a "clean env" run. Reuse ``_is_truthy_env_value`` so the
+# accepted-truthy set (``1``/``true``/``yes``/``on``, whitespace-tolerant)
+# matches the prod guard above — a value like ``" true"`` should opt out
+# here just as it would activate the prod guard.
 env_file = Path(__file__).parent.parent.parent / ".env"
-if env_file.exists() and os.environ.get("TRAIGENT_SKIP_DOTENV", "").lower() not in (
-    "1",
-    "true",
-    "yes",
-    "on",
+if env_file.exists() and not _is_truthy_env_value(
+    os.environ.get("TRAIGENT_SKIP_DOTENV")
 ):
     load_dotenv(env_file)
     _check_mock_llm_prod_guard()
