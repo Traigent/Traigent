@@ -4,13 +4,21 @@ Provides a lightweight mock adapter pattern that keeps main plugin
 logic clean by separating mock functionality into dedicated methods.
 
 Security:
-    Mock activation is NEVER controlled by environment variables. Mock
-    responses are only produced when callers explicitly invoke
-    ``MockAdapter.get_mock_response(...)`` (typically from test code that
-    has already patched the LLM client at the integration boundary).
-    ``is_mock_enabled`` always returns ``False`` to guarantee that no
-    production code path can be silently swapped for fake responses by
-    setting an env var such as ``TRAIGENT_MOCK_LLM`` or ``OPENAI_MOCK``.
+    Mock activation in **production is impossible** — neither the
+    in-code API (:func:`traigent.testing.enable_mock_mode_for_quickstart`)
+    nor the legacy ``TRAIGENT_MOCK_LLM=true`` env var can flip mock
+    mode on when ``ENVIRONMENT=production``. The in-code path raises
+    ``RuntimeError``; the env-var path raises ``OSError`` at module
+    import in :mod:`traigent.utils.env_config`. That's the surviving
+    guard against the original prod incident — a stray env var
+    silently swapping real LLM calls for canned mock text.
+
+    Outside production, mock mode can be activated by either the
+    in-code API (recommended) or the legacy env var (kept for
+    backward compatibility with existing test fixtures and example
+    scripts). Provider-specific ``*_MOCK`` env vars (e.g.
+    ``OPENAI_MOCK``) are completely ignored everywhere — those were
+    the worst offenders in the original incident.
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
@@ -68,37 +76,42 @@ class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
     Mock activation is **never** auto-enabled via environment variables.
-    Tests that need a mock response must call
-    ``MockAdapter.get_mock_response(...)`` directly (e.g. from inside a
-    ``unittest.mock.patch`` that replaces the real client method).
-
-    ``is_mock_enabled`` is preserved as a stub that always returns
-    ``False`` so any production interceptor that previously consulted it
-    will now always take the real-LLM path. Callers wanting mock
-    behaviour from tests must patch the underlying client instead.
+    The single source of truth is
+    :func:`traigent.testing.is_mock_mode_enabled`, which is only flipped
+    on by an explicit in-code call to
+    :func:`traigent.testing.enable_mock_mode_for_quickstart`. Tests that
+    want a one-off mock response without flipping the global flag can
+    still call :meth:`get_mock_response` directly from inside a
+    ``unittest.mock.patch`` of the underlying client.
     """
 
     _pending_tasks: ClassVar[set[asyncio.Task]] = set()
 
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
-        """Always returns ``False``.
+        """Return ``True`` iff mock mode should intercept LLM calls.
 
-        Historically this consulted ``TRAIGENT_MOCK_LLM`` and a set of
-        provider-specific ``*_MOCK`` environment variables. That env-toggle
-        was removed because a stray env var in production caused real LLM
-        calls to be silently replaced with canned mock text. Tests must
-        patch the LLM client (or call ``get_mock_response`` directly)
-        rather than relying on a global flag.
+        Delegates to :func:`traigent.utils.env_config.is_mock_llm`, which
+        is the single source of truth for both LLM interceptors and the
+        SDK's mock-aware behavior. The original prod incident — a stray
+        env var swapping real calls for canned text — is prevented by
+        :func:`is_mock_llm`'s production hard-block: in production
+        environments the env-var path is rejected at import time, and
+        only the in-code
+        :func:`traigent.testing.enable_mock_mode_for_quickstart` opt-in
+        can flip the flag. Tests and dev environments can still set
+        ``TRAIGENT_MOCK_LLM=true`` for backward compatibility.
 
         Args:
             provider: Provider name (kept for signature compatibility).
 
         Returns:
-            Always ``False``.
+            ``True`` if mock mode is on, ``False`` otherwise.
         """
         del provider  # signature compatibility only
-        return False
+        from traigent.utils.env_config import is_mock_llm
+
+        return is_mock_llm()
 
     @classmethod
     def _apply_mock_delay(cls, provider: str) -> None:

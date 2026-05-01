@@ -1,9 +1,14 @@
 """Tests for the quickstart env-configuration helper.
 
-Guards the invariant raised in PR #664 review: when the quickstart runs in mock
-mode without a ``TRAIGENT_API_KEY``, the user must receive an explicit notice
-before the script silently forces ``TRAIGENT_OFFLINE_MODE=true`` (the offline
-short-circuit otherwise suppresses the downstream "No API key found" warning).
+Guards two invariants:
+
+* When the quickstart runs without a ``TRAIGENT_API_KEY``, the user must
+  receive an explicit notice before the script forces
+  ``TRAIGENT_OFFLINE_MODE=true`` (otherwise the offline short-circuit
+  suppresses the downstream "No API key found" warning — original PR #664
+  review).
+* The helper no longer touches ``TRAIGENT_MOCK_LLM`` — mock mode is
+  activated in code via :func:`traigent.testing.enable_mock_mode_for_quickstart`.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ def empty_env() -> dict[str, str]:
     return {}
 
 
-def test_warns_when_no_api_key_in_mock_mode(
+def test_warns_when_no_api_key(
     empty_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     configure_quickstart_env(empty_env)
@@ -27,7 +32,7 @@ def test_warns_when_no_api_key_in_mock_mode(
     assert "TRAIGENT_API_KEY" in stderr
     assert "offline" in stderr.lower()
     assert empty_env["TRAIGENT_OFFLINE_MODE"] == "true"
-    assert empty_env["TRAIGENT_MOCK_LLM"] == "true"
+    assert empty_env["OPENAI_API_KEY"] == "mock-key-for-demos"  # pragma: allowlist secret
 
 
 def test_no_warning_when_api_key_present(
@@ -40,37 +45,46 @@ def test_no_warning_when_api_key_present(
     stderr = capsys.readouterr().err
     assert "TRAIGENT_API_KEY" not in stderr
     assert "TRAIGENT_OFFLINE_MODE" not in env
-    assert env["TRAIGENT_MOCK_LLM"] == "true"
-
-
-def test_respects_explicit_mock_llm_false(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    env: dict[str, str] = {"TRAIGENT_MOCK_LLM": "false"}
-
-    configure_quickstart_env(env)
-
-    stderr = capsys.readouterr().err
-    assert stderr == ""
-    assert "TRAIGENT_OFFLINE_MODE" not in env
-    assert "OPENAI_API_KEY" not in env
-
-
-@pytest.mark.parametrize("truthy", ["1", "true", "YES", "On"])
-def test_accepts_all_truthy_mock_llm_values(truthy: str) -> None:
-    env: dict[str, str] = {"TRAIGENT_MOCK_LLM": truthy}
-
-    configure_quickstart_env(env)
-
     assert env["OPENAI_API_KEY"] == "mock-key-for-demos"  # pragma: allowlist secret
-    assert env["TRAIGENT_OFFLINE_MODE"] == "true"
 
 
-def test_preserves_existing_offline_mode(
+def test_does_not_set_legacy_mock_env_var(empty_env: dict[str, str]) -> None:
+    configure_quickstart_env(empty_env)
+    # Legacy env-var-based activation is gone; mock mode is enabled in
+    # code via traigent.testing.enable_mock_mode_for_quickstart().
+    assert "TRAIGENT_MOCK_LLM" not in empty_env
+
+
+def test_overrides_offline_false_when_no_api_key(
     empty_env: dict[str, str],
 ) -> None:
+    """Codex review (round 3) finding #4: without a portal API key the
+    SDK can't sync anyway, so an explicit ``TRAIGENT_OFFLINE_MODE=false``
+    plus no key would produce noisy auth errors. We force offline in
+    that case (override, not setdefault)."""
+    empty_env["TRAIGENT_OFFLINE_MODE"] = "false"
+
+    configure_quickstart_env(empty_env)
+
+    assert empty_env["TRAIGENT_OFFLINE_MODE"] == "true"
+
+
+def test_does_not_touch_offline_when_api_key_present(
+    empty_env: dict[str, str],
+) -> None:
+    """When a portal key IS set, the user wants results synced; this
+    helper must not override their offline-mode choice."""
+    empty_env["TRAIGENT_API_KEY"] = "real-key"  # pragma: allowlist secret
     empty_env["TRAIGENT_OFFLINE_MODE"] = "false"
 
     configure_quickstart_env(empty_env)
 
     assert empty_env["TRAIGENT_OFFLINE_MODE"] == "false"
+
+
+def test_preserves_existing_openai_key(empty_env: dict[str, str]) -> None:
+    empty_env["OPENAI_API_KEY"] = "real-openai-key"  # pragma: allowlist secret
+
+    configure_quickstart_env(empty_env)
+
+    assert empty_env["OPENAI_API_KEY"] == "real-openai-key"  # pragma: allowlist secret
