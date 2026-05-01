@@ -1,10 +1,13 @@
 """Find the best model and temperature for your task - in one decorator.
 
-No API keys, no network, no surprises. The bundled quickstart is the
-load-bearing demo on the website funnel; everything below is structured
-to make that promise true.
+No API keys, no LLM provider calls, no spend. The bundled quickstart
+is the load-bearing demo on the website funnel; everything below is
+structured to make that promise true. LiteLLM may still attempt an
+import-time model-cost-map fetch from raw.githubusercontent.com (it
+falls back to bundled pricing data when offline); the guarantee is no
+provider spend, not zero outbound packets.
 
-The hermetic env-var setup that makes "no keys, no network" work has to
+The hermetic env-var setup that makes "no provider calls" work has to
 run before ``traigent/__init__.py`` itself executes (because that module
 pulls in optional deps like LiteLLM that may try to fetch model cost
 maps at import time). It can't live here — by the time this file

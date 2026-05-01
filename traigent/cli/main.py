@@ -376,10 +376,14 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
 
 @cli.command()
 def quickstart() -> None:
-    """Run the bundled mock-mode demo. Zero API keys, zero network.
+    """Run the bundled mock-mode demo. No API keys, no LLM provider calls.
 
     Equivalent to ``python -m traigent.examples.quickstart`` — this is
-    the canonical "first run" surface advertised on the website.
+    the canonical "first run" surface advertised on the website. LiteLLM
+    may still attempt an import-time model-cost-map fetch from
+    raw.githubusercontent.com (it falls back to bundled pricing data
+    when offline); the guarantee is no provider spend, not zero
+    outbound packets.
     """
     from traigent.examples.quickstart.__main__ import main as run_quickstart
 
