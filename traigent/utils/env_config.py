@@ -76,6 +76,13 @@ def _check_mock_llm_prod_guard() -> None:
             "ENVIRONMENT!=production. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
+    # Suppress the user-facing deprecation warning when the env var was
+    # written by the quickstart bootstrap in ``traigent/__init__.py``
+    # (the user IS using the recommended in-code path; the env var is
+    # internal handoff across the import boundary). The prod hard-block
+    # above still applies — bootstrap cannot bypass it.
+    if os.environ.get("_TRAIGENT_QUICKSTART_BOOTSTRAP") == "1":
+        return
     warnings.warn(
         "TRAIGENT_MOCK_LLM is deprecated. Call "
         "traigent.testing.enable_mock_mode_for_quickstart() in code "

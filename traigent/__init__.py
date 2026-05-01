@@ -66,19 +66,26 @@ def _is_quickstart_invocation() -> bool:
     if argv0.endswith(("quickstart/__main__.py", "quickstart\\__main__.py")):
         return True
     # ``traigent quickstart`` — argv[0] is the venv's bin/traigent script
-    # and argv[1] is the subcommand name. Gate on argv[0] mentioning
-    # traigent so an unrelated tool that happens to take "quickstart" as
-    # its first arg doesn't trip the bootstrap.
-    if (
-        len(sys.argv) >= 2
-        and sys.argv[1] == "quickstart"
-        and ("traigent" in os.path.basename(argv0).lower())
-    ):
-        return True
+    # and argv[1] is the subcommand name. Gate on argv[0] basename being
+    # *exactly* the traigent CLI so an unrelated tool whose name happens
+    # to contain "traigent" (e.g. ``my-traigent-util quickstart``) does
+    # NOT silently override the user's OPENAI_API_KEY.
+    if len(sys.argv) >= 2 and sys.argv[1] == "quickstart":
+        basename = os.path.basename(argv0).lower()
+        if basename in {"traigent", "traigent.exe"}:
+            return True
     return False
 
 
 if _is_quickstart_invocation():
+    # Sentinel telling env_config's prod guard that this env-var write is
+    # internal bootstrap, not user code. The prod hard-block still fires
+    # if ENVIRONMENT=production (correct: mock mode is blocked even from
+    # quickstart in prod), but the dev-mode deprecation warning meant for
+    # users who set TRAIGENT_MOCK_LLM themselves is suppressed — they
+    # ARE using the in-code path; the env var is just how we hand state
+    # across the import boundary.
+    os.environ["_TRAIGENT_QUICKSTART_BOOTSTRAP"] = "1"
     os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     # Only force offline if the user hasn't supplied a portal key — they

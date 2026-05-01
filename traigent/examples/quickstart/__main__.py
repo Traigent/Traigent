@@ -78,8 +78,24 @@ def _demo_scorer(
     returns a score derived from the trial's ``model`` and
     ``temperature``. Lower temperature gets a tiny boost so trials
     within the same model rank distinctly.
+
+    If the SDK does not forward the trial config as a ``config=`` kwarg
+    to metric functions (Greptile review #2 — silent zero-score risk),
+    fall back to :func:`traigent.get_config` so the demo doesn't
+    silently degrade into "every trial scores the same".
     """
-    cfg = config or {}
+    cfg = config
+    if not cfg:
+        # Fall back to the active trial's config from the SDK context.
+        # This may itself be empty if called outside an optimization
+        # (e.g. during validation) — in that case we return a neutral
+        # mid-range score rather than silently asserting a winner.
+        try:
+            from traigent.api.functions import get_config
+
+            cfg = get_config() or {}
+        except Exception:
+            cfg = {}
     base = _MODEL_DEMO_SCORE.get(str(cfg.get("model")), 0.5)
     temperature_raw = cfg.get("temperature", 0.5)
     temperature = (

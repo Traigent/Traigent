@@ -73,20 +73,26 @@ def enable_mock_mode_for_quickstart() -> None:
     """
     import os
 
-    env_name = os.environ.get("ENVIRONMENT", "development").strip().lower()
-    if env_name in {"prod", "production"}:
-        raise RuntimeError(
-            "traigent.testing.enable_mock_mode_for_quickstart() was "
-            "called with ENVIRONMENT=production. Mock mode is "
-            "hard-blocked in production to prevent silent substitution "
-            "of real LLM calls. If you want a keyless demo, run with "
-            "ENVIRONMENT!=production."
-        )
-
     global _enabled, _activation_logged
     with _lock:
         if _enabled:
             return
+        # Re-read ENVIRONMENT inside the lock (Greptile review #4 —
+        # close the TOCTOU window where another thread could mutate
+        # ENVIRONMENT to "production" between an unlocked check and
+        # ``_enabled = True``). A correctness re-check elsewhere
+        # (``is_mock_llm()`` recomputes ``is_production()`` live) makes
+        # exploitability low, but tightening the invariant here is
+        # cheap.
+        env_name = os.environ.get("ENVIRONMENT", "development").strip().lower()
+        if env_name in {"prod", "production"}:
+            raise RuntimeError(
+                "traigent.testing.enable_mock_mode_for_quickstart() was "
+                "called with ENVIRONMENT=production. Mock mode is "
+                "hard-blocked in production to prevent silent substitution "
+                "of real LLM calls. If you want a keyless demo, run with "
+                "ENVIRONMENT!=production."
+            )
         _enabled = True
         if not _activation_logged:
             _activation_logged = True
