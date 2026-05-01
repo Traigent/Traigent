@@ -203,13 +203,29 @@ def test_traigent_quickstart_cli_runs_with_no_keys(
     """The ``traigent quickstart`` CLI subcommand must behave exactly
     the same as ``python -m traigent.examples.quickstart`` — same
     hermetic guarantees, same exit, same activation WARN. The CLI is
-    the canonical install instruction on the website."""
-    # Run via `python -c` so PYTHONPATH (worktree-first) takes precedence
-    # over the venv's editable finder for the main checkout. Same
-    # observable behavior as `traigent quickstart` for the user.
+    the canonical install instruction on the website.
+
+    Greptile review of #800 caught that ``python -c "...cli(['quickstart'])"``
+    sets ``sys.argv = ['-c']`` and so does NOT trigger the
+    ``__init__.py`` bootstrap that real ``traigent quickstart``
+    invocations rely on. The real shell command sets
+    ``sys.argv[0]`` to the venv's ``bin/traigent`` script and
+    ``sys.argv[1] = "quickstart"`` — only that combination flips the
+    detector. We mirror that exact ``sys.argv`` shape inside a tiny
+    bootstrap script so the test exercises the same code path the
+    user hits.
+    """
+    bootstrap = (
+        # Set sys.argv BEFORE the first traigent import — that's the
+        # only thing the detector inspects, and it must be in place
+        # when traigent/__init__.py runs.
+        "import sys; sys.argv = ['traigent', 'quickstart']\n"
+        "from traigent.cli.main import cli\n"
+        "cli(['quickstart'])\n"
+    )
     result = _run_in_subprocess(
         venv_python,
-        ["-c", "from traigent.cli.main import cli; cli(['quickstart'])"],
+        ["-c", bootstrap],
         env=hermetic_subprocess_env,
         cwd=tmp_path,
     )

@@ -73,26 +73,27 @@ def test_env_var_works_in_dev_blocks_in_prod(
     surviving guard against the original prod incident."""
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
+    # Greptile review of #800: don't use ``importlib.reload(env_config)``
+    # — reloading has side effects beyond ``os.environ`` (sys.modules
+    # reference churn, .env re-loaded). The prod guard is a callable
+    # function (``_check_mock_llm_prod_guard``) and ``is_mock_llm`` reads
+    # ``is_production()`` live, so we can test both without a reload.
+    from traigent.utils.env_config import _check_mock_llm_prod_guard
+
     monkeypatch.setenv("ENVIRONMENT", "development")
-    # Re-evaluate the cached _is_production_env in env_config — it's set
-    # at import time; re-import to refresh.
-    import importlib
-
-    from traigent.utils import env_config as _ec
-
-    importlib.reload(_ec)
-    assert _ec.is_mock_llm() is True, "dev env must honor env-var fallback"
+    assert is_mock_llm() is True, "dev env must honor env-var fallback"
 
     monkeypatch.setenv("ENVIRONMENT", "production")
-    # Production env-var presence is now hard-blocked at import; the
-    # import itself must raise. This is why the sweeping prod-time
-    # incident is no longer reachable.
+    # Production env-var presence is hard-blocked: invoking the guard
+    # function raises just like it would on a fresh interpreter import.
     with pytest.raises(OSError, match="production"):
-        importlib.reload(_ec)
+        _check_mock_llm_prod_guard()
+    # And ``is_mock_llm`` itself returns False under prod regardless of
+    # env-var presence (the prod-first ordering closes the bypass).
+    assert is_mock_llm() is False, "prod must block env-var fallback"
 
     # Restore for downstream tests.
     monkeypatch.setenv("ENVIRONMENT", "development")
-    importlib.reload(_ec)
 
 
 def test_in_code_api_enables_mock_for_every_interceptor() -> None:
