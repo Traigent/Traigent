@@ -38,8 +38,59 @@ Example:
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 import warnings
+
+
+# ---------------------------------------------------------------------------
+# Quickstart bootstrap (must run BEFORE the heavy package imports below).
+# ---------------------------------------------------------------------------
+#
+# ``traigent quickstart`` and ``python -m traigent.examples.quickstart`` both
+# trigger ``traigent/__init__.py`` first (Python imports the parent package
+# before resolving any submodule), which pulls in optional dependencies
+# (LiteLLM model discovery, langfuse, etc.) that may attempt network at
+# import time. The bundled quickstart is the load-bearing demo on the
+# website funnel and MUST work with no API keys, no network, and no
+# surprises — so we detect quickstart invocations by inspecting ``sys.argv``
+# at the top of this module and seed the legacy env-var paths the SDK
+# already knows about. For non-quickstart invocations this is a no-op,
+# preserving the SDK's normal behavior for production code.
+def _is_quickstart_invocation() -> bool:
+    if not sys.argv:
+        return False
+    argv0 = sys.argv[0] or ""
+    # ``python -m traigent.examples.quickstart`` — argv[0] is the path
+    # to the quickstart's __main__.py
+    if argv0.endswith(("quickstart/__main__.py", "quickstart\\__main__.py")):
+        return True
+    # ``traigent quickstart`` — argv[0] is the venv's bin/traigent script
+    # and argv[1] is the subcommand name. Gate on argv[0] mentioning
+    # traigent so an unrelated tool that happens to take "quickstart" as
+    # its first arg doesn't trip the bootstrap.
+    if (
+        len(sys.argv) >= 2
+        and sys.argv[1] == "quickstart"
+        and ("traigent" in os.path.basename(argv0).lower())
+    ):
+        return True
+    return False
+
+
+if _is_quickstart_invocation():
+    os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    # Only force offline if the user hasn't supplied a portal key — they
+    # may want results synced even while LLM calls stay mocked.
+    if not os.environ.get("TRAIGENT_API_KEY"):
+        os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+    # OVERRIDE OPENAI_API_KEY (not setdefault): if a real key is sitting
+    # in the parent shell, a mock-regression in the demo could otherwise
+    # spend it. The placeholder cannot succeed against a real OpenAI
+    # endpoint, which is the whole point.
+    os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"  # pragma: allowlist secret
+
 
 # Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
 warnings.filterwarnings(
@@ -131,6 +182,7 @@ from traigent.api.validation_protocol import (
 from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
+from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
 
 # Thread context helpers
 from traigent.config.context import copy_context_to_thread, get_trial_context
@@ -165,6 +217,7 @@ from traigent.evaluation import (
     ScoreRecordListResponse,
     ScoreSource,
 )
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.observability import (
     CorrelationIds,
     ObservabilityClient,
@@ -192,8 +245,6 @@ from traigent.observability import (
     observe,
     set_default_observability_client,
 )
-from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
-from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.projects import ProjectManagementClient, ProjectManagementConfig
 from traigent.prompts import (
     ChatPromptMessage,

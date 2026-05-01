@@ -375,6 +375,18 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
 
 
 @cli.command()
+def quickstart() -> None:
+    """Run the bundled mock-mode demo. Zero API keys, zero network.
+
+    Equivalent to ``python -m traigent.examples.quickstart`` — this is
+    the canonical "first run" surface advertised on the website.
+    """
+    from traigent.examples.quickstart.__main__ import main as run_quickstart
+
+    run_quickstart()
+
+
+@cli.command()
 def info() -> None:
     """Show Traigent SDK version and system information."""
     version_info = get_version_info()

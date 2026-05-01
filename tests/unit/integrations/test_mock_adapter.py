@@ -1,19 +1,40 @@
 """Tests for mock adapter utilities.
 
-Note: ``MockAdapter`` previously consulted ``TRAIGENT_MOCK_LLM`` and a set
-of provider-specific ``*_MOCK`` environment variables to decide whether
-to swap real LLM calls for canned mock text. That env-toggle was removed
-because a stray env var in production caused real calls to be silently
-replaced with mock data. ``is_mock_enabled`` now always returns False;
-tests that need mock responses must patch the LLM client directly or
-call ``MockAdapter.get_mock_response`` from inside an explicit
-``unittest.mock.patch``.
+Note: ``MockAdapter`` previously consulted ``TRAIGENT_MOCK_LLM`` and a
+set of provider-specific ``*_MOCK`` env vars to decide whether to swap
+real LLM calls for canned mock text — and a stray env var in production
+caused real calls to be silently replaced with mock data. The current
+contract:
+
+* The recommended path is the in-code API
+  :func:`traigent.testing.enable_mock_mode_for_quickstart`, which is
+  the only thing tested here as a ground truth.
+* The legacy ``TRAIGENT_MOCK_LLM=true`` env var is honored as a
+  backward-compat path **only outside production**. ``is_mock_enabled``
+  delegates to :func:`traigent.utils.env_config.is_mock_llm`, which
+  hard-blocks the env-var path when ``ENVIRONMENT=production``. Those
+  guarantees are exercised in
+  ``tests/unit/integrations/test_mock_adapter_safety.py``.
+* Provider-specific ``*_MOCK`` env vars (e.g. ``OPENAI_MOCK=true``)
+  are still completely ignored — those were the worst offenders in the
+  original incident.
 """
 
 import os
+from collections.abc import Iterator
 from unittest.mock import patch
 
+import pytest
+
+from traigent import testing as traigent_testing
 from traigent.integrations.utils.mock_adapter import MockAdapter, MockResponse
+
+
+@pytest.fixture(autouse=True)
+def _reset_mock_mode_flag() -> Iterator[None]:
+    traigent_testing._reset_for_tests()
+    yield
+    traigent_testing._reset_for_tests()
 
 
 class TestMockResponse:
@@ -47,36 +68,64 @@ class TestMockResponse:
 
 
 class TestMockAdapterIsMockEnabled:
-    """``is_mock_enabled`` always returns False (env-toggle removed)."""
+    """``is_mock_enabled`` honors the in-code API and the env-var fallback
+    (in non-production); provider-specific ``*_MOCK`` vars are ignored."""
 
-    def test_global_mock_env_is_ignored(self) -> None:
-        """TRAIGENT_MOCK_LLM=true must NOT enable mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is False
-            assert MockAdapter.is_mock_enabled("anthropic") is False
-            assert MockAdapter.is_mock_enabled("unknown") is False
+    def test_in_code_api_enables_mock(self) -> None:
+        """The in-code API is the canonical path: it must flip every
+        provider's ``is_mock_enabled`` to True."""
+        with patch.dict(os.environ, {}, clear=True):
+            traigent_testing.enable_mock_mode_for_quickstart()
+            assert MockAdapter.is_mock_enabled("openai") is True
+            assert MockAdapter.is_mock_enabled("anthropic") is True
+            assert MockAdapter.is_mock_enabled("unknown") is True
 
-    def test_global_mock_env_1_is_ignored(self) -> None:
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "1"}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is False
+    def test_global_mock_env_enables_in_dev(self) -> None:
+        """``TRAIGENT_MOCK_LLM=true`` is the legacy backward-compat path
+        and works in dev/test environments. The hard block in production
+        is exercised in ``test_mock_adapter_safety.py``."""
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "true", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
+            assert MockAdapter.is_mock_enabled("openai") is True
+            assert MockAdapter.is_mock_enabled("anthropic") is True
+            assert MockAdapter.is_mock_enabled("unknown") is True
 
-    def test_global_mock_env_yes_is_ignored(self) -> None:
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "yes"}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is False
+    def test_global_mock_env_1_enables_in_dev(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "1", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
+            assert MockAdapter.is_mock_enabled("openai") is True
+
+    def test_global_mock_env_yes_enables_in_dev(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "yes", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
+            assert MockAdapter.is_mock_enabled("openai") is True
 
     def test_provider_specific_env_is_ignored(self) -> None:
-        """Provider-specific ``*_MOCK`` env vars must NOT enable mock mode."""
+        """Provider-specific ``*_MOCK`` env vars must NOT enable mock
+        mode — those were the worst offenders in the original incident
+        (one var per provider, easy to miss)."""
         with patch.dict(os.environ, {"OPENAI_MOCK": "true"}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is False
             assert MockAdapter.is_mock_enabled("anthropic") is False
 
     def test_no_env_returns_false(self) -> None:
-        """With no env vars, is_mock_enabled returns False."""
+        """With no env vars and no in-code activation, mock is off."""
         with patch.dict(os.environ, {}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is False
             assert MockAdapter.is_mock_enabled("anthropic") is False
 
-    def test_case_insensitive_provider_still_false(self) -> None:
+    def test_case_insensitive_provider_still_irrelevant_for_provider_envs(
+        self,
+    ) -> None:
         with patch.dict(os.environ, {"OPENAI_MOCK": "true"}, clear=True):
             assert MockAdapter.is_mock_enabled("OpenAI") is False
             assert MockAdapter.is_mock_enabled("OPENAI") is False

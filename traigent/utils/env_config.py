@@ -23,10 +23,80 @@ if os.environ.get("TRAIGENT_MOCK_MODE"):
     raise OSError(
         "TRAIGENT_MOCK_MODE is deprecated and no longer supported.\n"
         "Please migrate to:\n"
-        "  - TRAIGENT_MOCK_LLM=true (to mock LLM API calls)\n"
-        "  - TRAIGENT_OFFLINE_MODE=true (to skip backend communication)\n"
-        "For local testing, set both: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true"
+        "  - traigent.testing.enable_mock_mode_for_quickstart() (in code) "
+        "to mock LLM API calls\n"
+        "  - TRAIGENT_OFFLINE_MODE=true (to skip backend communication)"
     )
+
+
+def _is_production_env_name(name: str | None) -> bool:
+    """Internal helper used by the prod-guard before :func:`is_production`
+    is defined. Mirrors :func:`is_production`'s semantics so the guard
+    and the runtime check stay in lockstep."""
+    if name is None:
+        return False
+    return name.strip().lower() in {"prod", "production"}
+
+
+def _is_truthy_env_value(value: str | None) -> bool:
+    """Internal version of :func:`is_truthy` (defined later in the file).
+
+    Defined here so the prod-guard can run before :func:`is_truthy` is
+    in scope. Same accepted truthy strings.
+    """
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _check_mock_llm_prod_guard() -> None:
+    """Reject ``TRAIGENT_MOCK_LLM=true`` in production; warn elsewhere.
+
+    Reads ``os.environ`` live so the result reflects the current process
+    state — important because this is called both before AND after
+    :func:`load_dotenv`, and a ``.env`` file may add the variables on
+    the second pass. Tightness is intentional:
+
+    * ``TRAIGENT_MOCK_LLM=false`` (or unset) — no-op, no warn.
+    * ``TRAIGENT_MOCK_LLM=true`` and ``ENVIRONMENT=production`` —
+      ``OSError`` (hard-block; the surviving guard against the original
+      prod incident).
+    * ``TRAIGENT_MOCK_LLM=true`` outside production — emit a single
+      ``DeprecationWarning`` so the migration path is visible in
+      pytest's warnings summary and interactive Python sessions.
+    """
+    if not _is_truthy_env_value(os.environ.get("TRAIGENT_MOCK_LLM")):
+        return
+    if _is_production_env_name(os.environ.get("ENVIRONMENT")):
+        raise OSError(
+            "TRAIGENT_MOCK_LLM=true is set in a production environment "
+            "(ENVIRONMENT=production). Mock mode is hard-blocked in "
+            "production to prevent silent substitution of real LLM "
+            "calls. Either unset TRAIGENT_MOCK_LLM, or run with "
+            "ENVIRONMENT!=production. For programmatic mock activation "
+            "use traigent.testing.enable_mock_mode_for_quickstart()."
+        )
+    warnings.warn(
+        "TRAIGENT_MOCK_LLM is deprecated. Call "
+        "traigent.testing.enable_mock_mode_for_quickstart() in code "
+        "instead. The env var still works in non-production environments "
+        "for backward compatibility but will be removed in a future "
+        "release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+
+# ============================================================================
+# DEPRECATION: TRAIGENT_MOCK_LLM still works in dev/test, blocked in prod
+# ============================================================================
+# Run the guard before dotenv to catch the explicit-env-var case fast,
+# THEN run it again after dotenv so a `.env` setting `ENVIRONMENT=production
+# TRAIGENT_MOCK_LLM=true` is also caught (even though those vars only land
+# in os.environ after load_dotenv). is_mock_llm() recomputes the prod
+# check live as a defence in depth — no module-level cache is read after
+# import, so late env mutation cannot bypass the guard.
+_check_mock_llm_prod_guard()
 
 # Load environment variables from .env file if it exists
 env_file = Path(__file__).parent.parent.parent / ".env"
@@ -37,6 +107,7 @@ if env_file.exists() and os.environ.get("TRAIGENT_SKIP_DOTENV", "").lower() not 
     "on",
 ):
     load_dotenv(env_file)
+    _check_mock_llm_prod_guard()
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
@@ -218,19 +289,42 @@ def is_truthy(value: str | None) -> bool:
 def is_mock_llm() -> bool:
     """Check if LLM API calls should be mocked with simulated responses.
 
-    When TRAIGENT_MOCK_LLM=true, LLM provider calls (OpenAI, Anthropic, etc.)
-    are intercepted and return simulated responses instead of making real API calls.
+    Mock mode is on when EITHER:
 
-    This is separate from backend communication - use is_backend_offline() to
-    control whether Traigent backend calls are skipped.
+    * the in-code flag set via
+      :func:`traigent.testing.enable_mock_mode_for_quickstart` is true
+      (the recommended path), OR
+    * ``TRAIGENT_MOCK_LLM=true`` is set AND ``ENVIRONMENT`` is not
+      ``production`` (legacy path kept for backward compatibility with
+      existing test fixtures and examples; hard-blocked in prod by the
+      import-time guard at the top of this module).
+
+    This is separate from backend communication - use
+    :func:`is_backend_offline` to control whether Traigent backend calls
+    are skipped.
 
     Returns:
         True if LLM calls should be mocked, False for real LLM API calls.
 
     See also:
-        - is_backend_offline(): Check if Traigent backend calls should be skipped
+        - :func:`is_backend_offline`: Check if Traigent backend calls should be skipped
     """
-    return get_env_var("TRAIGENT_MOCK_LLM", "false").lower() == "true"
+    # Production hard-block runs FIRST — even if the in-code flag was
+    # flipped on in a previous shell-script step or a misconfigured
+    # deployment, ``is_mock_llm()`` must NEVER report True in production.
+    # ``is_production()`` is recomputed live from ``os.environ`` so late
+    # mutation cannot bypass the guard.
+    if is_production():
+        return False
+    from traigent.testing import is_mock_mode_enabled
+
+    if is_mock_mode_enabled():
+        return True
+    # Match the broader truthy set used by the import-time prod guard
+    # (1/true/yes/on) so a value like ``TRAIGENT_MOCK_LLM=1`` doesn't get
+    # blocked at import but then quietly return False here — the two
+    # paths must agree on what counts as "set".
+    return is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
 
 def is_strict_cost_accounting() -> bool:
@@ -288,7 +382,8 @@ def skip_provider_validation() -> bool:
 
     Provider validation is skipped when:
     - TRAIGENT_SKIP_PROVIDER_VALIDATION=true is set
-    - TRAIGENT_MOCK_LLM=true is set (no real API calls)
+    - Mock mode is on via :func:`traigent.testing.enable_mock_mode_for_quickstart`
+      (no real API calls)
 
     This allows users to bypass validation for:
     - Custom/internal models not recognized by Traigent
@@ -299,8 +394,8 @@ def skip_provider_validation() -> bool:
         True if provider validation should be skipped, False otherwise.
 
     See also:
-        - is_mock_llm(): Check if LLM API calls should be mocked
-        - validate_providers param in @traigent.optimize decorator
+        - :func:`is_mock_llm`: Check if LLM API calls should be mocked
+        - ``validate_providers`` param in ``@traigent.optimize`` decorator
     """
     # Skip if mock mode is enabled (no real API calls anyway)
     if is_mock_llm():

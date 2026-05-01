@@ -1,20 +1,27 @@
-"""Verify TRAIGENT_MOCK_LLM is no longer honored anywhere in the SDK.
+"""Verify dangerous env-toggles are not honored.
 
-Sprint 2 cleanup (S2-B) removed the ``TRAIGENT_MOCK_LLM`` env-toggle from
-three high-severity sites that previously shipped to customers:
+Sprint 2 cleanup (S2-B) removed the ``TRAIGENT_MOCK_LLM`` env-toggle
+from three high-severity sites that previously shipped to customers:
 
 * ``traigent/integrations/utils/mock_adapter.py`` — ``with_mock_support``
-  decorator + ``MockAdapter.is_mock_enabled`` (env-toggle replaced real
-  LLM calls with canned mock text).
+  decorator was deleted entirely. ``MockAdapter.is_mock_enabled`` now
+  consults the in-code flag set by
+  :func:`traigent.testing.enable_mock_mode_for_quickstart`. The legacy
+  ``TRAIGENT_MOCK_LLM=true`` env var is honored only outside production
+  (and is hard-blocked when ``ENVIRONMENT=production``); see
+  ``test_mock_adapter_safety.py`` for those guarantees.
 * ``traigent/security/encryption.py`` — encrypt() / decrypt() fallback
   branches (env-toggle produced ``b"mock_" + plaintext`` "ciphertext"
-  and stripped the prefix on decrypt).
-* ``traigent/evaluators/local.py`` — ``_compute_mock_accuracy`` (env-toggle
-  fabricated accuracy via random.uniform() + string-length heuristics).
+  and stripped the prefix on decrypt). These were deleted with no
+  fallback at all.
+* ``traigent/evaluators/local.py`` — ``_compute_mock_accuracy`` (env
+  toggle fabricated accuracy via random.uniform() + string-length
+  heuristics). Deleted with no fallback.
 
-These tests pin the new behaviour: setting ``TRAIGENT_MOCK_LLM=true`` and
-calling the affected methods must hit real code paths and either succeed
-on real input or fail with a real error — never return mock data.
+These tests pin the surviving guarantees: provider-specific
+``*_MOCK`` env vars are completely ignored everywhere, the
+``with_mock_support`` decorator is gone, and the encryption /
+evaluation paths fail closed regardless of any mock-style env var.
 """
 
 from __future__ import annotations
@@ -28,19 +35,12 @@ from traigent.integrations.utils.mock_adapter import MockAdapter
 from traigent.security.encryption import EncryptionManager, KeyManager
 
 
-class TestMockAdapterIgnoresEnv:
-    """``MockAdapter.is_mock_enabled`` must not consult any env variable."""
-
-    @pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", "True"])
-    def test_traigent_mock_llm_does_not_enable_mock(self, value: str) -> None:
-        """No truthy form of TRAIGENT_MOCK_LLM should enable mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": value}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is False
-            assert MockAdapter.is_mock_enabled("anthropic") is False
-            assert MockAdapter.is_mock_enabled("gemini") is False
-            assert MockAdapter.is_mock_enabled("cohere") is False
-            assert MockAdapter.is_mock_enabled("bedrock") is False
-            assert MockAdapter.is_mock_enabled("anything") is False
+class TestProviderSpecificMockEnvsAreIgnored:
+    """Provider-specific ``*_MOCK`` env vars (e.g. ``OPENAI_MOCK=true``)
+    were the worst offenders in the original prod incident — one var
+    per provider, easy to miss in a deployment audit. Those are
+    completely ignored regardless of ``ENVIRONMENT`` or any other
+    settings."""
 
     @pytest.mark.parametrize(
         "var",
@@ -55,7 +55,7 @@ class TestMockAdapterIgnoresEnv:
         ],
     )
     def test_provider_specific_mock_envs_do_not_enable_mock(self, var: str) -> None:
-        """Provider-specific *_MOCK env vars must not enable mock mode either."""
+        """Provider-specific *_MOCK env vars must not enable mock mode."""
         with patch.dict(os.environ, {var: "true"}, clear=True):
             # Strip the trailing _MOCK to derive the provider name.
             provider = var.removesuffix("_MOCK").lower()
