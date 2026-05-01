@@ -1,14 +1,40 @@
-"""Tests for mock adapter utilities."""
+"""Tests for mock adapter utilities.
+
+Note: ``MockAdapter`` previously consulted ``TRAIGENT_MOCK_LLM`` and a
+set of provider-specific ``*_MOCK`` env vars to decide whether to swap
+real LLM calls for canned mock text — and a stray env var in production
+caused real calls to be silently replaced with mock data. The current
+contract:
+
+* The recommended path is the in-code API
+  :func:`traigent.testing.enable_mock_mode_for_quickstart`, which is
+  the only thing tested here as a ground truth.
+* The legacy ``TRAIGENT_MOCK_LLM=true`` env var is honored as a
+  backward-compat path **only outside production**. ``is_mock_enabled``
+  delegates to :func:`traigent.utils.env_config.is_mock_llm`, which
+  hard-blocks the env-var path when ``ENVIRONMENT=production``. Those
+  guarantees are exercised in
+  ``tests/unit/integrations/test_mock_adapter_safety.py``.
+* Provider-specific ``*_MOCK`` env vars (e.g. ``OPENAI_MOCK=true``)
+  are still completely ignored — those were the worst offenders in the
+  original incident.
+"""
 
 import os
+from collections.abc import Iterator
 from unittest.mock import patch
 
-from traigent.integrations.utils.mock_adapter import (
-    MOCK_ENV_VARS,
-    MockAdapter,
-    MockResponse,
-    with_mock_support,
-)
+import pytest
+
+from traigent import testing as traigent_testing
+from traigent.integrations.utils.mock_adapter import MockAdapter, MockResponse
+
+
+@pytest.fixture(autouse=True)
+def _reset_mock_mode_flag() -> Iterator[None]:
+    traigent_testing._reset_for_tests()
+    yield
+    traigent_testing._reset_for_tests()
 
 
 class TestMockResponse:
@@ -41,77 +67,72 @@ class TestMockResponse:
         assert response.total_tokens == 300
 
 
-class TestMockEnvVars:
-    """Tests for MOCK_ENV_VARS configuration."""
-
-    def test_all_providers_have_env_vars(self) -> None:
-        """Test all expected providers have env var mappings."""
-        expected_providers = [
-            "openai",
-            "azure_openai",
-            "anthropic",
-            "gemini",
-            "cohere",
-            "huggingface",
-            "bedrock",
-            "traigent",
-        ]
-        for provider in expected_providers:
-            assert provider in MOCK_ENV_VARS
-
-
 class TestMockAdapterIsMockEnabled:
-    """Tests for MockAdapter.is_mock_enabled method."""
+    """``is_mock_enabled`` honors the in-code API and the env-var fallback
+    (in non-production); provider-specific ``*_MOCK`` vars are ignored."""
 
-    def test_global_mock_mode_true(self) -> None:
-        """Test global TRAIGENT_MOCK_LLM=true enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
+    def test_in_code_api_enables_mock(self) -> None:
+        """The in-code API is the canonical path: it must flip every
+        provider's ``is_mock_enabled`` to True."""
+        with patch.dict(os.environ, {}, clear=True):
+            traigent_testing.enable_mock_mode_for_quickstart()
             assert MockAdapter.is_mock_enabled("openai") is True
             assert MockAdapter.is_mock_enabled("anthropic") is True
             assert MockAdapter.is_mock_enabled("unknown") is True
 
-    def test_global_mock_mode_1(self) -> None:
-        """Test global TRAIGENT_MOCK_LLM=1 enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "1"}, clear=True):
+    def test_global_mock_env_enables_in_dev(self) -> None:
+        """``TRAIGENT_MOCK_LLM=true`` is the legacy backward-compat path
+        and works in dev/test environments. The hard block in production
+        is exercised in ``test_mock_adapter_safety.py``."""
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "true", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
+            assert MockAdapter.is_mock_enabled("openai") is True
+            assert MockAdapter.is_mock_enabled("anthropic") is True
+            assert MockAdapter.is_mock_enabled("unknown") is True
+
+    def test_global_mock_env_1_enables_in_dev(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "1", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
             assert MockAdapter.is_mock_enabled("openai") is True
 
-    def test_global_mock_mode_yes(self) -> None:
-        """Test global TRAIGENT_MOCK_LLM=yes enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "yes"}, clear=True):
+    def test_global_mock_env_yes_enables_in_dev(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "yes", "ENVIRONMENT": "development"},
+            clear=True,
+        ):
             assert MockAdapter.is_mock_enabled("openai") is True
 
-    def test_provider_specific_mock(self) -> None:
-        """Test provider-specific mock env var."""
+    def test_provider_specific_env_is_ignored(self) -> None:
+        """Provider-specific ``*_MOCK`` env vars must NOT enable mock
+        mode — those were the worst offenders in the original incident
+        (one var per provider, easy to miss)."""
         with patch.dict(os.environ, {"OPENAI_MOCK": "true"}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is True
+            assert MockAdapter.is_mock_enabled("openai") is False
             assert MockAdapter.is_mock_enabled("anthropic") is False
 
-    def test_provider_specific_azure(self) -> None:
-        """Test Azure-specific mock env var."""
-        with patch.dict(os.environ, {"AZURE_OPENAI_MOCK": "true"}, clear=True):
-            assert MockAdapter.is_mock_enabled("azure_openai") is True
-            assert MockAdapter.is_mock_enabled("openai") is False
-
-    def test_no_mock_enabled(self) -> None:
-        """Test mock is disabled when no env vars set."""
+    def test_no_env_returns_false(self) -> None:
+        """With no env vars and no in-code activation, mock is off."""
         with patch.dict(os.environ, {}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is False
             assert MockAdapter.is_mock_enabled("anthropic") is False
 
-    def test_mock_disabled_with_false(self) -> None:
-        """Test mock is disabled with false value."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=True):
-            assert MockAdapter.is_mock_enabled("openai") is False
-
-    def test_case_insensitive_provider(self) -> None:
-        """Test provider name is case insensitive."""
+    def test_case_insensitive_provider_still_irrelevant_for_provider_envs(
+        self,
+    ) -> None:
         with patch.dict(os.environ, {"OPENAI_MOCK": "true"}, clear=True):
-            assert MockAdapter.is_mock_enabled("OpenAI") is True
-            assert MockAdapter.is_mock_enabled("OPENAI") is True
+            assert MockAdapter.is_mock_enabled("OpenAI") is False
+            assert MockAdapter.is_mock_enabled("OPENAI") is False
 
 
 class TestMockAdapterGetMockResponse:
-    """Tests for MockAdapter.get_mock_response method."""
+    """``get_mock_response`` works for tests that invoke it explicitly."""
 
     def test_openai_mock_response(self) -> None:
         """Test OpenAI mock response structure."""
@@ -252,60 +273,3 @@ class TestBuildMockMethods:
         assert result["usage"]["prompt_tokens"] == data.prompt_tokens
         assert result["usage"]["completion_tokens"] == data.completion_tokens
         assert result["usage"]["total_tokens"] == data.total_tokens
-
-
-class TestWithMockSupportDecorator:
-    """Tests for with_mock_support decorator."""
-
-    def test_decorator_returns_mock_when_enabled(self) -> None:
-        """Test decorator returns mock response when enabled."""
-
-        @with_mock_support("openai")
-        def real_function(**kwargs):
-            return "real response"
-
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
-            result = real_function(model="gpt-4")
-
-        assert isinstance(result, dict)
-        assert "choices" in result
-
-    def test_decorator_calls_real_function_when_disabled(self) -> None:
-        """Test decorator calls real function when mock disabled."""
-
-        @with_mock_support("openai")
-        def real_function(**kwargs):
-            return "real response"
-
-        with patch.dict(os.environ, {}, clear=True):
-            result = real_function()
-
-        assert result == "real response"
-
-    def test_decorator_preserves_function_args(self) -> None:
-        """Test decorator preserves function arguments."""
-        calls = []
-
-        @with_mock_support("openai")
-        def capture_function(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "real response"
-
-        with patch.dict(os.environ, {}, clear=True):
-            capture_function("arg1", key="value")
-
-        assert len(calls) == 1
-        assert calls[0] == (("arg1",), {"key": "value"})
-
-    def test_decorator_uses_provider_specific_env(self) -> None:
-        """Test decorator respects provider-specific env var."""
-
-        @with_mock_support("anthropic")
-        def real_function():
-            return "real response"
-
-        # Only OPENAI_MOCK is set, not ANTHROPIC_MOCK
-        with patch.dict(os.environ, {"OPENAI_MOCK": "true"}, clear=True):
-            result = real_function()
-
-        assert result == "real response"
