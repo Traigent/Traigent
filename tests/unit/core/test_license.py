@@ -578,7 +578,9 @@ class TestValidateOfflineLicense:
             assert LicenseFeature.PARALLEL_EXECUTION in result.features
             assert LicenseFeature.MULTI_OBJECTIVE in result.features
             assert result.organization == "TestCorp"
-            assert result.validation_source == "offline"
+            # Unsigned tokens are now tagged as legacy until a public key
+            # is configured (see C3 phased license signature rollout).
+            assert result.validation_source == "offline_unsigned_legacy"
         finally:
             os.unlink(temp_path)
 
@@ -896,7 +898,8 @@ class TestValidateAsync:
             )
             result = await validator.validate_async()
             assert result.tier == LicenseTier.PRO
-            assert result.validation_source == "offline"
+            # See C3 phased rollout: unsigned tokens use the legacy tag.
+            assert result.validation_source == "offline_unsigned_legacy"
         finally:
             os.unlink(temp_path)
 
