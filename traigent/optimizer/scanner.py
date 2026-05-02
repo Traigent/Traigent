@@ -195,6 +195,7 @@ def _build_candidate(
     tvar_signals = [
         _candidate_to_tvar_signal(candidate, relative_file, lines, line_offset)
         for candidate in detection.candidates
+        if _is_actionable_tvar_candidate(candidate)
     ]
 
     if not signals and not tvar_signals:
@@ -396,6 +397,11 @@ def _candidate_to_tvar_signal(
             "category": _evidence_category(candidate, _snippet(lines, absolute_line)),
         },
     }
+
+
+def _is_actionable_tvar_candidate(candidate: TunedVariableCandidate) -> bool:
+    """Keep only candidates that can become a concrete optimizer search knob."""
+    return candidate.current_value is not None or candidate.suggested_range is not None
 
 
 def _candidate_to_tvar(candidate: TunedVariableCandidate) -> dict[str, Any]:

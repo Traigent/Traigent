@@ -77,6 +77,13 @@ def _is_quickstart_invocation() -> bool:
     return False
 
 
+def _is_optimizer_cli_invocation() -> bool:
+    if len(sys.argv) < 2 or sys.argv[1] != "optimizer":
+        return False
+    basename = os.path.basename(sys.argv[0] or "").lower()
+    return basename in {"traigent", "traigent.exe"}
+
+
 if _is_quickstart_invocation():
     # Sentinel telling env_config's prod guard that this env-var write is
     # internal bootstrap, not user code. The prod hard-block still fires
@@ -97,6 +104,11 @@ if _is_quickstart_invocation():
     # spend it. The placeholder cannot succeed against a real OpenAI
     # endpoint, which is the whole point.
     os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"  # pragma: allowlist secret
+
+if _is_optimizer_cli_invocation():
+    # Optimizer scan/decorate are static adoption helpers. They should not try
+    # to refresh LiteLLM's remote model-cost map while merely parsing code.
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
 # Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)

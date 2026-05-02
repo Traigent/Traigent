@@ -44,10 +44,9 @@ def test_scan_path_emits_schema_shaped_report(tmp_path: Path) -> None:
     assert len(candidate["fingerprint"]["source_span_hash"]) == 64
     assert candidate["function"]["name"] == "answer_question"
     assert {signal["kind"] for signal in candidate["signals"]} == {"llm_call"}
-    assert {signal["tvar"]["name"] for signal in candidate["tvar_signals"]} >= {
-        "model",
-        "temperature",
-    }
+    tvar_names = {signal["tvar"]["name"] for signal in candidate["tvar_signals"]}
+    assert tvar_names >= {"model", "temperature"}
+    assert "question" not in tvar_names
 
     objectives = {objective["name"]: objective for objective in candidate["objective_candidates"]}
     assert objectives["accuracy"]["requires_confirmation"] is True
