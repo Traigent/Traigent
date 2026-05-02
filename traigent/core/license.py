@@ -11,6 +11,24 @@ Enterprise Configuration:
     TRAIGENT_LICENSE_FILE - Path to offline license file (signed JWT)
     TRAIGENT_LICENSE_CACHE_TTL - Cache TTL in seconds (default: 3600)
     TRAIGENT_LICENSE_GRACE_PERIOD - Grace period in seconds (default: 86400)
+
+Offline-license signature configuration (phased rollout):
+    TRAIGENT_LICENSE_PUBLIC_KEY - PEM-encoded RSA/EC public key inline.
+    TRAIGENT_LICENSE_PUBLIC_KEY_FILE - Path to a PEM public-key file.
+    TRAIGENT_REQUIRE_SIGNED_LICENSE - "true" rejects unsigned tokens
+        even when no public key is configured. Use this in strict /
+        enterprise / air-gapped deployments that cannot accept the
+        legacy unsigned format under any condition.
+
+Behavior:
+    - If a public key is configured (env or file) the offline token's
+      signature is verified and rejected if invalid.
+    - If TRAIGENT_REQUIRE_SIGNED_LICENSE is truthy, unsigned tokens are
+      rejected regardless.
+    - Otherwise the legacy unsigned format is still accepted with a
+      loud deprecation warning, and the resulting LicenseInfo is tagged
+      ``validation_source="offline_unsigned_legacy"`` so callers and
+      observability can distinguish trusted from legacy validations.
 """
 
 # Traceability: CONC-Layer-Core FUNC-LICENSING REQ-LICENSE-001
@@ -27,6 +45,7 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -215,11 +234,91 @@ class LicenseValidator:
             logger.warning(f"Failed to validate offline license: {e}")
             return None
 
-    def _decode_license_token(self, token: str) -> LicenseInfo | None:
-        """Decode and validate a license token (simplified JWT-like format).
+    # Algorithms accepted for offline-license signature verification.
+    # The "none" algorithm is explicitly excluded to defeat the classic
+    # JWT alg=none downgrade attack.
+    _SUPPORTED_LICENSE_ALGORITHMS = ("RS256", "ES256")
 
-        Note: In production, this would use proper JWT validation with
-        cryptographic signatures. This is a simplified implementation.
+    @staticmethod
+    def _truthy(value: str | None) -> bool:
+        return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _resolve_license_public_key(cls) -> tuple[Any, bool]:
+        """Resolve the offline-license public key.
+
+        Returns ``(public_key, was_configured)``. Distinguishing
+        "configured but failed to load" from "not configured at all"
+        is critical: the fail-open from a broken-key configuration is
+        exactly the bypass an attacker would aim for if they could
+        influence the env var.
+
+        - was_configured=False, public_key=None  -> nothing was set
+        - was_configured=True,  public_key=<key> -> ready to verify
+        - was_configured=True,  public_key=None  -> configured but
+          unreadable / invalid / empty; the caller MUST fail closed.
+
+        "Configured" is determined by env var *presence* (``in os.environ``),
+        not truthiness. ``TRAIGENT_LICENSE_PUBLIC_KEY=""`` is treated as a
+        broken configuration, not absence — otherwise an attacker who could
+        clear the env var would silently re-enable the legacy bypass.
+        """
+        inline_configured = "TRAIGENT_LICENSE_PUBLIC_KEY" in os.environ
+        file_configured = "TRAIGENT_LICENSE_PUBLIC_KEY_FILE" in os.environ
+
+        if not inline_configured and not file_configured:
+            return None, False
+
+        pem_inline = os.environ.get("TRAIGENT_LICENSE_PUBLIC_KEY", "")
+        pem_path = os.environ.get("TRAIGENT_LICENSE_PUBLIC_KEY_FILE", "")
+
+        pem_bytes: bytes | None = None
+        if pem_inline:
+            pem_bytes = pem_inline.encode("utf-8")
+        elif pem_path:
+            try:
+                pem_bytes = Path(pem_path).expanduser().read_bytes()
+            except OSError as exc:
+                logger.error(
+                    "Failed to read TRAIGENT_LICENSE_PUBLIC_KEY_FILE=%s: %s",
+                    pem_path,
+                    exc,
+                )
+                return None, True  # configured but unreadable -> fail closed
+
+        if not pem_bytes:
+            # Env var present but empty (or whitespace-only inline) is
+            # broken configuration, not absence.
+            logger.error(
+                "License public key env var is set but empty; refusing to "
+                "verify offline licenses until a non-empty key is provided."
+            )
+            return None, True
+
+        try:
+            from cryptography.hazmat.primitives import serialization
+
+            return serialization.load_pem_public_key(pem_bytes), True
+        except Exception as exc:
+            logger.error("Configured license public key is invalid: %s", exc)
+            return None, True  # configured but invalid -> fail closed
+
+    def _decode_license_token(self, token: str) -> LicenseInfo | None:
+        """Decode and validate an offline license token.
+
+        Phased rollout: a public key (inline or file) verifies the
+        signature when configured; ``TRAIGENT_REQUIRE_SIGNED_LICENSE``
+        forces strict mode even when no key is configured. Otherwise the
+        legacy unsigned format is still accepted with a loud deprecation
+        warning and tagged ``validation_source="offline_unsigned_legacy"``
+        so air-gapped deployments are not broken in this release while
+        signed-only workflows can be enforced today.
+
+        If a public key is configured but cannot be loaded (unreadable
+        file, malformed PEM, empty inline value), the validator MUST
+        fail closed: silently treating a broken key configuration as
+        "no key configured" would let an attacker who can influence the
+        env var trigger the legacy bypass.
 
         Args:
             token: The license token to decode.
@@ -227,45 +326,120 @@ class LicenseValidator:
         Returns:
             LicenseInfo if valid, None if invalid.
         """
+        public_key, key_was_configured = self._resolve_license_public_key()
+        require_signed = self._truthy(os.environ.get("TRAIGENT_REQUIRE_SIGNED_LICENSE"))
+
+        if public_key is not None:
+            return self._decode_signed_license_token(token, public_key)
+
+        if key_was_configured:
+            # Env points at a key that did not load. Refuse rather than
+            # falling through to legacy — the loader has already logged
+            # the underlying error.
+            logger.error(
+                "License public key is configured but could not be "
+                "loaded; refusing to verify the offline license. Fix "
+                "TRAIGENT_LICENSE_PUBLIC_KEY / TRAIGENT_LICENSE_PUBLIC_KEY_FILE."
+            )
+            return None
+
+        if require_signed:
+            logger.error(
+                "TRAIGENT_REQUIRE_SIGNED_LICENSE is set but no license "
+                "public key is configured (TRAIGENT_LICENSE_PUBLIC_KEY or "
+                "TRAIGENT_LICENSE_PUBLIC_KEY_FILE). Refusing to accept "
+                "the offline license."
+            )
+            return None
+
+        logger.warning(
+            "Accepting an UNSIGNED offline license token. This format is "
+            "deprecated and will be removed in a future Traigent SDK "
+            "release. Provision a signing keypair and set "
+            "TRAIGENT_LICENSE_PUBLIC_KEY (or _FILE) to verify offline "
+            "licenses; set TRAIGENT_REQUIRE_SIGNED_LICENSE=true to refuse "
+            "unsigned tokens immediately."
+        )
+        return self._decode_unsigned_license_token(token)
+
+    def _decode_signed_license_token(
+        self, token: str, public_key
+    ) -> LicenseInfo | None:
+        """Verify the JWT signature on the offline license and decode it."""
         try:
-            # Simple base64-encoded JSON format for now
-            # Production would use proper JWT with RSA/ECDSA signatures
+            import jwt as pyjwt
+        except ImportError:
+            logger.error(
+                "PyJWT is required to verify signed license tokens but is "
+                "not installed."
+            )
+            return None
+
+        try:
+            payload = pyjwt.decode(
+                token,
+                public_key,
+                algorithms=list(self._SUPPORTED_LICENSE_ALGORITHMS),
+                options={"verify_aud": False},
+            )
+        except Exception as exc:
+            logger.warning("Signed license verification failed: %s", exc)
+            return None
+
+        info = self._build_license_info(payload, validation_source="offline")
+        if info is None:
+            return None
+        if info.is_expired:
+            logger.warning("Offline license has expired")
+            return None
+        return info
+
+    def _decode_unsigned_license_token(self, token: str) -> LicenseInfo | None:
+        """Legacy path: base64-decode the middle segment without verifying."""
+        try:
             parts = token.split(".")
             if len(parts) != 3:
                 logger.warning("Invalid license token format")
                 return None
 
-            # Decode payload (middle part)
             payload_b64 = parts[1]
-            # Add padding if needed (use negative modulo to avoid adding 4 when len%4==0)
             payload_b64 += "=" * ((-len(payload_b64)) % 4)
             payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
             payload = json.loads(payload_json)
-
-            # Extract license info
-            tier_str = payload.get("tier", "free")
-            tier = LicenseTier(tier_str)
-            features = {LicenseFeature(f) for f in payload.get("features", [])}
-            expires_at = payload.get("exp")
-            organization = payload.get("org")
-
-            # Check expiration
-            if expires_at and time.time() > expires_at:
-                logger.warning("Offline license has expired")
-                return None
-
-            return LicenseInfo(
-                tier=tier,
-                features=features,
-                expires_at=expires_at,
-                organization=organization,
-                validated_at=time.time(),
-                validation_source="offline",
-            )
-
-        except Exception as e:
-            logger.warning(f"Failed to decode license token: {e}")
+        except Exception as exc:
+            logger.warning("Failed to decode license token: %s", exc)
             return None
+
+        info = self._build_license_info(
+            payload, validation_source="offline_unsigned_legacy"
+        )
+        if info is None:
+            return None
+        if info.is_expired:
+            logger.warning("Offline license has expired")
+            return None
+        return info
+
+    @staticmethod
+    def _build_license_info(
+        payload: dict, *, validation_source: str
+    ) -> LicenseInfo | None:
+        """Common post-decode payload -> LicenseInfo conversion."""
+        try:
+            tier = LicenseTier(payload.get("tier", "free"))
+            features = {LicenseFeature(f) for f in payload.get("features", [])}
+        except ValueError as exc:
+            logger.warning("License payload contained unknown enum value: %s", exc)
+            return None
+
+        return LicenseInfo(
+            tier=tier,
+            features=features,
+            expires_at=payload.get("exp"),
+            organization=payload.get("org"),
+            validated_at=time.time(),
+            validation_source=validation_source,
+        )
 
     async def _validate_cloud_license(self) -> LicenseInfo | None:
         """Validate license via cloud API.
