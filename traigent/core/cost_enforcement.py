@@ -469,6 +469,7 @@ Your current cost limit:     ${self.config.limit:.2f} USD
 
 NOTE: This is an ESTIMATE based on maximum context. Actual billing is
       determined solely by your LLM provider.
+NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
 
 Options:
   [y] Approve and continue with current limit

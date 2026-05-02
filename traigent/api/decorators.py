@@ -1750,8 +1750,11 @@ def optimize(  # NOSONAR(S107)
                 ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
 
     Warning:
-        Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
+        Optimization runs multiple LLM calls. Use
+        ``traigent.testing.enable_mock_mode_for_quickstart()`` for local testing.
         Cost estimates are approximations; actual billing is determined by your LLM provider.
+        Traigent cost limits, alerts, thresholds, and stop conditions are best-effort
+        local guardrails, not provider-side billing caps.
         See DISCLAIMER.md for full liability terms.
 
     Important - Configuration Access:
