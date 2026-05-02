@@ -1946,5 +1946,9 @@ from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
 
+from traigent.cli.optimizer_command import optimizer  # noqa: E402
+
+cli.add_command(optimizer)
+
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter

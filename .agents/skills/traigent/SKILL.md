@@ -13,9 +13,15 @@ metadata:
 
 When a user asks you to optimize a function with Traigent, **always start with a dry run**. Real optimization costs real tokens and money. Never run real optimization until the user explicitly asks.
 
+If the function is not already decorated, use the dedicated optimizer adoption
+workflow first: run `traigent optimizer scan`, ask the user to pick a candidate,
+then run `traigent optimizer decorate` to produce a reviewable dry-run plan.
+Only continue with this dry-run validation workflow after the decorator or TVL
+plan has been accepted.
+
 **Workflow:**
 
-1. Set up the decorated function
+1. Confirm the function is decorated, or run optimizer scan/decorate first
 2. Validate dataset, config space, and providers
 3. Dry-run in mock mode — verify the full pipeline end-to-end at zero cost
 4. Report what the dry run found, estimate real costs

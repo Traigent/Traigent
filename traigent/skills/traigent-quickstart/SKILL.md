@@ -54,29 +54,36 @@ See `references/installation-extras.md` for the full table of extras and their c
 
 ### Development Mode (Recommended for Getting Started)
 
-Set these environment variables to develop and test without making real API calls or connecting to a backend:
+Mock mode is the keyless dev path. Activate it in code:
+
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
+```
+
+Skip backend communication via env:
 
 ```bash
-export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 ```
 
-- `TRAIGENT_MOCK_LLM=true` -- Mocks all LLM API calls so you do not need provider API keys or incur costs.
-- `TRAIGENT_OFFLINE_MODE=true` -- Skips backend communication so you do not need a running Traigent backend.
+- `enable_mock_mode_for_quickstart()` is hard-blocked when `ENVIRONMENT=production`.
+- `TRAIGENT_OFFLINE_MODE=true` skips backend communication so you do not need a running Traigent backend.
+- `TRAIGENT_MOCK_LLM=true` remains a non-production legacy fallback for older scripts; prefer the in-code API for new code.
 
 ### Using a .env File
 
 Traigent supports `.env` files via `python-dotenv` (included in the `integrations` extra). Create a `.env` file in your project root:
 
 ```
-TRAIGENT_MOCK_LLM=true
 TRAIGENT_OFFLINE_MODE=true
 TRAIGENT_LOG_LEVEL=DEBUG
 ```
 
 ### Production Mode
 
-For production, set your provider API keys and remove the mock/offline flags:
+For production, set your provider API keys and do not call `enable_mock_mode_for_quickstart()`:
 
 ```bash
 export OPENAI_API_KEY=sk-...

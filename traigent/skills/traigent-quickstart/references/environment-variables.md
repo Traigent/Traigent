@@ -37,8 +37,15 @@ These are standard provider API keys consumed by the respective LLM SDKs. Traige
 
 ### Local Development (No API Costs)
 
+Recommended in code:
+
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
+```
+
 ```bash
-export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 export TRAIGENT_LOG_LEVEL=DEBUG
 python my_optimization.py
@@ -46,8 +53,11 @@ python my_optimization.py
 
 ### CI/CD Pipeline
 
+CI environments typically already have a conftest or fixture that calls
+`enable_mock_mode_for_quickstart()`. The legacy `TRAIGENT_MOCK_LLM=true` env var
+still works outside production for older fixtures.
+
 ```bash
-export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_OFFLINE_MODE=true
 export TRAIGENT_COST_APPROVED=true
 export TRAIGENT_SKIP_PROVIDER_VALIDATION=true

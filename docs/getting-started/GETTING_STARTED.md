@@ -47,6 +47,33 @@ print(f"Best config: {result.best_config}")
 print(f"Best score:  {result.best_score:.2%}")
 ```
 
+## Adopt An Existing Codebase
+
+For an existing Python repo, use the optimizer assistant before hand-writing a
+decorator:
+
+```bash
+traigent optimizer scan . --top 5
+traigent optimizer decorate path/to/agent.py --function answer_question --output answer_question.decorate.json
+```
+
+`scan` is static: it reads Python source, ranks likely optimization targets, and
+does not import or execute your code. `decorate` produces a dry-run plan with
+proposed tuned variables, objective candidates, and a dataset stub. In this slice,
+`decorate --write` is intentionally not enabled; review the plan first, confirm
+quality objectives and dataset fields, then apply the changes manually or through
+the Traigent optimizer agent skill.
+
+Use the lower-level helpers only when you need them:
+
+| Helper | When to use it |
+| --- | --- |
+| `traigent optimizer scan/decorate` | Default path for adopting Traigent in existing Python code. |
+| `traigent detect-tvars` | Debugging or inspecting tuned-variable detection directly. |
+| `traigent generate-config` | Advanced config generation; `--enrich` may call an LLM and should be budgeted. |
+| MCP/hybrid | Backend and portal integration after the local workflow is validated. |
+| Governed autosearch | Advanced search over an existing TVL program, not first-run adoption. |
+
 ## 📋 Config Access Lifecycle
 
 | When | Use | Notes |
@@ -82,7 +109,8 @@ def classify(text: str) -> str:
 
 ## 🧪 Mock Mode & Examples
 
-- `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` (no API keys)
+- `python -m traigent.examples.quickstart` (no API keys)
+- For local tutorial code, prefer `traigent.testing.enable_mock_mode_for_quickstart()` over the legacy `TRAIGENT_MOCK_LLM=true` env var.
 - Examples Navigator: `python -m http.server 8000` → http://localhost:8000/examples/
 
 ## 🛠️ CLI Snippets
@@ -90,6 +118,8 @@ def classify(text: str) -> str:
 ```bash
 traigent info                                   # Version/features
 traigent algorithms                             # Available strategies
+traigent optimizer scan . --top 5               # Rank existing functions to optimize
+traigent optimizer decorate agent.py -f answer  # Produce a dry-run adoption plan
 traigent optimize examples/core/rag-optimization/run.py -a grid -n 5
 traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
 traigent plot my_run -p progress

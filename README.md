@@ -108,6 +108,41 @@ def your_function(question: str) -> str:
 
 Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Anthropic](https://docs.anthropic.com), [LiteLLM](https://github.com/BerriAI/litellm) (100+ providers), or plain HTTP calls.
 
+## AI-Assisted Adoption For Existing Code
+
+If you already have a codebase, start with the adoption assistant instead of
+hand-writing the decorator from scratch:
+
+```bash
+traigent optimizer scan . --top 5
+traigent optimizer decorate path/to/agent.py --function answer_question --output answer_question.decorate.json
+```
+
+`optimizer scan` statically ranks candidate functions and reuses the tuned-variable
+detection engine. `optimizer decorate` creates a reviewable dry-run plan with
+proposed tvars, objective candidates, and a dataset stub. It does not run an LLM,
+does not import user code, and does not spend tokens. Quality objectives such as
+`accuracy` require user confirmation; auto-measurable objectives such as `cost`
+and `latency` can be accepted by tooling once a dataset/objective policy is clear.
+
+When using Claude Code, Codex, Cursor, or another AI coding assistant, install the
+canonical Traigent skills and ask for the `traigent-optimizer` workflow. The skill
+should orchestrate the CLI, present the top candidates, and wait for objective and
+dataset confirmation before applying any changes.
+
+```bash
+npx skills add Traigent/agents-skills --skill traigent --skill traigent-optimizer
+```
+
+| Helper | Use it for | First-run status |
+| --- | --- | --- |
+| `traigent optimizer scan/decorate` | Existing-code adoption and reviewable plans | Recommended |
+| `traigent detect-tvars` | Low-level tuned-variable discovery | Advanced/debugging |
+| `traigent generate-config` | Legacy/full config generation, optional LLM enrichment | Advanced |
+| Agent skills | Conversational Claude/Codex/Cursor workflow over the CLI | Recommended with an AI coding assistant |
+| MCP/hybrid | Backend/portal integration transport | Advanced, not needed for first adoption |
+| Governed autosearch | Advanced search over an existing TVL program | Separate advanced workflow, after TVL exists |
+
 <p align="center">
   <a href="https://portal.traigent.ai">Portal</a> &middot;
   <a href="docs/getting-started/GETTING_STARTED.md">Quickstart</a> &middot;
@@ -123,6 +158,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | Goal | Resource | Time |
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
+| **Adopt Traigent in an existing codebase** | `traigent optimizer scan` → `decorate` dry run | 10 min |
 | **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
 | **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
 | **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
