@@ -1,7 +1,10 @@
 # Traigent SDK Disclaimer
 
-This document outlines important disclaimers and terms of use for the Traigent SDK.
-By using this software, you acknowledge and agree to the following terms.
+This document provides cost, warranty, and operational-risk guidance for the Traigent SDK.
+For paid services or portal users, contractual terms are governed by the applicable Traigent
+Terms of Service, order form, or other signed agreement. For open-source SDK use without a
+separate agreement, warranty and liability are governed by the AGPL-3.0 license; this document
+is informational unless incorporated into a separate agreement.
 
 ## Cost Liability
 
@@ -24,9 +27,27 @@ Users are **solely responsible** for:
 
 1. Monitoring and controlling their API spending
 2. Configuring appropriate spending limits via `TRAIGENT_RUN_COST_LIMIT`
-3. Using `TRAIGENT_MOCK_LLM=true` for development and testing
+3. Using `enable_mock_mode_for_quickstart()` from `traigent.testing` for local development and testing,
+   or `python -m traigent.examples.quickstart` for the no-cost demo
 4. Reviewing actual API provider billing independently
 5. Understanding provider pricing before production use
+6. Setting hard provider-side billing caps, quotas, budgets, and alerts directly with their LLM,
+   API, cloud, and infrastructure providers
+
+### Cost Limits Are Best-Effort Guardrails
+
+Traigent cost limits, budgets, alerts, thresholds, stop conditions, and estimates are
+**best-effort software controls**. They are not guarantees, insurance, financial commitments,
+provider-side billing controls, or a substitute for provider/account-level spending caps.
+
+Actual costs may exceed configured Traigent limits or estimates due to, among other things:
+
+- Provider pricing changes, billing rules, or tokenization differences
+- Parallel execution, retries, partial failures, timeouts, or cancelled requests
+- Cached tokens, output tokens, tool calls, embeddings, or provider-specific usage accounting
+- Stale pricing data, unrecognized model names, custom endpoints, or self-hosted models
+- Bugs, race conditions, network failures, misconfiguration, or user-supplied credentials
+- Provider dashboards or invoices applying charges differently than local estimates
 
 ### Parallel Execution Warning
 
@@ -54,6 +75,8 @@ Traigent is **not responsible** for:
 - Changes to provider pricing or terms
 - Provider account suspension or termination
 - Data handling by third-party providers
+- API, cloud, infrastructure, or provider charges that exceed Traigent estimates, budgets,
+  thresholds, alerts, stop conditions, or limits
 
 ## No Warranty
 
@@ -85,16 +108,23 @@ WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH 
 - API costs incurred during optimization
 - Costs from misconfigured limits or settings
 - Costs from parallel execution of LLM calls
+- Costs from bugs, retries, race conditions, stale pricing data, custom model mappings, failed
+  stop conditions, missed alerts, or provider billing differences
 - Any financial damages related to LLM API usage
 
 ## Best Practices for Cost Control
 
 To minimize unexpected costs, we strongly recommend:
 
-1. **Always use mock mode for development**:
-   ```bash
-   export TRAIGENT_MOCK_LLM=true
+1. **Always use mock mode for local development**:
+   ```python
+   from traigent.testing import enable_mock_mode_for_quickstart
+
+   enable_mock_mode_for_quickstart()
    ```
+   For the packaged demo, run `python -m traigent.examples.quickstart`. The legacy
+   `TRAIGENT_MOCK_LLM=true` env var remains available for older local scripts and is disabled
+   when `ENVIRONMENT=production`.
 
 2. **Set explicit cost limits**:
    ```bash
@@ -110,7 +140,10 @@ To minimize unexpected costs, we strongly recommend:
 
 4. **Monitor your provider dashboards** for actual usage and billing
 
-5. **Use the approval flow** for production runs:
+5. **Set hard caps directly with your providers** whenever available, including provider-side
+   budgets, quotas, alerts, organization limits, project limits, and payment controls
+
+6. **Use the approval flow** for production runs:
    ```bash
    export TRAIGENT_COST_APPROVED=true  # Only after reviewing estimates
    ```
@@ -162,5 +195,5 @@ https://github.com/Traigent/Traigent/issues
 
 ---
 
-*Last updated: March 2026*
+*Last updated: May 2026*
 *Licensed under GNU Affero General Public License v3.0 (AGPL-3.0-only) - See [LICENSE](LICENSE) for full terms*

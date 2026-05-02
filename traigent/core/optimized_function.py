@@ -179,11 +179,15 @@ def _emit_cost_warning_once() -> None:
             f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
             f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
             f"Cost estimates are approximations based on {CYAN}litellm{RESET} library pricing.\n"
+            f"Traigent limits are best-effort local guardrails, not provider billing caps.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom pricing file:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_FILE{RESET}\n"
             f"  - Custom pricing JSON:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_JSON{RESET}\n"
-            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
+            f"  - Local mock helper:     {CYAN}from traigent.testing import enable_mock_mode_for_quickstart{RESET}\n"
+            f"  - Then call:            {CYAN}enable_mock_mode_for_quickstart(){RESET}\n"
+            f"  - Legacy env mock:       {CYAN}TRAIGENT_MOCK_LLM=true{RESET} (non-production only)\n"
+            f"  - Set provider caps:     billing limits in your LLM/cloud provider account\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
@@ -191,11 +195,15 @@ def _emit_cost_warning_once() -> None:
             "\n[!] COST WARNING\n"
             "Traigent optimization will make multiple LLM API calls.\n"
             "Cost estimates are approximations based on litellm library pricing.\n"
+            "Traigent limits are best-effort local guardrails, not provider billing caps.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom pricing file:   TRAIGENT_CUSTOM_MODEL_PRICING_FILE\n"
             "  - Custom pricing JSON:   TRAIGENT_CUSTOM_MODEL_PRICING_JSON\n"
-            "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
+            "  - Local mock helper:     from traigent.testing import enable_mock_mode_for_quickstart\n"
+            "  - Then call:             enable_mock_mode_for_quickstart()\n"
+            "  - Legacy env mock:       TRAIGENT_MOCK_LLM=true (non-production only)\n"
+            "  - Set provider caps:     billing limits in your LLM/cloud provider account\n"
             "  - Full details:          DISCLAIMER.md\n"
         )
 

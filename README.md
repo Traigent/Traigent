@@ -17,7 +17,7 @@
 
 Our mission: **Anything you can measure, we can improve.** Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
 
-> **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
+> **Runs multiple LLM trials** — run `python -m traigent.examples.quickstart` for a no-cost demo, or call `enable_mock_mode_for_quickstart()` from `traigent.testing` in local tutorial code. Set `TRAIGENT_RUN_COST_LIMIT=2.0` as a best-effort local guardrail and set hard caps with your LLM/cloud providers; actual billing is determined by those providers. The legacy `TRAIGENT_MOCK_LLM=true` env var remains for backwards compatibility and is disabled when `ENVIRONMENT=production`. See [Cost Management](#cost-management).
 
 **Quick Install:**
 
@@ -173,7 +173,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ## 🚀 Walkthrough — 8 runnable examples
 
-All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
+The walkthrough examples use local mock mode through the quickstart/testing helpers — no API keys needed.
 
 <details>
 <summary>Show all 8 walkthrough steps</summary>
@@ -292,10 +292,14 @@ pip install -e ".[recommended]"
 
 | Setting | How |
 |---------|-----|
-| Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
+| Testing (no API calls) | Import and call `enable_mock_mode_for_quickstart()` from `traigent.testing`, or run `python -m traigent.examples.quickstart` for the demo |
 | Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
 
-Cost estimates are approximations. See [DISCLAIMER.md](DISCLAIMER.md) for details.
+Cost estimates, budgets, limits, alerts, and thresholds are best-effort software controls, not
+provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
+remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
+only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`. See
+[DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ### Evaluation
 
@@ -357,8 +361,8 @@ traigent --help                              # Full command reference
 | Problem | Fix |
 |---------|-----|
 | `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
-| 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
-| Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
+| 0.0% accuracy | Check dataset format; for local demos, import and call `enable_mock_mode_for_quickstart()` from `traigent.testing` |
+| Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
 </details>
@@ -370,7 +374,7 @@ traigent --help                              # Full command reference
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"              # Install with dev dependencies
-TRAIGENT_MOCK_LLM=true pytest            # Run tests
+pytest                                   # Run tests
 make format && make lint                 # Format and lint
 ```
 
