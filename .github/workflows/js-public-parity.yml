@@ -2,6 +2,9 @@ name: JS Public Parity
 
 on:
   pull_request:
+    # Client/config file moves outside these conventional module names are still
+    # caught by the weekly schedule; keep PR triggers scoped to parity-relevant
+    # files so unrelated Python changes do not pay the cross-repo clone/install cost.
     paths:
       - ".github/workflows/js-public-parity.yml"
       - "tests/cross_sdk_oracles/test_js_public_parity_manifest.py"
@@ -39,7 +42,8 @@ jobs:
           echo "available=true" >> "$GITHUB_OUTPUT"
 
       # The JS API-surface snapshot remains sourced from traigent-js main so the
-      # Python guard tracks the package users install, instead of a vendored copy.
+      # Python guard tracks the next JS release surface, instead of a vendored
+      # copy or the latest npm-published tag.
       - name: Checkout JS SDK
         if: steps.js-sdk-token.outputs.available == 'true'
         uses: actions/checkout@v4
