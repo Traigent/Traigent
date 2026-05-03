@@ -1,0 +1,86 @@
+name: JS Public Parity
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/js-public-parity.yml"
+      - "tests/cross_sdk_oracles/test_js_public_parity_manifest.py"
+      - "traigent/__init__.py"
+      - "traigent/**/client.py"
+      - "traigent/**/config.py"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * 1"
+
+env:
+  TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
+
+jobs:
+  js-public-parity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Python SDK
+        uses: actions/checkout@v4
+        with:
+          path: Traigent
+
+      - name: Checkout JS SDK
+        env:
+          TRAIGENT_JS_SDK_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          for token_name in \
+            TRAIGENT_JS_SDK_TOKEN \
+            TRAIGENT_SCHEMAS_PAT \
+            TRAIGENT_PRIVATE_DEPS_TOKEN \
+            TRAIGENT_SCHEMA_TOKEN \
+            GITHUB_TOKEN
+          do
+            token="${!token_name:-}"
+            if [ -z "$token" ]; then
+              continue
+            fi
+
+            auth="$(printf 'x-access-token:%s' "$token" | base64 -w 0)"
+            if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              clone --depth 1 --branch main https://github.com/Traigent/traigent-js.git traigent-js
+            then
+              echo "Checked out Traigent/traigent-js with $token_name."
+              exit 0
+            fi
+            rm -rf traigent-js
+          done
+
+          echo "Unable to check out Traigent/traigent-js. Configure TRAIGENT_JS_SDK_TOKEN with read access."
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python SDK
+        working-directory: Traigent
+        env:
+          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
+          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
+          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh build wheel -e ".[dev,all]"
+
+      - name: Check JS public parity
+        working-directory: Traigent
+        env:
+          TRAIGENT_JS_SDK_PATH: ${{ github.workspace }}/traigent-js
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+          PYTHONPATH: .
+        run: |
+          pytest -o addopts= -q tests/cross_sdk_oracles/test_js_public_parity_manifest.py
