@@ -57,18 +57,24 @@ traigent optimizer scan . --top 5
 traigent optimizer decorate path/to/agent.py --function answer_question --output answer_question.decorate.json
 ```
 
-`scan` is static: it reads Python source, ranks likely optimization targets, and
-does not import or execute your code. `decorate` produces a dry-run plan with
-proposed tuned variables, objective candidates, and a dataset stub. In this slice,
-`decorate --write` is intentionally not enabled; review the plan first, confirm
-quality objectives and dataset fields, then apply the changes manually or through
-the Traigent optimizer agent skill.
+`scan` reads Python source, ranks likely optimization targets, and does not
+import or execute your code. `decorate` produces a dry-run plan with proposed
+tuned variables, objective candidates, and a dataset stub. The default
+`--agent static` mode spends no model tokens. If you explicitly pass
+`--agent codex`, `--agent claude-code`, or `--agent github-models`, Traigent calls
+that installed coding-agent CLI once for bounded enrichment, validates the JSON
+response, and records provenance in `agent_enrichment`. Pass `--project-root`
+when scanning a single file below the repo root so the agent can read project
+context. In this slice, `decorate --write` is intentionally not enabled; review
+the plan first, confirm quality objectives and dataset fields, then apply the
+changes manually or through the Traigent optimizer agent skill.
 
 Use the lower-level helpers only when you need them:
 
 | Helper | When to use it |
 | --- | --- |
 | `traigent optimizer scan/decorate` | Default path for adopting Traigent in existing Python code. |
+| `traigent optimizer --agent ...` | Optional coding-agent enrichment; opt-in only and should be budgeted. |
 | `traigent detect-tvars` | Debugging or inspecting tuned-variable detection directly. |
 | `traigent generate-config` | Advanced config generation; `--enrich` may call an LLM and should be budgeted. |
 | MCP/hybrid | Backend and portal integration after the local workflow is validated. |

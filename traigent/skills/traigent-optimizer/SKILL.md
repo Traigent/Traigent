@@ -29,6 +29,7 @@ The default optimizer CLI flow is static and review-first:
 | Helper | Use it for |
 | --- | --- |
 | `traigent optimizer scan/decorate` | Default Python adoption workflow for existing code. |
+| `traigent optimizer --agent codex/claude-code/github-models` | Optional coding-agent enrichment. Use only after explicit user approval because it spends that agent/provider budget. |
 | `traigent detect-tvars` | Low-level tuned-variable discovery debugging. |
 | `traigent generate-config` | Advanced config generation; `--enrich` may call an LLM and must be budgeted. |
 | JS `traigent detect tuned-variables` | Current JS discovery path until JS optimizer parity lands. |
@@ -52,6 +53,20 @@ For machine-readable output:
 mkdir -p .traigent
 traigent optimizer scan . --top 5 --output .traigent/optimizer-scan.json
 ```
+
+Do not pass `--agent` by default. If the user explicitly wants coding-agent
+enrichment, use one of:
+
+```bash
+traigent optimizer scan . --top 5 --agent codex --agent-enrich-top-n 3
+traigent optimizer scan . --top 5 --agent claude-code --agent-enrich-top-n 3
+traigent optimizer scan . --top 5 --agent github-models --agent-enrich-top-n 3
+```
+
+Agent enrichment is one-shot, read-only, schema-validated, and provenance is
+recorded in `agent_enrichment`. When operating on one file, pass `--project-root`
+if the repo root is not the file's parent. Treat any `validation_status: invalid`
+or `rejected_by_policy` as a review signal, not as a hard failure.
 
 Report the top candidates with function, file, rank reason, proposed objective
 candidates, and missing dataset signals. Do not present scan output as
@@ -80,6 +95,15 @@ traigent optimizer decorate path/to/file.py \
   --objective accuracy \
   --objective cost \
   --dataset data/eval.jsonl \
+  --output .traigent/function_name.decorate.json
+```
+
+If the user approved enrichment for the chosen function, add the selected agent:
+
+```bash
+traigent optimizer decorate path/to/file.py \
+  --function function_name \
+  --agent codex \
   --output .traigent/function_name.decorate.json
 ```
 

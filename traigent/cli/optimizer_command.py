@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from traigent.optimizer.agent_enrichment import AGENT_MODES
 from traigent.optimizer.proposer import build_decorate_plan
 from traigent.optimizer.scanner import scan_path
 
@@ -51,16 +52,95 @@ def optimizer() -> None:
     default=None,
     help="Limit report candidates to the top N ranked functions.",
 )
+@click.option(
+    "--agent",
+    "agent_mode",
+    type=click.Choice(AGENT_MODES),
+    default="static",
+    show_default=True,
+    help="Coding-agent enrichment mode.",
+)
+@click.option(
+    "--agent-enrich-top-n",
+    type=int,
+    default=3,
+    show_default=True,
+    help="With --agent, enrich at most the top N scan candidates.",
+)
+@click.option(
+    "--agent-budget-tokens",
+    type=int,
+    default=8_000,
+    show_default=True,
+    help="Approximate prompt budget for coding-agent enrichment.",
+)
+@click.option(
+    "--agent-timeout",
+    "agent_timeout_seconds",
+    type=int,
+    default=120,
+    show_default=True,
+    help="Timeout in seconds for one coding-agent call.",
+)
+@click.option(
+    "--agent-total-timeout",
+    "agent_total_timeout_seconds",
+    type=int,
+    default=180,
+    show_default=True,
+    help="Total timeout in seconds for scan agent enrichment across candidates.",
+)
+@click.option(
+    "--agent-command",
+    default=None,
+    help=(
+        "Command for --agent command. Runs the provided command; prompt/schema "
+        "are passed through env vars."
+    ),
+)
+@click.option(
+    "--agent-model",
+    default=None,
+    help="Model hint passed to adapters that support model selection.",
+)
+@click.option(
+    "--project-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project root for coding-agent context. Defaults to detected repo root.",
+)
 def scan(
     path: Path,
     function_name: str | None,
     output_json: bool,
     output_path: Path | None,
     top: int | None,
+    agent_mode: str,
+    agent_enrich_top_n: int,
+    agent_budget_tokens: int,
+    agent_timeout_seconds: int,
+    agent_total_timeout_seconds: int,
+    agent_command: str | None,
+    agent_model: str | None,
+    project_root: Path | None,
 ) -> None:
     """Scan a Python file or directory and rank optimizer candidates."""
 
-    report = scan_path(path, function_name=function_name)
+    try:
+        report = scan_path(
+            path,
+            function_name=function_name,
+            agent_mode=agent_mode,
+            agent_enrich_top_n=agent_enrich_top_n,
+            agent_budget_tokens=agent_budget_tokens,
+            agent_timeout_seconds=agent_timeout_seconds,
+            agent_total_timeout_seconds=agent_total_timeout_seconds,
+            agent_command=agent_command,
+            agent_model=agent_model,
+            project_root=project_root,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     if top is not None:
         report["candidates"] = report["candidates"][: max(top, 0)]
 
@@ -72,6 +152,7 @@ def scan(
         return
 
     _print_scan_summary(report)
+    _print_agent_summary(report.get("agent_enrichment"))
     if output_path is not None:
         console.print(f"[green]Wrote scan report:[/green] {output_path}")
 
@@ -106,6 +187,48 @@ def scan(
     help="Requested output style for the eventual decorator/spec.",
 )
 @click.option(
+    "--agent",
+    "agent_mode",
+    type=click.Choice(AGENT_MODES),
+    default="static",
+    show_default=True,
+    help="Coding-agent enrichment mode.",
+)
+@click.option(
+    "--agent-budget-tokens",
+    type=int,
+    default=8_000,
+    show_default=True,
+    help="Approximate prompt budget for coding-agent enrichment.",
+)
+@click.option(
+    "--agent-timeout",
+    "agent_timeout_seconds",
+    type=int,
+    default=120,
+    show_default=True,
+    help="Timeout in seconds for one coding-agent call.",
+)
+@click.option(
+    "--agent-command",
+    default=None,
+    help=(
+        "Command for --agent command. Runs the provided command; prompt/schema "
+        "are passed through env vars."
+    ),
+)
+@click.option(
+    "--agent-model",
+    default=None,
+    help="Model hint passed to adapters that support model selection.",
+)
+@click.option(
+    "--project-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project root for coding-agent context. Defaults to detected repo root.",
+)
+@click.option(
     "--json",
     "output_json",
     is_flag=True,
@@ -132,6 +255,12 @@ def decorate(
     objectives: tuple[str, ...],
     dataset_ref: str | None,
     requested_emit_mode: str,
+    agent_mode: str,
+    agent_budget_tokens: int,
+    agent_timeout_seconds: int,
+    agent_command: str | None,
+    agent_model: str | None,
+    project_root: Path | None,
     output_json: bool,
     output_path: Path | None,
     write: bool,
@@ -151,6 +280,12 @@ def decorate(
             objective_names=objectives,
             dataset_ref=dataset_ref,
             requested_emit_mode=requested_emit_mode,
+            agent_mode=agent_mode,
+            agent_budget_tokens=agent_budget_tokens,
+            agent_timeout_seconds=agent_timeout_seconds,
+            agent_command=agent_command,
+            agent_model=agent_model,
+            project_root=project_root,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -163,6 +298,7 @@ def decorate(
         return
 
     _print_decorate_summary(plan)
+    _print_agent_summary(plan.get("agent_enrichment"))
     if output_path is not None:
         console.print(f"[green]Wrote decorate plan:[/green] {output_path}")
 
@@ -198,6 +334,24 @@ def _print_scan_summary(report: dict[str, Any]) -> None:
             or "-",
         )
     console.print(table)
+
+
+def _print_agent_summary(agent_enrichment: Any) -> None:
+    if agent_enrichment is None:
+        return
+
+    entries = (
+        agent_enrichment if isinstance(agent_enrichment, list) else [agent_enrichment]
+    )
+    for entry in entries:
+        provider = entry.get("provider") or entry.get("requested_mode") or "agent"
+        status = entry.get("status", "unknown")
+        validation = entry.get("validation_status", "not_validated")
+        version = entry.get("agent_version")
+        version_text = f" {version}" if version else ""
+        console.print(f"Agent: {provider}{version_text} - {status} ({validation})")
+        for warning in entry.get("warnings", []):
+            console.print(f"[yellow]Agent warning:[/yellow] {warning}")
 
 
 def _print_decorate_summary(plan: dict[str, Any]) -> None:

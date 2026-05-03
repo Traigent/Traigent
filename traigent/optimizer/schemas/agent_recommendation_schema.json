@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Optimizer Agent Recommendation Schema",
+  "description": "One-shot structured response from an optional coding-agent enrichment adapter.",
+  "definitions": {
+    "ConfidenceBand": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "DomainIntent": {
+      "type": "string",
+      "enum": ["search_space", "current_only"]
+    },
+    "Evidence": {
+      "type": "object",
+      "required": ["file", "line", "snippet", "category"],
+      "properties": {
+        "file": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "snippet": {"type": "string"},
+        "category": {
+          "type": "string",
+          "enum": [
+            "literal_assignment",
+            "framework_call_kwarg",
+            "framework_constructor_arg",
+            "comparison_threshold",
+            "loop_bound",
+            "config_dict_value",
+            "string_template",
+            "structural_pattern",
+            "import",
+            "other"
+          ]
+        },
+        "detail": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "Locator": {
+      "type": "object",
+      "required": ["kind", "details"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["ast_path", "regex", "line_col"]
+        },
+        "details": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "TVARDomain": {
+      "type": "object",
+      "properties": {
+        "values": {"type": "array", "minItems": 1},
+        "range": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "resolution": {"type": "number", "exclusiveMinimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "TVAR": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["bool", "int", "float", "str", "enum"]
+        },
+        "domain": {"$ref": "#/definitions/TVARDomain"},
+        "default": {},
+        "scale": {"type": "string", "enum": ["linear", "log"]},
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "is_tool": {"type": "boolean"},
+        "constraints": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "TVarRecommendation": {
+      "type": "object",
+      "required": [
+        "tvar",
+        "confidence",
+        "domain_intent",
+        "current_value",
+        "evidence",
+        "rationale"
+      ],
+      "properties": {
+        "tvar": {"$ref": "#/definitions/TVAR"},
+        "confidence": {"$ref": "#/definitions/ConfidenceBand"},
+        "domain_intent": {"$ref": "#/definitions/DomainIntent"},
+        "current_value": {},
+        "evidence": {"$ref": "#/definitions/Evidence"},
+        "locator": {"$ref": "#/definitions/Locator"},
+        "rationale": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "ObjectiveRecommendation": {
+      "type": "object",
+      "required": [
+        "name",
+        "direction",
+        "confidence",
+        "rationale",
+        "required_dataset_fields",
+        "auto_measurable",
+        "requires_confirmation"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {"auto_measurable": {"const": false}},
+            "required": ["auto_measurable"]
+          },
+          "then": {
+            "properties": {"requires_confirmation": {"const": true}}
+          }
+        }
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["maximize", "minimize", "band"]
+        },
+        "confidence": {"$ref": "#/definitions/ConfidenceBand"},
+        "rationale": {"type": "string", "minLength": 1},
+        "required_dataset_fields": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "auto_measurable": {"type": "boolean"},
+        "requires_confirmation": {"type": "boolean"},
+        "evidence": {"$ref": "#/definitions/Evidence"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "response_version",
+    "context_confidence",
+    "tvar_recommendations",
+    "objective_recommendations",
+    "warnings"
+  ],
+  "properties": {
+    "response_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "context_confidence": {"$ref": "#/definitions/ConfidenceBand"},
+    "tvar_recommendations": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/TVarRecommendation"}
+    },
+    "objective_recommendations": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/ObjectiveRecommendation"}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

@@ -11,6 +11,14 @@ Note:
 
 from __future__ import annotations
 
-from traigent.cli.main import cli
+from typing import Any
 
 __all__ = ["cli"]
+
+
+def __getattr__(name: str) -> Any:
+    if name != "cli":
+        raise AttributeError(name)
+    from traigent.cli.main import cli
+
+    return cli

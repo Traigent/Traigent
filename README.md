@@ -120,10 +120,16 @@ traigent optimizer decorate path/to/agent.py --function answer_question --output
 
 `optimizer scan` statically ranks candidate functions and reuses the tuned-variable
 detection engine. `optimizer decorate` creates a reviewable dry-run plan with
-proposed tvars, objective candidates, and a dataset stub. It does not run an LLM,
-does not import user code, and does not spend tokens. Quality objectives such as
-`accuracy` require user confirmation; auto-measurable objectives such as `cost`
-and `latency` can be accepted by tooling once a dataset/objective policy is clear.
+proposed tvars, objective candidates, and a dataset stub. The default
+`--agent static` mode does not run an LLM, does not import user code, and does
+not spend tokens. Opt-in enrichment modes (`--agent codex`,
+`--agent claude-code`, or `--agent github-models`) call the user-installed coding
+agent CLI once, validate its JSON response, and mark merged suggestions with
+`domain_source: "agent"` / `source: "agent"`. Use `--project-root` when the file
+being decorated lives below the repository root so the agent sees README and
+project context. Quality objectives such as `accuracy` require user confirmation;
+auto-measurable objectives such as `cost` and `latency` can be accepted by
+tooling once a dataset/objective policy is clear.
 
 When using Claude Code, Codex, Cursor, or another AI coding assistant, install the
 canonical Traigent skills and ask for the `traigent-optimizer` workflow. The skill

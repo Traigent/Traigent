@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from traigent._version import get_version
+from traigent.optimizer.agent_enrichment import (
+    AgentRunConfig,
+    enrich_scan_report,
+    normalize_agent_mode,
+)
 from traigent.tuned_variables.detection_types import (
     CandidateType,
     TunedVariableCandidate,
@@ -32,6 +37,8 @@ _SKIP_DIR_NAMES = {
     "venv",
 }
 
+_PROJECT_MARKERS = {"README.md", "pyproject.toml", "package.json", ".git"}
+
 _LLM_CONSTRUCTOR_NAMES = {
     "ChatOpenAI": "langchain",
     "AzureChatOpenAI": "langchain",
@@ -48,13 +55,26 @@ class _FunctionInfo:
     source: str
 
 
-def scan_path(path: str | Path, function_name: str | None = None) -> dict[str, Any]:
+def scan_path(
+    path: str | Path,
+    function_name: str | None = None,
+    *,
+    agent_mode: str = "static",
+    agent_enrich_top_n: int = 3,
+    agent_budget_tokens: int = 8_000,
+    agent_timeout_seconds: int = 120,
+    agent_total_timeout_seconds: int | None = 180,
+    agent_command: str | None = None,
+    agent_model: str | None = None,
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
     """Scan a Python file or directory and return a schema-compatible report.
 
     The scan is static only: it reads and parses source files, but never imports
     or executes user code.
     """
 
+    normalize_agent_mode(agent_mode)
     root = Path(path).expanduser().resolve()
     if root.is_file():
         scan_root = root.parent
@@ -76,14 +96,44 @@ def scan_path(path: str | Path, function_name: str | None = None) -> dict[str, A
         )
 
     candidates.sort(key=lambda candidate: candidate["score"], reverse=True)
-    return {
+    report = {
         "report_version": "0.1.0",
         "runtime": "python",
         "scan_root": str(scan_root),
         "generated_at": _utc_now(),
         "tool_version": f"traigent=={get_version()}",
         "candidates": candidates,
+        "agent_enrichment": None,
     }
+    if agent_mode != "static":
+        report = enrich_scan_report(
+            report,
+            config=AgentRunConfig(
+                mode=agent_mode,
+                project_root=(
+                    Path(project_root).expanduser().resolve()
+                    if project_root is not None
+                    else infer_project_root(scan_root)
+                ),
+                timeout_seconds=agent_timeout_seconds,
+                total_timeout_seconds=agent_total_timeout_seconds,
+                budget_tokens=agent_budget_tokens,
+                enrich_top_n=agent_enrich_top_n,
+                command=agent_command,
+                model=agent_model,
+            ),
+        )
+    return report
+
+
+def infer_project_root(start: str | Path) -> Path:
+    """Return the nearest parent that looks like a project root."""
+
+    current = Path(start).expanduser().resolve()
+    for candidate in (current, *current.parents):
+        if any((candidate / marker).exists() for marker in _PROJECT_MARKERS):
+            return candidate
+    return current
 
 
 def _iter_python_files(root: Path) -> list[Path]:
@@ -223,7 +273,7 @@ def _build_candidate(
         "signals": signals,
         "tvar_signals": tvar_signals,
         "objective_candidates": objective_candidates,
-        "dataset_status": {"status": "stub_required"},
+        "dataset_status": _detect_dataset_status(file_path, scan_root),
     }
 
 
@@ -232,6 +282,40 @@ def _relative_file(file_path: Path, scan_root: Path) -> str:
         return file_path.relative_to(scan_root).as_posix()
     except ValueError:
         return file_path.as_posix()
+
+
+def _detect_dataset_status(file_path: Path, scan_root: Path) -> dict[str, Any]:
+    for dataset_path in _iter_candidate_dataset_paths(file_path.parent):
+        return {
+            "status": "present",
+            "candidate_path": _relative_file(dataset_path, scan_root),
+        }
+    return {"status": "stub_required"}
+
+
+def _iter_candidate_dataset_paths(directory: Path) -> list[Path]:
+    candidates: list[Path] = []
+    project_root = infer_project_root(directory)
+    search_dirs = [
+        directory,
+        directory / "eval",
+        directory / "evals",
+        directory / "data",
+        project_root / "eval",
+        project_root / "evals",
+        project_root / "data",
+    ]
+    for search_dir in search_dirs:
+        if not search_dir.exists() or not search_dir.is_dir():
+            continue
+        for suffix in ("*.jsonl", "*.csv", "*.parquet"):
+            candidates.extend(
+                path for path in search_dir.glob(suffix) if path.is_file()
+            )
+    return sorted(
+        set(candidates),
+        key=lambda path: (0 if "eval" in path.name.lower() else 1, path.name),
+    )
 
 
 def _candidate_id(source_span_hash: str, qualified_name: str) -> str:
@@ -382,9 +466,11 @@ def _candidate_to_tvar_signal(
     line_offset: int,
 ) -> dict[str, Any]:
     absolute_line = max(candidate.location.line + line_offset, 1)
+    tvar = _candidate_to_tvar(candidate)
     return {
-        "tvar": _candidate_to_tvar(candidate),
-        "confidence": candidate.confidence.value,
+        "tvar": tvar,
+        "confidence": _tvar_signal_confidence(candidate, tvar),
+        "domain_source": "static",
         "evidence": {
             "file": relative_file,
             "line": absolute_line,
@@ -402,6 +488,16 @@ def _candidate_to_tvar_signal(
 def _is_actionable_tvar_candidate(candidate: TunedVariableCandidate) -> bool:
     """Keep only candidates that can become a concrete optimizer search knob."""
     return candidate.current_value is not None or candidate.suggested_range is not None
+
+
+def _tvar_signal_confidence(
+    candidate: TunedVariableCandidate,
+    tvar: dict[str, Any],
+) -> str:
+    values = tvar.get("domain", {}).get("values")
+    if isinstance(values, list) and len({repr(value) for value in values}) <= 1:
+        return "low"
+    return candidate.confidence.value
 
 
 def _candidate_to_tvar(candidate: TunedVariableCandidate) -> dict[str, Any]:
@@ -540,6 +636,7 @@ def _objective(
         "name": name,
         "direction": direction,
         "confidence": confidence,
+        "source": "static",
         "rationale": rationale,
         "required_dataset_fields": required_dataset_fields,
         "auto_measurable": auto_measurable,
