@@ -25,40 +25,23 @@ jobs:
         with:
           path: Traigent
 
-      - name: Checkout JS SDK
+      - name: Check JS SDK token
         env:
           TRAIGENT_JS_SDK_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
-          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
-          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
-          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -z "${TRAIGENT_JS_SDK_TOKEN:-}" ]; then
+            echo "::error::Configure TRAIGENT_JS_SDK_TOKEN with read access to Traigent/traigent-js."
+            exit 1
+          fi
 
-          for token_name in \
-            TRAIGENT_JS_SDK_TOKEN \
-            TRAIGENT_SCHEMAS_PAT \
-            TRAIGENT_PRIVATE_DEPS_TOKEN \
-            TRAIGENT_SCHEMA_TOKEN \
-            GITHUB_TOKEN
-          do
-            token="${!token_name:-}"
-            if [ -z "$token" ]; then
-              continue
-            fi
-
-            auth="$(printf 'x-access-token:%s' "$token" | base64 -w 0)"
-            if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-              clone --depth 1 --branch main https://github.com/Traigent/traigent-js.git traigent-js
-            then
-              echo "Checked out Traigent/traigent-js with $token_name."
-              exit 0
-            fi
-            rm -rf traigent-js
-          done
-
-          echo "Unable to check out Traigent/traigent-js. Configure TRAIGENT_JS_SDK_TOKEN with read access."
-          exit 1
+      - name: Checkout JS SDK
+        uses: actions/checkout@v4
+        with:
+          repository: Traigent/traigent-js
+          ref: main
+          path: traigent-js
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
