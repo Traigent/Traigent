@@ -5,7 +5,7 @@ pytest-mock>=3.10.0
 pytest-asyncio>=0.21.0
 coverage>=7.0.0
 click>=8.0.0
-requests>=2.28.0
+requests>=2.33.0
 ragas>=0.3.6
 rapidfuzz>=3.14.0
 
