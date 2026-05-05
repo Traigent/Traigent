@@ -66,7 +66,14 @@ _SYSTEM_PROMPT = (
 # A custom scoring function is the right escape hatch for mock-mode
 # demos; users who switch to real LLMs replace it with their own
 # accuracy metric (see walkthrough/real/01_tuning_qa.py).
-_MODEL_DEMO_SCORE = {"gpt-4o": 0.85, "gpt-4o-mini": 0.65}
+_MODEL_DEMO_SCORES = (("gpt-4o", 0.85), ("gpt-4o-mini", 0.65))
+
+
+def _model_demo_score(model: object) -> float:
+    for model_name, score in _MODEL_DEMO_SCORES:
+        if str(model) == model_name:
+            return score
+    return 0.5
 
 
 def _demo_scorer(
@@ -99,7 +106,7 @@ def _demo_scorer(
             cfg = get_config() or {}
         except Exception:
             cfg = {}
-    base = _MODEL_DEMO_SCORE.get(str(cfg.get("model")), 0.5)
+    base = _model_demo_score(cfg.get("model"))
     temperature_raw = cfg.get("temperature", 0.5)
     temperature = (
         float(temperature_raw)

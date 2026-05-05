@@ -9,7 +9,6 @@ generation and distributed coordination support.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
 import secrets
 import time
@@ -19,6 +18,8 @@ from decimal import Decimal, getcontext
 from enum import Enum
 from threading import Lock
 from typing import Any, cast
+
+from cryptography.hazmat.primitives import hashes, hmac
 
 from traigent.security.config import get_security_flags
 
@@ -59,7 +60,7 @@ class SecureRateLimitConfig:
     progressive_delay: bool = True
     max_delay_seconds: float = 60.0
     use_cryptographic_ids: bool = True
-    identifier_salt: bytes | None = None  # For HMAC-based identifiers
+    identifier_salt: bytes | None = None  # For keyed identifier derivation
 
     # Distributed coordination
     enable_distributed: bool = False
@@ -215,6 +216,8 @@ class SecureTokenBucket:
 class SecureRateLimiter:
     """Production-hardened rate limiter with enhanced security."""
 
+    _DEFAULT_IDENTIFIER_SECRET = b"traigent-rate-limiter-identifier-v1"
+
     def __init__(self, config: SecureRateLimitConfig) -> None:
         """Initialize secure rate limiter."""
         self.config = config
@@ -237,6 +240,17 @@ class SecureRateLimiter:
             "bypass_attempts": 0,
         }
 
+    @classmethod
+    def _keyed_identifier(cls, secret: bytes | None, value: str) -> str:
+        key = secret or cls._DEFAULT_IDENTIFIER_SECRET
+        mac = hmac.HMAC(key, hashes.SHA256())
+        mac.update(value.encode("utf-8"))
+        return cast(bytes, mac.finalize()).hex()
+
+    @staticmethod
+    def _plain_identifier(value: str) -> str:
+        return hashlib.blake2b(value.encode("utf-8"), digest_size=32).hexdigest()
+
     def _generate_secure_identifier(
         self,
         ip_address: str | None = None,
@@ -246,9 +260,10 @@ class SecureRateLimiter:
     ) -> str:
         """Generate cryptographically secure identifier.
 
-        This prevents identifier manipulation attacks by using HMAC.
+        This prevents identifier manipulation attacks by using keyed derivation.
         """
         components = []
+        identifier_secret = self.config.identifier_salt
 
         # Add components with type prefixes
         if ip_address:
@@ -265,8 +280,11 @@ class SecureRateLimiter:
             components.append(f"user:{username}")
 
         if api_key:
-            # Never log the actual API key
-            components.append(f"key:{api_key[:8]}...")
+            key_fingerprint = self._keyed_identifier(
+                identifier_secret,
+                f"api_key:{api_key}",
+            )[:16]
+            components.append(f"key:{key_fingerprint}")
 
         if additional_context:
             for key, value in additional_context.items():
@@ -279,19 +297,9 @@ class SecureRateLimiter:
         base_identifier = "|".join(sorted(components))  # Sort for consistency
 
         if self.config.use_cryptographic_ids:
-            # Use HMAC to prevent identifier manipulation
-            salt = self.config.identifier_salt
-            if salt is None:
-                salt = b"default_salt"
-            h = hmac.new(
-                salt,
-                base_identifier.encode(),
-                hashlib.sha256,
-            )
-            return h.hexdigest()
+            return self._keyed_identifier(identifier_secret, base_identifier)
         else:
-            # Fallback to simple hashing
-            return hashlib.sha256(base_identifier.encode()).hexdigest()
+            return self._plain_identifier(base_identifier)
 
     def check_rate_limit(
         self,
