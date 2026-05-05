@@ -15,9 +15,7 @@ from traigent.tvl.spec_loader import (
 )
 from traigent.utils.exceptions import TVLValidationError
 
-FIXTURE_SPEC = Path(
-    "docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml"
-)
+FIXTURE_SPEC = Path("tests/fixtures/tvl/rag_campus_orientation.yml")
 
 
 class TestLoadTvlSpecErrors:
