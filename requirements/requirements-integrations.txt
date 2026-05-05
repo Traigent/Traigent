@@ -16,7 +16,7 @@ anthropic>=0.18.0
 rank_bm25>=0.2.2
 mlflow>=3.11.1,<4.0
 wandb>=0.15.0
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # AWS Bedrock
 boto3>=1.28.0

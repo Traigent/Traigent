@@ -12,8 +12,12 @@ Works with Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Gemini CLI, Windsu
 
 **Option A — npx (all 8 skills):**
 ```bash
-npx skills add Traigent/agent-skills
+npx skills add Traigent/agents-skills
 ```
+
+> **Note:** The older `Traigent/agent-skills` repo (without the trailing `s`)
+> is deprecated and pinned to 7 skills missing the dry-run-first orchestrator.
+> Use `Traigent/agents-skills` instead.
 
 **Option B — already included:**
 

@@ -115,15 +115,19 @@ This discovers `@traigent.optimize` decorated functions and validates that datas
 
 ## Step 3: Run Mock Optimization
 
-Set mock mode, then run the full optimization pipeline at zero cost. This tests everything — decorator wiring, config sampling, dataset loading, trial execution, scoring — end to end.
+Enable mock mode in code, then run the full optimization pipeline at zero cost. This tests everything — decorator wiring, config sampling, dataset loading, trial execution, scoring — end to end. Mock mode is hard-blocked when `ENVIRONMENT=production`, so this cannot accidentally swap real LLM calls for canned text in a deployed system.
+
+> **Scope note:** `enable_mock_mode_for_quickstart()` flips a *runtime* flag — the LLM interceptors honor it from the moment it's called. It runs AFTER `import traigent`, so any *import-time* behavior of the SDK's optional dependencies (e.g., LiteLLM's model-cost-map fetch) has already executed. For fully hermetic startup (CI, air-gapped runs), set the equivalent env vars BEFORE Python imports anything: `TRAIGENT_MOCK_LLM=true`, `TRAIGENT_OFFLINE_MODE=true`, `LITELLM_LOCAL_MODEL_COST_MAP=True`. The bundled `traigent quickstart` command does this for you.
 
 ```python
 import os
-os.environ["TRAIGENT_MOCK_LLM"] = "true"       # Mock LLM responses
-os.environ["TRAIGENT_OFFLINE_MODE"] = "true"    # Skip backend communication
+os.environ["TRAIGENT_OFFLINE_MODE"] = "true"   # Skip Traigent backend calls
 
 import traigent
 from traigent import Choices, Range
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()              # Mock LLM responses (dev-only)
 
 @traigent.optimize(
     eval_dataset="eval_data.jsonl",
@@ -201,17 +205,19 @@ When the user explicitly says to proceed:
 Models in the config space need corresponding provider keys. Traigent auto-validates keys before starting and raises `ProviderValidationError` with details if validation fails.
 
 ```bash
-export OPENAI_API_KEY="sk-..."         # For gpt-* models
-export ANTHROPIC_API_KEY="sk-ant-..."  # For claude-* models
-export GEMINI_API_KEY="..."            # For gemini-* models
+export OPENAI_API_KEY="sk-..."         # For gpt-* models  # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..."  # For claude-* models  # pragma: allowlist secret
+export GEMINI_API_KEY="..."            # For gemini-* models  # pragma: allowlist secret
 ```
 
-### 2. Remove Mock Flags and Set Cost Controls
+### 2. Skip the Mock-Mode Activation and Set Cost Controls
 
 ```python
 import os
 
-os.environ.pop("TRAIGENT_MOCK_LLM", None)
+# Just don't call enable_mock_mode_for_quickstart() this run.
+# Mock mode is process-local — start a fresh interpreter for the
+# real run if the previous one had it on.
 os.environ.pop("TRAIGENT_OFFLINE_MODE", None)
 
 # Cost limit — default $2.00 USD per run
@@ -253,12 +259,13 @@ my_function.export_config("best_config.json")
 
 | | Mock (Dry Run) | Real |
 |---|---|---|
-| `TRAIGENT_MOCK_LLM` | `true` | unset |
+| Activation | `traigent.testing.enable_mock_mode_for_quickstart()` | (don't call it) |
 | `TRAIGENT_OFFLINE_MODE` | `true` | unset |
 | API keys needed | No | Yes |
 | LLM calls | Mocked | Real |
 | Cost | $0 | Real tokens |
-| Scores meaningful | No (random) | Yes |
+| Scores meaningful | Custom scorer recommended (built-in mock returns generic text) | Yes |
+| Production-safe | Hard-blocked when `ENVIRONMENT=production` | — |
 | Use when | Always first | After mock passes |
 
 ## See Also

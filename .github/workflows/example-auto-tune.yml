@@ -87,28 +87,32 @@ jobs:
 
       - name: Determine environment
         id: env
+        env:
+          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
-          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          echo "environment=$INPUT_ENVIRONMENT" >> "$GITHUB_OUTPUT"
 
       - name: Set tuning parameters
         id: params
+        env:
+          STEP_ENV_OUTPUT: ${{ steps.env.outputs.environment }}
+          INPUT_MAX_TRIALS: ${{ github.event.inputs.max_trials }}
+          INPUT_BUDGET: ${{ github.event.inputs.budget }}
         run: |
-          ENV="${{ steps.env.outputs.environment }}"
-
           # Set defaults based on environment
-          if [[ "$ENV" == "production" ]]; then
-            MAX_TRIALS="${{ github.event.inputs.max_trials || '50' }}"
-            BUDGET="${{ github.event.inputs.budget || '25.0' }}"
-          elif [[ "$ENV" == "staging" ]]; then
-            MAX_TRIALS="${{ github.event.inputs.max_trials || '20' }}"
-            BUDGET="${{ github.event.inputs.budget || '10.0' }}"
+          if [[ "$STEP_ENV_OUTPUT" == "production" ]]; then
+            MAX_TRIALS="${INPUT_MAX_TRIALS:-50}"
+            BUDGET="${INPUT_BUDGET:-25.0}"
+          elif [[ "$STEP_ENV_OUTPUT" == "staging" ]]; then
+            MAX_TRIALS="${INPUT_MAX_TRIALS:-20}"
+            BUDGET="${INPUT_BUDGET:-10.0}"
           else
-            MAX_TRIALS="${{ github.event.inputs.max_trials || '10' }}"
-            BUDGET="${{ github.event.inputs.budget || '5.0' }}"
+            MAX_TRIALS="${INPUT_MAX_TRIALS:-10}"
+            BUDGET="${INPUT_BUDGET:-5.0}"
           fi
 
-          echo "max_trials=$MAX_TRIALS" >> $GITHUB_OUTPUT
-          echo "budget=$BUDGET" >> $GITHUB_OUTPUT
+          echo "max_trials=$MAX_TRIALS" >> "$GITHUB_OUTPUT"
+          echo "budget=$BUDGET" >> "$GITHUB_OUTPUT"
 
       - name: Run auto-tuning pipeline
         env:
@@ -116,14 +120,16 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TRAIGENT_MOCK_LLM: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
           TRAIGENT_OFFLINE_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+          STEP_PARAMS_MAX_TRIALS: ${{ steps.params.outputs.max_trials }}
+          STEP_PARAMS_BUDGET: ${{ steps.params.outputs.budget }}
         run: |
           # Update DVC params with current settings
           python -c "
-          import yaml
+          import os, yaml
           with open('params.yaml', 'r') as f:
               params = yaml.safe_load(f)
-          params['optimize']['max_trials'] = ${{ steps.params.outputs.max_trials }}
-          params['optimize']['budget'] = ${{ steps.params.outputs.budget }}
+          params['optimize']['max_trials'] = int(os.environ['STEP_PARAMS_MAX_TRIALS'])
+          params['optimize']['budget'] = float(os.environ['STEP_PARAMS_BUDGET'])
           with open('params.yaml', 'w') as f:
               yaml.dump(params, f)
           "
@@ -133,13 +139,17 @@ jobs:
 
       - name: Generate CML report
         if: always()
+        env:
+          STEP_ENV_OUTPUT: ${{ steps.env.outputs.environment }}
+          STEP_PARAMS_MAX_TRIALS: ${{ steps.params.outputs.max_trials }}
+          STEP_PARAMS_BUDGET: ${{ steps.params.outputs.budget }}
         run: |
           # Create performance report
           echo "## 🤖 Auto-Tuning Results" > report.md
           echo "" >> report.md
-          echo "**Environment:** ${{ steps.env.outputs.environment }}" >> report.md
-          echo "**Max Trials:** ${{ steps.params.outputs.max_trials }}" >> report.md
-          echo "**Budget:** \$${{ steps.params.outputs.budget }}" >> report.md
+          echo "**Environment:** $STEP_ENV_OUTPUT" >> report.md
+          echo "**Max Trials:** $STEP_PARAMS_MAX_TRIALS" >> report.md
+          echo "**Budget:** \$$STEP_PARAMS_BUDGET" >> report.md
           echo "" >> report.md
 
           # Add metrics

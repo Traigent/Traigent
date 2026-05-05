@@ -1,0 +1,54 @@
+spec:
+  id: hello-tvl
+  version: 0.0.1
+
+metadata:
+  owner: "students@traigent.ai"
+  description: "Minimal TVL spec used to test decorator hydration."
+  reviewers: ["mentor@traigent.ai"]
+
+units:
+  time: [milliseconds, seconds]
+  ratio: [dimensionless]
+
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini", "claude-3-haiku"]
+  temperature:
+    type: continuous
+    range: [0.0, 0.8]
+    unit: ratio
+  max_tokens:
+    type: discrete
+    values: [256, 384, 512]
+    unit: tokens
+
+objectives:
+  - name: faithfulness
+    direction: maximize
+  - name: latency
+    direction: minimize
+
+optimization:
+  strategy: pareto_optimal
+  budget:
+    max_trials:
+      value: 30
+      unit: count
+    timeout_seconds: 900
+
+constraints:
+  - id: mild-temperature
+    type: expression
+    rule: 'params.temperature <= 0.8'
+    error_message: "Stick to milder sampling in the quickstart."
+
+evaluation:
+  workloads:
+    - name: tutorial
+      dataset: dvl://demo/tutorial
+
+promotion:
+  gate: manual_review
+  reviewers: ["mentor@traigent.ai"]

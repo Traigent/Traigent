@@ -2,6 +2,23 @@
 
 Provides a lightweight mock adapter pattern that keeps main plugin
 logic clean by separating mock functionality into dedicated methods.
+
+Security:
+    Mock activation in **production is impossible** — neither the
+    in-code API (:func:`traigent.testing.enable_mock_mode_for_quickstart`)
+    nor the legacy ``TRAIGENT_MOCK_LLM=true`` env var can flip mock
+    mode on when ``ENVIRONMENT=production``. The in-code path raises
+    ``RuntimeError``; the env-var path raises ``OSError`` at module
+    import in :mod:`traigent.utils.env_config`. That's the surviving
+    guard against the original prod incident — a stray env var
+    silently swapping real LLM calls for canned mock text.
+
+    Outside production, mock mode can be activated by either the
+    in-code API (recommended) or the legacy env var (kept for
+    backward compatibility with existing test fixtures and example
+    scripts). Provider-specific ``*_MOCK`` env vars (e.g.
+    ``OPENAI_MOCK``) are completely ignored everywhere — those were
+    the worst offenders in the original incident.
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
@@ -10,14 +27,13 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
 # Default mock delay in milliseconds (0 = no delay)
-# Set TRAIGENT_MOCK_DELAY_MS to simulate realistic LLM latency
+# Set TRAIGENT_MOCK_DELAY_MS to simulate realistic LLM latency in tests.
 DEFAULT_MOCK_DELAY_MS = 0
 
 
@@ -37,20 +53,6 @@ def _get_mock_delay_ms() -> int:
     except ValueError:
         logger.warning(f"Invalid TRAIGENT_MOCK_DELAY_MS value '{delay_str}', using 0")
         return 0
-
-
-# Environment variable names for each provider
-MOCK_ENV_VARS = {
-    "openai": "OPENAI_MOCK",
-    "azure_openai": "AZURE_OPENAI_MOCK",
-    "anthropic": "ANTHROPIC_MOCK",
-    "gemini": "GEMINI_MOCK",
-    "cohere": "COHERE_MOCK",
-    "huggingface": "HUGGINGFACE_MOCK",
-    "bedrock": "BEDROCK_MOCK",
-    # Global override
-    "traigent": "TRAIGENT_MOCK_LLM",
-}
 
 
 @dataclass
@@ -73,40 +75,43 @@ class MockResponse:
 class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
-    Usage in plugins:
-        if MockAdapter.is_mock_enabled("openai"):
-            return MockAdapter.get_mock_response("openai", **kwargs)
-
-    This keeps mock logic separate from main plugin code.
+    Mock activation is **never** auto-enabled via environment variables.
+    The single source of truth is
+    :func:`traigent.testing.is_mock_mode_enabled`, which is only flipped
+    on by an explicit in-code call to
+    :func:`traigent.testing.enable_mock_mode_for_quickstart`. Tests that
+    want a one-off mock response without flipping the global flag can
+    still call :meth:`get_mock_response` directly from inside a
+    ``unittest.mock.patch`` of the underlying client.
     """
 
     _pending_tasks: ClassVar[set[asyncio.Task]] = set()
 
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
-        """Check if mock mode is enabled for a provider.
+        """Return ``True`` iff mock mode should intercept LLM calls.
 
-        Checks both provider-specific and global mock env vars.
+        Delegates to :func:`traigent.utils.env_config.is_mock_llm`, which
+        is the single source of truth for both LLM interceptors and the
+        SDK's mock-aware behavior. The original prod incident — a stray
+        env var swapping real calls for canned text — is prevented by
+        :func:`is_mock_llm`'s production hard-block: in production
+        environments the env-var path is rejected at import time, and
+        only the in-code
+        :func:`traigent.testing.enable_mock_mode_for_quickstart` opt-in
+        can flip the flag. Tests and dev environments can still set
+        ``TRAIGENT_MOCK_LLM=true`` for backward compatibility.
 
         Args:
-            provider: Provider name (openai, anthropic, gemini, etc.)
+            provider: Provider name (kept for signature compatibility).
 
         Returns:
-            True if mock mode is enabled.
+            ``True`` if mock mode is on, ``False`` otherwise.
         """
-        # Check global mock LLM mode first
-        global_mock = os.getenv("TRAIGENT_MOCK_LLM", "").lower()
-        if global_mock in ("true", "1", "yes"):
-            return True
+        del provider  # signature compatibility only
+        from traigent.utils.env_config import is_mock_llm
 
-        # Check provider-specific mock
-        env_var = MOCK_ENV_VARS.get(provider.lower())
-        if env_var:
-            provider_mock = os.getenv(env_var, "").lower()
-            if provider_mock in ("true", "1", "yes"):
-                return True
-
-        return False
+        return is_mock_llm()
 
     @classmethod
     def _apply_mock_delay(cls, provider: str) -> None:
@@ -148,6 +153,11 @@ class MockAdapter:
         **kwargs: Any,
     ) -> Any:
         """Get a provider-appropriate mock response object.
+
+        This method is intended to be invoked **explicitly** from test
+        code (e.g. inside a ``unittest.mock.patch`` of the real client).
+        It is no longer reachable from any production code path via an
+        environment toggle.
 
         Args:
             provider: Provider name.
@@ -278,33 +288,3 @@ class MockAdapter:
                 "total_tokens": data.total_tokens,
             },
         }
-
-
-def with_mock_support(provider: str) -> Callable:
-    """Decorator to add mock support to a function.
-
-    Usage:
-        @with_mock_support("openai")
-        def create_completion(**kwargs):
-            # Real implementation
-            ...
-
-    Args:
-        provider: Provider name for mock lookup.
-
-    Returns:
-        Decorator function.
-    """
-
-    def decorator(func: Callable) -> Callable:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if MockAdapter.is_mock_enabled(provider):
-                logger.debug(
-                    f"Mock mode enabled for {provider}, returning mock response"
-                )
-                return MockAdapter.get_mock_response(provider, **kwargs)
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

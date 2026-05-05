@@ -1,0 +1,124 @@
+# TVL 0.9 Example: RAG Campus Orientation
+#
+# Adaptive RAG configuration for onboarding questions that drift with
+# semester timelines, budgets, and latency promises.
+
+spec:
+  id: rag-campus-orientation
+  version: 0.1.0
+
+metadata:
+  owner: "mlops@traigent.ai"
+  description: >
+    Adaptive RAG configuration for onboarding questions that drift with
+    semester timelines, budgets, and latency promises.
+  tags:
+    - rag
+    - campus
+    - tvl-book
+
+units:
+  time: [milliseconds, seconds]
+  currency: [USD]
+  ratio: [dimensionless]
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku"]
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.1, 0.8]
+    unit: ratio
+
+  - name: max_tokens
+    type: enum[int]
+    domain: [256, 512, 768]
+    unit: tokens
+
+  - name: retrieval_depth
+    type: int
+    domain:
+      range: [2, 6]
+    unit: count
+
+objectives:
+  - name: answer_quality
+    direction: maximize
+  - name: response_latency
+    direction: minimize
+  - name: token_cost
+    direction: minimize
+
+exploration:
+  strategy: pareto_optimal
+  pareto_config:
+    selection_method: crowding_distance
+  budgets:
+    max_trials: 60
+    timeout_seconds: 2400
+  parallelism:
+    max_parallel_trials: 6
+
+constraints:
+  structural:
+    - expr: 'params.response_latency_ms <= 1200'
+      id: campus-hour-latency
+      error_message: "Keep responses under 1.2s during campus rush"
+
+    - when: 'params.model == "gpt-4o"'
+      then: 'params.token_cost_usd <= 0.04'
+      id: premium-model-budget
+      error_message: "Premium models need budget guardrails"
+
+environments:
+  base:
+    objectives:
+      - name: response_latency
+        threshold:
+          value: 900
+          unit: milliseconds
+
+  finals_week:
+    extends: base
+    overrides:
+      tvars:
+        - name: retrieval_depth
+          type: int
+          domain:
+            range: [3, 8]
+          unit: count
+      exploration:
+        budgets:
+          max_trials: 90
+
+evaluation:
+  workloads:
+    - name: onboarding_faq
+      dataset: dvl://faq/onboarding
+    - name: policy_changes
+      dataset: dvl://faq/policy-2024
+  metrics:
+    answer_quality:
+      aggregation: ndcg@10
+    response_latency:
+      aggregation: p95
+    token_cost:
+      aggregation: mean
+
+promotion:
+  gate: strict_dominance
+  reviewers: ["ops@traigent.ai"]
+
+triagent:
+  pipeline: RAGOrientation
+  deployment_targets: ["staging", "production"]
+  manifest_output: artifacts/params.yaml
+
+dvl:
+  version: ">=0.4.0"
+  drift_tests:
+    - name: faq-topic-shift
+      rule: 'metrics.topic_overlap >= 0.85'

@@ -38,8 +38,66 @@ Example:
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 import warnings
+
+
+# ---------------------------------------------------------------------------
+# Quickstart bootstrap (must run BEFORE the heavy package imports below).
+# ---------------------------------------------------------------------------
+#
+# ``traigent quickstart`` and ``python -m traigent.examples.quickstart`` both
+# trigger ``traigent/__init__.py`` first (Python imports the parent package
+# before resolving any submodule), which pulls in optional dependencies
+# (LiteLLM model discovery, langfuse, etc.) that may attempt network at
+# import time. The bundled quickstart is the load-bearing demo on the
+# website funnel and MUST work with no API keys, no network, and no
+# surprises — so we detect quickstart invocations by inspecting ``sys.argv``
+# at the top of this module and seed the legacy env-var paths the SDK
+# already knows about. For non-quickstart invocations this is a no-op,
+# preserving the SDK's normal behavior for production code.
+def _is_quickstart_invocation() -> bool:
+    if not sys.argv:
+        return False
+    argv0 = sys.argv[0] or ""
+    # ``python -m traigent.examples.quickstart`` — argv[0] is the path
+    # to the quickstart's __main__.py
+    if argv0.endswith(("quickstart/__main__.py", "quickstart\\__main__.py")):
+        return True
+    # ``traigent quickstart`` — argv[0] is the venv's bin/traigent script
+    # and argv[1] is the subcommand name. Gate on argv[0] basename being
+    # *exactly* the traigent CLI so an unrelated tool whose name happens
+    # to contain "traigent" (e.g. ``my-traigent-util quickstart``) does
+    # NOT silently override the user's OPENAI_API_KEY.
+    if len(sys.argv) >= 2 and sys.argv[1] == "quickstart":
+        basename = os.path.basename(argv0).lower()
+        if basename in {"traigent", "traigent.exe"}:
+            return True
+    return False
+
+
+if _is_quickstart_invocation():
+    # Sentinel telling env_config's prod guard that this env-var write is
+    # internal bootstrap, not user code. The prod hard-block still fires
+    # if ENVIRONMENT=production (correct: mock mode is blocked even from
+    # quickstart in prod), but the dev-mode deprecation warning meant for
+    # users who set TRAIGENT_MOCK_LLM themselves is suppressed — they
+    # ARE using the in-code path; the env var is just how we hand state
+    # across the import boundary.
+    os.environ["_TRAIGENT_QUICKSTART_BOOTSTRAP"] = "1"
+    os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    # Only force offline if the user hasn't supplied a portal key — they
+    # may want results synced even while LLM calls stay mocked.
+    if not os.environ.get("TRAIGENT_API_KEY"):
+        os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
+    # OVERRIDE OPENAI_API_KEY (not setdefault): if a real key is sitting
+    # in the parent shell, a mock-regression in the demo could otherwise
+    # spend it. The placeholder cannot succeed against a real OpenAI
+    # endpoint, which is the whole point.
+    os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"  # pragma: allowlist secret
+
 
 # Suppress noisy FutureWarning from transitive deps (instructor → google.generativeai)
 warnings.filterwarnings(
@@ -165,6 +223,7 @@ from traigent.evaluation import (
     ScoreRecordListResponse,
     ScoreSource,
 )
+from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.observability import (
     CorrelationIds,
     ObservabilityClient,
