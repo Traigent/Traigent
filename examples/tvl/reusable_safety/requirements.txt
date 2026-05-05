@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements.txt
 
 # LiteLLM for unified LLM API (Groq, OpenAI, Anthropic, etc.)
-litellm>=1.30.0,<1.82.7
+litellm>=1.83.14,<2.0
 
 # HuggingFace transformers for local toxicity classifier
 transformers>=4.35.0
