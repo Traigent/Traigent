@@ -354,7 +354,8 @@ traigent_example.py
 reports/
 
 # IDE settings (may contain local paths)
-.vscode/
+.vscode/*
+!.vscode/settings.json
 
 # Backup environments
 .venv.bkp/
