@@ -185,6 +185,9 @@ cython_debug/
 #  https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 .idea/
 
+# VS Code
+# Keep .vscode settings tracked for team consistency
+# .vscode/
 
 # Internal design docs (IP/private during implementation)
 resampling_configs.md
@@ -351,8 +354,7 @@ traigent_example.py
 reports/
 
 # IDE settings (may contain local paths)
-.vscode/*
-!.vscode/settings.json
+.vscode/
 
 # Backup environments
 .venv.bkp/
