@@ -184,9 +184,8 @@ class APIKeyManager:
         else:
             self._api_key_preview = self.mask_key(api_key)
             logger.info(
-                "✅ API key token set successfully (source=%s, preview=%s)",
+                "✅ API key token set successfully (source=%s)",
                 source,
-                self._api_key_preview,
             )
 
         self._api_key_source = source
@@ -388,30 +387,23 @@ class APIKeyManager:
 
         if state == "warning":
             logger.warning(
-                "API key approaching rotation threshold (preview=%s, days_remaining=%.2f)",
-                status["preview"],
+                "API key approaching rotation threshold (days_remaining=%.2f)",
                 status["days_remaining"],
             )
             return False
 
         if state == "critical":
             logger.error(
-                "API key rotation required immediately (preview=%s, days_remaining=%.2f)",
-                status["preview"],
+                "API key rotation required immediately (days_remaining=%.2f)",
                 status["days_remaining"],
             )
             return False
 
         if state == "expired":
-            logger.error(
-                "API key expired and must be rotated (preview=%s)",
-                status["preview"],
-            )
+            logger.error("API key expired and must be rotated")
             return False
 
-        logger.warning(
-            "API key status unknown; recommend rotation (preview=%s)", status["preview"]
-        )
+        logger.warning("API key status unknown; recommend rotation")
         return False
 
     def persist_api_key(self, credentials: AuthCredentials) -> None:

@@ -33,9 +33,7 @@ async def test_auth_flow():
     print("\n2. Testing credential manager...")
     api_key = CredentialManager.get_api_key()
     if api_key:
-        print(
-            f"   Found API key: {api_key[:10]}...{api_key[-4:] if len(api_key) > 14 else ''}"
-        )
+        print("   Found API key: configured")
     else:
         print("   No API key found")
 
@@ -65,9 +63,7 @@ async def test_auth_flow():
 
     auth_manager = AuthManager()
     if auth_manager.has_api_key():
-        preview = auth_manager.get_api_key_preview() or "(unavailable)"
         print("   AuthManager has API key: Yes")
-        print(f"   Key preview: {preview}")
     else:
         print("   AuthManager has no API key")
 

@@ -3,6 +3,9 @@ name: Examples Smoke Test
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   smoke-test:
     runs-on: ubuntu-latest

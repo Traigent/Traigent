@@ -64,3 +64,34 @@ def test_normalize_backend_url_rejects_unsafe_values(
 
     with pytest.raises(ValueError, match=error):
         module.normalize_backend_url(backend_url)
+
+
+def test_main_quiet_prints_generated_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Quiet mode is the script contract for programmatic key capture."""
+    module = _load_get_api_key_module()
+
+    monkeypatch.setattr(
+        module,
+        "get_api_key",
+        lambda email, password, backend_url, verbose=True: "tg_generated_key",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "get_api_key.py",
+            "--email",
+            "user@example.com",
+            "--password",
+            "test-password",  # pragma: allowlist secret
+            "--backend-url",
+            "https://api.traigent.ai",
+            "--quiet",
+        ],
+    )
+
+    module.main()
+
+    assert capsys.readouterr().out == "tg_generated_key\n"

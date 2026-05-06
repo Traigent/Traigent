@@ -51,7 +51,6 @@ class TOTPAuthProvider:
         """Generate a new TOTP secret for a user."""
         random_bytes = secrets.token_bytes(self.secret_length)
         secret = base64.b32encode(random_bytes).decode("utf-8")
-        logger.info(f"Generated new TOTP secret ({self.secret_length * 8} bits)")
         return secret
 
     def generate_provisioning_uri(self, username: str, secret: str) -> str:

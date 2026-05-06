@@ -585,6 +585,7 @@ class TestFastAPIIntegration:
 
     def test_create_fastapi_security_headers(self, mock_fastapi_app: MagicMock) -> None:
         """Test FastAPI security headers integration."""
+        pytest.importorskip("starlette.middleware.base")
         create_fastapi_security_headers(mock_fastapi_app)
 
         # Verify middleware was added
@@ -613,6 +614,7 @@ class TestFastAPIIntegration:
 
     def test_fastapi_middleware_class_exists(self) -> None:
         """Test that FastAPI middleware class is created properly."""
+        pytest.importorskip("starlette.middleware.base")
         mock_app = MagicMock()
         create_fastapi_security_headers(mock_app)
 
@@ -703,8 +705,10 @@ class TestCSPPresets:
     def test_relaxed_csp_preset(self) -> None:
         """Test RELAXED_CSP preset configuration."""
         assert RELAXED_CSP["default-src"] == "'self'"
-        assert "'unsafe-inline'" in RELAXED_CSP["script-src"]
-        assert "cdn.jsdelivr.net" in RELAXED_CSP["script-src"]
+        assert (
+            RELAXED_CSP["script-src"]
+            == "'self' 'unsafe-inline' https://cdn.jsdelivr.net"
+        )
         assert "'unsafe-inline'" in RELAXED_CSP["style-src"]
         assert "connect-src" in RELAXED_CSP
 

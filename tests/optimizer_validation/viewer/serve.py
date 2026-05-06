@@ -19,9 +19,9 @@ import threading
 import time
 import uuid
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 # Add project root to path for imports
 PROJECT_ROOT_FOR_IMPORTS = Path(__file__).parents[3]
@@ -35,6 +35,7 @@ ROOT = Path(__file__).parent
 PROJECT_ROOT = (
     ROOT.parent.parent.parent
 )  # tests/optimizer_validation/viewer -> project root
+PROJECT_ROOT_RESOLVED = PROJECT_ROOT.resolve()
 RESULTS_DIR = ROOT / "_results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -60,6 +61,40 @@ PERSISTENT_RESULTS_FILE = RESULTS_DIR / "persistent_results.json"
 
 # Evidence extraction prefix
 EVIDENCE_PREFIX = '{"type": "TEST_EVIDENCE"'
+
+
+def resolve_project_file(raw_path: str) -> Path:
+    """Resolve a viewer-provided relative path inside the project root."""
+    requested_key = _normalize_project_file_key(raw_path)
+    return _project_file_index().get(
+        requested_key, PROJECT_ROOT_RESOLVED / "__missing_project_file__"
+    )
+
+
+def _normalize_project_file_key(raw_path: str) -> str:
+    """Normalize a viewer path to a project-relative file index key."""
+    decoded = unquote(raw_path).replace("\\", "/")
+    if not decoded:
+        raise ValueError("empty paths are not allowed")
+    if ":" in decoded:
+        raise ValueError("drive-qualified paths are not allowed")
+
+    requested = PurePosixPath(decoded)
+    if requested.is_absolute():
+        raise ValueError("absolute paths are not allowed")
+    if ".." in requested.parts:
+        raise ValueError("path traversal is not allowed")
+
+    return requested.as_posix()
+
+
+def _project_file_index() -> dict[str, Path]:
+    """Return existing project files keyed by normalized project-relative path."""
+    return {
+        path.relative_to(PROJECT_ROOT_RESOLVED).as_posix(): path
+        for path in PROJECT_ROOT_RESOLVED.rglob("*")
+        if path.is_file()
+    }
 
 
 def load_persistent_results() -> dict[str, Any]:
@@ -669,10 +704,10 @@ def _process_chat_fallback(message: str) -> dict[str, Any]:
             )
             return {
                 "response": f"""**Test Suite Statistics**
-- Total tests: {stats['total_tests']}
-- Passed: {stats['passed']}
-- Failed: {stats['failed']}
-- Not run: {stats['not_run']}
+- Total tests: {stats["total_tests"]}
+- Passed: {stats["passed"]}
+- Failed: {stats["failed"]}
+- Not run: {stats["not_run"]}
 {evidence}""",
                 "tools_used": tools_used,
             }
@@ -720,7 +755,7 @@ def _process_chat_fallback(message: str) -> dict[str, Any]:
                 f"Scanned {stats['total_tests']} tests for status='FAIL'",
             )
             return {
-                "response": f"""**Failed Tests**: {stats['failed']} tests have failed.
+                "response": f"""**Failed Tests**: {stats["failed"]} tests have failed.
 {evidence}""",
                 "tools_used": tools_used,
             }
@@ -1067,12 +1102,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             return
 
         # Security: Validate file path is within project
-        full_path = PROJECT_ROOT / file_path
         try:
-            full_path = full_path.resolve()
-            if not str(full_path).startswith(str(PROJECT_ROOT.resolve())):
-                self._send_json({"error": "Invalid file path"}, 403)
-                return
+            full_path = resolve_project_file(file_path)
         except (OSError, ValueError):
             self._send_json({"error": "Invalid file path"}, 400)
             return
@@ -1111,19 +1142,15 @@ class ViewerHandler(SimpleHTTPRequestHandler):
     def _handle_get_file_content(self) -> None:
         """Handle GET /api/file/path/to/file.py - get file content for viewer."""
         # Extract file path from URL (everything after /api/file/)
-        file_path = self.path.replace("/api/file/", "", 1)
+        file_path = urlparse(self.path).path.replace("/api/file/", "", 1)
 
         if not file_path:
             self._send_json({"error": "No file specified"}, 400)
             return
 
         # Security: Validate file path is within project
-        full_path = PROJECT_ROOT / file_path
         try:
-            full_path = full_path.resolve()
-            if not str(full_path).startswith(str(PROJECT_ROOT.resolve())):
-                self._send_json({"error": "Invalid file path"}, 403)
-                return
+            full_path = resolve_project_file(file_path)
         except (OSError, ValueError):
             self._send_json({"error": "Invalid file path"}, 400)
             return
@@ -1167,9 +1194,9 @@ def start_server(host: str, port: int) -> None:
 
     server = HTTPServer((host, port), ViewerHandler)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Optimizer Validation Test Viewer")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"\n  Open in browser: http://{host}:{port}")
     if host == "127.0.0.1":
         print("  (Bound to localhost only for security)")
@@ -1181,7 +1208,7 @@ def start_server(host: str, port: int) -> None:
     print("    POST /api/chat          - Chat with test assistant")
     print(f"\n  Chat mode: {'Claude CLI' if CHAT_USE_CLI else 'Local fallback'}")
     print("\n  Press Ctrl+C to stop\n")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     try:
         server.serve_forever()

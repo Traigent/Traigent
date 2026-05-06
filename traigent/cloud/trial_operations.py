@@ -78,10 +78,8 @@ class TrialOperations:
         parts: list[str] = []
         if info.get("owner_user_id"):
             parts.append(f"user '{info['owner_user_id']}'")
-        if info.get("owner_api_key_id"):
-            parts.append(f"api-key '{info['owner_api_key_id']}'")
-        if info.get("owner_api_key_preview"):
-            parts.append(f"token {info['owner_api_key_preview']}")
+        if info.get("owner_api_key_id") or info.get("owner_api_key_preview"):
+            parts.append("api-key configured")
         if info.get("credential_source"):
             parts.append(f"source={info['credential_source']}")
 
@@ -103,8 +101,6 @@ class TrialOperations:
                 fingerprint = {}
 
         summary = self._summarize_actor(fingerprint)
-        excerpt = self._first_error_line(error_msg)
-
         logger.error(
             "❌ %s for session %s denied: HTTP %s Forbidden. Session ownership enforcement is active. "
             "Calling credentials: %s. Re-authenticate with the session owner or an admin-scoped token.",
@@ -113,8 +109,6 @@ class TrialOperations:
             status,
             summary,
         )
-        if excerpt:
-            logger.error("   Backend response: %s", excerpt)
 
     @staticmethod
     def _first_error_line(error_text: str | None) -> str:
@@ -291,9 +285,9 @@ class TrialOperations:
                         )
                         return False
                     else:
-                        error_msg = await response.text()
                         logger.warning(
-                            f"Failed to register trial start: {response.status} - {error_msg[:200]}"
+                            "Failed to register trial start: HTTP %s",
+                            response.status,
                         )
                         return False
 
@@ -507,23 +501,16 @@ class TrialOperations:
     def _handle_trial_error_response(
         self,
         status: int,
-        error_msg: str,
         trial_id: str,
         session_id: str,
         url: str,
     ) -> None:
         """Handle error response from trial submission."""
-        logger.error(f"❌ Failed to submit trial result: HTTP {status}")
-        logger.error(f"   Error message: {error_msg}")
-        logger.error(f"   Trial ID: {trial_id}")
-        logger.error(f"   Session ID: {session_id}")
-        logger.error(f"   URL: {url}")
-
-        try:
-            error_json = json.loads(error_msg)
-            logger.error(f"   Parsed error: {json.dumps(error_json, indent=2)}")
-        except json.JSONDecodeError:
-            logger.debug("Received non-JSON error response from backend")
+        logger.error("❌ Failed to submit trial result: HTTP %s", status)
+        logger.error("   Trial ID: %s", trial_id)
+        logger.error("   Session ID: %s", session_id)
+        logger.error("   URL: %s", url)
+        logger.debug("Backend error response suppressed from logs")
 
     async def submit_trial_result_via_session(
         self,
@@ -658,9 +645,8 @@ class TrialOperations:
                         )
                         return False
                     else:
-                        error_msg = await response.text()
                         self._handle_trial_error_response(
-                            response.status, error_msg, trial_id, session_id, url
+                            response.status, trial_id, session_id, url
                         )
                         return False
 
@@ -749,9 +735,9 @@ class TrialOperations:
                 logger.error(f"Invalid summary stats submission: {e}")
                 # Still try to send but log the validation error
 
-            # Debug logging to verify structure
             logger.debug(
-                f"Submitting summary_stats with structure: {json.dumps(submission_data, indent=2)[:1000]}"
+                "Submitting summary_stats with keys: %s",
+                sorted(submission_data.keys()),
             )
 
             connector = self._create_localhost_connector()
@@ -789,13 +775,9 @@ class TrialOperations:
                         )
                         return False
                     else:
-                        error_msg = await response.text()
                         logger.error(
-                            f"Failed to submit summary stats: {response.status} - {error_msg[:500]}"
-                        )
-                        # Log the full submission data for debugging
-                        logger.debug(
-                            f"Submission data was: {json.dumps(submission_data, indent=2)[:1000]}"
+                            "Failed to submit summary stats: HTTP %s",
+                            response.status,
                         )
                         return False
 
@@ -910,11 +892,11 @@ class TrialOperations:
                                         self._auth_error_logged = True
                                     return False
                                 logger.error(
-                                    f"Failed to update weighted scores: {response.status} - {error_msg[:200]}"
+                                    "Failed to update weighted scores: HTTP %s",
+                                    response.status,
                                 )
                                 return False
                         else:
-                            error_msg = await response.text()
                             # Auth failures: instance-scoped dedup at DEBUG
                             if response.status in (401, 403):
                                 if not self._auth_error_logged:
@@ -925,7 +907,8 @@ class TrialOperations:
                                     self._auth_error_logged = True
                                 return False
                             logger.error(
-                                f"Failed to update weighted scores: {response.status} - {error_msg[:100]}"
+                                "Failed to update weighted scores: HTTP %s",
+                                response.status,
                             )
                             return False
                 except Exception as exc:

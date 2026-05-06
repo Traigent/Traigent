@@ -185,7 +185,7 @@ class SMSAuthProvider:
             msg = self.client.messages.create(
                 body=message, from_=self.from_number, to=phone_number
             )
-            logger.info(f"Notification SMS sent to {phone_number}")
+            logger.info("Notification SMS sent")
             return cast(str, msg.sid)
         except Exception as e:
             logger.error(f"Failed to send notification SMS: {e}")
