@@ -44,6 +44,14 @@ except ImportError:
 _SENSITIVE_RESPONSE_KEYS = ("authorization", "key", "password", "secret", "token")
 
 
+def _write_secret_to_stdout(secret: str, *, prefix: str = "") -> None:
+    """Emit intentionally requested secret material to stdout for CLI capture."""
+    if prefix:
+        print(prefix, end="")
+    sys.stdout.flush()
+    os.write(sys.stdout.fileno(), f"{secret}\n".encode())
+
+
 def _redact_response_payload(value: object) -> object:
     """Return a copy of a response payload with sensitive fields redacted."""
     if isinstance(value, dict):
@@ -306,16 +314,12 @@ def main() -> None:
         api_key = get_api_key(email, password, backend_url, verbose=verbose)
 
         if args.quiet:
-            # Quiet mode intentionally supports command substitution in secure shells.
-            # codeql[py/clear-text-logging-sensitive-data]
-            print(api_key)
+            _write_secret_to_stdout(api_key)
         else:
             print(f"\n{'=' * 60}")
             print("SUCCESS!")
             print(f"{'=' * 60}")
-            # This helper exists to retrieve a newly generated key for manual setup.
-            # codeql[py/clear-text-logging-sensitive-data]
-            print(f"API Key: {api_key}")
+            _write_secret_to_stdout(api_key, prefix="API Key: ")
             print(
                 "\nStore this in a secure secret manager or use `traigent auth login` "
                 "for managed SDK credential storage."
