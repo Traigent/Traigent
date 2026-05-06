@@ -334,44 +334,36 @@ class APIKeyManager:
         Returns:
             Dictionary with state, preview, expires_at, and days_remaining
         """
+        state, days_remaining = self._rotation_state()
+        expires_at = self._api_key_expiry
+
+        return {
+            "state": state,
+            "preview": self.get_preview() if state != "missing" else None,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "days_remaining": days_remaining,
+        }
+
+    def _rotation_state(self) -> tuple[str, float | None]:
+        """Return rotation state without including key preview metadata."""
         if not self.has_key():
-            return {
-                "state": "missing",
-                "preview": None,
-                "expires_at": None,
-                "days_remaining": None,
-            }
+            return "missing", None
 
         expires_at = self._api_key_expiry
-        preview = self.get_preview()
-
         if not expires_at:
-            return {
-                "state": "unknown",
-                "preview": preview,
-                "expires_at": None,
-                "days_remaining": None,
-            }
+            return "unknown", None
 
         now = datetime.now(UTC)
         delta = expires_at - now
         days_remaining = delta.total_seconds() / 86400
 
         if days_remaining <= 0:
-            state = "expired"
-        elif days_remaining <= self.config.api_key_critical_days:
-            state = "critical"
-        elif days_remaining <= self.config.api_key_warning_days:
-            state = "warning"
-        else:
-            state = "ok"
-
-        return {
-            "state": state,
-            "preview": preview,
-            "expires_at": expires_at.isoformat(),
-            "days_remaining": days_remaining,
-        }
+            return "expired", days_remaining
+        if days_remaining <= self.config.api_key_critical_days:
+            return "critical", days_remaining
+        if days_remaining <= self.config.api_key_warning_days:
+            return "warning", days_remaining
+        return "ok", days_remaining
 
     def check_rotation(self) -> bool:
         """Log rotation guidance and return True when the key is healthy.
@@ -379,8 +371,7 @@ class APIKeyManager:
         Returns:
             True if key is healthy, False if rotation is needed
         """
-        status = self.get_status()
-        state = status["state"]
+        state, days_remaining = self._rotation_state()
 
         if state == "ok":
             return True
@@ -388,14 +379,14 @@ class APIKeyManager:
         if state == "warning":
             logger.warning(
                 "API key approaching rotation threshold (days_remaining=%.2f)",
-                status["days_remaining"],
+                days_remaining,
             )
             return False
 
         if state == "critical":
             logger.error(
                 "API key rotation required immediately (days_remaining=%.2f)",
-                status["days_remaining"],
+                days_remaining,
             )
             return False
 

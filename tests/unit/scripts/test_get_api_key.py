@@ -67,7 +67,7 @@ def test_normalize_backend_url_rejects_unsafe_values(
 
 
 def test_main_quiet_prints_generated_key(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
     """Quiet mode is the script contract for programmatic key capture."""
     module = _load_get_api_key_module()
@@ -94,4 +94,4 @@ def test_main_quiet_prints_generated_key(
 
     module.main()
 
-    assert capsys.readouterr().out == "tg_generated_key\n"
+    assert capfd.readouterr().out == "tg_generated_key\n"

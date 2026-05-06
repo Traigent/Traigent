@@ -57,16 +57,7 @@ class TrialOperations:
             or BackendConfig.get_backend_url()
         )
         env = os.getenv("TRAIGENT_ENV", "production")
-        api_key_preview = None
-        auth = getattr(self.client, "auth_manager", None)
-        if auth and hasattr(auth, "auth") and hasattr(auth.auth, "get_api_key_preview"):
-            try:
-                api_key_preview = auth.auth.get_api_key_preview()
-            except Exception:  # pragma: no cover - defensive
-                api_key_preview = None
-
-        api_key_display = api_key_preview or "not configured"
-        return f"backend_url={backend_url}, env={env}, api_key={api_key_display}"
+        return f"backend_url={backend_url}, env={env}"
 
     @staticmethod
     def _summarize_actor(info: dict[str, Any] | None) -> str:
