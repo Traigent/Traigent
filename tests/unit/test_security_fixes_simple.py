@@ -27,9 +27,9 @@ class TestSecurityFixes:
         trial_id = client._generate_trial_id(session_id, config, metadata)
 
         # Verify the trial_id format follows the expected pattern
-        assert trial_id.startswith(
-            "trial_"
-        ), f"Trial ID should start with 'trial_', got: {trial_id}"
+        assert trial_id.startswith("trial_"), (
+            f"Trial ID should start with 'trial_', got: {trial_id}"
+        )
 
         # Verify it's using SHA256 by checking the implementation logic
         # The generate_trial_hash function creates hash from session_id:config:dataset_name
@@ -38,15 +38,12 @@ class TestSecurityFixes:
         expected_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
         expected_trial_id = f"trial_{expected_hash}"
 
-        assert (
-            trial_id == expected_trial_id
-        ), f"Expected {expected_trial_id}, got {trial_id}"
+        assert trial_id == expected_trial_id, (
+            f"Expected {expected_trial_id}, got {trial_id}"
+        )
 
-        # Verify it's NOT using MD5 by checking if MD5 hash matches
-        md5_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
-        md5_trial_id = f"trial_{md5_hash}"
-
-        assert trial_id != md5_trial_id, "Should not use MD5 hash"
+        legacy_md5_trial_id = "trial_f05e53e940fe"
+        assert trial_id != legacy_md5_trial_id, "Should not use MD5 hash"
 
     def test_persistence_secure_pickle_loading(self):
         """Test that persistence module handles pickle securely."""
@@ -102,9 +99,9 @@ class TestSecurityFixes:
             content = source_file.read_text()
 
             # Check that SHA256 is used where hashing is needed
-            assert (
-                "hashlib.sha256" in content or "SHA256" in content
-            ), "Should use SHA256"
+            assert "hashlib.sha256" in content or "SHA256" in content, (
+                "Should use SHA256"
+            )
             assert "hashlib.md5" not in content, "Should not use MD5"
 
     def test_random_seeding_in_optimizer(self):
