@@ -16,6 +16,7 @@ from traigent.cloud.dtos import (
     ConfigurationsDTO,
     ExampleMeasure,
     ExperimentDTO,
+    ExperimentListRunSummaryDTO,
     ExperimentRunDTO,
     InfrastructureDTO,
 )
@@ -391,6 +392,67 @@ class TestExperimentDTO:
                 status=status,
             )
             assert exp.status == status
+
+    def test_to_dict_includes_list_response_stats(self):
+        """ExperimentDTO should carry backend experiment-list stats when present."""
+        exp = ExperimentDTO(
+            id="exp-list-stats",
+            name="List Stats",
+            description="Experiment list payload",
+            configuration_runs_count=3,
+            total_examples=42,
+            optimization_runs_count=2,
+            experiment_run=ExperimentListRunSummaryDTO(
+                id="run-list-latest",
+                run_id="external-run-id",
+                experiment_id="exp-list-stats",
+                status="completed",
+                configuration_runs_count=1,
+                summary_stats={"total_examples": 12, "accuracy": 0.9},
+                metrics={"latency_ms": 123},
+            ),
+        )
+
+        result = exp.to_dict()
+
+        assert result["configuration_runs_count"] == 3
+        assert result["total_examples"] == 42
+        assert result["optimization_runs_count"] == 2
+        assert result["experiment_run"]["run_id"] == "external-run-id"
+        assert result["experiment_run"]["summary_stats"]["accuracy"] == 0.9
+
+    def test_list_run_summary_preserves_empty_string_run_id(self):
+        """ExperimentListRunSummaryDTO should only fall back when run_id is None."""
+        summary = ExperimentListRunSummaryDTO(
+            id="run-list-latest",
+            run_id="",
+            experiment_id="exp-list-stats",
+            status="completed",
+        )
+
+        result = summary.to_dict()
+
+        assert result["run_id"] == ""
+
+    def test_to_dict_passes_through_raw_experiment_run_stats(self):
+        """ExperimentDTO should pass through raw embedded run stats when provided."""
+        raw_run = {
+            "id": "run-list-latest",
+            "run_id": "raw-run-id",
+            "experiment_id": "exp-list-stats",
+            "status": "completed",
+            "configuration_runs_count": 1,
+        }
+        exp = ExperimentDTO(
+            id="exp-list-stats",
+            name="List Stats",
+            description="Experiment list payload",
+            experiment_run=raw_run,
+        )
+
+        result = exp.to_dict()
+
+        assert result["experiment_run"] is raw_run
 
 
 class TestExperimentRunDTO:
