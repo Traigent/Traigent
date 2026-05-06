@@ -355,6 +355,47 @@ class ConfigurationsDTO:
 
 
 @dataclass
+class ExperimentListRunSummaryDTO:
+    """Compact experiment-run summary embedded in experiment list responses."""
+
+    id: str
+    experiment_id: str
+    status: str
+    run_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    configuration_runs_count: int = 0
+    summary_stats: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the compact backend list-response shape."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=EXPERIMENT_RUN_STATUS_VALUES,
+            dto_name="ExperimentListRunSummaryDTO",
+        )
+        result: dict[str, Any] = {
+            "id": self.id,
+            "run_id": self.run_id if self.run_id is not None else self.id,
+            "experiment_id": self.experiment_id,
+            "status": self.status,
+            "configuration_runs_count": int(self.configuration_runs_count),
+        }
+        for field_name in ("created_at", "updated_at", "started_at", "completed_at"):
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = value
+        if self.summary_stats is not None:
+            result["summary_stats"] = self.summary_stats
+        if self.metrics is not None:
+            result["metrics"] = self.metrics
+        return result
+
+
+@dataclass
 class ExperimentDTO:
     """Experiment DTO based on experiment_schema.json.
 
@@ -382,6 +423,10 @@ class ExperimentDTO:
     status: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    configuration_runs_count: int | None = None
+    total_examples: int | None = None
+    optimization_runs_count: int | None = None
+    experiment_run: ExperimentListRunSummaryDTO | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
@@ -434,6 +479,17 @@ class ExperimentDTO:
             result["benchmark_id"] = resolved_dataset_id
         if self.status is not None:
             result["status"] = self.status
+        if self.configuration_runs_count is not None:
+            result["configuration_runs_count"] = int(self.configuration_runs_count)
+        if self.total_examples is not None:
+            result["total_examples"] = int(self.total_examples)
+        if self.optimization_runs_count is not None:
+            result["optimization_runs_count"] = int(self.optimization_runs_count)
+        if self.experiment_run is not None:
+            if isinstance(self.experiment_run, ExperimentListRunSummaryDTO):
+                result["experiment_run"] = self.experiment_run.to_dict()
+            else:
+                result["experiment_run"] = self.experiment_run
 
         return result
 
