@@ -17,9 +17,11 @@ Usage:
 
 import argparse
 import ipaddress
+import json
 import os
 import socket
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -39,6 +41,35 @@ except ImportError:
     pass
 
 
+_SENSITIVE_RESPONSE_KEYS = ("authorization", "key", "password", "secret", "token")
+
+
+def _redact_response_payload(value: object) -> object:
+    """Return a copy of a response payload with sensitive fields redacted."""
+    if isinstance(value, dict):
+        redacted: dict[object, object] = {}
+        for key, item in value.items():
+            if any(marker in str(key).lower() for marker in _SENSITIVE_RESPONSE_KEYS):
+                redacted[key] = "***"
+            else:
+                redacted[key] = _redact_response_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_response_payload(item) for item in value]
+    return value
+
+
+def _safe_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Return response headers safe enough for console diagnostics."""
+    safe_headers: dict[str, str] = {}
+    for key, value in headers.items():
+        if any(marker in key.lower() for marker in _SENSITIVE_RESPONSE_KEYS):
+            safe_headers[key] = "***"
+        else:
+            safe_headers[key] = value
+    return safe_headers
+
+
 def normalize_backend_url(backend_url: str) -> str:
     """Validate and normalize the backend URL before issuing HTTP requests."""
     candidate = backend_url.strip()
@@ -51,7 +82,9 @@ def normalize_backend_url(backend_url: str) -> str:
     if parsed.username or parsed.password:
         raise ValueError("Backend URL must not include embedded credentials")
     if parsed.params or parsed.query or parsed.fragment:
-        raise ValueError("Backend URL must not include params, query strings, or fragments")
+        raise ValueError(
+            "Backend URL must not include params, query strings, or fragments"
+        )
 
     hostname = parsed.hostname
     if not hostname:
@@ -76,7 +109,9 @@ def normalize_backend_url(backend_url: str) -> str:
             if not is_localhost:
                 raise ValueError("Backend URL must not target private or loopback IPs")
         if ip_addr.is_multicast or ip_addr.is_reserved or ip_addr.is_unspecified:
-            raise ValueError("Backend URL must not target multicast, reserved, or unspecified IPs")
+            raise ValueError(
+                "Backend URL must not target multicast, reserved, or unspecified IPs"
+            )
     elif not is_localhost:
         try:
             addr_infos = socket.getaddrinfo(normalized_host, None)
@@ -95,7 +130,9 @@ def normalize_backend_url(backend_url: str) -> str:
                 or resolved_ip.is_reserved
                 or resolved_ip.is_unspecified
             ):
-                raise ValueError("Backend URL must not resolve to private or unsafe IPs")
+                raise ValueError(
+                    "Backend URL must not resolve to private or unsafe IPs"
+                )
 
     normalized_path = parsed.path.rstrip("/")
     return urlunparse(
@@ -108,7 +145,9 @@ def normalize_backend_url(backend_url: str) -> str:
     )
 
 
-def get_api_key(email: str, password: str, backend_url: str, verbose: bool = True) -> str:
+def get_api_key(
+    email: str, password: str, backend_url: str, verbose: bool = True
+) -> str:
     """Authenticate and create an API key.
 
     Args:
@@ -127,9 +166,9 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
 
     # Step 1: Login to get JWT token
     login_url = f"{backend_url}/api/v1/auth/login"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("STEP 1: LOGIN")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"URL: {login_url}")
     print(f"Email: {email}")
     print("Sending request...")
@@ -141,36 +180,36 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
         allow_redirects=False,
     )
 
-    print(f"\n--- Response ---")
+    print("\n--- Response ---")
     print(f"Status Code: {login_resp.status_code}")
-    print(f"Headers: {dict(login_resp.headers)}")
+    print(f"Headers: {_safe_response_headers(login_resp.headers)}")
 
     try:
         login_data = login_resp.json()
         if verbose:
-            import json
-            print(f"Body (JSON):\n{json.dumps(login_data, indent=2)}")
+            print(
+                "Body (JSON):\n"
+                f"{json.dumps(_redact_response_payload(login_data), indent=2)}"
+            )
     except Exception:
-        print(f"Body (raw): {login_resp.text}")
-        raise Exception(f"Login failed: {login_resp.status_code} - {login_resp.text}")
+        print("Body (raw): <suppressed>")
+        raise Exception(f"Login failed: HTTP {login_resp.status_code}") from None
 
     if login_resp.status_code != 200:
-        raise Exception(f"Login failed: {login_resp.status_code} - {login_resp.text}")
+        raise Exception(f"Login failed: HTTP {login_resp.status_code}")
 
     if not login_data.get("success"):
         raise Exception(f"Login failed: {login_data.get('error', 'Unknown error')}")
 
     token = login_data["data"]["access_token"]
-    # Show truncated token for security
-    token_preview = f"{token[:20]}...{token[-10:]}" if len(token) > 30 else token
-    print(f"\n✅ Login successful!")
-    print(f"JWT Token: {token_preview}")
+    print("\n✅ Login successful!")
+    print("JWT token received")
 
     # Step 2: Create API key
     api_key_url = f"{backend_url}/api/v1/keys"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("STEP 2: CREATE API KEY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"URL: {api_key_url}")
     print("Sending request...")
 
@@ -182,26 +221,28 @@ def get_api_key(email: str, password: str, backend_url: str, verbose: bool = Tru
         allow_redirects=False,
     )
 
-    print(f"\n--- Response ---")
+    print("\n--- Response ---")
     print(f"Status Code: {key_resp.status_code}")
-    print(f"Headers: {dict(key_resp.headers)}")
+    print(f"Headers: {_safe_response_headers(key_resp.headers)}")
 
     try:
         key_data = key_resp.json()
         if verbose:
-            import json
-            print(f"Body (JSON):\n{json.dumps(key_data, indent=2)}")
+            print(
+                "Body (JSON):\n"
+                f"{json.dumps(_redact_response_payload(key_data), indent=2)}"
+            )
     except Exception:
-        print(f"Body (raw): {key_resp.text}")
-        raise Exception(f"API key creation failed: {key_resp.status_code} - {key_resp.text}")
+        print("Body (raw): <suppressed>")
+        raise Exception(
+            f"API key creation failed: HTTP {key_resp.status_code}"
+        ) from None
 
     if key_resp.status_code != 201:
-        raise Exception(
-            f"API key creation failed: {key_resp.status_code} - {key_resp.text}"
-        )
+        raise Exception(f"API key creation failed: HTTP {key_resp.status_code}")
 
     api_key = key_data["data"]["key"]
-    print(f"\n✅ API key created successfully!")
+    print("\n✅ API key created successfully!")
 
     return api_key
 
@@ -236,7 +277,7 @@ def main() -> None:
         "--quiet",
         "-q",
         action="store_true",
-        help="Only show the API key (minimal output)",
+        help="Suppress non-error diagnostics",
     )
 
     args = parser.parse_args()
@@ -265,14 +306,20 @@ def main() -> None:
         api_key = get_api_key(email, password, backend_url, verbose=verbose)
 
         if args.quiet:
+            # Quiet mode intentionally supports command substitution in secure shells.
+            # codeql[py/clear-text-logging-sensitive-data]
             print(api_key)
         else:
             print(f"\n{'=' * 60}")
             print("SUCCESS!")
             print(f"{'=' * 60}")
+            # This helper exists to retrieve a newly generated key for manual setup.
+            # codeql[py/clear-text-logging-sensitive-data]
             print(f"API Key: {api_key}")
-            print(f"\nTo use this key, add to your .env file:")
-            print(f"TRAIGENT_API_KEY={api_key}")
+            print(
+                "\nStore this in a secure secret manager or use `traigent auth login` "
+                "for managed SDK credential storage."
+            )
     except Exception as e:
         print(f"\nError: {e}")
         sys.exit(1)

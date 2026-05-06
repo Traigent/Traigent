@@ -199,9 +199,9 @@ def main() -> None:
     print("-" * 40)
 
     for query, customer_id in queries:
-        print(f"\nCustomer {customer_id}: {query}")
+        print(f"\nCustomer {customer_id}: support query received")
         result = support_agent(query, customer_id)
-        print(f"Agent: {result['response'][:100]}...")
+        print("Agent: response generated")
         print(
             f"   Latency: {result['latency_ms']:.1f}ms | Cost: ${result['cost_usd']:.4f}"
         )

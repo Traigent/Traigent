@@ -3,6 +3,9 @@ name: Documentation Validation
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate-docs:
     name: Quick Doc Check

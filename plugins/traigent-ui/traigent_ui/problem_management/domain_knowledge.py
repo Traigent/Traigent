@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
+
 class DomainKnowledge:
     """
     Manages domain-specific knowledge and patterns for problem generation.
@@ -405,12 +406,6 @@ class DomainKnowledge:
             "financial": financial,
             "educational": educational,
         }
-
-        # Save to files if they don't exist
-        for domain, knowledge in self.builtin_domains.items():
-            domain_file = self.knowledge_dir / f"{domain}.json"
-            if not domain_file.exists():
-                self.save_domain_knowledge(domain, knowledge)
 
     def get_domain_patterns(self, domain: str) -> Dict[str, Any]:
         """

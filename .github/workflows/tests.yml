@@ -3,6 +3,9 @@ name: Tests
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
 
