@@ -1,0 +1,26 @@
+{
+  "name": "Answer Helpfulness Judge",
+  "measure_id": "answer_helpfulness",
+  "target_type": "observability_trace",
+  "judge_config": {
+    "instructions": "Score whether the final answer directly helps the user.",
+    "model_id": "gpt-4o-mini",
+    "context_type": "trace",
+    "context_source": "observability.trace",
+    "parameters": {
+      "model_id": "gpt-4o-mini",
+      "temperature": 0.0
+    },
+    "scoring_rubric": {
+      "0": "The answer is unhelpful or unsafe.",
+      "1": "The answer is useful and grounded."
+    },
+    "response_format_instructions": "Return a numeric score and short rationale.",
+    "max_budget": 0.05
+  },
+  "sampling_rate": 1.0,
+  "target_filters": {
+    "environment": "production"
+  },
+  "is_active": true
+}

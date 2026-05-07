@@ -6,7 +6,9 @@ with focus on schema compliance, serialization, and edge cases.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -14,13 +16,23 @@ import traigent.cloud.dtos as cloud_dtos
 from traigent.cloud.dtos import (
     ConfigurationRunDTO,
     ConfigurationsDTO,
+    EvaluatorDTO,
     ExampleMeasure,
     ExperimentDTO,
     ExperimentListRunSummaryDTO,
     ExperimentRunDTO,
     InfrastructureDTO,
+    MeasureDTO,
+    PlannerDraftDTO,
 )
 from traigent.utils.exceptions import DTOSerializationError
+
+FIXTURES_DIR = Path(__file__).parents[2] / "cloud" / "fixtures"
+
+
+def _load_fixture(name: str) -> dict:
+    with (FIXTURES_DIR / name).open(encoding="utf-8") as fixture:
+        return json.load(fixture)
 
 
 class TestInfrastructureDTO:
@@ -780,6 +792,94 @@ class TestConfigurationRunDTO:
                 trial_number=i,
             )
             assert config_run.trial_number == i
+
+
+class TestEvaluatorDTO:
+    """Test EvaluatorDTO round-trip behavior."""
+
+    def test_fixture_round_trip(self):
+        payload = _load_fixture("evaluator_dto.json")
+        evaluator = EvaluatorDTO(**payload)
+
+        assert evaluator.to_dict() == payload
+        assert evaluator.to_dict()["judge_config"]["model_id"] == "gpt-4o-mini"
+
+    def test_to_dict_deep_copies_nested_judge_config(self):
+        evaluator = EvaluatorDTO(
+            name="Nested Judge",
+            measure_id="answer_helpfulness",
+            target_type="observability_trace",
+            judge_config={"parameters": {"temperature": 0.0}},
+        )
+
+        result = evaluator.to_dict()
+        result["judge_config"]["parameters"]["temperature"] = 0.7
+
+        assert evaluator.judge_config["parameters"]["temperature"] == 0.0
+
+
+class TestMeasureDTO:
+    """Test MeasureDTO round-trip behavior."""
+
+    def test_fixture_round_trip(self):
+        payload = _load_fixture("measure_dto.json")
+        measure = MeasureDTO(**payload)
+
+        assert measure.to_dict() == payload
+        assert measure.to_dict()["id"] == "answer_helpfulness"
+        assert "measure_id" not in measure.to_dict()
+
+    def test_to_dict_omits_none_domain_bounds(self):
+        payload = _load_fixture("measure_dto.json")
+        measure = MeasureDTO(**{**payload, "domain_min": None, "domain_max": None})
+
+        result = measure.to_dict()
+
+        assert "domain_min" not in result
+        assert "domain_max" not in result
+
+
+class TestPlannerDraftDTO:
+    """Test PlannerDraftDTO round-trip behavior."""
+
+    def test_fixture_round_trip(self):
+        payload = _load_fixture("planner_draft_dto.json")
+        planner = PlannerDraftDTO(**payload)
+
+        assert planner.to_dict() == payload
+        assert planner.to_dict()["measures"][0]["id"] == "answer_helpfulness"
+
+    def test_accepts_measure_dto_items(self):
+        measure_payload = _load_fixture("measure_dto.json")
+        measure = MeasureDTO(**measure_payload)
+        planner = PlannerDraftDTO(
+            draft_id="draft_with_measure_dto",
+            description="Create a support agent.",
+            measures=[measure],
+        )
+
+        result = planner.to_dict()
+
+        assert result["measures"] == [measure_payload]
+
+    def test_to_dict_omits_none_agent_and_benchmark(self):
+        planner = PlannerDraftDTO(description="Create a support agent.")
+
+        result = planner.to_dict()
+
+        assert "agent" not in result
+        assert "benchmark" not in result
+
+    def test_to_dict_deep_copies_nested_measure_dicts(self):
+        planner = PlannerDraftDTO(
+            description="Create a support agent.",
+            measures=[{"id": "answer_helpfulness", "metadata": {"weight": 1}}],
+        )
+
+        result = planner.to_dict()
+        result["measures"][0]["metadata"]["weight"] = 2
+
+        assert planner.measures[0]["metadata"]["weight"] == 1
 
 
 class TestEdgeCases:
