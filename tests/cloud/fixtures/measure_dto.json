@@ -1,0 +1,31 @@
+{
+  "id": "answer_helpfulness",
+  "version": "1.0.0",
+  "label": "Answer Helpfulness",
+  "description": "Scores whether the response directly and usefully answers the user's request.",
+  "category": "Response Quality",
+  "measure_type": "quality",
+  "evaluation_method": "llm_based",
+  "target_aspect": "response",
+  "metric_type": "single_turn",
+  "output_type": "continuous",
+  "agent_types": [
+    "chat"
+  ],
+  "domain_min": 0.0,
+  "domain_max": 1.0,
+  "inverse": false,
+  "is_custom": true,
+  "target_types": [
+    "observability_trace",
+    "configuration_run"
+  ],
+  "allowed_score_sources": [
+    "manual",
+    "evaluator"
+  ],
+  "criteria": [
+    "The response addresses the user's stated goal.",
+    "The response includes enough detail to be actionable."
+  ]
+}
