@@ -116,6 +116,19 @@ def _string_list_at(payload: JsonObject, path: tuple[str, ...], description: str
     return value
 
 
+def _non_empty_string_list_at(
+    payload: JsonObject,
+    path: tuple[str, ...],
+    description: str,
+) -> list[str]:
+    value = _string_list_at(payload, path, description)
+    if not value:
+        dotted = ".".join(path)
+        raise AssertionError(f"{description} field `{dotted}` must not be empty.")
+
+    return value
+
+
 def _load_parity_manifest() -> JsonObject:
     manifest_path = _resolve_existing_path(
         env_var="TRAIGENT_PARITY_MANIFEST",
@@ -168,10 +181,10 @@ def test_parity_manifest_declares_python_target() -> None:
 def test_python_public_clients_are_represented_in_js_api_surface() -> None:
     manifest = _load_parity_manifest()
     js_surface = _load_js_surface()
-    js_root = set(_string_list_at(js_surface, ("root",), "JS API surface snapshot"))
+    js_root = set(_non_empty_string_list_at(js_surface, ("root",), "JS API surface snapshot"))
 
     required = set(
-        _string_list_at(
+        _non_empty_string_list_at(
             manifest,
             ("javascript", "requiredRootExports"),
             "Python/JS parity manifest",
