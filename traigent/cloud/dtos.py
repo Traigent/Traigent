@@ -9,6 +9,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 import re
 from collections import UserDict
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -706,9 +707,9 @@ class EvaluatorDTO:
             "name": self.name,
             "measure_id": self.measure_id,
             "target_type": self.target_type,
-            "judge_config": dict(self.judge_config),
+            "judge_config": deepcopy(self.judge_config),
             "sampling_rate": self.sampling_rate,
-            "target_filters": dict(self.target_filters),
+            "target_filters": deepcopy(self.target_filters),
             "is_active": self.is_active,
         }
         for field_name in (
@@ -723,7 +724,7 @@ class EvaluatorDTO:
         ):
             value = getattr(self, field_name)
             if value is not None:
-                result[field_name] = value
+                result[field_name] = deepcopy(value)
         return result
 
 
@@ -766,21 +767,21 @@ class MeasureDTO:
             "metric_type": self.metric_type,
             "output_type": self.output_type,
             "agent_types": list(self.agent_types),
-            "domain_min": self.domain_min,
-            "domain_max": self.domain_max,
             "inverse": self.inverse,
             "is_custom": self.is_custom,
             "target_types": list(self.target_types),
             "allowed_score_sources": list(self.allowed_score_sources),
         }
+        if self.domain_min is not None:
+            result["domain_min"] = self.domain_min
+        if self.domain_max is not None:
+            result["domain_max"] = self.domain_max
         if self.criteria is not None:
             result["criteria"] = list(self.criteria)
         if self.python_packages is not None:
-            result["python_packages"] = [dict(item) for item in self.python_packages]
+            result["python_packages"] = deepcopy(self.python_packages)
         if self.measure_parameters is not None:
-            result["measure_parameters"] = [
-                dict(item) for item in self.measure_parameters
-            ]
+            result["measure_parameters"] = deepcopy(self.measure_parameters)
         return result
 
 
@@ -802,18 +803,27 @@ class PlannerDraftDTO:
         """Convert to the canonical planner draft shape."""
         result: dict[str, Any] = {
             "description": self.description,
-            "agent": self.agent,
-            "benchmark": self.benchmark,
             "measures": [
-                measure.to_dict() if isinstance(measure, MeasureDTO) else dict(measure)
+                (
+                    measure.to_dict()
+                    if isinstance(measure, MeasureDTO)
+                    else deepcopy(measure)
+                )
                 for measure in self.measures
             ],
-            "metadata": dict(self.metadata),
+            "metadata": deepcopy(self.metadata),
         }
-        for field_name in ("draft_id", "status", "created_at", "updated_at"):
+        for field_name in (
+            "agent",
+            "benchmark",
+            "draft_id",
+            "status",
+            "created_at",
+            "updated_at",
+        ):
             value = getattr(self, field_name)
             if value is not None:
-                result[field_name] = value
+                result[field_name] = deepcopy(value)
         return result
 
 

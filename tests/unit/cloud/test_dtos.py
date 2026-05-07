@@ -804,6 +804,19 @@ class TestEvaluatorDTO:
         assert evaluator.to_dict() == payload
         assert evaluator.to_dict()["judge_config"]["model_id"] == "gpt-4o-mini"
 
+    def test_to_dict_deep_copies_nested_judge_config(self):
+        evaluator = EvaluatorDTO(
+            name="Nested Judge",
+            measure_id="answer_helpfulness",
+            target_type="observability_trace",
+            judge_config={"parameters": {"temperature": 0.0}},
+        )
+
+        result = evaluator.to_dict()
+        result["judge_config"]["parameters"]["temperature"] = 0.7
+
+        assert evaluator.judge_config["parameters"]["temperature"] == 0.0
+
 
 class TestMeasureDTO:
     """Test MeasureDTO round-trip behavior."""
@@ -815,6 +828,15 @@ class TestMeasureDTO:
         assert measure.to_dict() == payload
         assert measure.to_dict()["id"] == "answer_helpfulness"
         assert "measure_id" not in measure.to_dict()
+
+    def test_to_dict_omits_none_domain_bounds(self):
+        payload = _load_fixture("measure_dto.json")
+        measure = MeasureDTO(**{**payload, "domain_min": None, "domain_max": None})
+
+        result = measure.to_dict()
+
+        assert "domain_min" not in result
+        assert "domain_max" not in result
 
 
 class TestPlannerDraftDTO:
@@ -839,6 +861,25 @@ class TestPlannerDraftDTO:
         result = planner.to_dict()
 
         assert result["measures"] == [measure_payload]
+
+    def test_to_dict_omits_none_agent_and_benchmark(self):
+        planner = PlannerDraftDTO(description="Create a support agent.")
+
+        result = planner.to_dict()
+
+        assert "agent" not in result
+        assert "benchmark" not in result
+
+    def test_to_dict_deep_copies_nested_measure_dicts(self):
+        planner = PlannerDraftDTO(
+            description="Create a support agent.",
+            measures=[{"id": "answer_helpfulness", "metadata": {"weight": 1}}],
+        )
+
+        result = planner.to_dict()
+        result["measures"][0]["metadata"]["weight"] = 2
+
+        assert planner.measures[0]["metadata"]["weight"] == 1
 
 
 class TestEdgeCases:
