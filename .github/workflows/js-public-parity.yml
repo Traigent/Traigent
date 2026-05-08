@@ -2,6 +2,8 @@ name: JS Public Parity
 
 on:
   pull_request:
+    branches:
+      - develop
     # Client/config file moves outside these conventional module names are still
     # caught by the weekly schedule; keep PR triggers scoped to parity-relevant
     # files so unrelated Python changes do not pay the cross-repo clone/install cost.
