@@ -6,14 +6,12 @@ from __future__ import annotations
 
 from traigent.evaluators.base import BaseEvaluator, Dataset, SimpleScoringEvaluator
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator
-from traigent.evaluators.js_evaluator import JSEvaluator
 from traigent.evaluators.local import LocalEvaluator
 
 __all__ = [
     "BaseEvaluator",
     "Dataset",
     "HybridAPIEvaluator",
-    "JSEvaluator",
     "LocalEvaluator",
     "SimpleScoringEvaluator",
 ]

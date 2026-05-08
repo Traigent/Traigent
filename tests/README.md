@@ -25,7 +25,7 @@ pytest tests/e2e/          # End-to-end tests only
 
 ## Excluded Directories
 
-Certain directories (legacy tests, manual validation, bridges) are automatically excluded
+Certain directories (legacy tests and manual validation suites) are automatically excluded
 by the `addopts` in `pyproject.toml` (`[tool.pytest.ini_options]`).
 
 ## Test Standards

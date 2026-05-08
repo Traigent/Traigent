@@ -144,6 +144,11 @@ class InjectionOptions(BaseModel):
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
+    Note:
+        ``runtime`` and ``js_*`` execution fields were removed in 0.12.0 with
+        the temporary Python-orchestrated JS bridge. Use native ``@traigent/sdk``
+        for JavaScript optimization. See CHANGELOG.md and docs/guides/js-bridge.md.
+
     Attributes:
         execution_mode: Execution mode. Use ``edge_analytics`` for local
             execution, ``hybrid`` for local trials plus backend/portal
@@ -164,18 +169,6 @@ class ExecutionOptions(BaseModel):
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
         reps_aggregation: How to aggregate metrics across repetitions.
             Options: "mean" (default), "median", "min", "max".
-        runtime: Runtime to execute trials in ("python" or "node").
-            When set to "node", trials are executed in a Node.js subprocess.
-        js_module: Path to the JS module containing the trial function.
-            Required when runtime="node".
-        js_function: Name of the exported function to call in the JS module.
-            Default is "runTrial".
-        js_timeout: Timeout for JS trial execution in seconds.
-            Default is 300 (5 minutes).
-        js_use_npx: Whether to invoke the JS bridge runner via `npx traigent-js`.
-            Disable this when providing an explicit local runner path.
-        js_runner_path: Explicit path to the `traigent-js` CLI runner script.
-        js_node_executable: Node.js executable to use for explicit runner paths.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -189,15 +182,6 @@ class ExecutionOptions(BaseModel):
     samples_include_pruned: bool = True
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
-    # JS Bridge options
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
-    js_use_npx: bool = True
-    js_runner_path: str | None = None
-    js_node_executable: str = "node"
     # Hybrid API options
     hybrid_api_endpoint: str | None = None
     tunable_id: str | None = None
@@ -908,29 +892,6 @@ def _resolve_injection_bundle_options(
     )
 
 
-@dataclass
-class JSRuntimeConfig:
-    """Configuration for JS runtime execution."""
-
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
-    js_use_npx: bool = True
-    js_runner_path: str | None = None
-    js_node_executable: str = "node"
-
-    @property
-    def is_js_runtime(self) -> bool:
-        """Return True if this is a JS runtime configuration.
-
-        Returns:
-            True if runtime is 'node', False otherwise.
-        """
-        return self.runtime == "node"
-
-
 @dataclass(slots=True)
 class ResolvedExecutionOptions:
     """Resolved execution options after merging direct and bundled settings."""
@@ -954,7 +915,6 @@ class ResolvedExecutionOptions:
     privacy_enabled: Any
     max_total_examples: Any
     samples_include_pruned: Any
-    js_runtime_config: JSRuntimeConfig | None
 
 
 def _resolve_execution_bundle_options(
@@ -978,30 +938,6 @@ def _resolve_execution_bundle_options(
             "reps_aggregation is not available in this version. "
             "This feature requires Traigent Enterprise. "
             "Contact sales@traigent.ai for more information."
-        )
-
-    # Build JS runtime config if runtime is "node"
-    js_runtime_config = None
-    if execution_bundle.runtime == "node":
-        if not execution_bundle.js_module:
-            raise ValueError(
-                "js_module is required when runtime='node'. "
-                "Specify the path to your JS module containing the trial function."
-            )
-        js_runtime_config = JSRuntimeConfig(
-            runtime=execution_bundle.runtime,
-            js_module=execution_bundle.js_module,
-            js_function=execution_bundle.js_function,
-            js_timeout=execution_bundle.js_timeout,
-            js_parallel_workers=execution_bundle.js_parallel_workers,
-            js_use_npx=execution_bundle.js_use_npx,
-            js_runner_path=execution_bundle.js_runner_path,
-            js_node_executable=execution_bundle.js_node_executable,
-        )
-    elif execution_bundle.runtime not in ("python", "node"):
-        raise ValueError(
-            f"Invalid runtime '{execution_bundle.runtime}'. "
-            "Supported values are 'python' (default) or 'node' (JavaScript)."
         )
 
     return ResolvedExecutionOptions(
@@ -1119,7 +1055,6 @@ def _resolve_execution_bundle_options(
             execution_bundle.samples_include_pruned,
             defaults,
         ),
-        js_runtime_config=js_runtime_config,
     )
 
 
@@ -1148,52 +1083,6 @@ def _resolve_injection_mode_enum(
         return InjectionMode(injection_mode)
     except ValueError:
         return injection_mode
-
-
-# Injection modes that are incompatible with JS runtime
-_JS_INCOMPATIBLE_INJECTION_MODES = frozenset(
-    {
-        InjectionMode.CONTEXT,  # Uses Python's contextvars
-        InjectionMode.SEAMLESS,  # Modifies Python source code
-    }
-)
-
-
-def _validate_js_runtime_injection_mode(
-    js_runtime_config: JSRuntimeConfig | None,
-    injection_mode: str | InjectionMode,
-) -> None:
-    """Validate that injection mode is compatible with JS runtime.
-
-    When runtime='node', Python-specific injection modes are not supported
-    because the trial config is passed directly to the JS function via the
-    NDJSON protocol.
-
-    Args:
-        js_runtime_config: JS runtime configuration (None if runtime='python')
-        injection_mode: The injection mode being used
-
-    Raises:
-        ValueError: If injection mode is incompatible with JS runtime
-    """
-    if js_runtime_config is None or not js_runtime_config.is_js_runtime:
-        return
-
-    # Normalize to enum for comparison
-    if isinstance(injection_mode, InjectionMode):
-        mode_enum = injection_mode
-    elif injection_mode in [m.value for m in InjectionMode]:
-        mode_enum = InjectionMode(injection_mode)
-    else:
-        mode_enum = None
-
-    if mode_enum in _JS_INCOMPATIBLE_INJECTION_MODES:
-        raise ValueError(
-            f"injection_mode='{mode_enum.value if mode_enum else injection_mode}' "
-            f"is not compatible with runtime='node'. "
-            f"When using JavaScript runtime, config is passed directly to the JS function "
-            f"via the trial protocol. Use injection_mode='parameter' or omit it."
-        )
 
 
 def _resolve_execution_mode_enum(
@@ -2061,7 +1950,6 @@ def optimize(  # NOSONAR(S107)
         privacy_enabled=privacy_enabled,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
-        js_runtime_config=None,
     )
     resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
@@ -2087,7 +1975,6 @@ def optimize(  # NOSONAR(S107)
     privacy_enabled = resolved_execution.privacy_enabled
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
-    js_runtime_config = resolved_execution.js_runtime_config
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -2144,9 +2031,6 @@ def optimize(  # NOSONAR(S107)
         actual_execution_mode = _resolve_actual_execution_mode(execution_mode)
 
         actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
-
-        # Validate injection mode is compatible with JS runtime
-        _validate_js_runtime_injection_mode(js_runtime_config, actual_injection_mode)
 
         execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
             actual_execution_mode, privacy_enabled
@@ -2258,8 +2142,6 @@ def optimize(  # NOSONAR(S107)
             # Config persistence
             auto_load_best=auto_load_best_config,
             load_from=load_from_config,
-            # JS runtime configuration
-            js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
             # Optimizer limits (extracted from combined_settings)

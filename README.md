@@ -136,7 +136,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
 </details>
@@ -363,6 +363,7 @@ traigent --help                              # Full command reference
 | `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
 | 0.0% accuracy | Check dataset format; for local demos, import and call `enable_mock_mode_for_quickstart()` from `traigent.testing` |
 | Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
+| `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](docs/guides/js-bridge.md). |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
 </details>
