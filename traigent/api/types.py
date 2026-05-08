@@ -1054,7 +1054,11 @@ class OptimizationResult:
     def _legacy_normalize_value(
         value: Any, min_val: float, max_val: float, minimize: bool
     ) -> float | None:
-        """Normalize a single metric value using legacy orientation rules."""
+        """Normalize a single metric value using legacy orientation rules.
+
+        Zero-span tolerance and fallback follow the TraigentSchema
+        multi_objective_semantics meta-contract (epsilon=1e-9, fallback=0.5).
+        """
 
         if value is None:
             return None
@@ -1064,7 +1068,7 @@ class OptimizationResult:
         except (TypeError, ValueError):
             return None
 
-        if abs(max_val - min_val) < 1e-10:
+        if abs(max_val - min_val) < 1e-9:
             return 0.5
 
         span = max_val - min_val
