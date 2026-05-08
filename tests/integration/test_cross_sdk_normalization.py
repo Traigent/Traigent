@@ -1,13 +1,12 @@
 """Cross-SDK normalization parity test.
 
 Asserts the Python SDK's ``score_trials()`` and weight-rescaling logic match
-the numerical contract pinned in
-``integrations/traigent-cross-sdk-benchmarks/fixtures/multi_objective_normalization.json``.
+the numerical contract pinned in ``tests/fixtures/multi_objective_normalization.json``.
 
 The traigent-js SDK has a parallel test
 (``traigent-js/tests/cross-sdk/multi-objective-normalization.test.ts``)
-asserting the same fixture. Drift on either side fails its own suite;
-agreement on the fixture is the cross-SDK contract.
+asserting its repo-local mirror of the same fixture. Drift on either side
+fails its own suite; agreement on the fixture is the cross-SDK contract.
 
 Contract source: TraigentSchema/optimization/multi_objective_semantics_schema.json v1.0.0.
 """
@@ -25,14 +24,20 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 
 def _locate_fixture() -> Path:
-    """Find the fixture under the workspace's `integrations/` directory.
+    """Find the normalization fixture.
 
-    Depth varies between main checkout and worktree, so walk upward looking
-    for the `integrations` sibling. Override via TRAIGENT_CROSS_SDK_FIXTURE_PATH.
+    CI uses the repo-local fixture. Local enterprise parity runs may override
+    with TRAIGENT_CROSS_SDK_FIXTURE_PATH or use the workspace-level
+    integrations/traigent-cross-sdk-benchmarks copy when present.
     """
     override = os.environ.get("TRAIGENT_CROSS_SDK_FIXTURE_PATH")
     if override and Path(override).exists():
         return Path(override)
+
+    local = Path(__file__).resolve().parent.parent / "fixtures" / "multi_objective_normalization.json"
+    if local.exists():
+        return local
+
     cursor = Path(__file__).resolve()
     for _ in range(10):
         candidate = (
@@ -48,8 +53,8 @@ def _locate_fixture() -> Path:
             break
         cursor = cursor.parent
     raise FileNotFoundError(
-        "Could not locate multi_objective_normalization.json; set "
-        "TRAIGENT_CROSS_SDK_FIXTURE_PATH."
+        "Could not locate tests/fixtures/multi_objective_normalization.json; set "
+        "TRAIGENT_CROSS_SDK_FIXTURE_PATH to a compatible fixture copy."
     )
 
 
