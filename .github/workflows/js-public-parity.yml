@@ -18,9 +18,6 @@ on:
 permissions:
   contents: read
 
-env:
-  TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
-
 jobs:
   js-public-parity:
     runs-on: ubuntu-latest
@@ -65,11 +62,6 @@ jobs:
       - name: Install Python SDK
         if: steps.js-sdk-token.outputs.available == 'true'
         working-directory: Traigent
-        env:
-          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
-          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
-          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
-          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
           bash scripts/ci/install_sdk_requirements.sh build wheel -e ".[dev,all]"
 
