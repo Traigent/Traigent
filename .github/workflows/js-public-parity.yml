@@ -39,11 +39,11 @@ jobs:
       - name: Check cross-repo token
         id: cross-repo-token
         env:
-          TRAIGENT_JS_SDK_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
+          CROSS_REPO_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${TRAIGENT_JS_SDK_TOKEN:-}" ]; then
-            echo "::warning::Skipping JS public parity guard. Configure TRAIGENT_JS_SDK_TOKEN with read access to Traigent/traigent-js and Traigent/TraigentSchema to enable it."
+          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
+            echo "::warning::Skipping JS public parity guard. Configure TRAIGENT_JS_SDK_TOKEN or TRAIGENT_PRIVATE_DEPS_TOKEN with read access to Traigent/traigent-js and Traigent/TraigentSchema to enable it."
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -59,7 +59,7 @@ jobs:
           repository: Traigent/traigent-js
           ref: main
           path: traigent-js
-          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
 
       - name: Checkout TraigentSchema
         if: steps.cross-repo-token.outputs.available == 'true'
@@ -68,7 +68,7 @@ jobs:
           repository: Traigent/TraigentSchema
           ref: main
           path: TraigentSchema
-          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN }}
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
 
       - name: Set up Python
         if: steps.cross-repo-token.outputs.available == 'true'
