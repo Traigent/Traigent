@@ -3,8 +3,7 @@ set -euo pipefail
 
 python -m pip install --upgrade pip
 
-private_deps_token="${TRAIGENT_PRIVATE_DEPS_TOKEN:-${TRAIGENT_SCHEMA_TOKEN:-${TRAIGENT_SCHEMAS_PAT:-}}}"
-schema_ref="${TRAIGENT_SCHEMA_REF:-0af2a11e0485513465dd0a4f88d62ef27a7e6336}"
+schema_requirement="${TRAIGENT_SCHEMA_REQUIREMENT:-traigent-schema>=4.1.0,<5.0.0}"
 install_schema="${TRAIGENT_INSTALL_SCHEMA:-}"
 
 for arg in "$@"; do
@@ -13,12 +12,8 @@ for arg in "$@"; do
   esac
 done
 
-if [ -n "$private_deps_token" ]; then
-  git config --global url."https://x-access-token:${private_deps_token}@github.com/Traigent/".insteadOf "https://github.com/Traigent/"
-fi
-
 if [ "$install_schema" = "1" ]; then
-  python -m pip install "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@${schema_ref}"
+  python -m pip install "$schema_requirement"
 fi
 
 if [ "$#" -gt 0 ]; then
