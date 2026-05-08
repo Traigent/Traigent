@@ -783,6 +783,90 @@ class TestOptimizationResultNormalizationMethods:
         )
         assert normalized == pytest.approx(0.5)
 
+    def test_legacy_normalize_value_boundary_epsilon_collapses(self):
+        """Spans below the new normative epsilon (1e-9) collapse to 0.5.
+
+        Pre-rollout the legacy path used 1e-10, so spans in the boundary
+        band [1e-10, 1e-9) normalized linearly. Per
+        TraigentSchema/optimization/multi_objective_semantics_schema.json
+        v1.0.0 the legacy and schema-aware paths now share the same
+        epsilon, so this band collapses to the neutral 0.5 fallback.
+        """
+        # Span = 5e-10: between old 1e-10 and new 1e-9 epsilon.
+        normalized = OptimizationResult._legacy_normalize_value(
+            value=0.85, min_val=0.85, max_val=0.85 + 5e-10, minimize=False
+        )
+        assert normalized == pytest.approx(0.5)
+
+        # Same span, minimize direction: still collapses to the neutral 0.5.
+        normalized = OptimizationResult._legacy_normalize_value(
+            value=0.85 + 5e-10, min_val=0.85, max_val=0.85 + 5e-10, minimize=True
+        )
+        assert normalized == pytest.approx(0.5)
+
+    def test_recompute_zero_span_both_paths(self):
+        """Both backend recompute paths return 0.5 on a zero-span trial set.
+
+        Exercises:
+        - The schema-aware path (objective_schema is provided), which
+          delegates to ObjectiveSchema.normalize_metrics().
+        - The legacy path (no objective_schema), which calls
+          _legacy_normalize_value() inline.
+
+        The plan calls out that these are *separate* code paths in
+        api/types.py; this test pins agreement between them.
+        """
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        # All trials carry the same accuracy and cost: every objective
+        # must return 0.5 from both paths, weighted score = 0.5.
+        trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"seed": i},
+                metrics={"accuracy": 0.9, "cost": 0.1},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(3)
+        ]
+        result = OptimizationResult(
+            trials=trials,
+            best_config={"seed": 0},
+            best_score=0.9,
+            optimization_id="recompute_zero_span",
+            duration=3.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="test",
+            timestamp=datetime.now(),
+        )
+
+        # Legacy path (no schema): minimize_objectives is the only
+        # direction signal.
+        legacy = result.score_trials(minimize_objectives=["cost"])
+        assert len(legacy) == 3
+        for entry in legacy:
+            assert entry["normalized"]["accuracy"] == pytest.approx(0.5)
+            assert entry["normalized"]["cost"] == pytest.approx(0.5)
+            assert entry["weighted"] == pytest.approx(0.5)
+
+        # Schema-aware path: ObjectiveSchema drives orientation + weights.
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
+                ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
+            ]
+        )
+        schema_aware = result.score_trials(objective_schema=schema)
+        assert len(schema_aware) == 3
+        for entry in schema_aware:
+            assert entry["normalized"]["accuracy"] == pytest.approx(0.5)
+            assert entry["normalized"]["cost"] == pytest.approx(0.5)
+            assert entry["weighted"] == pytest.approx(0.5)
+
     def test_legacy_normalize_value_preserves_out_of_range_values(self):
         """Test _legacy_normalize_value keeps out-of-range signal (no clipping)."""
         # Value below min
