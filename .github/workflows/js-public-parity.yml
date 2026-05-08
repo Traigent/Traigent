@@ -13,6 +13,15 @@ on:
       - "traigent/__init__.py"
       - "traigent/**/client.py"
       - "traigent/**/config.py"
+  push:
+    branches:
+      - develop
+    paths:
+      - ".github/workflows/js-public-parity.yml"
+      - "tests/cross_sdk_oracles/test_js_public_parity_manifest.py"
+      - "traigent/__init__.py"
+      - "traigent/**/client.py"
+      - "traigent/**/config.py"
   workflow_dispatch:
   schedule:
     - cron: "17 7 * * 1"
