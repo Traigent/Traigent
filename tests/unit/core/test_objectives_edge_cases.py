@@ -247,6 +247,25 @@ class TestZeroRangeHandling:
         )
         assert normalized == 0.5  # Should return middle value for near-zero range
 
+    def test_boundary_epsilon_collapses_to_half(self):
+        """Spans in the boundary band [1e-10, 1e-9) collapse under the new
+        normative epsilon (TraigentSchema multi_objective_semantics_schema.json
+        v1.0.0). Pre-rollout this band normalized linearly.
+        """
+        schema = create_default_objectives(["accuracy"])
+
+        # Span = 5e-10: between the old 1e-10 and the new 1e-9 epsilon.
+        normalized = schema.normalize_value(
+            "accuracy", 0.85, min_val=0.85, max_val=0.85 + 5e-10
+        )
+        assert normalized == 0.5
+
+        # normalize_metrics() must agree (it forwards epsilon to normalize_value).
+        bulk = schema.normalize_metrics(
+            {"accuracy": 0.85}, ranges={"accuracy": (0.85, 0.85 + 5e-10)}
+        )
+        assert bulk["accuracy"] == 0.5
+
 
 class TestMixedOrientationParetoFront:
     """Tests for Pareto fronts with mixed maximize/minimize objectives."""

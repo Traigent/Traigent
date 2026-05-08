@@ -197,6 +197,12 @@ class ObjectiveDefinition:
 class ObjectiveSchema:
     """Complete schema for multi-objective optimization.
 
+    Behavior is governed by TraigentSchema's
+    ``optimization/multi_objective_semantics_schema.json`` meta-contract
+    (zero-span fallback 0.5, zero-span epsilon 1e-9, sum-to-one weight
+    rescaling, dominance-guard cap 0.99 with sdk-only validation scope).
+    Those constants are not wire-format fields; this class hard-codes them.
+
     Attributes:
         objectives: List of objective definitions
         weights_sum: Sum of all objective weights
@@ -373,7 +379,7 @@ class ObjectiveSchema:
         value: float,
         min_val: float | None = None,
         max_val: float | None = None,
-        epsilon: float = 1e-10,
+        epsilon: float = 1e-9,
     ) -> float:
         """Normalize a value based on objective orientation.
 
@@ -382,10 +388,13 @@ class ObjectiveSchema:
             value: Value to normalize
             min_val: Minimum value (if None, uses bounds if available)
             max_val: Maximum value (if None, uses bounds if available)
-            epsilon: Small value to handle zero-range cases
+            epsilon: Zero-span tolerance. Default 1e-9 matches the normative
+                value pinned in TraigentSchema's
+                multi_objective_semantics_schema.json.
 
         Returns:
-            Normalized value in [0, 1] range
+            Normalized value in [0, 1] range. When |max - min| < epsilon,
+            returns 0.5 (zero-span fallback per the schema meta-contract).
         """
         obj = self.get_objective(objective_name)
         if obj is None:
@@ -420,7 +429,7 @@ class ObjectiveSchema:
         self,
         metrics: dict[str, float],
         ranges: dict[str, tuple[float, float]] | None = None,
-        epsilon: float = 1e-10,
+        epsilon: float = 1e-9,
     ) -> dict[str, float]:
         """Normalize all metrics based on their orientations.
 
