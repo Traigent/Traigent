@@ -3,7 +3,7 @@ set -euo pipefail
 
 python -m pip install --upgrade pip
 
-schema_requirement="${TRAIGENT_SCHEMA_REQUIREMENT:-traigent-schema>=4.1.0,<5.0.0}"
+schema_requirement="${TRAIGENT_SCHEMA_REQUIREMENT:-traigent-schema==4.1.0}"
 install_schema="${TRAIGENT_INSTALL_SCHEMA:-}"
 
 for arg in "$@"; do
