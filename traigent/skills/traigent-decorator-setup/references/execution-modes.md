@@ -28,16 +28,6 @@ from traigent.api.decorators import ExecutionOptions
 | `reps_per_trial` | `int` | `1` | Number of times to repeat each configuration. Useful for noisy LLM evaluations. Set to 3-5 for statistical stability. |
 | `reps_aggregation` | `str` | `"mean"` | How to aggregate metrics across repetitions: `"mean"`, `"median"`, `"min"`, or `"max"`. |
 
-### JS Bridge Fields
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `runtime` | `str` | `"python"` | Runtime for trial execution: `"python"` or `"node"`. |
-| `js_module` | `str \| None` | `None` | Path to the JS module containing the trial function. Required when `runtime="node"`. |
-| `js_function` | `str` | `"runTrial"` | Name of the exported function to call in the JS module. |
-| `js_timeout` | `float` | `300.0` | Timeout for JS trial execution in seconds. |
-| `js_parallel_workers` | `int` | `1` | Number of parallel JS worker processes. |
-
 ### Hybrid API Fields
 
 | Field | Type | Default | Description |
@@ -149,45 +139,6 @@ You can also pass it as a dictionary:
 def my_func(query: str) -> str:
     cfg = traigent.get_config()
     return call_llm(model=cfg["model"], prompt=query)
-```
-
-## JS Bridge (Node.js Execution)
-
-Run trials in a Node.js subprocess. Useful when your LLM application is written in JavaScript/TypeScript.
-
-```python
-@traigent.optimize(
-    execution=ExecutionOptions(
-        runtime="node",
-        js_module="./src/trial.js",
-        js_function="runTrial",
-        js_timeout=120.0,
-        js_parallel_workers=2,
-    ),
-    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-)
-def my_func(query: str) -> str:
-    # This function body is not executed when runtime="node"
-    # Instead, the JS module's runTrial function is called
-    pass
-```
-
-The JS module should export a function matching `js_function`:
-
-```javascript
-// src/trial.js
-async function runTrial(config, example) {
-    const response = await callLLM({
-        model: config.model,
-        prompt: example.question,
-    });
-    return {
-        prediction: response.text,
-        score: response.text.includes(example.expected) ? 1.0 : 0.0,
-    };
-}
-
-module.exports = { runTrial };
 ```
 
 ## Repetitions for Statistical Stability

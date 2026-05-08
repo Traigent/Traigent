@@ -20,7 +20,6 @@ def _make_common_kwargs() -> dict[str, object]:
         "effective_thread_workers": None,
         "effective_privacy_enabled": False,
         "objectives": ["accuracy"],
-        "js_runtime_config": None,
         "mock_mode_config": None,
         "metric_functions": None,
         "scoring_function": None,
@@ -41,7 +40,7 @@ def test_create_traigent_config_accepts_hybrid_api_mode() -> None:
 
 def test_create_effective_evaluator_uses_hybrid_api_evaluator() -> None:
     """Hybrid mode wiring returns HybridAPIEvaluator when requested."""
-    evaluator, js_pool = create_effective_evaluator(
+    evaluator, auxiliary_resource = create_effective_evaluator(
         **_make_common_kwargs(),
         execution_mode="hybrid_api",
         hybrid_api_options=HybridAPIEvaluatorOptions(
@@ -57,7 +56,7 @@ def test_create_effective_evaluator_uses_hybrid_api_evaluator() -> None:
     assert evaluator._tunable_id == "cap-1"
     assert evaluator._batch_size == 8
     assert evaluator._batch_parallelism == 2
-    assert js_pool is None
+    assert auxiliary_resource is None
 
 
 def test_create_effective_evaluator_hybrid_api_requires_endpoint_or_transport() -> None:

@@ -12,7 +12,6 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 - **[Interactive Optimization](interactive_optimization.md)** - Real-time optimization workflows and monitoring
 - **[Evaluation Guide](evaluation_guide.md)** - Measure and improve model performance
 - **[Optuna Integration](optuna_integration.md)** - Use the Optuna-backed optimizers and distributed coordinator
-- **[JS Bridge Guide](../guides/js-bridge.md)** - Orchestrate JavaScript/TypeScript agents from Python
 
 ## Learning Path
 

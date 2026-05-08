@@ -589,14 +589,6 @@ class OptimizedFunction:
             kwargs, sentinel, "global_measures", None
         )
 
-        # JS runtime configuration
-        self.js_runtime_config = self._store_optional_param(
-            kwargs, sentinel, "js_runtime_config", None
-        )
-
-        # JS process pool (created lazily for parallel JS execution)
-        self._js_process_pool: Any = None
-
         # Safety constraints
         self.safety_constraints = self._store_optional_param(
             kwargs, sentinel, "safety_constraints", None
@@ -1485,14 +1477,13 @@ class OptimizedFunction:
         force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator. Delegates to optimization_pipeline."""
-        evaluator, js_pool = create_effective_evaluator(
+        evaluator, _auxiliary_resource = create_effective_evaluator(
             timeout=timeout,
             custom_evaluator=custom_evaluator,
             effective_batch_size=effective_batch_size,
             effective_thread_workers=effective_thread_workers,
             effective_privacy_enabled=effective_privacy_enabled,
             objectives=self.objectives,
-            js_runtime_config=getattr(self, "js_runtime_config", None),
             execution_mode=self.execution_mode,
             mock_mode_config=self.mock_mode_config,
             metric_functions=self.metric_functions,
@@ -1502,8 +1493,6 @@ class OptimizedFunction:
                 force_auto_discover_tvars=force_auto_discover_tvars
             ),
         )
-        if js_pool is not None:
-            self._js_process_pool = js_pool
         return evaluator
 
     def _build_optimization_orchestrator(
@@ -1597,17 +1586,6 @@ class OptimizedFunction:
             # Set state to ERROR on failure
             self._state = OptimizationState.ERROR
             raise
-        finally:
-            # Clean up JS process pool if it was created
-            if self._js_process_pool is not None:
-                try:
-                    await self._js_process_pool.shutdown()
-                    logger.debug("JS process pool shut down successfully")
-                except Exception as e:
-                    logger.warning("Error shutting down JS process pool: %s", e)
-                finally:
-                    self._js_process_pool = None
-
         # Save results if requested
         if save_to:
             self.save_optimization_results(save_to)
