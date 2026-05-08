@@ -1163,6 +1163,66 @@ class OptimizationResult:
         best_trial, best_score = max(weighted_scores, key=lambda item: item[1])
         return best_trial.config, best_score
 
+    def score_trials(
+        self,
+        objective_weights: dict[str, float] | None = None,
+        minimize_objectives: list[str] | None = None,
+        objective_schema: ObjectiveSchema | None = None,
+    ) -> list[dict[str, Any]]:
+        """Per-trial normalized + weighted scores for cross-SDK parity.
+
+        Returns the per-objective normalized values and weighted score for
+        every successful trial. This is the public surface used by the
+        ``traigent-cross-sdk-benchmarks`` normalization harness; it shares
+        all preference-resolution and ranging logic with
+        :meth:`calculate_weighted_scores`.
+
+        Args:
+            objective_weights: Same as :meth:`calculate_weighted_scores`.
+            minimize_objectives: Same as :meth:`calculate_weighted_scores`.
+            objective_schema: Same as :meth:`calculate_weighted_scores`.
+
+        Returns:
+            List of dicts, one per successful trial, each containing:
+                - ``trial_id``: Trial identifier.
+                - ``normalized``: Per-objective normalized values (0..1).
+                - ``weighted``: Weighted-sum score using sum-to-one weights.
+        """
+        if not self.successful_trials:
+            return []
+
+        (
+            resolved_weights,
+            resolved_minimize,
+            resolved_schema,
+        ) = self._prepare_objective_preferences(
+            objective_weights, minimize_objectives, objective_schema
+        )
+        normalized_weights = self._normalize_weight_map(resolved_weights)
+        ranges = self._calculate_objective_ranges()
+
+        per_trial: list[dict[str, Any]] = []
+        for trial in self.successful_trials:
+            if not trial.metrics:
+                per_trial.append(
+                    {"trial_id": trial.trial_id, "normalized": {}, "weighted": 0.0}
+                )
+                continue
+            normalized = self._normalize_trial_metrics(
+                trial, ranges, resolved_minimize, resolved_schema
+            )
+            weighted = (
+                self._score_trial(normalized, normalized_weights) if normalized else 0.0
+            )
+            per_trial.append(
+                {
+                    "trial_id": trial.trial_id,
+                    "normalized": dict(normalized),
+                    "weighted": float(weighted),
+                }
+            )
+        return per_trial
+
     def calculate_weighted_scores(
         self,
         objective_weights: dict[str, float] | None = None,
