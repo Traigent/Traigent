@@ -1,0 +1,98 @@
+name: JS Public Parity
+
+on:
+  pull_request:
+    branches:
+      - develop
+    # Client/config file moves outside these conventional module names are still
+    # caught by the weekly schedule; keep PR triggers scoped to parity-relevant
+    # files so unrelated Python changes do not pay the cross-repo clone/install cost.
+    paths:
+      - ".github/workflows/js-public-parity.yml"
+      - "tests/cross_sdk_oracles/test_js_public_parity_manifest.py"
+      - "traigent/__init__.py"
+      - "traigent/**/client.py"
+      - "traigent/**/config.py"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  js-public-parity:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        install-profile:
+          - name: base-dev
+            extras: ".[dev]"
+          - name: full-all
+            extras: ".[dev,all]"
+
+    steps:
+      - name: Checkout Python SDK
+        uses: actions/checkout@v4
+        with:
+          path: Traigent
+
+      - name: Check cross-repo token
+        id: cross-repo-token
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
+            echo "::warning::Skipping JS public parity guard. Configure TRAIGENT_JS_SDK_TOKEN or TRAIGENT_PRIVATE_DEPS_TOKEN with read access to Traigent/traigent-js and Traigent/TraigentSchema to enable it."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      # The JS API-surface snapshot remains sourced from traigent-js main so the
+      # Python guard tracks the next JS release surface, instead of a vendored
+      # copy or the latest npm-published tag.
+      - name: Checkout JS SDK
+        if: steps.cross-repo-token.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Traigent/traigent-js
+          ref: main
+          path: traigent-js
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+
+      - name: Checkout TraigentSchema
+        if: steps.cross-repo-token.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Traigent/TraigentSchema
+          ref: main
+          path: TraigentSchema
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+
+      - name: Set up Python
+        if: steps.cross-repo-token.outputs.available == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python SDK (${{ matrix.install-profile.name }})
+        if: steps.cross-repo-token.outputs.available == 'true'
+        working-directory: Traigent
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh build wheel -e "${{ matrix.install-profile.extras }}"
+
+      - name: Check JS public parity
+        if: steps.cross-repo-token.outputs.available == 'true'
+        working-directory: Traigent
+        env:
+          TRAIGENT_ENTERPRISE_ROOT: ${{ github.workspace }}
+          TRAIGENT_PARITY_MANIFEST: ${{ github.workspace }}/TraigentSchema/parity/python-js-sdk.json
+          TRAIGENT_JS_API_SURFACE_SNAPSHOT: ${{ github.workspace }}/traigent-js/tests/integration/fixtures/api-surface.snapshot.json
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+          PYTHONPATH: .
+        run: |
+          pytest -o addopts= -q tests/cross_sdk_oracles/test_js_public_parity_manifest.py
