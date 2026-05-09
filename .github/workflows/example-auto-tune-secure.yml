@@ -212,7 +212,7 @@ jobs:
 
       - name: Configure AWS credentials via OIDC
         if: github.event.inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: github-actions-auto-tune-secure
