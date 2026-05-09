@@ -24,13 +24,14 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_BASE_BRANCH: ${{ github.event.workflow_run.pull_requests[0].base.ref }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
-            echo "Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
-            exit 0
-          fi
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_EVENT" != "pull_request" ]; then
             echo "Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
+            exit 0
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
+            echo "Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
             exit 0
           fi
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -40,8 +41,9 @@ jobs:
 
           source_sha="${SOURCE_HEAD_SHA:-$GITHUB_SHA}"
           source_branch="${SOURCE_HEAD_BRANCH:-$GITHUB_REF_NAME}"
-          source_run_id="${SOURCE_RUN_ID:-$GITHUB_RUN_ID}"
-          source_workflow="${SOURCE_WORKFLOW:-$GITHUB_WORKFLOW}"
+          source_base_branch="${SOURCE_BASE_BRANCH:-}"
+          source_run_id="${SOURCE_RUN_ID:-}"
+          source_workflow="${SOURCE_WORKFLOW:-}"
 
           gh api --method POST repos/Traigent/traigent-validation-spine/dispatches \
             -f event_type=validation-g8 \
@@ -49,4 +51,5 @@ jobs:
             -f client_payload[source_workflow]="$source_workflow" \
             -f client_payload[source_run_id]="$source_run_id" \
             -f client_payload[source_head_branch]="$source_branch" \
+            -f client_payload[source_base_branch]="$source_base_branch" \
             -f client_payload[source_head_sha]="$source_sha"
