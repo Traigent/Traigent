@@ -8,16 +8,26 @@ cloud execution is reserved for a future release and fails closed today.
 
 from __future__ import annotations
 
-from .auth import APIKey, AuthManager
-from .billing import BillingManager, UsageTracker
-from .client import TraigentCloudClient
-from .service import TraigentCloudService
-from .subset_selection import (
-    DiverseSampling,
-    HighConfidenceSampling,
-    RepresentativeSampling,
-    SmartSubsetSelector,
-)
+from importlib import import_module
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "TraigentCloudClient": ("traigent.cloud.client", "TraigentCloudClient"),
+    "TraigentCloudService": ("traigent.cloud.service", "TraigentCloudService"),
+    "AuthManager": ("traigent.cloud.auth", "AuthManager"),
+    "APIKey": ("traigent.cloud.auth", "APIKey"),
+    "BillingManager": ("traigent.cloud.billing", "BillingManager"),
+    "UsageTracker": ("traigent.cloud.billing", "UsageTracker"),
+    "SmartSubsetSelector": ("traigent.cloud.subset_selection", "SmartSubsetSelector"),
+    "DiverseSampling": ("traigent.cloud.subset_selection", "DiverseSampling"),
+    "RepresentativeSampling": (
+        "traigent.cloud.subset_selection",
+        "RepresentativeSampling",
+    ),
+    "HighConfidenceSampling": (
+        "traigent.cloud.subset_selection",
+        "HighConfidenceSampling",
+    ),
+}
 
 __all__ = [
     "TraigentCloudClient",
@@ -31,3 +41,13 @@ __all__ = [
     "RepresentativeSampling",
     "HighConfidenceSampling",
 ]
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module_name, attr_name = _LAZY_EXPORTS[name]
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
