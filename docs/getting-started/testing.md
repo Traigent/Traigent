@@ -39,7 +39,7 @@ The `[test]` extra includes:
 - **pytest-cov>=4.0.0** - Coverage reporting
 - **pytest-mock>=3.10.0** - Mocking utilities
 - **coverage>=7.0.0** - Code coverage tracking
-- **ragas>=0.3.6** - RAG evaluation metrics
+- RAGAS examples are optional and skipped when `ragas` is not installed.
 - **rapidfuzz>=3.14.0** - Fuzzy string matching
 
 ## Test Categories
