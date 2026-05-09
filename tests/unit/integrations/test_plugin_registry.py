@@ -86,6 +86,14 @@ def sample_plugin(sample_metadata: PluginMetadata) -> _MinimalPlugin:
     return _MinimalPlugin(sample_metadata)
 
 
+def _allowed_plugins_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Create the cwd-local plugin directory allowed by PluginRegistry."""
+    monkeypatch.chdir(tmp_path)
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    return plugins_dir
+
+
 class TestPluginRegistrySingleton:
     """Tests for singleton pattern behavior."""
 
@@ -557,9 +565,11 @@ class TestLoadPluginFromModule:
         mock_module.TestPlugin = TestLoadedPlugin
         mock_import.return_value = mock_module
 
-        isolated_registry.load_plugin_from_module("test.module", "TestPlugin")
+        isolated_registry.load_plugin_from_module(
+            "traigent_plugins.test_module", "TestPlugin"
+        )
 
-        mock_import.assert_called_once_with("test.module")
+        mock_import.assert_called_once_with("traigent_plugins.test_module")
         assert "loaded_plugin" in isolated_registry._plugins
 
     @patch("traigent.integrations.plugin_registry.importlib.import_module")
@@ -589,10 +599,10 @@ class TestLoadPluginFromModule:
         mock_import.return_value = mock_module
 
         isolated_registry.load_plugin_from_module(
-            "test.module", "TestPlugin", config_path=config_path
+            "traigent_plugins.test_module", "TestPlugin", config_path=config_path
         )
 
-        mock_import.assert_called_once_with("test.module")
+        mock_import.assert_called_once_with("traigent_plugins.test_module")
         # Verify plugin was registered with config
         assert "loaded_plugin" in isolated_registry._plugins
 
@@ -604,7 +614,9 @@ class TestLoadPluginFromModule:
         mock_import.side_effect = ImportError("Module not found")
 
         with pytest.raises(TraigentError, match="Failed to import module"):
-            isolated_registry.load_plugin_from_module("invalid.module", "TestPlugin")
+            isolated_registry.load_plugin_from_module(
+                "traigent_plugins.missing", "TestPlugin"
+            )
 
     @patch("traigent.integrations.plugin_registry.importlib.import_module")
     def test_load_plugin_from_module_attribute_error(
@@ -615,7 +627,9 @@ class TestLoadPluginFromModule:
         mock_import.return_value = mock_module
 
         with pytest.raises(TraigentError, match="Class .* not found"):
-            isolated_registry.load_plugin_from_module("test.module", "MissingClass")
+            isolated_registry.load_plugin_from_module(
+                "traigent_plugins.test_module", "MissingClass"
+            )
 
     @patch("traigent.integrations.plugin_registry.importlib.import_module")
     def test_load_plugin_from_module_not_subclass(
@@ -627,37 +641,69 @@ class TestLoadPluginFromModule:
         mock_import.return_value = mock_module
 
         with pytest.raises(TraigentError, match="not a valid IntegrationPlugin"):
-            isolated_registry.load_plugin_from_module("test.module", "NotAPlugin")
+            isolated_registry.load_plugin_from_module(
+                "traigent_plugins.test_module", "NotAPlugin"
+            )
+
+    @patch("traigent.integrations.plugin_registry.importlib.import_module")
+    def test_load_plugin_from_module_rejects_untrusted_module(
+        self, mock_import: MagicMock, isolated_registry: PluginRegistry
+    ) -> None:
+        """Untrusted module paths must fail before import side effects can run."""
+        with pytest.raises(TraigentError, match="not allowed"):
+            isolated_registry.load_plugin_from_module("os", "TestPlugin")
+
+        mock_import.assert_not_called()
+
+    @patch("traigent.integrations.plugin_registry.importlib.import_module")
+    def test_load_plugin_from_module_rejects_invalid_class_name(
+        self, mock_import: MagicMock, isolated_registry: PluginRegistry
+    ) -> None:
+        """Invalid class names must fail before module import."""
+        with pytest.raises(TraigentError, match="class name"):
+            isolated_registry.load_plugin_from_module(
+                "traigent_plugins.test_module", "not-a-class"
+            )
+
+        mock_import.assert_not_called()
 
 
 class TestDiscoverPluginsInDirectory:
     """Tests for plugin discovery in directories."""
 
     def test_discover_plugins_in_directory_empty_dir(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test discovery in empty directory returns empty list."""
-        empty_dir = tmp_path / "plugins"
-        empty_dir.mkdir()
+        empty_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         result = isolated_registry.discover_plugins_in_directory(empty_dir)
         assert result == []
 
     def test_discover_plugins_in_directory_nonexistent(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test discovery in non-existent directory returns empty list."""
-        nonexistent = tmp_path / "nonexistent"
+        monkeypatch.chdir(tmp_path)
+        nonexistent = tmp_path / "plugins" / "nonexistent"
 
         result = isolated_registry.discover_plugins_in_directory(nonexistent)
         assert result == []
 
     def test_discover_plugins_skips_private_files(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test that files starting with underscore are skipped."""
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         # Create private file
         private_file = plugins_dir / "_private.py"
@@ -674,10 +720,10 @@ class TestDiscoverPluginsInDirectory:
         mock_spec_from_file: MagicMock,
         isolated_registry: PluginRegistry,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test that import errors during discovery are handled gracefully."""
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         plugin_file = plugins_dir / "broken_plugin.py"
         plugin_file.write_text("# Broken plugin")
@@ -688,11 +734,13 @@ class TestDiscoverPluginsInDirectory:
         assert result == []
 
     def test_discover_plugins_loads_valid_plugin(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test successful plugin discovery from directory."""
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         # Create a valid plugin file
         plugin_code = '''
@@ -735,11 +783,13 @@ class DiscoveredPlugin(IntegrationPlugin):
         assert "discovered" in isolated_registry._plugins
 
     def test_discover_plugins_with_config_file(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test plugin discovery finds and uses config files."""
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         # Create a config file
         config_file = plugins_dir / "discoveredplugin.yaml"
@@ -785,11 +835,13 @@ class DiscoveredPlugin(IntegrationPlugin):
         assert "discovered" in result
 
     def test_discover_plugins_handles_exceptions(
-        self, isolated_registry: PluginRegistry, tmp_path: Path
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test that exceptions during plugin loading are logged."""
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
 
         # Create a plugin file that will raise an exception
         plugin_code = """
@@ -799,6 +851,35 @@ raise RuntimeError("Test error during module load")
         plugin_file.write_text(plugin_code)
 
         # Should not raise, just log error
+        result = isolated_registry.discover_plugins_in_directory(plugins_dir)
+        assert result == []
+
+    def test_discover_plugins_rejects_untrusted_directory(
+        self, isolated_registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        """Plugin discovery must not execute Python from arbitrary directories."""
+        untrusted_dir = tmp_path / "not_plugins"
+        untrusted_dir.mkdir()
+
+        with pytest.raises(TraigentError, match="allowed plugin root"):
+            isolated_registry.discover_plugins_in_directory(untrusted_dir)
+
+    def test_discover_plugins_skips_symlink_escape(
+        self,
+        isolated_registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Symlinked plugin files must not escape the trusted plugin directory."""
+        plugins_dir = _allowed_plugins_dir(tmp_path, monkeypatch)
+        outside_file = tmp_path / "outside_plugin.py"
+        outside_file.write_text('raise RuntimeError("should not load")\n')
+        link = plugins_dir / "outside_plugin.py"
+        try:
+            link.symlink_to(outside_file)
+        except OSError:
+            pytest.skip("symlink creation is not supported on this filesystem")
+
         result = isolated_registry.discover_plugins_in_directory(plugins_dir)
         assert result == []
 

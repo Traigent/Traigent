@@ -9,6 +9,7 @@ including discovery, registration, and lifecycle management.
 import importlib
 import importlib.util
 import inspect
+import keyword
 import logging
 from pathlib import Path
 from threading import RLock
@@ -20,6 +21,44 @@ if TYPE_CHECKING:
     from traigent.integrations.base_plugin import IntegrationPlugin, PluginMetadata
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_PLUGIN_MODULE_PREFIXES = (
+    "traigent.integrations",
+    "traigent_plugins",
+    "custom_plugins",
+)
+_UNSAFE_PLUGIN_MODULE_PARTS = {
+    "__builtin__",
+    "__import__",
+    "builtins",
+    "compile",
+    "eval",
+    "exec",
+    "file",
+    "importlib",
+    "input",
+    "open",
+    "os",
+    "raw_input",
+    "subprocess",
+    "sys",
+}
+
+
+def _is_valid_module_identifier(value: str) -> bool:
+    return value.isidentifier() and not keyword.iskeyword(value)
+
+
+def _is_allowed_plugin_module_path(module_path: str) -> bool:
+    parts = module_path.split(".")
+    if not parts or not all(_is_valid_module_identifier(part) for part in parts):
+        return False
+    if any(part.lower() in _UNSAFE_PLUGIN_MODULE_PARTS for part in parts):
+        return False
+    return any(
+        module_path == prefix or module_path.startswith(f"{prefix}.")
+        for prefix in _ALLOWED_PLUGIN_MODULE_PREFIXES
+    )
 
 
 class PluginRegistry:
@@ -305,6 +344,11 @@ class PluginRegistry:
             class_name: Name of the plugin class
             config_path: Optional path to configuration file
         """
+        if not _is_allowed_plugin_module_path(module_path):
+            raise TraigentError(f"Plugin module path '{module_path}' is not allowed")
+        if not _is_valid_module_identifier(class_name):
+            raise TraigentError(f"Plugin class name '{class_name}' is invalid")
+
         try:
             module = importlib.import_module(module_path)
             plugin_class = getattr(module, class_name)
@@ -330,6 +374,60 @@ class PluginRegistry:
         except Exception as e:
             raise TraigentError(f"Failed to load plugin {class_name}: {e}") from None
 
+    def _allowed_plugin_directories(self) -> tuple[Path, ...]:
+        """Return roots trusted for filesystem plugin discovery."""
+        return (
+            self._config_dir,
+            Path.cwd() / "traigent_plugins",
+            Path.cwd() / "plugins",
+            Path(__file__).parent / "contrib",
+        )
+
+    def _resolve_trusted_plugin_directory(self, directory: Path) -> Path:
+        """Resolve and verify that a plugin directory stays inside a trusted root."""
+        resolved = directory.expanduser().resolve()
+        for allowed_dir in self._allowed_plugin_directories():
+            trusted_root = allowed_dir.expanduser().resolve()
+            try:
+                resolved.relative_to(trusted_root)
+                return resolved
+            except (ValueError, RuntimeError):
+                continue
+
+        allowed = ", ".join(str(path) for path in self._allowed_plugin_directories())
+        raise TraigentError(
+            f"Plugin directory '{directory}' is not under an allowed plugin root: {allowed}"
+        )
+
+    @staticmethod
+    def _resolve_plugin_file(py_file: Path, directory: Path) -> Path | None:
+        """Return a plugin file only when it does not escape the trusted directory."""
+        try:
+            resolved_file = py_file.resolve(strict=True)
+            resolved_file.relative_to(directory)
+        except (OSError, RuntimeError, ValueError):
+            logger.warning(
+                "Skipping plugin file outside trusted directory: %s", py_file
+            )
+            return None
+        return resolved_file
+
+    @staticmethod
+    def _safe_config_path(directory: Path, class_name: str) -> Path | None:
+        """Return an adjacent config file only if it remains inside the plugin root."""
+        candidate = directory / f"{class_name.lower()}.yaml"
+        if not candidate.exists():
+            return None
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(directory)
+        except (OSError, RuntimeError, ValueError):
+            logger.warning(
+                "Ignoring plugin config outside trusted directory: %s", candidate
+            )
+            return None
+        return resolved
+
     def discover_plugins_in_directory(self, directory: Path) -> list[str]:
         """Discover and load plugins from a directory.
 
@@ -340,16 +438,25 @@ class PluginRegistry:
             List of loaded plugin names
         """
         loaded: list[str] = []
+        trusted_directory = self._resolve_trusted_plugin_directory(directory)
 
-        if not directory.exists():
+        if not trusted_directory.exists():
             return loaded
+        if not trusted_directory.is_dir():
+            raise TraigentError(f"Plugin path '{directory}' is not a directory")
 
-        for py_file in directory.glob("*.py"):
+        for py_file in sorted(trusted_directory.glob("*.py")):
             if py_file.stem.startswith("_"):
                 continue
 
-            module_name = py_file.stem
-            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            resolved_plugin_file = self._resolve_plugin_file(py_file, trusted_directory)
+            if resolved_plugin_file is None:
+                continue
+
+            module_name = resolved_plugin_file.stem
+            spec = importlib.util.spec_from_file_location(
+                module_name, resolved_plugin_file
+            )
             if spec and spec.loader:
                 try:
                     module = importlib.util.module_from_spec(spec)
@@ -366,9 +473,8 @@ class PluginRegistry:
                             and obj != IntegrationPlugin
                         ):
                             # Check for config file
-                            candidate = directory / f"{name.lower()}.yaml"
-                            config_path: Path | None = (
-                                candidate if candidate.exists() else None
+                            config_path = self._safe_config_path(
+                                trusted_directory, name
                             )
 
                             plugin = obj(config_path=config_path)
