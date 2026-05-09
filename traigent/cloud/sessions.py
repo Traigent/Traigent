@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from random import SystemRandom
 from typing import Any, Protocol
 
 from traigent.cloud.models import (
@@ -28,6 +29,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
 
 logger = get_logger(__name__)
+_SECURE_RANDOM = SystemRandom()
 
 # Import validation utilities for enhanced state management
 try:
@@ -805,20 +807,18 @@ class SessionManager:
         This is a simple implementation. In production, this would
         integrate with optimization algorithms.
         """
-        import random
-
         config = {}
         for param, space in session.configuration_space.items():
             if isinstance(space, list):
                 # Categorical parameter
-                config[param] = random.choice(space)
+                config[param] = _SECURE_RANDOM.choice(space)
             elif isinstance(space, tuple) and len(space) == 2:
                 # Continuous parameter
                 min_val, max_val = space
                 if isinstance(min_val, int) and isinstance(max_val, int):
-                    config[param] = random.randint(min_val, max_val)
+                    config[param] = _SECURE_RANDOM.randint(min_val, max_val)
                 else:
-                    config[param] = random.uniform(min_val, max_val)
+                    config[param] = _SECURE_RANDOM.uniform(min_val, max_val)
             else:
                 # Default
                 config[param] = space
@@ -859,9 +859,7 @@ class SessionManager:
 
         # Generate random indices for now
         # In production, use smarter selection strategies
-        import random
-
-        indices = sorted(random.sample(range(dataset_size), subset_size))
+        indices = sorted(_SECURE_RANDOM.sample(range(dataset_size), subset_size))
 
         return DatasetSubsetIndices(
             indices=indices,

@@ -16,6 +16,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from random import SystemRandom
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -40,6 +41,8 @@ from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
 logger = get_logger(__name__)
+
+_SECURE_RANDOM = SystemRandom()
 
 _EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
 _SENSITIVE_METADATA_KEY_PATTERN = re.compile(
@@ -586,9 +589,7 @@ class DatasetConverter:
             indices = [int(i * step) for i in range(subset_size)]
 
         elif strategy == "random_sampling":
-            import random
-
-            indices = random.sample(range(total_size), subset_size)
+            indices = _SECURE_RANDOM.sample(range(total_size), subset_size)
 
         elif strategy == "first_n":
             indices = list(range(subset_size))
