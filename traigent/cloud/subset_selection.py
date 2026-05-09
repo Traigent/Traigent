@@ -43,6 +43,8 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_SECURE_RANDOM = random.SystemRandom()
+
 
 def _compute_reduction_ratio(original_size: int, selected_size: int) -> float:
     """Safely compute reduction ratio, guarding against division by zero."""
@@ -193,7 +195,7 @@ class DiverseSampling(BaseSubsetSelector):
         """Select examples using k-means clustering for diversity."""
         if not SKLEARN_AVAILABLE:
             logger.warning("scikit-learn not available, using random sampling")
-            return random.sample(range(len(text_features)), target_size)
+            return _SECURE_RANDOM.sample(range(len(text_features)), target_size)
 
         # Vectorize text features
         vectorizer = TfidfVectorizer(max_features=1000, stop_words="english")
@@ -202,7 +204,7 @@ class DiverseSampling(BaseSubsetSelector):
         except (ValueError, ImportError):
             # Fallback to random sampling if TF-IDF fails
             logger.warning("TF-IDF vectorization failed, using random sampling")
-            return random.sample(range(len(text_features)), target_size)
+            return _SECURE_RANDOM.sample(range(len(text_features)), target_size)
 
         # Perform clustering
         n_clusters = min(target_size, len(text_features))
@@ -225,7 +227,7 @@ class DiverseSampling(BaseSubsetSelector):
         while len(selected_indices) < target_size:
             remaining_indices = set(range(len(text_features))) - set(selected_indices)
             if remaining_indices:
-                selected_indices.append(random.choice(list(remaining_indices)))
+                selected_indices.append(_SECURE_RANDOM.choice(list(remaining_indices)))
             else:
                 break
 
@@ -237,20 +239,20 @@ class DiverseSampling(BaseSubsetSelector):
         """Select examples using similarity-based diverse sampling."""
         if not SKLEARN_AVAILABLE:
             logger.warning("scikit-learn not available, using random sampling")
-            return random.sample(range(len(text_features)), target_size)
+            return _SECURE_RANDOM.sample(range(len(text_features)), target_size)
 
         vectorizer = TfidfVectorizer(max_features=500, stop_words="english")
         try:
             feature_matrix = vectorizer.fit_transform(text_features)
         except (ValueError, ImportError):
             # Fallback to random sampling
-            return random.sample(range(len(text_features)), target_size)
+            return _SECURE_RANDOM.sample(range(len(text_features)), target_size)
 
         selected_indices = []
         remaining_indices = set(range(len(text_features)))
 
         # Start with random example
-        first_idx = random.choice(list(remaining_indices))
+        first_idx = _SECURE_RANDOM.choice(list(remaining_indices))
         selected_indices.append(first_idx)
         remaining_indices.remove(first_idx)
 

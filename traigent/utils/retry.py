@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import random
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from random import SystemRandom
 from threading import RLock
 from typing import Any, TypeVar, cast
 
@@ -36,6 +36,7 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 T = TypeVar("T")
+_SECURE_RANDOM = SystemRandom()
 
 
 class RetryStrategy(Enum):
@@ -151,10 +152,10 @@ class RetryConfig:
 
         # Add jitter if enabled
         if self.jitter and self.strategy != RetryStrategy.JITTER:
-            jitter_amount = delay * 0.1 * random.random()
+            jitter_amount = delay * 0.1 * _SECURE_RANDOM.random()
             delay += jitter_amount
         elif self.strategy == RetryStrategy.JITTER:
-            delay = random.uniform(0, delay)
+            delay = _SECURE_RANDOM.uniform(0, delay)
 
         return delay
 
