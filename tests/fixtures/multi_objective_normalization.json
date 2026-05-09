@@ -1,0 +1,99 @@
+{
+  "_meta": {
+    "schema_contract": "TraigentSchema/optimization/multi_objective_semantics_schema.json v1.0.0",
+    "purpose": "Lock cross-SDK parity for the multi-objective normalization meta-contract: zero_span_fallback=0.5, zero_span_epsilon=1e-9, weight_normalization=sum_to_one, dominance_guard.max_normalized_weight=0.99 (sdk-only).",
+    "tolerance": 1e-9,
+    "instructions": "Each case has trials + objectives + raw weights; runners must produce per-trial normalized values matching `expected.normalized` and weighted scores matching `expected.weighted` to <= tolerance. The `expects_validation_error` flag marks cases that must throw before scoring (dominance guard)."
+  },
+  "cases": [
+    {
+      "id": "partial_zero_span",
+      "description": "All trials tie on `cost` while `accuracy` varies. The constant objective contributes 0.5 to every trial regardless of value; ranking is driven entirely by accuracy.",
+      "trials": [
+        {"trial_id": "t1", "metrics": {"accuracy": 0.70, "cost": 1.00}},
+        {"trial_id": "t2", "metrics": {"accuracy": 0.90, "cost": 1.00}},
+        {"trial_id": "t3", "metrics": {"accuracy": 0.80, "cost": 1.00}}
+      ],
+      "objectives": [
+        {"metric": "accuracy", "direction": "maximize", "weight": 1},
+        {"metric": "cost", "direction": "minimize", "weight": 1}
+      ],
+      "expected": {
+        "trial_scores": [
+          {"trial_id": "t1", "normalized": {"accuracy": 0.0, "cost": 0.5}, "weighted": 0.25},
+          {"trial_id": "t2", "normalized": {"accuracy": 1.0, "cost": 0.5}, "weighted": 0.75},
+          {"trial_id": "t3", "normalized": {"accuracy": 0.5, "cost": 0.5}, "weighted": 0.5}
+        ]
+      }
+    },
+    {
+      "id": "full_zero_span",
+      "description": "All trials tie on every objective. Each trial's contribution is 0.5 across the board; weighted score = 0.5; best-pick falls back to insertion order.",
+      "trials": [
+        {"trial_id": "t1", "metrics": {"accuracy": 0.85, "cost": 1.00}},
+        {"trial_id": "t2", "metrics": {"accuracy": 0.85, "cost": 1.00}},
+        {"trial_id": "t3", "metrics": {"accuracy": 0.85, "cost": 1.00}}
+      ],
+      "objectives": [
+        {"metric": "accuracy", "direction": "maximize", "weight": 1},
+        {"metric": "cost", "direction": "minimize", "weight": 1}
+      ],
+      "expected": {
+        "trial_scores": [
+          {"trial_id": "t1", "normalized": {"accuracy": 0.5, "cost": 0.5}, "weighted": 0.5},
+          {"trial_id": "t2", "normalized": {"accuracy": 0.5, "cost": 0.5}, "weighted": 0.5},
+          {"trial_id": "t3", "normalized": {"accuracy": 0.5, "cost": 0.5}, "weighted": 0.5}
+        ]
+      }
+    },
+    {
+      "id": "weight_rescaling",
+      "description": "Mixed maximize/minimize objectives with raw weights [2, 1, 1] rescaling to [0.5, 0.25, 0.25]. Weighted scores must use rescaled weights.",
+      "trials": [
+        {"trial_id": "t1", "metrics": {"accuracy": 0.80, "cost": 0.50, "latency": 100}},
+        {"trial_id": "t2", "metrics": {"accuracy": 0.90, "cost": 0.10, "latency": 200}}
+      ],
+      "objectives": [
+        {"metric": "accuracy", "direction": "maximize", "weight": 2},
+        {"metric": "cost", "direction": "minimize", "weight": 1},
+        {"metric": "latency", "direction": "minimize", "weight": 1}
+      ],
+      "expected": {
+        "trial_scores": [
+          {"trial_id": "t1", "normalized": {"accuracy": 0.0, "cost": 0.0, "latency": 1.0}, "weighted": 0.25},
+          {"trial_id": "t2", "normalized": {"accuracy": 1.0, "cost": 1.0, "latency": 0.0}, "weighted": 0.75}
+        ]
+      }
+    },
+    {
+      "id": "boundary_epsilon",
+      "description": "Span of 5e-10 lies between the old (1e-10) and new (1e-9) epsilon. Must collapse to 0.5 under the new contract; pre-rollout it would have normalized linearly producing different per-trial values.",
+      "trials": [
+        {"trial_id": "t1", "metrics": {"accuracy": 0.85}},
+        {"trial_id": "t2", "metrics": {"accuracy": 8.500000005e-1}}
+      ],
+      "objectives": [
+        {"metric": "accuracy", "direction": "maximize", "weight": 1}
+      ],
+      "expected": {
+        "trial_scores": [
+          {"trial_id": "t1", "normalized": {"accuracy": 0.5}, "weighted": 0.5},
+          {"trial_id": "t2", "normalized": {"accuracy": 0.5}, "weighted": 0.5}
+        ]
+      }
+    },
+    {
+      "id": "dominance_guard_violation",
+      "description": "Raw weights [100, 1] rescale to [100/101, 1/101] ~= [0.9901, 0.0099]. The 100/101 share exceeds the 0.99 cap, so SDK schema construction must reject this with a validation error before any scoring happens.",
+      "trials": [
+        {"trial_id": "t1", "metrics": {"accuracy": 0.80, "cost": 0.50}},
+        {"trial_id": "t2", "metrics": {"accuracy": 0.90, "cost": 0.10}}
+      ],
+      "objectives": [
+        {"metric": "accuracy", "direction": "maximize", "weight": 100},
+        {"metric": "cost", "direction": "minimize", "weight": 1}
+      ],
+      "expects_validation_error": true
+    }
+  ]
+}

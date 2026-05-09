@@ -29,6 +29,7 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
         exclude: .*\.lock$|package-lock\.json$|pnpm-lock\.yaml$|.*\.example$|\.secrets\.baseline$|\.venv/
 
   # General file checks

@@ -7,8 +7,31 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.auth import AuthManager
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.core.optimized_function import OptimizedFunction
+
+
+async def _stub_validate_backend(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for offline tests.
+
+    B4 round 3 made ``get_auth_headers()`` fail closed when the backend
+    rejects a key. Tests that simulate cloud paths but never expect a real
+    backend call must stub this hook.
+    """
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _patch_backend_validate_autouse():
+    """Auto-applied: keep backend validation offline for all tests in this module."""
+    with patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate_backend
+    ):
+        yield
 
 
 class TestCloudIntegration:
@@ -139,6 +162,34 @@ class TestCloudIntegration:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_cloud_remote_unavailable_error_does_not_fallback(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Remote-execution unavailability is typed instead of string-matched."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            execution_mode="cloud",
+            cloud_fallback_policy="auto",
+        )
+
+        with patch.object(
+            opt_func,
+            "_optimize_with_cloud_service",
+            side_effect=CloudRemoteExecutionUnavailableError("optimize_function"),
+        ):
+            with pytest.raises(CloudRemoteExecutionUnavailableError, match="use hybrid"):
+                await opt_func._try_cloud_execution(
+                    dataset=sample_dataset,
+                    max_trials=5,
+                    timeout=10.0,
+                    effective_config_space=sample_config_space,
+                    algorithm_kwargs={},
+                )
+
+    @pytest.mark.asyncio
     async def test_cloud_mode_fail_closed_on_unexpected_exception(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
@@ -229,13 +280,18 @@ class TestCloudIntegration:
         )
 
         with patch(
-            "traigent.core.orchestrator.OptimizationOrchestrator"
+            "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as MockOrchestrator:
             mock_orchestrator = MockOrchestrator.return_value
             mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
 
-            result = await opt_func.optimize()
-            assert result.best_score == 0.95
+            with patch.object(
+                opt_func,
+                "_optimize_with_cloud_service",
+                side_effect=OSError("network down"),
+            ):
+                result = await opt_func.optimize()
+                assert result.best_score == 0.95
 
     def test_disable_cloud_mode(
         self, simple_function, sample_config_space, sample_objectives
@@ -312,6 +368,7 @@ class TestCloudIntegration:
             objectives=sample_objectives,
             eval_dataset=sample_dataset,
             execution_mode="cloud",
+            cloud_fallback_policy="auto",
         )
 
         # Test that cloud execution enables cloud service
@@ -338,13 +395,18 @@ class TestCloudIntegration:
         )
 
         with patch(
-            "traigent.core.orchestrator.OptimizationOrchestrator"
+            "traigent.core.optimized_function.OptimizationOrchestrator"
         ) as MockOrchestrator:
             mock_orchestrator = MockOrchestrator.return_value
             mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
 
-            result = await opt_func.optimize()
-            assert result.best_score == 0.90
+            with patch.object(
+                opt_func,
+                "_optimize_with_cloud_service",
+                side_effect=OSError("network down"),
+            ):
+                result = await opt_func.optimize()
+                assert result.best_score == 0.90
 
     def test_cloud_result_caching(
         self, simple_function, sample_config_space, sample_objectives

@@ -562,11 +562,15 @@ class TestStopReasonValues:
             "max_samples_reached",
             "timeout",
             "cost_limit",
+            "metric_limit",
             "optimizer",
             "plateau",
+            "convergence",
             "user_cancelled",
             "condition",
             "error",
+            "vendor_error",
+            "network_error",
         }
 
         scenario = basic_scenario(
@@ -615,11 +619,15 @@ class TestStopReasonValues:
             "max_samples_reached",
             "timeout",
             "cost_limit",
+            "metric_limit",
             "optimizer",
             "plateau",
+            "convergence",
             "user_cancelled",
             "condition",
             "error",
+            "vendor_error",
+            "network_error",
         }
 
         scenario = basic_scenario(
@@ -1437,11 +1445,15 @@ class TestStopConditionsWithParallelModes:
             "max_samples_reached",
             "timeout",
             "cost_limit",
+            "metric_limit",
             "optimizer",
             "plateau",
+            "convergence",
             "user_cancelled",
             "condition",
             "error",
+            "vendor_error",
+            "network_error",
         }
 
         scenario = TestScenario(

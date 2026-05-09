@@ -15,6 +15,18 @@ PER_TRIAL_CAP = 8
 TOTAL_BUDGET = 60
 
 
+@pytest.fixture(autouse=True)
+def _approve_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S2-B Round 3: cost approval no longer auto-skips on TRAIGENT_MOCK_LLM.
+
+    These budget-enforcement scenarios run a full orchestrator pass; the
+    estimated cost may exceed the default $2 limit. Pre-approve to avoid
+    blocking on user handshake.
+    """
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "100.0")
+
+
 def _build_dataset(*, as_mapping: bool = False) -> Dataset:
     examples: list[EvaluationExample] = []
     for idx in range(PER_TRIAL_CAP):
@@ -109,6 +121,7 @@ async def test_sample_budget_enforcement_variants(
     )
 
     assert orchestrator._stop_reason == "max_samples_reached"  # noqa: SLF001
+    assert result.stop_reason == "max_samples_reached"
     assert result.status.name == "COMPLETED"
 
     assert sum(consumed) == TOTAL_BUDGET
@@ -148,6 +161,7 @@ async def test_sample_budget_enforcement_parameter_injection() -> None:
     )
 
     assert orchestrator._stop_reason == "max_samples_reached"  # noqa: SLF001
+    assert result.stop_reason == "max_samples_reached"
     assert result.status.name == "COMPLETED"
 
     assert sum(consumed) == TOTAL_BUDGET

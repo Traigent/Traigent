@@ -1,5 +1,5 @@
 """
-Local-to-cloud sync manager for Traigent optimization sessions.
+Local-to-backend sync manager for Traigent optimization sessions.
 Handles migration of local data to Traigent backend when users upgrade.
 """
 
@@ -50,7 +50,7 @@ class SyncManager:
 
         Args:
             config: TraigentConfig with local storage settings
-            api_key: API key for cloud service authentication
+            api_key: API key for backend authentication
         """
         self.config = config
         self.storage = LocalStorageManager(config.get_local_storage_path())
@@ -333,9 +333,9 @@ class SyncManager:
             }
             return sync_result
 
-        # Actually sync to cloud
+        # Actually sync to backend.
         if not self.api_key:
-            msg = "No API key provided for cloud sync. " + get_no_credentials_hint()
+            msg = "No API key provided for backend sync. " + get_no_credentials_hint()
             logger.warning(msg)
             sync_result["status"] = "error"
             sync_result["errors"].append(msg)

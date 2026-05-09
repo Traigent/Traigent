@@ -9,6 +9,7 @@ from traigent.core.stop_conditions import (
     HypervolumeConvergenceStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
+    MetricLimitStopCondition,
     PlateauAfterNStopCondition,
 )
 
@@ -35,9 +36,9 @@ def base_manager(**overrides):
         "plateau_window": None,
         "plateau_epsilon": None,
         "objective_schema": None,
-        "budget_limit": None,
-        "budget_metric": "total_cost",
-        "include_pruned": True,
+        "metric_limit": None,
+        "metric_name": None,
+        "metric_include_pruned": True,
     }
     kwargs.update(overrides)
     return StopConditionManager(**kwargs)
@@ -82,6 +83,16 @@ def test_should_stop_returns_reason_when_condition_triggers():
     should_stop, reason = manager.should_stop([DummyTrial(), DummyTrial()])
     assert should_stop is True
     assert reason == "max_trials"
+
+
+def test_metric_limit_requires_metric_name():
+    with pytest.raises(ValueError, match="metric_name is required"):
+        base_manager(metric_limit=10.0)
+
+
+def test_metric_limit_condition_is_registered():
+    manager = base_manager(metric_limit=10.0, metric_name="total_tokens")
+    assert any(isinstance(c, MetricLimitStopCondition) for c in manager.conditions)
 
 
 def make_trial(

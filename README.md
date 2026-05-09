@@ -17,7 +17,7 @@
 
 Our mission: **Anything you can measure, we can improve.** Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
 
-> **Runs multiple LLM trials** — use `TRAIGENT_MOCK_LLM=true` to test without spending money, or set `TRAIGENT_RUN_COST_LIMIT=2.0` to cap spend. See [Cost Management](#cost-management).
+> **Runs multiple LLM trials** — run `python -m traigent.examples.quickstart` for a no-cost demo, or call `enable_mock_mode_for_quickstart()` from `traigent.testing` in local tutorial code. Set `TRAIGENT_RUN_COST_LIMIT=2.0` as a best-effort local guardrail and set hard caps with your LLM/cloud providers; actual billing is determined by those providers. The legacy `TRAIGENT_MOCK_LLM=true` env var remains for backwards compatibility and is disabled when `ENVIRONMENT=production`. See [Cost Management](#cost-management).
 
 **Quick Install:**
 
@@ -124,8 +124,8 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
 | **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
-| **Connect to Traigent Cloud** | [Cloud Setup](#-traigent-cloud) | 5 min |
-| **Try examples locally, see them on the cloud** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
+| **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
+| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
 
 <details>
@@ -136,7 +136,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
 </details>
@@ -173,7 +173,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ## 🚀 Walkthrough — 8 runnable examples
 
-All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
+The walkthrough examples use local mock mode through the quickstart/testing helpers — no API keys needed.
 
 <details>
 <summary>Show all 8 walkthrough steps</summary>
@@ -195,14 +195,18 @@ All examples run with `TRAIGENT_MOCK_LLM=true` — no API keys needed.
 
 ---
 
-### ☁️ Traigent Cloud
+<a id="portal-hybrid-tracking"></a>
 
-Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate.
+### ☁️ Traigent Portal & Hybrid Tracking
+
+Connect to [Traigent Portal](https://portal.traigent.ai) to view results, compare trials, and collaborate. The supported portal-visible SDK path today is `execution_mode="hybrid"`: trials run locally, while session and trial metrics are stored in the backend for portal tracking.
+
+`execution_mode="cloud"` is reserved for future remote agent execution. It is not available yet and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
 1. **Sign up** at [portal.traigent.ai](https://portal.traigent.ai) — verify your email to activate
 2. **Create an API key** — click your name (top-right) → **API Keys** → **+ Create API Key**
 3. **Connect** — run `traigent auth login` or set `export TRAIGENT_API_KEY="sk_..."`  <!-- pragma: allowlist secret -->
-4. **Run** — results appear in the portal automatically
+4. **Run with hybrid tracking** — set `execution_mode="hybrid"` for portal-visible optimization
 
 <details>
 <summary>Credential priority and multi-provider setup</summary>
@@ -288,10 +292,14 @@ pip install -e ".[recommended]"
 
 | Setting | How |
 |---------|-----|
-| Testing (no API calls) | `TRAIGENT_MOCK_LLM=true` |
+| Testing (no API calls) | Import and call `enable_mock_mode_for_quickstart()` from `traigent.testing`, or run `python -m traigent.examples.quickstart` for the demo |
 | Cost Limit | `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2/run) |
 
-Cost estimates are approximations. See [DISCLAIMER.md](DISCLAIMER.md) for details.
+Cost estimates, budgets, limits, alerts, and thresholds are best-effort software controls, not
+provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
+remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
+only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`. See
+[DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ### Evaluation
 
@@ -311,9 +319,9 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | All use cases |
-| **Hybrid** | ✅ Available | ✅ Execution local | All (Random/Grid/Bayesian/Optuna) | Balanced approach |
-| **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Random/Grid/Bayesian | Production, teams |
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | Local/private runs |
+| **Hybrid** (`hybrid`) | ✅ Available | ✅ Trial execution local | All (Random/Grid/Bayesian/Optuna) | Portal-tracked runs |
+| **Cloud** (`cloud`) | 🚧 Reserved | Not available | Future remote execution | Do not use yet |
 
 **[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
 
@@ -353,8 +361,9 @@ traigent --help                              # Full command reference
 | Problem | Fix |
 |---------|-----|
 | `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
-| 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true`, or check dataset format |
-| Missing API keys | Copy `.env.example` to `.env`; or use mock mode |
+| 0.0% accuracy | Check dataset format; for local demos, import and call `enable_mock_mode_for_quickstart()` from `traigent.testing` |
+| Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
+| `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](docs/guides/js-bridge.md). |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
 </details>
@@ -366,7 +375,7 @@ traigent --help                              # Full command reference
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"              # Install with dev dependencies
-TRAIGENT_MOCK_LLM=true pytest            # Run tests
+pytest                                   # Run tests
 make format && make lint                 # Format and lint
 ```
 

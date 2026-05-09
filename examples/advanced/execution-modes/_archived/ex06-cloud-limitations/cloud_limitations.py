@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Execution Modes - Cloud Limitations demo.
+"""Execution Modes - Archived Cloud Limitations demo.
 
-Shows a self-contained function suitable for cloud, and notes about
-functions that rely on local resources. For offline/run purposes we
-optimize only the simple classifier with a tiny dataset.
+This archived example is retained for historical context. Remote cloud
+execution is not available today, so the runnable function uses Edge Analytics.
 """
 
 from __future__ import annotations
@@ -88,7 +87,7 @@ def _ensure_dataset():
 _ensure_dataset()
 
 
-# ✅ Self-contained function (cloud-friendly in docs; local here)
+# Self-contained function; run locally because cloud mode is reserved.
 @traigent.optimize(
     eval_dataset=DATASET_FILE,
     objectives=["accuracy", "cost"],
@@ -105,7 +104,7 @@ def simple_classifier(text: str) -> str:
     return getattr(resp, "content", str(resp))
 
 
-# ❌ Not suitable for cloud in docs: database/file access
+# Local-resource examples kept as historical cloud-limitation notes.
 # Kept as illustrative (not optimized/run here)
 def database_function(query: str) -> str:
     import sqlite3

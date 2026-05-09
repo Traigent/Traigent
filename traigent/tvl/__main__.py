@@ -56,7 +56,8 @@ def validate_tvl_files(
             # First validate schema (early validation)
             import yaml
 
-            # Security: CLI tool intentionally reads user-specified files for validation
+            # nosec - CLI tool intentionally reads user-specified files for
+            # TVL validation; resolved_path is the user-provided argument.
             with open(resolved_path, encoding="utf-8") as f:
                 raw_data = yaml.safe_load(f)
 

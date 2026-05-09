@@ -46,9 +46,12 @@ def test_local_evaluator_patches_langchain_lazily_once(monkeypatch):
         calls.append("patched")
         return False
 
-    monkeypatch.setattr(local_module, "_LANGCHAIN_PATCH_ATTEMPTED", False)
+    monkeypatch.setattr(local_module, "_METADATA_PATCHES_ATTEMPTED", False)
     monkeypatch.setattr(
         local_module, "patch_langchain_for_metadata_capture", fake_patch
+    )
+    monkeypatch.setattr(
+        local_module, "patch_litellm_for_metadata_capture", lambda: True
     )
 
     local_module.LocalEvaluator(metrics=["accuracy"])

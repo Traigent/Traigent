@@ -133,6 +133,68 @@ class TestMeasuresDictValidationInSubmission:
     """Test MeasuresDict validation warning path in submit_trial_result_via_session."""
 
     @pytest.mark.asyncio
+    async def test_hybrid_trial_submission_uses_session_results_endpoint(self) -> None:
+        """Hybrid/backend tracking posts trial metrics to the session results API."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = (
+            "https://api.example.com"  # pragma: allowlist secret
+        )
+        mock_client.backend_config.api_base_url = "https://api.example.com/api/v1"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
+        mock_client._normalize_execution_mode = Mock(return_value="local")
+        mock_client._sanitize_error_message = Mock(return_value="")
+
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        mock_response = Mock()
+        mock_response.status = 201
+
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_trial_result_via_session(
+                session_id="session_123",
+                trial_id="trial_001",
+                config={"temperature": 0.2},
+                metrics={"accuracy": 0.95},
+                status="completed",
+                execution_mode="hybrid",
+            )
+
+        assert result is True
+        assert (
+            mock_session.post.call_args.args[0]
+            == "https://api.example.com/api/v1/sessions/session_123/results"
+        )
+        mock_client._normalize_execution_mode.assert_called_once_with("hybrid")
+
+    @pytest.mark.asyncio
     async def test_invalid_metric_key_logs_warning_and_submits_unvalidated(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

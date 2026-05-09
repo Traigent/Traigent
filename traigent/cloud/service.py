@@ -1,4 +1,9 @@
-"""Traigent Cloud Service implementation."""
+"""In-process optimization service scaffold.
+
+This helper is not the SDK ``execution_mode="cloud"`` remote execution path.
+It runs locally inside the current process and exists for service experiments
+around subset selection, billing, and orchestration shapes.
+"""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
@@ -23,7 +28,7 @@ logger = get_logger(__name__)
 
 @dataclass
 class OptimizationRequest:
-    """Request for cloud optimization service."""
+    """Request for the in-process optimization service scaffold."""
 
     function_name: str
     dataset: Dataset
@@ -37,7 +42,7 @@ class OptimizationRequest:
 
 @dataclass
 class OptimizationResponse:
-    """Response from cloud optimization service."""
+    """Response shape for the in-process optimization service scaffold."""
 
     request_id: str
     best_config: dict[str, Any]
@@ -51,10 +56,10 @@ class OptimizationResponse:
 
 
 class TraigentCloudService:
-    """Main Traigent Cloud Service for commercial optimization."""
+    """Local scaffold for service-style optimization experiments."""
 
     def __init__(self) -> None:
-        """Initialize cloud service."""
+        """Initialize the local service scaffold."""
         self.subset_selector = SmartSubsetSelector()
         self.usage_tracker = UsageTracker()
         self.billing_manager = BillingManager(self.usage_tracker)
@@ -120,7 +125,7 @@ class TraigentCloudService:
     async def process_optimization_request(
         self, request: OptimizationRequest
     ) -> OptimizationResponse:
-        """Process optimization request with smart cost optimization.
+        """Process an in-process optimization request with cost controls.
 
         Args:
             request: OptimizationRequest with all parameters

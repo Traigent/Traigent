@@ -189,6 +189,7 @@ from traigent.api.validation_protocol import (
 from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
+from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
 
 # Thread context helpers
 from traigent.config.context import copy_context_to_thread, get_trial_context
@@ -400,6 +401,10 @@ __all__ = [
     "EnterpriseAdminConfig",
     "ObservabilityClient",
     "ObservabilityConfig",
+    "BenchmarkClient",
+    "BenchmarkClientConfig",
+    "Dataset",
+    "EvaluationExample",
     "ProjectManagementClient",
     "ProjectManagementConfig",
     "EvaluationClient",

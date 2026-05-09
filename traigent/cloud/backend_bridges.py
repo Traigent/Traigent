@@ -1,8 +1,8 @@
 """Model bridges between Traigent SDK and Traigent Backend.
 
 This module provides conversion utilities to bridge the gap between
-SDK cloud models and backend database entities, enabling seamless
-integration between client-side optimization and server-side execution.
+SDK backend models and backend database entities, enabling integration between
+client-side optimization and backend session/result tracking.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013

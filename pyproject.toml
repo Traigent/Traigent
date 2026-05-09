@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.11.4"
+version = "0.12.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -37,11 +37,11 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.13.4,<4.0",  # CVE-2026-34513..34525 fixed in 3.13.4 (see #677)
-    "requests>=2.33.0",  # Required by Langfuse integration sync fallback; GHSA-9hjg-9r4m-mvj7 fix
+    "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
     "backoff>=2.2.0",
-    "litellm>=1.83.14,<2.0",  # GHSA-xqmj-j6mv-4862 fix
+    "litellm>=1.83.7,<2.0",  # GHSA-xqmj-j6mv-4862 (prompt template SSTI) fixed in 1.83.7; prior: GHSA-69x8-hrgq-fjj8 (see #652). NOTE: floor kept at 1.83.7 because litellm==1.83.14 pins openai==2.24.0 which conflicts with langchain-openai>=1.1.14 (needs openai>=2.26.0)
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
@@ -67,10 +67,10 @@ bayesian = [
 # Framework integrations (Sprint 6)
 integrations = [
     "langchain>=0.0.200",
-    "langchain-core>=1.2.11",  # CVE-2026-26013 fix
+    "langchain-core>=1.2.28",  # CVE-2026-26013 + CVE-2026-40087 (improper template neutralization) fix
     "langchain-community>=0.3.27",
     "langchain-anthropic>=0.2.0",
-    "langchain-openai>=0.3.30",
+    "langchain-openai>=1.1.14",  # GHSA-r7w7-9xr2-qq2r (SSRF) fix
     "langchain-chroma>=0.2.5",
     "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
     "langchain-google-genai>=2.1.4",  # Google Gemini support via LangChain
@@ -82,7 +82,7 @@ integrations = [
     "rank_bm25>=0.2.2",
     "mlflow>=3.11.1,<4.0",  # Defensive bump — Aikido flagged tarfile.extractall path-traversal in mlflow <3.9.0 (see #616)
     "wandb>=0.15.0",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.0.0",  # NOTE: main bumped to >=1.2.2 (#811) but litellm 1.83.7-1.83.13 pins python-dotenv==1.0.1; revisit when litellm releases a version free of that pin
     "boto3>=1.28.0",
     "botocore>=1.31.0",
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
@@ -95,7 +95,7 @@ dspy = [
 
 # PydanticAI agent framework integration
 pydanticai = [
-    "pydantic-ai-slim>=1.56.0,<2",
+    "pydantic-ai-slim>=1.56.0,<2",  # CVE triage patched floor for PydanticAI slim
 ]
 
 # Enterprise security features (Sprint 7)
@@ -103,7 +103,7 @@ security = [
     "pyjwt>=2.12.0",  # CVE-2026-32597 fix
     # cryptography and psutil are in core dependencies
     "passlib>=1.7.4",
-    "python-multipart>=0.0.22",  # CVE-2026-24486 fix
+    "python-multipart>=0.0.26",  # CVE-2026-24486, CVE-2026-40347 fix
     "fastapi>=0.95.0",
     "starlette>=0.49.1",  # CVE-2025-62727 fix (FastAPI dependency)
     "uvicorn>=0.18.0",
@@ -122,12 +122,17 @@ visualization = [
 hybrid = [
     "httpx[http2]>=0.24.0",
     "claude-code-sdk>=0.0.14",
-    "mcp>=1.23.0",  # CVE-2025-66416 fix (claude-code-sdk dependency)
+    "mcp>=1.27.0",  # CVE-2025-66416, AIKIDO-2026-10472 fix (claude-code-sdk dependency)
+]
+
+# Internal schema validation support for DTO strict-validation paths.
+internal_schema = [
+    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@96c30d3c6f4f0ab32748093357bbedfab89b80a5",
 ]
 
 # Testing dependencies
 test = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
@@ -150,7 +155,7 @@ tracing = [
 
 # Development dependencies
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
@@ -190,7 +195,8 @@ deepeval = [
     "deepeval>=1.0.0",
 ]
 
-# Cloud bundle (cloud execution mode, advanced session management)
+# Cloud bundle reserved for future remote execution support.
+# Portal-tracked SDK runs use the supported hybrid extra/mode today.
 cloud = [
     "traigent[security]",
     "boto3>=1.28.0",
@@ -232,13 +238,17 @@ include = ["traigent*", "traigent_validation*"]
 exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 
 [tool.setuptools.package-data]
-traigent = ["py.typed", "examples/**/*.jsonl"]
+traigent = ["py.typed", "examples/**/*.jsonl", "skills/**/*.md"]
 traigent_validation = ["py.typed"]
 
 [tool.uv]
 constraint-dependencies = [
+    "flask>=3.1.3",
     "langgraph>=1.0.10",
+    "langsmith>=0.7.31",
+    "mako>=1.3.11",
     "orjson>=3.11.6",
+    "pyasn1>=0.6.3",
     "urllib3>=2.6.3",
     "virtualenv>=20.36.1",
     "werkzeug>=3.1.6",
@@ -333,12 +343,6 @@ addopts = [
     "-v",
     "--ignore=plugins",
     "--ignore=tests/auto_tune",
-    # JS bridge tests — require Node.js runtime, can crash terminals
-    "--ignore=tests/unit/bridges",
-    "--ignore=tests/unit/test_bridge_wrapper.py",
-    "--ignore=tests/unit/evaluators/test_js_evaluator.py",
-    "--ignore=tests/unit/evaluators/test_js_evaluator_budget.py",
-    "--ignore=tests/unit/evaluators/test_js_evaluator_stop_conditions.py",
     # Hangs at ~33% — works in CI with different timeout handling
     "--ignore=tests/unit/core/test_constraints_enforced.py",
     # Hangs at ~33% locally — works in CI with different timeout handling

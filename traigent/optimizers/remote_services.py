@@ -1,7 +1,7 @@
 """Remote optimization service interfaces and abstractions.
 
 This module provides the core interfaces for integrating with remote optimization
-services, enabling hybrid local/cloud optimization architectures.
+services, enabling local execution with optional remote guidance architectures.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Compatibility FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID REQ-OPT-ALG-004 REQ-CLOUD-009 SYNC-CloudHybrid
@@ -188,7 +188,7 @@ class RemoteOptimizationService(ABC):
     """Abstract interface for remote optimization services.
 
     This interface defines the contract for communicating with remote optimization
-    services, whether they are Traigent Cloud services or third-party providers.
+    services, whether they are future Traigent services or third-party providers.
     """
 
     def __init__(

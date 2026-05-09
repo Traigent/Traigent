@@ -765,6 +765,7 @@ When optimization completes, the SDK reports a `stop_reason` indicating why it s
 | `cost_limit` | Budget limit exceeded |
 | `timeout` | Wall-clock time limit exceeded |
 | `plateau` | Convergence criterion met (no improvement) |
+| `convergence` | Hypervolume convergence criterion met |
 | `optimizer` | Optimizer signaled completion |
 | `condition` | Generic stop condition triggered |
 | `user_cancelled` | User cancelled the run |

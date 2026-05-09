@@ -179,11 +179,15 @@ def _emit_cost_warning_once() -> None:
             f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
             f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
             f"Cost estimates are approximations based on {CYAN}litellm{RESET} library pricing.\n"
+            f"Traigent limits are best-effort local guardrails, not provider billing caps.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom pricing file:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_FILE{RESET}\n"
             f"  - Custom pricing JSON:   {CYAN}TRAIGENT_CUSTOM_MODEL_PRICING_JSON{RESET}\n"
-            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
+            f"  - Local mock helper:     {CYAN}from traigent.testing import enable_mock_mode_for_quickstart{RESET}\n"
+            f"  - Then call:            {CYAN}enable_mock_mode_for_quickstart(){RESET}\n"
+            f"  - Legacy env mock:       {CYAN}TRAIGENT_MOCK_LLM=true{RESET} (non-production only)\n"
+            f"  - Set provider caps:     billing limits in your LLM/cloud provider account\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
@@ -191,11 +195,15 @@ def _emit_cost_warning_once() -> None:
             "\n[!] COST WARNING\n"
             "Traigent optimization will make multiple LLM API calls.\n"
             "Cost estimates are approximations based on litellm library pricing.\n"
+            "Traigent limits are best-effort local guardrails, not provider billing caps.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom pricing file:   TRAIGENT_CUSTOM_MODEL_PRICING_FILE\n"
             "  - Custom pricing JSON:   TRAIGENT_CUSTOM_MODEL_PRICING_JSON\n"
-            "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
+            "  - Local mock helper:     from traigent.testing import enable_mock_mode_for_quickstart\n"
+            "  - Then call:             enable_mock_mode_for_quickstart()\n"
+            "  - Legacy env mock:       TRAIGENT_MOCK_LLM=true (non-production only)\n"
+            "  - Set provider caps:     billing limits in your LLM/cloud provider account\n"
             "  - Full details:          DISCLAIMER.md\n"
         )
 
@@ -388,11 +396,7 @@ class OptimizedFunction:
             mode_enum = resolve_execution_mode(
                 effective_mode, default=resolve_execution_mode(self.execution_mode)
             )
-        return mode_enum in {
-            ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
-            ExecutionMode.HYBRID,
-        }
+        return mode_enum is ExecutionMode.CLOUD
 
     def _setup_configuration_space(self, configuration_space, config_space) -> None:
         """Setup configuration space with backward compatibility."""
@@ -584,14 +588,6 @@ class OptimizedFunction:
         self.global_measures = self._store_optional_param(
             kwargs, sentinel, "global_measures", None
         )
-
-        # JS runtime configuration
-        self.js_runtime_config = self._store_optional_param(
-            kwargs, sentinel, "js_runtime_config", None
-        )
-
-        # JS process pool (created lazily for parallel JS execution)
-        self._js_process_pool: Any = None
 
         # Safety constraints
         self.safety_constraints = self._store_optional_param(
@@ -1481,14 +1477,13 @@ class OptimizedFunction:
         force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator. Delegates to optimization_pipeline."""
-        evaluator, js_pool = create_effective_evaluator(
+        evaluator, _auxiliary_resource = create_effective_evaluator(
             timeout=timeout,
             custom_evaluator=custom_evaluator,
             effective_batch_size=effective_batch_size,
             effective_thread_workers=effective_thread_workers,
             effective_privacy_enabled=effective_privacy_enabled,
             objectives=self.objectives,
-            js_runtime_config=getattr(self, "js_runtime_config", None),
             execution_mode=self.execution_mode,
             mock_mode_config=self.mock_mode_config,
             metric_functions=self.metric_functions,
@@ -1498,8 +1493,6 @@ class OptimizedFunction:
                 force_auto_discover_tvars=force_auto_discover_tvars
             ),
         )
-        if js_pool is not None:
-            self._js_process_pool = js_pool
         return evaluator
 
     def _build_optimization_orchestrator(
@@ -1593,17 +1586,6 @@ class OptimizedFunction:
             # Set state to ERROR on failure
             self._state = OptimizationState.ERROR
             raise
-        finally:
-            # Clean up JS process pool if it was created
-            if self._js_process_pool is not None:
-                try:
-                    await self._js_process_pool.shutdown()
-                    logger.debug("JS process pool shut down successfully")
-                except Exception as e:
-                    logger.warning("Error shutting down JS process pool: %s", e)
-                finally:
-                    self._js_process_pool = None
-
         # Save results if requested
         if save_to:
             self.save_optimization_results(save_to)
@@ -1641,6 +1623,11 @@ class OptimizedFunction:
         if not use_cloud:
             return None
 
+        from traigent.cloud.client import (
+            CloudRemoteExecutionUnavailableError,
+            CloudServiceError,
+        )
+
         try:
             return await self._optimize_with_cloud_service(
                 dataset,
@@ -1651,6 +1638,12 @@ class OptimizedFunction:
             )
         except (AuthenticationError, ConfigurationError, ValidationError):
             raise
+        except CloudRemoteExecutionUnavailableError:
+            raise
+        except CloudServiceError as e:
+            if self.cloud_fallback_policy == "never":
+                raise
+            logger.warning("Cloud optimization failed, falling back to local: %s", e)
         except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
             if self.cloud_fallback_policy == "never":
                 raise
@@ -1670,26 +1663,18 @@ class OptimizedFunction:
     def _apply_mock_config_overrides(
         self, algorithm: str, optimizer_kwargs: dict[str, Any]
     ) -> str:
-        """Apply mock config overrides to algorithm and optimizer_kwargs."""
-        mock_config = getattr(self, "mock_mode_config", None) or {}
-        if not isinstance(mock_config, dict):
-            return algorithm
+        """No-op retained for backward compatibility.
 
-        # Override algorithm if specified in mock config
-        mock_optimizer = mock_config.get("optimizer")
-        if mock_optimizer and isinstance(mock_optimizer, str):
-            algorithm = mock_optimizer
-            logger.debug("Using optimizer '%s' from mock_mode_config", mock_optimizer)
-
-        # Extract and pass random_seed to optimizer for reproducibility
-        random_seed = mock_config.get("random_seed")
-        if random_seed is not None:
-            optimizer_kwargs["random_seed"] = random_seed
-            logger.debug(
-                "Passing random_seed=%s to optimizer from mock_mode_config",
-                random_seed,
-            )
-
+        Historically this method consulted ``self.mock_mode_config`` to
+        override the optimizer algorithm and to inject ``random_seed`` into
+        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
+        flag, ``mock_mode_config`` is now fully inert: callers may still pass
+        the parameter through public APIs, but it must not change optimizer
+        selection or seeding. A stray production config in the past silently
+        rerouted real optimizations to a different algorithm with a fixed
+        seed, so we now ignore it entirely. Real seeding should go through
+        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
+        """
         return algorithm
 
     async def _execute_optimization(
@@ -1871,7 +1856,11 @@ class OptimizedFunction:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> OptimizationResult:
-        """Run optimization using Traigent Cloud Service.
+        """Run optimization through the reserved Traigent Cloud path.
+
+        Remote cloud execution is not available yet. The cloud client is
+        expected to fail closed with guidance to use hybrid for portal-tracked
+        optimization.
 
         Args:
             dataset: Evaluation dataset
@@ -1880,13 +1869,13 @@ class OptimizedFunction:
             **kwargs: Additional arguments
 
         Returns:
-            OptimizationResult from cloud service
+            OptimizationResult from cloud service when the future path is implemented
         """
         from traigent.cloud.client import TraigentCloudClient
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
-            self._cloud_client = TraigentCloudClient(enable_fallback=True)
+            self._cloud_client = TraigentCloudClient(enable_fallback=False)
 
         if max_trials is not None and max_trials <= 0:
             logger.info("Cloud optimization skipped due to max_trials=0.")

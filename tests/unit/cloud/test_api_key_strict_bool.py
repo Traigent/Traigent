@@ -1,0 +1,196 @@
+"""Strict-bool regression test for ``_validate_api_key_with_backend``.
+
+The backend response body must be parsed strictly: only the literal boolean
+``True`` for the ``valid`` key indicates a successful validation. Truthy
+non-boolean values (e.g. the string ``"false"``, the int ``1``) MUST be
+treated as a rejection so a misconfigured or hostile backend cannot smuggle
+a fake-pass through the SDK.
+
+Repro for the prior weakness:
+
+    if isinstance(data, dict) and data.get("valid"):  # truthy check
+        return None
+
+A response of ``{"valid": "false"}`` would silently authenticate because the
+non-empty string ``"false"`` is truthy in Python. The fix tightens this to
+``data.get("valid") is True``.
+"""
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from traigent.cloud.auth import AuthManager
+
+
+class _FakeResponse:
+    """Minimal aiohttp response stub for the success-status path."""
+
+    def __init__(self, payload):
+        self.status = 200
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self, content_type=None):  # noqa: ARG002
+        return self._payload
+
+
+class _FakeSession:
+    """Stub aiohttp.ClientSession returning a configurable JSON payload."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, headers=None, allow_redirects=None):  # noqa: ARG002
+        return _FakeResponse(self._payload)
+
+
+def _patch_aiohttp(payload):
+    """Patch the aiohttp surface used by ``_validate_api_key_with_backend``."""
+    fake_aiohttp = MagicMock()
+    fake_aiohttp.ClientSession = MagicMock(return_value=_FakeSession(payload))
+    fake_aiohttp.ClientTimeout = MagicMock()
+    return patch("traigent.cloud.auth.aiohttp", fake_aiohttp)
+
+
+class _RequestsResponse:
+    """Minimal requests response stub for the no-aiohttp fallback path."""
+
+    def __init__(self, status: int, body: bytes):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        return json.loads(self._body.decode("utf-8"))
+
+
+def _auth_manager_with_public_backend() -> AuthManager:
+    """Create an auth manager whose validation URL is not localhost-derived."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "https://backend.example.test"
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_string_false_payload():
+    """A backend returning ``{"valid": "false"}`` must NOT authenticate."""
+    manager = _auth_manager_with_public_backend()
+
+    with _patch_aiohttp({"valid": "false"}):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is not None, (
+        "String 'false' was treated as truthy — strict ``is True`` check missing"
+    )
+    assert "invalid" in reason.lower() or "reported" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_truthy_int_payload():
+    """A backend returning ``{"valid": 1}`` must NOT authenticate (strict bool)."""
+    manager = _auth_manager_with_public_backend()
+
+    with _patch_aiohttp({"valid": 1}):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is not None
+    assert "invalid" in reason.lower() or "reported" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_accepts_strict_true_payload():
+    """A backend returning the literal ``{"valid": True}`` is the only success."""
+    manager = _auth_manager_with_public_backend()
+
+    with _patch_aiohttp({"valid": True}):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
+    """Missing aiohttp must not block API-key validation when the stdlib can call backend."""
+    manager = _auth_manager_with_public_backend()
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch(
+            "requests.post",
+            return_value=_RequestsResponse(200, b'{"valid": true}'),
+        ) as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is None
+    post.assert_called_once()
+    assert post.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_validate_fails_closed_when_requests_fallback_missing():
+    """Missing aiohttp and requests must return a validation failure reason."""
+    manager = _auth_manager_with_public_backend()
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch.object(
+            manager,
+            "_validate_api_key_with_backend_sync",
+            side_effect=ImportError("requests missing"),
+        ),
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "requests library not available for backend validation"
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_invalid_backend_validation_url():
+    """Backend key validation must not send credentials to unsupported URL schemes."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "ftp://backend.example"
+
+    with patch("requests.post") as post:
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL is invalid"
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "http://169.254.169.254/latest/meta-data",
+        "https://10.0.0.1",
+        "http://127.0.0.1:5000",
+        "http://localhost:5000",
+    ],
+)
+async def test_validate_rejects_non_global_backend_validation_hosts(backend_url):
+    """Backend key validation must not POST credentials to internal hosts."""
+    manager = AuthManager()
+    manager.config.backend_base_url = backend_url
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL host is not allowed"
+    post.assert_not_called()

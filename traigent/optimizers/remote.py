@@ -4,9 +4,9 @@ This optimizer integrates with a remote suggestion service when available.
 It is designed to be privacy-aware: only metadata (e.g., indices, metrics)
 should be sent upstream when `privacy_enabled` is True.
 
-Note: Remote optimization requires cloud or hybrid mode, which are not yet
-supported in the open-source SDK. This optimizer is reserved for future
-enterprise features.
+Note: Remote suggestion services are reserved for future enterprise features.
+Use `execution_mode="hybrid"` for the supported portal-tracked path where
+trials still execute locally.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID REQ-OPT-ALG-004 REQ-CLOUD-009 SYNC-CloudHybrid
@@ -26,8 +26,7 @@ logger = get_logger(__name__)
 class RemoteOptimizer(BaseOptimizer):
     """Optimizer that can request suggestions from a remote service.
 
-    Note: Remote optimization requires cloud or hybrid execution mode, which
-    are not yet supported in the open-source SDK. This optimizer currently
+    Note: Remote optimization is not implemented yet. This optimizer currently
     uses a local RandomSearchOptimizer as a placeholder.
 
     - Async suggestion APIs are provided to align with remote access patterns.

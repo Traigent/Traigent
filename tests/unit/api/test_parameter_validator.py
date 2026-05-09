@@ -42,13 +42,13 @@ class TestParameterValidator:
     def test_validate_execution_mode_valid(self):
         """Test validation of valid execution modes.
 
-        Only edge_analytics is currently supported. cloud/hybrid raise
-        ConfigurationError (not yet supported), privacy/standard raise
-        ConfigurationError (removed).
+        Edge analytics and hybrid are supported mode strings at decorator
+        validation time; cloud remains a recognized future mode whose remote
+        execution path fails at runtime.
         """
-        # Only edge_analytics is valid
         result = self.validator._validate_execution_mode("edge_analytics")
         assert result is None, "Expected None for valid mode edge_analytics"
+        assert self.validator._validate_execution_mode("hybrid") is None
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""

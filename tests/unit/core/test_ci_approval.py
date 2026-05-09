@@ -272,29 +272,34 @@ class TestCheckCiApproval:
         # Should not raise
         check_ci_approval(config)
 
-    def test_skips_in_mock_llm_mode(self) -> None:
-        config = MagicMock()
-        config.is_edge_analytics_mode.return_value = True
-        with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=True),
-            patch("traigent.core.ci_approval.is_production", return_value=False),
-        ):
-            check_ci_approval(config)
+    def test_mock_llm_no_longer_bypasses_ci_approval(self, tmp_path: Path) -> None:
+        """S2-B retirement: TRAIGENT_MOCK_LLM=true must NOT skip CI approval.
 
-    def test_skips_in_mock_llm_production(self) -> None:
+        Previously, ``check_ci_approval`` short-circuited whenever
+        ``is_mock_llm()`` returned True. That made a security gate
+        bypassable by setting an env var, which was unsafe in production
+        deployments where the variable could leak in. The bypass is removed.
+        """
         config = MagicMock()
         config.is_edge_analytics_mode.return_value = True
+        config.get_local_storage_path.return_value = str(tmp_path)
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k != "TRAIGENT_RUN_APPROVED"
+        }
+        env["TRAIGENT_MOCK_LLM"] = "true"
         with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=True),
-            patch("traigent.core.ci_approval.is_production", return_value=True),
+            patch("traigent.core.ci_approval._is_ci_environment", return_value=True),
+            patch.dict(os.environ, env, clear=True),
         ):
-            check_ci_approval(config)
+            with pytest.raises(OptimizationError, match="CI/CD Approval Required"):
+                check_ci_approval(config)
 
     def test_skips_when_not_ci(self) -> None:
         config = MagicMock()
         config.is_edge_analytics_mode.return_value = True
         with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=False),
             patch("traigent.core.ci_approval._is_ci_environment", return_value=False),
         ):
             check_ci_approval(config)
@@ -305,7 +310,6 @@ class TestCheckCiApproval:
         config.get_local_storage_path.return_value = str(tmp_path)
         env = {k: v for k, v in os.environ.items() if k != "TRAIGENT_RUN_APPROVED"}
         with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=False),
             patch("traigent.core.ci_approval._is_ci_environment", return_value=True),
             patch.dict(os.environ, env, clear=True),
         ):
@@ -318,7 +322,6 @@ class TestCheckCiApproval:
         config.get_local_storage_path.return_value = None
         env = {k: v for k, v in os.environ.items() if k != "TRAIGENT_RUN_APPROVED"}
         with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=False),
             patch("traigent.core.ci_approval._is_ci_environment", return_value=True),
             patch.dict(os.environ, env, clear=True),
         ):
@@ -329,7 +332,6 @@ class TestCheckCiApproval:
         config = MagicMock()
         config.is_edge_analytics_mode.return_value = True
         with (
-            patch("traigent.core.ci_approval.is_mock_llm", return_value=False),
             patch("traigent.core.ci_approval._is_ci_environment", return_value=True),
             patch.dict(os.environ, {"TRAIGENT_RUN_APPROVED": "1"}),
         ):

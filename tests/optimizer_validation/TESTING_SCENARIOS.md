@@ -212,8 +212,8 @@ for trial in result.trials:
 
 VALID_STOP_REASONS = {
     "max_trials_reached", "max_samples_reached", "timeout",
-    "cost_limit", "optimizer", "plateau", "user_cancelled",
-    "condition", "error", None
+    "cost_limit", "metric_limit", "optimizer", "plateau", "convergence", "user_cancelled",
+    "condition", "error", "vendor_error", "network_error", None
 }
 
 # INV-STOP-001: stop_reason is valid or None

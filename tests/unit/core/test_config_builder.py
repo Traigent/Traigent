@@ -20,10 +20,7 @@ from traigent.core.config_builder import (
     create_advanced_config_space,
     create_simple_config_space,
 )
-from traigent.core.constants import (
-    DEFAULT_EXECUTION_MODE,
-    DEFAULT_MODEL,
-)
+from traigent.core.constants import DEFAULT_EXECUTION_MODE, DEFAULT_MODEL
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.types import ParameterType
 
@@ -291,8 +288,8 @@ class TestOptimizedFunctionConfig:
     def test_validate_valid_execution_modes(self) -> None:
         """Test validation passes for edge_analytics execution mode.
 
-        Note: Only edge_analytics is currently supported. cloud/hybrid raise
-        ConfigurationError (not yet supported), privacy/standard were removed.
+        Note: This test exercises the local default. Hybrid is covered by
+        execution-mode tests; cloud remote execution raises ConfigurationError.
         """
         config = OptimizedFunctionConfig(
             execution_mode=ExecutionMode.EDGE_ANALYTICS.value

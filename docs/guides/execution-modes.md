@@ -1,20 +1,24 @@
 # Traigent Execution Modes Guide
 
-> **Current status:** Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local). `execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported in this build; they will raise `NotYetSupported` when optimization runs.
+> **Current status:** Traigent executes trials locally. The default is `execution_mode="edge_analytics"` (local-only). Use `execution_mode="hybrid"` when you want local execution plus backend/portal tracking. `execution_mode="cloud"` is reserved for future remote execution and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
 ## Overview
 
-Use `edge_analytics` (default) to run locally. Use `cloud` or `hybrid` only when Traigent Cloud is available for your build/deployment.
+Use `edge_analytics` (default) to run locally. Use `hybrid` for website-visible results while keeping trials on your machine. Do not use `cloud` yet; remote agent execution is not implemented.
 
 To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
+
+## Migration Note
+
+If you want optimization results in the Traigent website, use `execution_mode="hybrid"`, not `execution_mode="cloud"`. Hybrid is the supported production path for portal-tracked SDK optimization. Cloud is reserved for a future product path where Traigent Cloud runs the remote agent execution itself.
 
 ## Modes at a Glance
 
 | Mode | OSS availability | Status | Notes |
 | --- | --- | --- | --- |
-| `edge_analytics` | ✅ Available | ✅ Supported | Local execution |
-| `hybrid` | ✅ Available | 🚧 Not yet supported | Raises `NotYetSupported` when optimization runs |
-| `cloud` | ✅ Available | 🚧 Not yet supported | Raises `NotYetSupported` when optimization runs |
+| `edge_analytics` | Available | Supported | Local execution and local results |
+| `hybrid` | Available | Supported | Local execution plus backend session/trial tracking |
+| `cloud` | Reserved | Not implemented | Remote execution path fails closed |
 
 ## Local Mode (`edge_analytics`)
 
@@ -60,9 +64,15 @@ def my_agent(query: str) -> str:
 - CI smoke tests and demos (`TRAIGENT_MOCK_LLM=true`)
 - Budget-conscious experiments
 
-## Roadmap Notes
+## Hybrid Mode
 
-Some fully managed backend capabilities (for example, cloud-executed trials / agent optimization) require a provisioned backend and may not be available in OSS builds yet. In this build, only `execution_mode="edge_analytics"` is supported.
+Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session, runs each trial locally, and submits trial metrics to the backend session/result endpoints so the run appears in the portal.
+
+Use `hybrid` when you want results to appear in the Traigent website. Use `edge_analytics` when you want fully local runs with no backend dependency.
+
+## Cloud Roadmap
+
+Fully managed remote execution, including cloud-executed trials and remote agent optimization, is reserved for `execution_mode="cloud"`. That path is not implemented yet and must not return synthetic session IDs, trial suggestions, agent outputs, or completed statuses.
 
 ## Privacy-Safe Analytics
 

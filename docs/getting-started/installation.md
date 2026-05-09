@@ -27,6 +27,7 @@ pip install -e ".[recommended]"           # Recommended bundle: integrations, an
 | `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
 | `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `pip install -e ".[hybrid]"` |
+| `cloud` | Reserved dependencies for future remote execution; not required for portal-tracked `hybrid` runs | `pip install -e ".[cloud]"` |
 | `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
 | `test` | pytest + tooling | `pip install -e ".[test]"` |
 | `dev` | Linters + tests | `pip install -e ".[dev]"` |

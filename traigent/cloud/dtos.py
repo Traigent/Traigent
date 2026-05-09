@@ -9,6 +9,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 import re
 from collections import UserDict
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -355,6 +356,47 @@ class ConfigurationsDTO:
 
 
 @dataclass
+class ExperimentListRunSummaryDTO:
+    """Compact experiment-run summary embedded in experiment list responses."""
+
+    id: str
+    experiment_id: str
+    status: str
+    run_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    configuration_runs_count: int = 0
+    summary_stats: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the compact backend list-response shape."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=EXPERIMENT_RUN_STATUS_VALUES,
+            dto_name="ExperimentListRunSummaryDTO",
+        )
+        result: dict[str, Any] = {
+            "id": self.id,
+            "run_id": self.run_id if self.run_id is not None else self.id,
+            "experiment_id": self.experiment_id,
+            "status": self.status,
+            "configuration_runs_count": int(self.configuration_runs_count),
+        }
+        for field_name in ("created_at", "updated_at", "started_at", "completed_at"):
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = value
+        if self.summary_stats is not None:
+            result["summary_stats"] = self.summary_stats
+        if self.metrics is not None:
+            result["metrics"] = self.metrics
+        return result
+
+
+@dataclass
 class ExperimentDTO:
     """Experiment DTO based on experiment_schema.json.
 
@@ -382,6 +424,10 @@ class ExperimentDTO:
     status: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    configuration_runs_count: int | None = None
+    total_examples: int | None = None
+    optimization_runs_count: int | None = None
+    experiment_run: ExperimentListRunSummaryDTO | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
@@ -434,6 +480,17 @@ class ExperimentDTO:
             result["benchmark_id"] = resolved_dataset_id
         if self.status is not None:
             result["status"] = self.status
+        if self.configuration_runs_count is not None:
+            result["configuration_runs_count"] = int(self.configuration_runs_count)
+        if self.total_examples is not None:
+            result["total_examples"] = int(self.total_examples)
+        if self.optimization_runs_count is not None:
+            result["optimization_runs_count"] = int(self.optimization_runs_count)
+        if self.experiment_run is not None:
+            if isinstance(self.experiment_run, ExperimentListRunSummaryDTO):
+                result["experiment_run"] = self.experiment_run.to_dict()
+            else:
+                result["experiment_run"] = self.experiment_run
 
         return result
 
@@ -622,6 +679,152 @@ class ConfigurationRunDTO:
             "config": self.metadata.get("config", self.configuration.get("parameters")),
             "dataset_subset": dataset_subset,
         }
+
+
+@dataclass
+class EvaluatorDTO:
+    """Evaluator definition DTO based on observability/evaluator_definition_schema.json."""
+
+    name: str
+    measure_id: str
+    target_type: str
+    judge_config: dict[str, Any]
+    id: str | None = None
+    description: str | None = None
+    sampling_rate: float = 1.0
+    target_filters: dict[str, Any] = field(default_factory=dict)
+    is_active: bool = True
+    primary_measure_id: str | None = None
+    measure: dict[str, Any] | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the canonical evaluator definition shape."""
+        result: dict[str, Any] = {
+            "name": self.name,
+            "measure_id": self.measure_id,
+            "target_type": self.target_type,
+            "judge_config": deepcopy(self.judge_config),
+            "sampling_rate": self.sampling_rate,
+            "target_filters": deepcopy(self.target_filters),
+            "is_active": self.is_active,
+        }
+        for field_name in (
+            "id",
+            "description",
+            "primary_measure_id",
+            "measure",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = deepcopy(value)
+        return result
+
+
+@dataclass
+class MeasureDTO:
+    """Measure DTO based on measures/measure_schema.json."""
+
+    id: str
+    label: str
+    description: str
+    category: str
+    measure_type: str = "quality"
+    evaluation_method: str = "llm_based"
+    target_aspect: str = "response"
+    metric_type: str = "single_turn"
+    output_type: str = "continuous"
+    agent_types: list[str] = field(default_factory=lambda: ["chat"])
+    domain_min: float | None = 0.0
+    domain_max: float | None = 1.0
+    inverse: bool = False
+    is_custom: bool = True
+    version: str = "1.0.0"
+    target_types: list[str] = field(default_factory=list)
+    allowed_score_sources: list[str] = field(default_factory=list)
+    criteria: list[str] | None = None
+    python_packages: list[dict[str, Any]] | None = None
+    measure_parameters: list[dict[str, Any]] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the canonical measure schema shape."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "version": self.version,
+            "label": self.label,
+            "description": self.description,
+            "category": self.category,
+            "measure_type": self.measure_type,
+            "evaluation_method": self.evaluation_method,
+            "target_aspect": self.target_aspect,
+            "metric_type": self.metric_type,
+            "output_type": self.output_type,
+            "agent_types": list(self.agent_types),
+            "inverse": self.inverse,
+            "is_custom": self.is_custom,
+            "target_types": list(self.target_types),
+            "allowed_score_sources": list(self.allowed_score_sources),
+        }
+        if self.domain_min is not None:
+            result["domain_min"] = self.domain_min
+        if self.domain_max is not None:
+            result["domain_max"] = self.domain_max
+        if self.criteria is not None:
+            result["criteria"] = list(self.criteria)
+        if self.python_packages is not None:
+            result["python_packages"] = deepcopy(self.python_packages)
+        if self.measure_parameters is not None:
+            result["measure_parameters"] = deepcopy(self.measure_parameters)
+        return result
+
+
+@dataclass
+class PlannerDraftDTO:
+    """Planner draft DTO for the planner spine."""
+
+    description: str
+    agent: dict[str, Any] | None = None
+    benchmark: dict[str, Any] | None = None
+    measures: list[MeasureDTO | dict[str, Any]] = field(default_factory=list)
+    draft_id: str | None = None
+    status: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to the canonical planner draft shape."""
+        result: dict[str, Any] = {
+            "description": self.description,
+            "measures": [
+                (
+                    measure.to_dict()
+                    if isinstance(measure, MeasureDTO)
+                    else deepcopy(measure)
+                )
+                for measure in self.measures
+            ],
+            "metadata": deepcopy(self.metadata),
+        }
+        for field_name in (
+            "agent",
+            "benchmark",
+            "draft_id",
+            "status",
+            "created_at",
+            "updated_at",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                result[field_name] = deepcopy(value)
+        return result
 
 
 # Helper functions for creating privacy-preserving DTOs

@@ -100,10 +100,6 @@ class BedrockChatClient:
     def _ensure_client(self):  # pragma: no cover - network client guard
         if self._client is not None:
             return self._client
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            # Mock mode: no real client needed
-            self._client = object()
-            return self._client
         boto3 = _require_boto3()
         if self._profile_name:
             session = boto3.session.Session(profile_name=self._profile_name)
@@ -152,33 +148,19 @@ class BedrockChatClient:
         if extra_params:
             payload.update(dict(extra_params))
 
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            # Deterministic mock response echoes last user content
-            msgs = _coerce_user_messages(messages)
-            last = (
-                msgs[-1]["content"][0]["text"]
-                if msgs and msgs[-1].get("content")
-                else ""
-            )
-            data: dict[str, Any] = {
-                "mock": True,
-                "content": [{"type": "text", "text": f"[MOCK:{model_id}] {last}"}],
-                "usage": {"input_tokens": 0, "output_tokens": min(max_tokens, 16)},
-            }
-        else:
-            resp = client.invoke_model(
-                modelId=model_id,
-                accept="application/json",
-                contentType="application/json",
-                body=json.dumps(payload),
-            )
+        resp = client.invoke_model(
+            modelId=model_id,
+            accept="application/json",
+            contentType="application/json",
+            body=json.dumps(payload),
+        )
 
-            # `body` can be streaming-like; ensure we read and parse JSON
-            raw_body = resp.get("body")
-            if hasattr(raw_body, "read"):
-                data = json.loads(raw_body.read())
-            else:
-                data = json.loads(raw_body)
+        # `body` can be streaming-like; ensure we read and parse JSON
+        raw_body = resp.get("body")
+        if hasattr(raw_body, "read"):
+            data = json.loads(raw_body.read())
+        else:
+            data = json.loads(raw_body)
 
         text = _extract_text_from_messages_response(data)
         usage = data.get("usage") if isinstance(data, Mapping) else None
@@ -195,14 +177,11 @@ class BedrockChatClient:
     ) -> BedrockChatResponse:
         """Invoke an AI21 Jamba family model via Bedrock."""
 
-        prompt_text: str
         if isinstance(messages, str):
             request_messages = [{"role": "user", "content": messages}]
-            prompt_text = messages
         else:
             coalesced = _coerce_user_messages(messages)
             request_messages = []
-            combined_pieces: list[str] = []
             for item in coalesced:
                 role = str(item.get("role", "user"))
                 content = item.get("content", "")
@@ -215,17 +194,6 @@ class BedrockChatClient:
                 else:
                     text = str(content)
                 request_messages.append({"role": role, "content": text})
-                if text:
-                    combined_pieces.append(text)
-            prompt_text = "\n".join(combined_pieces)
-
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            usage: Mapping[str, Any] | None = {
-                "input_tokens": len(prompt_text.split()),
-                "output_tokens": min(max_tokens, 32),
-            }
-            text = f"[MOCK:{model_id}] {prompt_text.strip()}"
-            return BedrockChatResponse(text=text, raw={"mock": True}, usage=usage)
 
         client = self._ensure_client()
         payload = {
@@ -287,44 +255,28 @@ class BedrockChatClient:
             payload.update(dict(extra_params))
 
         final_text_parts: list[str] = []
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            msgs = _coerce_user_messages(messages)
-            last = (
-                msgs[-1]["content"][0]["text"]
-                if msgs and msgs[-1].get("content")
-                else ""
-            )
-            chunks = [
-                f"[MOCK:{model_id}] ",
-                last[: max(1, len(last) // 2)],
-                last[max(1, len(last) // 2) :],
-            ]
-            for piece in chunks:
-                final_text_parts.append(piece)
-                yield piece
-        else:
-            resp = client.invoke_model_with_response_stream(
-                modelId=model_id,
-                accept="application/json",
-                contentType="application/json",
-                body=json.dumps(payload),
-            )
+        resp = client.invoke_model_with_response_stream(
+            modelId=model_id,
+            accept="application/json",
+            contentType="application/json",
+            body=json.dumps(payload),
+        )
 
-            stream = resp.get("body")
-            if stream is not None:
-                for event in stream:
-                    chunk = event.get("chunk") if isinstance(event, Mapping) else None
-                    if not chunk:
-                        continue
-                    try:
-                        data = json.loads(chunk.get("bytes").decode("utf-8"))
-                    except Exception:  # noqa: BLE001 - defensive
-                        continue
-                    # Extract incremental text if present
-                    text_piece = _extract_text_from_messages_response(data)
-                    if text_piece:
-                        final_text_parts.append(text_piece)
-                        yield text_piece
+        stream = resp.get("body")
+        if stream is not None:
+            for event in stream:
+                chunk = event.get("chunk") if isinstance(event, Mapping) else None
+                if not chunk:
+                    continue
+                try:
+                    data = json.loads(chunk.get("bytes").decode("utf-8"))
+                except Exception:  # noqa: BLE001 - defensive
+                    continue
+                # Extract incremental text if present
+                text_piece = _extract_text_from_messages_response(data)
+                if text_piece:
+                    final_text_parts.append(text_piece)
+                    yield text_piece
 
         final = "".join(final_text_parts)
         return BedrockChatResponse(text=final, raw={"streamed": True}, usage=None)
@@ -344,23 +296,6 @@ class BedrockChatClient:
         Uses aioboto3 for true async or falls back to thread-pool executor.
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
-        # Check for mock mode first
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            msgs = _coerce_user_messages(messages)
-            last = (
-                msgs[-1]["content"][0]["text"]
-                if msgs and msgs[-1].get("content")
-                else ""
-            )
-            data: dict[str, Any] = {
-                "mock": True,
-                "content": [{"type": "text", "text": f"[MOCK:{model_id}] {last}"}],
-                "usage": {"input_tokens": 0, "output_tokens": min(max_tokens, 16)},
-            }
-            text = _extract_text_from_messages_response(data)
-            usage = data.get("usage") if isinstance(data, Mapping) else None
-            return BedrockChatResponse(text=text, raw=data, usage=usage)
-
         # Try aioboto3 for true async
         try:
             import aioboto3  # noqa: F401 - used for availability check and async method
@@ -452,23 +387,6 @@ class BedrockChatClient:
         Uses aioboto3 for true async streaming or falls back to sync streaming
         wrapped in an executor.
         """
-        # Check for mock mode first
-        if os.getenv("BEDROCK_MOCK", "").strip().lower() == "true":
-            msgs = _coerce_user_messages(messages)
-            last = (
-                msgs[-1]["content"][0]["text"]
-                if msgs and msgs[-1].get("content")
-                else ""
-            )
-            chunks = [
-                f"[MOCK:{model_id}] ",
-                last[: max(1, len(last) // 2)],
-                last[max(1, len(last) // 2) :],
-            ]
-            for piece in chunks:
-                yield piece
-            return
-
         # Try aioboto3 for true async streaming
         try:
             import aioboto3  # noqa: F401 - used for availability check and async stream
@@ -567,8 +485,6 @@ def resolve_default_bedrock_model_id(model_hint: str | None) -> str:
     Allows environment override via `BEDROCK_MODEL_ID`. Fallback mapping supports
     common Claude variants used in our experiments.
     """
-
-    import os
 
     override = os.getenv("BEDROCK_MODEL_ID")
     if override:

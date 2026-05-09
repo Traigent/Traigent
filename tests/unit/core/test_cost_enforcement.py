@@ -194,34 +194,55 @@ class TestCostEnforcerBasic:
 
 
 class TestCostEnforcerMockMode:
-    """Tests for mock mode behavior."""
+    """Tests pinning that TRAIGENT_MOCK_LLM is NOT honored by CostEnforcer.
 
-    def test_mock_mode_bypasses_tracking(self) -> None:
-        """Mock mode bypasses all tracking."""
+    S2-B Round 3 removed the mock-mode bypass: cost approval, permit
+    acquisition, and cost tracking always run regardless of the env flag.
+    """
+
+    def test_mock_mode_does_not_bypass_tracking(self) -> None:
+        """track_cost must update accumulated_cost even with TRAIGENT_MOCK_LLM=true."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             enforcer = CostEnforcer()
-            enforcer.track_cost(
-                100.0, permit=_create_mock_permit()
-            )  # Would exceed any limit
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.05, permit=permit)
+            assert enforcer.accumulated_cost == pytest.approx(0.05)
 
-            # Should still be 0 because mock mode skips tracking
-            assert enforcer.accumulated_cost == 0.0
-
-    def test_mock_mode_always_permits(self) -> None:
-        """Mock mode always grants permits."""
+    def test_mock_mode_does_not_force_permits(self) -> None:
+        """Permit denial under tight limits must still occur with TRAIGENT_MOCK_LLM=true."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
-            config = CostEnforcerConfig(limit=0.01)  # Very low limit
+            config = CostEnforcerConfig(
+                limit=0.01, estimated_cost_per_trial=1.0
+            )  # Very low limit, high estimate
             enforcer = CostEnforcer(config=config)
 
             permit = enforcer.acquire_permit()
-            assert permit.is_granted, "Mock mode should always grant permits"
-            assert permit.amount > 0, "Mock mode permit should have positive amount"
+            # First permit reserves budget; subsequent acquisitions must be
+            # denied because the in-flight reservation already exceeds limit.
+            second = enforcer.acquire_permit()
+            assert not second.is_granted, (
+                "Mock mode must not override real permit limits"
+            )
+            enforcer.release_permit(permit)
 
-    def test_mock_mode_approves_any_cost(self) -> None:
-        """Mock mode approves any estimated cost."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
-            enforcer = CostEnforcer()
-            assert enforcer.check_and_approve(1000.0) is True
+    def test_mock_mode_does_not_auto_approve(self) -> None:
+        """check_and_approve must NOT short-circuit when TRAIGENT_MOCK_LLM=true.
+
+        With a non-interactive shell and an estimated cost above the limit,
+        approval should fail-safe to False (no auto-approval via mock mode).
+        """
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_COST_APPROVED": "false"},
+        ):
+            enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0, approved=False))
+            # Far above limit — without auto-approval and with no interactive
+            # shell available, this must NOT return True solely due to mock mode.
+            with patch(
+                "traigent.core.cost_enforcement.CostEnforcer._request_user_approval",
+                return_value=False,
+            ):
+                assert enforcer.check_and_approve(1000.0) is False
 
 
 class TestCostEnforcerUnknownCost:
@@ -788,6 +809,23 @@ class TestCostEnforcerInFlightReservation:
         assert status.reserved_cost_usd == 0.0
         assert status.accumulated_cost_usd == 0.15
 
+    def test_actual_cost_overrun_denies_future_permits(self) -> None:
+        """Actual cost may exceed estimate, but future permits are denied."""
+        config = CostEnforcerConfig(limit=0.10, estimated_cost_per_trial=0.05)
+        enforcer = CostEnforcer(config=config)
+
+        permit = enforcer.acquire_permit()
+        assert permit.is_granted
+
+        enforcer.track_cost(0.20, permit=permit)
+        status = enforcer.get_status()
+        assert status.accumulated_cost_usd == pytest.approx(0.20)
+        assert status.reserved_cost_usd == 0.0
+        assert status.limit_reached is True
+
+        next_permit = enforcer.acquire_permit()
+        assert not next_permit.is_granted
+
     def test_release_permit_without_tracking(self) -> None:
         """release_permit releases reservation without tracking cost."""
         config = CostEnforcerConfig(limit=1.0, estimated_cost_per_trial=0.2)
@@ -1071,29 +1109,13 @@ class TestCostEnforcerInternals:
         assert enforcer._sync_used is False
         assert enforcer._async_used is False
 
-    def test_check_mock_mode(self) -> None:
-        """Verify _check_mock_mode handles env vars correctly."""
-        # Test "true"
+    def test_mock_mode_method_and_property_are_removed(self) -> None:
+        """S2-B Round 3 removed _check_mock_mode and is_mock_mode from CostEnforcer."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             enforcer = CostEnforcer()
-            assert enforcer._check_mock_mode() is True
-
-        # Test "True" (case insensitive)
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "True"}):
-            enforcer = CostEnforcer()
-            assert enforcer._check_mock_mode() is True
-
-        # Test "false"
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
-            enforcer = CostEnforcer()
-            assert enforcer._check_mock_mode() is False
-
-        # Test missing (default false)
-        with patch.dict(os.environ):
-            if "TRAIGENT_MOCK_LLM" in os.environ:
-                del os.environ["TRAIGENT_MOCK_LLM"]
-            enforcer = CostEnforcer()
-            assert enforcer._check_mock_mode() is False
+            assert not hasattr(enforcer, "_check_mock_mode")
+            assert not hasattr(enforcer, "is_mock_mode")
+            assert not hasattr(enforcer, "_mock_mode_cached")
 
     def test_get_approval_token_path(self) -> None:
         """Verify token path construction."""
@@ -1608,6 +1630,29 @@ class TestCostEnforcerInvariants:
 
         enforcer.release_permit(permit2)
         enforcer.assert_invariants()
+
+    def test_invariants_allow_parallel_actual_overrun_with_active_permit(self) -> None:
+        """A completed overrun can coexist with other admitted in-flight work."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=0.10, estimated_cost_per_trial=0.05)
+        )
+
+        permit1 = enforcer.acquire_permit()
+        permit2 = enforcer.acquire_permit()
+        assert permit1.is_granted
+        assert permit2.is_granted
+
+        enforcer.track_cost(0.20, permit=permit1)
+        status = enforcer.get_status()
+        assert status.accumulated_cost_usd == pytest.approx(0.20)
+        assert status.reserved_cost_usd == pytest.approx(0.05)
+        assert status.in_flight_count == 1
+        assert status.limit_reached is True
+
+        enforcer.assert_invariants()
+
+        next_permit = enforcer.acquire_permit()
+        assert not next_permit.is_granted
 
 
 class TestCostEnforcerEdgeCases:

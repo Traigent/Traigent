@@ -44,7 +44,7 @@ def answer_question(question: str) -> str:
 - **[Optuna Integration](user-guide/optuna_integration.md)** - Optuna-backed optimizers, coordinator, and adapter
 
 ### 🧭 [Guides](guides/)
-- **[Execution Modes](guides/execution-modes.md)** - Local, hybrid, and cloud execution behavior
+- **[Execution Modes](guides/execution-modes.md)** - Local, hybrid portal tracking, and reserved cloud execution behavior
 - **[Evaluation](guides/evaluation.md)** - Evaluation best practices and troubleshooting
 - **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
 - **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys

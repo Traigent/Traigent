@@ -279,10 +279,14 @@ class TraigentWandBTracker:
             "timestamp": timestamp_iso,
         }
 
-        # Save trial as JSON artifact
-        trial_file = f"trial_{trial_number}.json"
+        # Save trial as JSON artifact. Coerce trial_number through int() so
+        # the formatted filename can never carry path-traversal segments even
+        # if a caller violates the int type contract. The coercion is inside
+        # the try block so a bad caller falls into the same graceful-failure
+        # path as I/O / serialisation errors instead of crashing log_trial().
         artifact_written = False
         try:
+            trial_file = f"trial_{int(trial_number)}.json"
             with open(trial_file, "w", encoding="utf-8") as f:
                 json.dump(trial_artifact_data, f, indent=2)
                 artifact_written = True

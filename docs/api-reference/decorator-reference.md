@@ -469,47 +469,13 @@ from traigent.config.parallel import ParallelConfig
 
 **ExecutionOptions Fields**:
 
-- `execution_mode`: "edge_analytics" (only supported mode in OSS)
+- `execution_mode`: "edge_analytics" for local-only runs; "hybrid" for local execution with backend/portal tracking; "cloud" is reserved for future remote execution.
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
 - `parallel_config`: Concurrency configuration
 - `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
-
-**JavaScript Runtime Fields** (for `runtime="node"`):
-
-- `runtime`: Runtime to execute trials ("python" or "node")
-- `js_module`: Path to JS module containing trial function (required for node)
-- `js_function`: Exported function name (default: "runTrial")
-- `js_timeout`: Trial timeout in seconds (default: 300)
-- `js_parallel_workers`: Number of parallel Node.js workers (default: 1)
-
-**JavaScript Execution Example**:
-
-```python
-@traigent.optimize(
-    execution={
-        "runtime": "node",
-        "js_module": "./dist/my-agent.js",
-        "js_function": "runTrial",
-        "js_timeout": 300.0,
-        "js_parallel_workers": 4,
-    },
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.3, 0.7],
-    },
-    evaluation={"eval_dataset": "dataset.jsonl"},
-    objectives=["accuracy", "cost"],
-    max_trials=20,
-)
-def optimize_js_agent(text: str) -> str:
-    # Function body not executed when runtime="node"
-    pass
-```
-
-See the [JS Bridge Guide](../guides/js-bridge.md) for complete documentation.
 
 #### `mock`
 
@@ -562,16 +528,19 @@ The `**runtime_overrides` parameter accepts additional settings:
 )
 ```
 
-**Budget Controls**:
+**Metric-Limit Controls**:
 
 ```python
 @traigent.optimize(
-    budget_limit=1000,  # Max samples
-    budget_metric="samples",
-    budget_include_pruned=True,
+    metric_limit=1000,  # Soft cumulative metric stop
+    metric_name="samples",
+    metric_include_pruned=True,
     ...
 )
 ```
+
+`budget_limit` / `budget_metric` / `budget_include_pruned` are deprecated aliases
+for compatibility. Use `cost_limit` for hard USD spend control.
 
 **Stop Conditions**:
 

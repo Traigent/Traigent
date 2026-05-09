@@ -20,6 +20,9 @@ from traigent.security.audit import (
 )
 
 STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
+COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting subsystem is not yet implemented"
+PERSISTENT_STORAGE_NOT_IMPLEMENTED = "Persistent audit storage is not yet implemented"
+TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
 
 
 class TestAuditEvent:
@@ -83,6 +86,23 @@ class TestAuditEvent:
 
 class TestAuditStorage:
     """Test AuditStorage class"""
+
+    def test_default_storage_path_keeps_backward_compatible_value(self):
+        """No-arg construction preserves the historical default path."""
+        storage = AuditStorage()
+
+        assert storage.storage_path == "audit_logs"
+        assert storage.events == []
+
+    def test_explicit_storage_path_is_accepted_for_compatibility(self):
+        """Explicit paths remain constructible while storage stays in-memory."""
+        storage = AuditStorage(storage_path="custom_audit_logs")
+        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+
+        storage.store_event(event)
+
+        assert storage.storage_path == "custom_audit_logs"
+        assert storage.get_events() == [event]
 
     def test_store_and_retrieve_events(self):
         """Test storing and retrieving events"""
@@ -189,6 +209,20 @@ class TestAuditStorage:
         limited_events = storage.get_events(limit=5)
         assert len(limited_events) == 5
 
+    def test_retrieve_events_warns_when_time_filters_ignored(self):
+        """retrieve_events warns when its unsupported time filters are supplied."""
+        storage = AuditStorage()
+        event = AuditEvent(event_type=AuditEventType.DATA_READ, user_id="user123")
+        storage.store_event(event)
+
+        now = datetime.now(UTC)
+        with pytest.warns(UserWarning, match="ignores time filters"):
+            events = storage.retrieve_events(
+                start_time=now - timedelta(hours=1), end_time=now
+            )
+
+        assert events == [event]
+
     def test_verify_integrity(self):
         """Test audit log integrity verification"""
         storage = AuditStorage()
@@ -209,6 +243,20 @@ class TestAuditStorage:
         assert integrity.event_count == 3
         assert integrity.log_hash is not None
         assert len(integrity.log_hash) == 64  # SHA-256 hex digest
+
+
+class TestAuditLogIntegrity:
+    """Test AuditLogIntegrity class"""
+
+    def test_verify_integrity_fails_loud(self):
+        """Tamper detection should not report fake success."""
+        integrity = AuditLogIntegrity()
+        integrity.hash_chain = ["TAMPERED_NOT_A_HASH", "ANOTHER_BAD"]
+        integrity.event_count = 999
+        integrity.log_hash = "CORRUPTED"
+
+        with pytest.raises(NotImplementedError, match=TAMPER_DETECTION_NOT_IMPLEMENTED):
+            integrity.verify_integrity()
 
 
 class TestAuditLogger:
@@ -353,96 +401,49 @@ class TestComplianceReporter:
     """Test ComplianceReporter class"""
 
     def test_soc2_report_generation(self):
-        """Test SOC 2 compliance report generation"""
+        """SOC 2 compliance reporting fails loudly until implemented."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        # Create test events with SOC 2 compliance tags
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        # Add some events to storage directly for testing
-        security_event = AuditEvent(
-            event_type=AuditEventType.LOGIN_SUCCESS,
-            user_id="user123",
-            compliance_tags=[ComplianceFramework.SOC2],
-        )
-        audit_logger.storage.store_event(security_event)
-
-        # Generate report
-        report = reporter.generate_report(
-            framework=ComplianceFramework.SOC2, start_date=start_date, end_date=end_date
-        )
-
-        assert report["framework"] == "SOC 2 Type II"
-        assert "trust_service_criteria" in report
-        assert "security" in report["trust_service_criteria"]
-        assert "availability" in report["trust_service_criteria"]
-        assert "processing_integrity" in report["trust_service_criteria"]
-        assert "confidentiality" in report["trust_service_criteria"]
-        assert "privacy" in report["trust_service_criteria"]
-        assert "summary" in report
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_report(
+                framework=ComplianceFramework.SOC2,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def test_iso27001_report_generation(self):
-        """Test ISO 27001 compliance report generation"""
+        """ISO 27001 compliance reporting fails loudly until implemented."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        # Add test events
-        auth_event = AuditEvent(
-            event_type=AuditEventType.LOGIN_SUCCESS,
-            user_id="user123",
-            compliance_tags=[ComplianceFramework.ISO27001],
-        )
-        audit_logger.storage.store_event(auth_event)
-
-        # Generate report
-        report = reporter.generate_report(
-            framework=ComplianceFramework.ISO27001,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        assert report["framework"] == "ISO 27001:2013"
-        assert "control_objectives" in report
-        assert "access_control" in report["control_objectives"]
-        assert "incident_management" in report["control_objectives"]
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_report(
+                framework=ComplianceFramework.ISO27001,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def test_gdpr_report_generation(self):
-        """Test GDPR compliance report generation"""
+        """GDPR compliance reporting fails loudly until implemented."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        # Add test events
-        data_event = AuditEvent(
-            event_type=AuditEventType.DATA_READ,
-            user_id="user123",
-            compliance_tags=[ComplianceFramework.GDPR],
-        )
-        gdpr_request_event = AuditEvent(
-            event_type=AuditEventType.GDPR_REQUEST,
-            user_id="user123",
-            compliance_tags=[ComplianceFramework.GDPR],
-        )
-
-        audit_logger.storage.store_event(data_event)
-        audit_logger.storage.store_event(gdpr_request_event)
-
-        # Generate report
-        report = reporter.generate_report(
-            framework=ComplianceFramework.GDPR, start_date=start_date, end_date=end_date
-        )
-
-        assert report["framework"] == "GDPR (EU) 2016/679"
-        assert "data_protection_principles" in report
-        assert "lawfulness" in report["data_protection_principles"]
-        assert "data_subject_rights" in report["data_protection_principles"]
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_report(
+                framework=ComplianceFramework.GDPR,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def test_unsupported_framework(self):
         """Test error handling for unsupported framework"""
@@ -465,78 +466,54 @@ class TestComplianceReporter:
             )
 
     def test_compliance_dashboard(self):
-        """Test compliance dashboard generation"""
+        """Compliance dashboard fails loudly until implemented."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        # Add some test events
-        events = [
-            AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123"),
-            AuditEvent(event_type=AuditEventType.LOGIN_FAILURE, user_id="user456"),
-            AuditEvent(event_type=AuditEventType.DATA_READ, user_id="user123"),
-            AuditEvent(
-                event_type=AuditEventType.SECURITY_VIOLATION,
-                severity=AuditSeverity.CRITICAL,
-            ),
-        ]
-
-        for event in events:
-            audit_logger.storage.store_event(event)
-
-        # Get dashboard
-        dashboard = reporter.get_compliance_dashboard()
-
-        assert "period" in dashboard
-        assert "metrics" in dashboard
-        assert "frameworks_status" in dashboard
-        assert "recent_alerts" in dashboard
-
-        metrics = dashboard["metrics"]
-        assert "total_events" in metrics
-        assert "critical_events" in metrics
-        assert "failed_logins" in metrics
-        assert "data_access_events" in metrics
-        assert "compliance_score" in metrics
-
-        # Should have some events
-        assert metrics["total_events"] >= 4
-        assert metrics["critical_events"] >= 1
-        assert metrics["failed_logins"] >= 1
-        assert metrics["data_access_events"] >= 1
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.get_compliance_dashboard()
 
     def test_tenant_specific_reporting(self):
-        """Test tenant-specific compliance reporting"""
+        """Tenant-specific compliance reporting fails loudly until implemented."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        # Add events for different tenants
-        tenant1_event = AuditEvent(
-            event_type=AuditEventType.DATA_READ,
-            user_id="user123",
-            tenant_id="tenant1",
-            compliance_tags=[ComplianceFramework.GDPR],
-        )
-        tenant2_event = AuditEvent(
-            event_type=AuditEventType.DATA_READ,
-            user_id="user456",
-            tenant_id="tenant2",
-            compliance_tags=[ComplianceFramework.GDPR],
-        )
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_report(
+                framework=ComplianceFramework.GDPR,
+                start_date=start_date,
+                end_date=end_date,
+                tenant_id="tenant1",
+            )
 
-        audit_logger.storage.store_event(tenant1_event)
-        audit_logger.storage.store_event(tenant2_event)
+    def test_legacy_compliance_methods_fail_loud(self):
+        """Legacy report entry points fail loudly instead of returning fake status."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
 
-        # Generate report for specific tenant
-        report = reporter.generate_report(
-            framework=ComplianceFramework.GDPR,
-            start_date=start_date,
-            end_date=end_date,
-            tenant_id="tenant1",
-        )
+        start_date = datetime.now(UTC) - timedelta(days=30)
+        end_date = datetime.now(UTC)
 
-        # Report should be generated successfully (may be None if no events match)
-        # The key is that the call completed without error
-        assert isinstance(report, (dict, type(None)))  # Report is dict or None
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_soc2_report(start_date, end_date)
+
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter.generate_gdpr_report(start_date, end_date)
+
+    def test_security_incident_analysis_fails_loud(self):
+        """Incident compliance analysis fails loudly instead of faking resolution."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        events = [
+            AuditEvent(
+                event_type=AuditEventType.SECURITY_VIOLATION,
+                user_id="user123",
+                severity=AuditSeverity.CRITICAL,
+            )
+        ]
+
+        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+            reporter._analyze_security_incidents(events)

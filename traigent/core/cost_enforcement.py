@@ -15,12 +15,18 @@ Environment Variables:
     TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
-    TRAIGENT_MOCK_LLM: Bypass all cost tracking when "true" (no real LLM costs)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
     TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
         (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning)
+
+Note:
+    ``TRAIGENT_MOCK_LLM`` is intentionally NOT consulted here. Sprint 2-B
+    retired the mock-mode bypass because it could disable cost enforcement
+    and billing accounting if the variable ever leaked into a production
+    environment. Cost approval, permit acquisition, and cost tracking
+    always run regardless of any mock-mode flag.
 """
 
 from __future__ import annotations
@@ -215,12 +221,11 @@ class CostEnforcer:
         self._permit_counter: int = 0  # Monotonic counter for permit IDs
         self._active_permits: dict[int, Permit] = {}  # Track active permits by ID
 
-        # Cache mock LLM mode at init to prevent mid-run env var changes (Phase 2.2).
-        # NOTE: Changing TRAIGENT_MOCK_LLM after CostEnforcer is initialized will
-        # have NO EFFECT. This is intentional - toggling mock mode mid-run could
-        # cause stranded permits (acquired with tracking, released without tracking).
-        # If you need to change mock mode, create a new CostEnforcer instance.
-        self._mock_mode_cached: bool = self._check_mock_mode()
+        # S2-B Round 3: TRAIGENT_MOCK_LLM no longer suppresses cost enforcement.
+        # Previously this module cached a mock-mode flag at init and used it to
+        # short-circuit approval, permit acquisition, and cost tracking. That
+        # bypass was a security/billing risk if the env var leaked into prod, so
+        # all bypass branches were removed. Cost enforcement now always runs.
         # Cache strict-cost-tracking mode at init for consistent run semantics.
         # NOTE: Changing TRAIGENT_REQUIRE_COST_TRACKING or
         # TRAIGENT_STRICT_COST_ACCOUNTING after CostEnforcer initialization has
@@ -235,14 +240,6 @@ class CostEnforcer:
         # Sync/async usage tracking for mixing detection (Phase 3.2)
         self._sync_used: bool = False
         self._async_used: bool = False
-
-    def _check_mock_mode(self) -> bool:
-        """Check if mock LLM mode is enabled from environment.
-
-        When TRAIGENT_MOCK_LLM=true, cost tracking is bypassed because
-        there are no real LLM API costs to track.
-        """
-        return os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
     @staticmethod
     def _check_require_cost_tracking_mode() -> bool:
@@ -370,15 +367,6 @@ class CostEnforcer:
                 return self._trial_count >= self.config.fallback_trial_limit
             return self._accumulated_cost >= self.config.limit
 
-    @property
-    def is_mock_mode(self) -> bool:
-        """Check if mock mode is enabled (bypasses all cost tracking).
-
-        Uses cached value from init to prevent mid-run env var changes
-        from causing stranded permits.
-        """
-        return self._mock_mode_cached
-
     def check_and_approve(self, estimated_cost: float) -> bool:
         """Pre-optimization handshake. Returns True if approved.
 
@@ -394,10 +382,6 @@ class CostEnforcer:
         Returns:
             True if approved to proceed, False if user declined or non-interactive abort.
         """
-        if self.is_mock_mode:
-            logger.debug("Mock mode enabled, skipping cost approval")
-            return True
-
         if self.config.approved:
             logger.info(
                 f"Cost pre-approved via TRAIGENT_COST_APPROVED "
@@ -485,6 +469,7 @@ Your current cost limit:     ${self.config.limit:.2f} USD
 
 NOTE: This is an ESTIMATE based on maximum context. Actual billing is
       determined solely by your LLM provider.
+NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
 
 Options:
   [y] Approve and continue with current limit
@@ -530,10 +515,6 @@ Options:
         """
         self._check_mixing(is_async=False)
 
-        if self.is_mock_mode:
-            # Mock mode: return valid permit with estimated cost, id=0
-            return Permit(id=0, amount=self._estimated_cost, active=True)
-
         with self._lock:
             return self._acquire_permit_locked()
 
@@ -558,10 +539,6 @@ Options:
         """
         self._check_mixing(is_async=False)
 
-        if self.is_mock_mode:
-            permit.mark_released()  # Mark even in mock mode for consistency
-            return True
-
         with self._lock:
             return self._release_permit_locked(permit, caller="release_permit")
 
@@ -578,10 +555,6 @@ Options:
             True if permit was released, False if already released (double-release).
         """
         self._check_mixing(is_async=True)
-
-        if self.is_mock_mode:
-            permit.mark_released()  # Mark even in mock mode for consistency
-            return True
 
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
@@ -600,10 +573,6 @@ Options:
             if limit reached (amount=0.0, id=-1).
         """
         self._check_mixing(is_async=True)
-
-        if self.is_mock_mode:
-            # Mock mode: return valid permit with estimated cost, id=0
-            return Permit(id=0, amount=self._estimated_cost, active=True)
 
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
@@ -644,10 +613,6 @@ Options:
 
         if cost is not None and cost < 0:
             raise ValueError(f"Cost must be non-negative, got {cost}")
-
-        if self.is_mock_mode:
-            permit.mark_released()  # Mark for consistency
-            return
 
         # Read environment-driven strictness once per call.
         # Keep this outside the lock to minimize lock hold time.
@@ -856,10 +821,6 @@ Options:
 
         if cost is not None and cost < 0:
             raise ValueError(f"Cost must be non-negative, got {cost}")
-
-        if self.is_mock_mode:
-            permit.mark_released()  # Mark for consistency
-            return
 
         # Read environment-driven strictness once per call.
         # Keep this outside the lock to minimize lock hold time.
@@ -1157,18 +1118,19 @@ Options:
         Returns:
             List of invariant violation descriptions. Empty list if all hold.
 
-        Invariants checked:
+        Runtime state invariants checked:
             I1: in_flight_count >= 0
             I2: reserved_cost >= 0
             I3: len(active_permits) == in_flight_count
-            I4: accumulated_cost + reserved_cost <= limit + ε
-                (enforced only when in_flight_count > 0 and not unknown_cost_mode;
-                 post-execution actuals may exceed reserved estimates)
             I5: Released permits have active=False (structural - verified via Permit design)
             I6: Permit IDs monotonically increasing (structural - verified via counter)
             I7: Denied permits: id=-1, amount=0 (structural - verified via construction)
             I8: Sum of active permit amounts equals reserved_cost
                 (enforced only outside unknown_cost_mode)
+
+        I4 is an admission-time budget guard enforced by _acquire_permit_locked(),
+        not a runtime state invariant. Post-execution actuals may exceed reserved
+        estimates, even while other permits remain in flight.
         """
         violations: list[str] = []
 
@@ -1193,22 +1155,7 @@ Options:
                     f"in_flight_count = {self._in_flight_count}"
                 )
 
-            # I4: accumulated + reserved <= limit + ε (reservation phase only)
-            # Actual accumulated spend can exceed limit after execution if per-trial
-            # actuals are higher than reserved estimates. Also, unknown-cost mode
-            # enforces fallback trial-count limits rather than budget arithmetic.
-            total = self._accumulated_cost + self._reserved_cost
             epsilon = 0.0001  # Floating point tolerance
-            if (
-                self._in_flight_count > 0
-                and not self._unknown_cost_mode
-                and total > self.config.limit + epsilon
-            ):
-                violations.append(
-                    f"I4 violated: accumulated ({self._accumulated_cost:.4f}) + "
-                    f"reserved ({self._reserved_cost:.4f}) = {total:.4f} > "
-                    f"limit ({self.config.limit:.4f}) + ε"
-                )
 
             # I5, I6, I7 are structural invariants enforced by code design:
             # - I5: Permit.mark_released() sets active=False atomically

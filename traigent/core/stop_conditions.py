@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterable, Sequence
@@ -132,24 +133,29 @@ class PlateauAfterNStopCondition(StopCondition):
         return abs(delta) <= self._epsilon
 
 
-class BudgetStopCondition(StopCondition):
-    """Stop when the cumulative metric exceeds a specified budget."""
+class MetricLimitStopCondition(StopCondition):
+    """Stop when the cumulative value of a named metric reaches a limit.
 
-    reason = "budget"
+    This is a soft, post-trial stop condition. It sums completed trial metrics and
+    stops before the next trial once the configured metric has reached the limit.
+    For hard money-spend control, use ``cost_limit`` and ``CostLimitStopCondition``.
+    """
+
+    reason = "metric_limit"
 
     def __init__(
         self,
         *,
-        budget: float,
-        metric_name: str = "total_cost",
+        limit: float,
+        metric_name: str,
         include_pruned: bool = True,
     ) -> None:
-        if budget is None or float(budget) <= 0:
-            raise ValueError("budget must be a positive number")
+        if limit is None or float(limit) <= 0:
+            raise ValueError("metric limit must be a positive number")
         if not metric_name:
             raise ValueError("metric_name must be provided")
 
-        self._budget = float(budget)
+        self._limit = float(limit)
         self._metric = metric_name
         self._include_pruned = include_pruned
         self._running_total = 0.0
@@ -167,7 +173,7 @@ class BudgetStopCondition(StopCondition):
 
         new_trials = trial_seq[self._last_index :]
         if not new_trials:
-            return self._running_total >= self._budget
+            return self._running_total >= self._limit
 
         for trial in new_trials:
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
@@ -177,8 +183,11 @@ class BudgetStopCondition(StopCondition):
             value = metrics.get(self._metric)
 
             if value is None and self._metric == "total_cost":
-                # Default to historical per-trial totals recorded in metadata.
-                value = (trial.metadata or {}).get("total_example_cost")
+                # Compatibility with older evaluators that reported cost under
+                # different names before metric_limit required an explicit metric.
+                value = metrics.get("cost")
+                if value is None:
+                    value = (trial.metadata or {}).get("total_example_cost")
 
             if value is None:
                 raise ValueError(
@@ -194,12 +203,48 @@ class BudgetStopCondition(StopCondition):
 
             self._running_total += numeric_value
 
-            if self._running_total >= self._budget:
+            if self._running_total >= self._limit:
                 self._last_index = len(trial_seq)
                 return True
 
         self._last_index = len(trial_seq)
-        return self._running_total >= self._budget
+        return self._running_total >= self._limit
+
+
+class BudgetStopCondition(MetricLimitStopCondition):
+    """Deprecated alias for ``MetricLimitStopCondition``."""
+
+    def __init__(
+        self,
+        *,
+        budget: float,
+        metric_name: str | None = None,
+        include_pruned: bool = True,
+    ) -> None:
+        if metric_name is None:
+            warnings.warn(
+                "BudgetStopCondition and budget_limit are deprecated. "
+                "BudgetStopCondition without metric_name defaults to total_cost for "
+                "compatibility. If this is money spend control, use cost_limit; "
+                "otherwise use MetricLimitStopCondition(limit=..., metric_name=...) "
+                "or metric_limit with metric_name.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            metric_name = "total_cost"
+        else:
+            warnings.warn(
+                "BudgetStopCondition and budget_limit are deprecated for cumulative "
+                "metrics. Use MetricLimitStopCondition(limit=..., metric_name=...) "
+                "or metric_limit with metric_name. For money spend, use cost_limit.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        super().__init__(
+            limit=budget,
+            metric_name=metric_name,
+            include_pruned=include_pruned,
+        )
 
 
 class MaxSamplesStopCondition(StopCondition):
@@ -641,3 +686,15 @@ class HypervolumeConvergenceStopCondition(StopCondition):
 
         # Check if all improvements in window are below threshold
         return all(imp <= self._threshold for imp in self._hypervolume_history)
+
+
+__all__ = [
+    "BudgetStopCondition",
+    "CostLimitStopCondition",
+    "HypervolumeConvergenceStopCondition",
+    "MaxSamplesStopCondition",
+    "MaxTrialsStopCondition",
+    "MetricLimitStopCondition",
+    "PlateauAfterNStopCondition",
+    "StopCondition",
+]

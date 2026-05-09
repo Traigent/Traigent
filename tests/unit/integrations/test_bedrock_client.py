@@ -1,7 +1,7 @@
 """Unit tests for AWS Bedrock client integration.
 
 Tests for BedrockChatClient and related helper functions, covering both
-mock mode and mocked boto3 interactions.
+normalized response parsing and mocked boto3 interactions.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility
@@ -24,6 +24,24 @@ from traigent.integrations.bedrock_client import (
     _require_boto3,
     resolve_default_bedrock_model_id,
 )
+
+
+def _mock_invoke_client(payload: dict) -> MagicMock:
+    mock_client = MagicMock()
+    mock_client.invoke_model.return_value = {
+        "body": MagicMock(read=lambda: json.dumps(payload).encode())
+    }
+    return mock_client
+
+
+def _mock_stream_client(*payloads: dict) -> MagicMock:
+    mock_client = MagicMock()
+    mock_client.invoke_model_with_response_stream.return_value = {
+        "body": iter(
+            {"chunk": {"bytes": json.dumps(payload).encode()}} for payload in payloads
+        )
+    }
+    return mock_client
 
 
 class TestHelperFunctions:
@@ -169,44 +187,43 @@ class TestBedrockChatClientEnsureClient:
         result = client._ensure_client()
         assert result is mock_client
 
-    def test_ensure_client_with_mock_mode(
-        self, monkeypatch: pytest.MonkeyPatch
+    @patch("traigent.integrations.bedrock_client._require_boto3")
+    def test_ensure_client_uses_boto3_when_bedrock_mock_is_set(
+        self, mock_require: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test _ensure_client in mock mode returns placeholder object."""
+        """Test BEDROCK_MOCK does not bypass boto3 client creation."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
-        result = client._ensure_client()
-        assert result is not None
-        assert client._client is not None
+        mock_boto3 = MagicMock()
+        mock_session = MagicMock()
+        mock_client = MagicMock()
+        mock_session.client.return_value = mock_client
+        mock_boto3.session.Session.return_value = mock_session
+        mock_require.return_value = mock_boto3
 
-    def test_ensure_client_with_mock_mode_case_insensitive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test BEDROCK_MOCK environment variable is case insensitive."""
-        monkeypatch.setenv("BEDROCK_MOCK", "TrUe")
-        client = BedrockChatClient()
+        client = BedrockChatClient(region_name="us-west-2")
         result = client._ensure_client()
-        assert result is not None
 
-    def test_ensure_client_with_mock_mode_whitespace(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test BEDROCK_MOCK handles whitespace correctly."""
-        monkeypatch.setenv("BEDROCK_MOCK", "  true  ")
-        client = BedrockChatClient()
-        result = client._ensure_client()
-        assert result is not None
+        assert result is mock_client
+        mock_session.client.assert_called_once_with(
+            "bedrock-runtime", region_name="us-west-2"
+        )
 
 
 class TestBedrockChatClientInvoke:
     """Tests for BedrockChatClient.invoke method."""
 
-    def test_invoke_with_mock_mode_string_message(
+    def test_invoke_uses_configured_client_when_bedrock_mock_is_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test invoke in mock mode with string message."""
+        """Test BEDROCK_MOCK does not fabricate invoke responses."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_invoke_client(
+            {
+                "content": [{"type": "text", "text": "Response text"}],
+                "usage": {"input_tokens": 5, "output_tokens": 10},
+            }
+        )
+        client = BedrockChatClient(client=mock_client)
 
         response = client.invoke(
             model_id="anthropic.claude-3-sonnet-20240229-v1:0",
@@ -214,18 +231,20 @@ class TestBedrockChatClientInvoke:
             max_tokens=16,
         )
 
-        assert "[MOCK:anthropic.claude-3-sonnet-20240229-v1:0]" in response.text
-        assert "Hello world" in response.text
-        assert response.raw["mock"] is True
+        assert response.text == "Response text"
+        assert "[MOCK:" not in response.text
         assert response.usage is not None
-        assert response.usage["output_tokens"] == 16
+        assert response.usage["output_tokens"] == 10
+        mock_client.invoke_model.assert_called_once()
 
-    def test_invoke_with_mock_mode_list_messages(
+    def test_invoke_with_list_messages(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test invoke in mock mode with list of messages."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        """Test invoke sends list messages to Bedrock payload."""
+        mock_client = _mock_invoke_client(
+            {"content": [{"type": "text", "text": "List response"}]}
+        )
+        client = BedrockChatClient(client=mock_client)
 
         messages = [
             {"role": "user", "content": [{"type": "text", "text": "First"}]},
@@ -233,15 +252,18 @@ class TestBedrockChatClientInvoke:
         ]
         response = client.invoke(model_id="test-model", messages=messages)
 
-        assert "[MOCK:test-model]" in response.text
-        assert "Last message" in response.text
+        assert response.text == "List response"
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["messages"] == messages
 
     def test_invoke_with_temperature_and_top_p(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test invoke accepts temperature and top_p parameters."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_invoke_client(
+            {"content": [{"type": "text", "text": "Temperature response"}]}
+        )
+        client = BedrockChatClient(client=mock_client)
 
         response = client.invoke(
             model_id="test-model",
@@ -251,14 +273,18 @@ class TestBedrockChatClientInvoke:
             top_p=0.9,
         )
 
-        assert response is not None
-        # Mock mode caps output_tokens at min(max_tokens, 16)
-        assert response.usage["output_tokens"] == 16
+        assert response.text == "Temperature response"
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["max_tokens"] == 100
+        assert body["temperature"] == 0.7
+        assert body["top_p"] == 0.9
 
     def test_invoke_with_extra_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test invoke accepts extra_params."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_invoke_client(
+            {"content": [{"type": "text", "text": "Extra params response"}]}
+        )
+        client = BedrockChatClient(client=mock_client)
 
         extra = {"stop_sequences": ["\n"], "custom_param": "value"}
         response = client.invoke(
@@ -267,7 +293,10 @@ class TestBedrockChatClientInvoke:
             extra_params=extra,
         )
 
-        assert response is not None
+        assert response.text == "Extra params response"
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["stop_sequences"] == ["\n"]
+        assert body["custom_param"] == "value"
 
     @patch("traigent.integrations.bedrock_client._require_boto3")
     def test_invoke_with_real_boto3_client(
@@ -361,8 +390,13 @@ class TestBedrockChatClientInvoke:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test invoke delegates to _invoke_ai21 for AI21 models."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_invoke_client(
+            {
+                "choices": [{"message": {"content": "AI21 response"}}],
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            }
+        )
+        client = BedrockChatClient(client=mock_client)
 
         response = client.invoke(
             model_id="ai21.jamba-1-5-mini-v1:0",
@@ -370,19 +404,24 @@ class TestBedrockChatClientInvoke:
             max_tokens=50,
         )
 
-        assert "[MOCK:ai21.jamba-1-5-mini-v1:0]" in response.text
-        assert "test prompt" in response.text
+        assert response.text == "AI21 response"
+        mock_client.invoke_model.assert_called_once()
 
 
 class TestBedrockChatClientInvokeAI21:
     """Tests for BedrockChatClient._invoke_ai21 method."""
 
-    def test_invoke_ai21_with_mock_mode_string(
+    def test_invoke_ai21_with_string_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test _invoke_ai21 in mock mode with string message."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        """Test _invoke_ai21 sends string messages to Bedrock."""
+        mock_client = _mock_invoke_client(
+            {
+                "choices": [{"message": {"content": "AI21 string response"}}],
+                "usage": {"input_tokens": 4, "output_tokens": 8},
+            }
+        )
+        client = BedrockChatClient(client=mock_client)
 
         response = client._invoke_ai21(
             model_id="ai21.jamba-1-5-large-v1:0",
@@ -392,17 +431,20 @@ class TestBedrockChatClientInvokeAI21:
             top_p=None,
         )
 
-        assert "[MOCK:ai21.jamba-1-5-large-v1:0]" in response.text
-        assert "AI21 test" in response.text
+        assert response.text == "AI21 string response"
         assert response.usage is not None
-        assert response.usage["output_tokens"] == 32
+        assert response.usage["output_tokens"] == 8
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["messages"] == [{"role": "user", "content": "AI21 test"}]
 
-    def test_invoke_ai21_with_mock_mode_list(
+    def test_invoke_ai21_with_list_messages(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test _invoke_ai21 in mock mode with list of messages."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        """Test _invoke_ai21 sends list messages to Bedrock."""
+        mock_client = _mock_invoke_client(
+            {"choices": [{"message": {"content": "AI21 list response"}}]}
+        )
+        client = BedrockChatClient(client=mock_client)
 
         messages = [
             {"role": "user", "content": [{"type": "text", "text": "First"}]},
@@ -416,7 +458,12 @@ class TestBedrockChatClientInvokeAI21:
             top_p=0.9,
         )
 
-        assert "[MOCK:ai21.jamba-1-5-mini-v1:0]" in response.text
+        assert response.text == "AI21 list response"
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["messages"] == [
+            {"role": "user", "content": "First"},
+            {"role": "user", "content": "Second"},
+        ]
 
     @patch("traigent.integrations.bedrock_client._require_boto3")
     def test_invoke_ai21_real_mode_with_choices(
@@ -495,8 +542,10 @@ class TestBedrockChatClientInvokeAI21:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test _invoke_ai21 handles list content in messages."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_invoke_client(
+            {"choices": [{"message": {"content": "Coerced response"}}]}
+        )
+        client = BedrockChatClient(client=mock_client)
 
         messages = [
             {
@@ -515,18 +564,24 @@ class TestBedrockChatClientInvokeAI21:
             top_p=None,
         )
 
-        assert response is not None
+        assert response.text == "Coerced response"
+        body = json.loads(mock_client.invoke_model.call_args.kwargs["body"])
+        assert body["messages"] == [{"role": "user", "content": "Part 1\nPart 2"}]
 
 
 class TestBedrockChatClientInvokeStream:
     """Tests for BedrockChatClient.invoke_stream method."""
 
-    def test_invoke_stream_with_mock_mode(
+    def test_invoke_stream_uses_configured_client_when_bedrock_mock_is_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test invoke_stream in mock mode yields chunks."""
+        """Test BEDROCK_MOCK does not fabricate streaming chunks."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        mock_client = _mock_stream_client(
+            {"content": [{"type": "text", "text": "Stream"}]},
+            {"content": [{"type": "text", "text": " response"}]},
+        )
+        client = BedrockChatClient(client=mock_client)
 
         gen = client.invoke_stream(
             model_id="anthropic.claude-3-opus-20240229-v1:0",
@@ -534,35 +589,29 @@ class TestBedrockChatClientInvokeStream:
             max_tokens=512,
         )
 
-        # Collect chunks (strings) and return value (BedrockChatResponse)
-        chunks = []
-        for chunk in gen:
-            chunks.append(chunk)
+        chunks = list(gen)
 
-        # Generator should yield string chunks only
-        assert len(chunks) > 0
-        assert all(isinstance(c, str) for c in chunks)
-        assert any("[MOCK:anthropic.claude-3-opus-20240229-v1:0]" in c for c in chunks)
+        assert chunks == ["Stream", "response"]
+        assert not any("[MOCK:" in c for c in chunks)
+        mock_client.invoke_model_with_response_stream.assert_called_once()
 
-    def test_invoke_stream_chunks_message_correctly(
+    def test_invoke_stream_sends_coerced_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test invoke_stream splits message into chunks."""
-        monkeypatch.setenv("BEDROCK_MOCK", "true")
-        client = BedrockChatClient()
+        """Test invoke_stream sends the message in the Bedrock payload."""
+        mock_client = _mock_stream_client()
+        client = BedrockChatClient(client=mock_client)
 
         long_message = "This is a longer message for testing"
         gen = client.invoke_stream(model_id="test-model", messages=long_message)
 
-        chunks = []
-        for chunk in gen:
-            if isinstance(chunk, str):
-                chunks.append(chunk)
+        chunks = list(gen)
 
-        # Should have prefix and split message parts
-        assert len(chunks) >= 2
-        combined = "".join(chunks)
-        assert long_message in combined
+        assert chunks == []
+        body = json.loads(
+            mock_client.invoke_model_with_response_stream.call_args.kwargs["body"]
+        )
+        assert body["messages"][0]["content"][0]["text"] == long_message
 
     @patch("traigent.integrations.bedrock_client._require_boto3")
     def test_invoke_stream_with_real_client(
@@ -653,22 +702,29 @@ class TestBedrockChatClientAsyncInvoke:
     """Tests for BedrockChatClient.ainvoke method."""
 
     @pytest.mark.asyncio
-    async def test_ainvoke_with_mock_mode(
+    async def test_ainvoke_uses_sync_fallback_when_bedrock_mock_is_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test ainvoke in mock mode returns mocked response."""
+        """Test BEDROCK_MOCK does not fabricate async invoke responses."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
+        mock_response = BedrockChatResponse(
+            text="Fallback response",
+            raw={"fallback": True},
+            usage={"input_tokens": 5, "output_tokens": 10},
+        )
         client = BedrockChatClient()
 
-        response = await client.ainvoke(
-            model_id="anthropic.claude-3-haiku-20240307-v1:0",
-            messages="Async test",
-            max_tokens=32,
-        )
+        with patch.object(client, "invoke", return_value=mock_response) as mock_invoke:
+            with patch("builtins.__import__", side_effect=ImportError("No aioboto3")):
+                response = await client.ainvoke(
+                    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+                    messages="Async test",
+                    max_tokens=32,
+                )
 
-        assert "[MOCK:anthropic.claude-3-haiku-20240307-v1:0]" in response.text
-        assert "Async test" in response.text
-        assert response.usage is not None
+        assert response.text == "Fallback response"
+        assert "[MOCK:" not in response.text
+        mock_invoke.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_ainvoke_falls_back_to_sync_without_aioboto3(
@@ -736,22 +792,29 @@ class TestBedrockChatClientAsyncInvokeStream:
     """Tests for BedrockChatClient.ainvoke_stream method."""
 
     @pytest.mark.asyncio
-    async def test_ainvoke_stream_with_mock_mode(
+    async def test_ainvoke_stream_uses_sync_fallback_when_bedrock_mock_is_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test ainvoke_stream in mock mode yields chunks."""
+        """Test BEDROCK_MOCK does not fabricate async streaming chunks."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
         client = BedrockChatClient()
 
-        chunks = []
-        async for chunk in client.ainvoke_stream(
-            model_id="anthropic.claude-3-opus-20240229-v1:0",
-            messages="Async stream test",
-        ):
-            chunks.append(chunk)
+        def mock_sync_stream(*args, **kwargs):
+            yield "chunk1"
+            yield "chunk2"
+            return BedrockChatResponse(text="chunk1chunk2", raw={"streamed": True})
 
-        assert len(chunks) > 0
-        assert any("[MOCK:anthropic.claude-3-opus-20240229-v1:0]" in c for c in chunks)
+        with patch.object(client, "invoke_stream", side_effect=mock_sync_stream):
+            with patch("builtins.__import__", side_effect=ImportError("No aioboto3")):
+                chunks = []
+                async for chunk in client.ainvoke_stream(
+                    model_id="anthropic.claude-3-opus-20240229-v1:0",
+                    messages="Async stream test",
+                ):
+                    chunks.append(chunk)
+
+        assert chunks == ["chunk1", "chunk2"]
+        assert not any("[MOCK:" in c for c in chunks)
 
     @pytest.mark.asyncio
     async def test_ainvoke_stream_falls_back_to_sync(

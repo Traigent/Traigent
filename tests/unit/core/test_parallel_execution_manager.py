@@ -7,10 +7,12 @@ Tests cover:
 """
 
 import asyncio
+import gc
 import math
 
 import pytest
 
+from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
 from traigent.core.parallel_execution_manager import (
     ParallelBatchCaps,
     ParallelExecutionManager,
@@ -285,6 +287,109 @@ class TestParallelExecutionManagerAsync:
         manager = ParallelExecutionManager(parallel_trials=4)
         results = await manager.run_tasks_with_semaphore([])
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_permit_denial_closes_skipped_coroutines(self, monkeypatch, recwarn):
+        """Denied permits must close coroutine objects that are never executed."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config = CostEnforcerConfig(limit=0.001, estimated_cost_per_trial=0.01)
+        enforcer = CostEnforcer(config)
+
+        manager = ParallelExecutionManager(
+            parallel_trials=2,
+            cost_enforcer=enforcer,
+        )
+
+        trial_executed = False
+
+        async def mock_trial():
+            nonlocal trial_executed
+            trial_executed = True
+            return {"accuracy": 0.9}
+
+        results, cancelled = await manager.run_with_cost_permits(
+            [mock_trial(), mock_trial(), mock_trial()],
+            cancel_sentinel="CANCELLED",
+        )
+
+        assert cancelled == 3
+        assert all(result.result == "CANCELLED" for result in results)
+        assert not trial_executed
+
+        gc.collect()
+        await asyncio.sleep(0)
+        gc.collect()
+
+        unawaited_warnings = [
+            warning
+            for warning in recwarn
+            if "was never awaited" in str(warning.message)
+        ]
+        assert unawaited_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_cancellation_releases_permits_and_closes_waiting_coroutines(
+        self,
+        monkeypatch,
+        recwarn,
+    ):
+        """External cancellation must not strand reserved budget."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        config = CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        enforcer = CostEnforcer(config)
+
+        manager = ParallelExecutionManager(
+            parallel_trials=2,
+            max_concurrent=1,
+            cost_enforcer=enforcer,
+        )
+
+        first_started = asyncio.Event()
+        first_release = asyncio.Event()
+        second_started = False
+
+        async def first_trial():
+            first_started.set()
+            await first_release.wait()
+            return "first"
+
+        async def second_trial():
+            nonlocal second_started
+            second_started = True
+            return "second"
+
+        task = asyncio.create_task(
+            manager.run_with_cost_permits([first_trial(), second_trial()])
+        )
+
+        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        for _ in range(20):
+            if enforcer.get_status().in_flight_count == 2:
+                break
+            await asyncio.sleep(0)
+
+        assert enforcer.get_status().in_flight_count == 2
+        assert not second_started
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        status = enforcer.get_status()
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+        assert not second_started
+
+        gc.collect()
+        await asyncio.sleep(0)
+        gc.collect()
+
+        unawaited_warnings = [
+            warning
+            for warning in recwarn
+            if "was never awaited" in str(warning.message)
+        ]
+        assert unawaited_warnings == []
 
 
 class TestBackwardCompatibilityWithOrchestrator:

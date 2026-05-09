@@ -959,13 +959,18 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
-    from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
+    from traigent.utils.env_config import is_strict_cost_accounting
 
-    mock_mode = is_mock_llm()
     strict_cost_accounting = is_strict_cost_accounting()
+    # NOTE: ``TRAIGENT_MOCK_LLM`` no longer suppresses cost calculation here
+    # (S2-B retirement of the mock flag). Cost is always computed from the
+    # real token counts so that production traces reflect real spend even if
+    # a stale env var leaks into a deployed environment. ``TRAIGENT_GENERATE_MOCKS``
+    # is preserved because it is an internal fixture-recording knob, not a
+    # user-facing mock-LLM toggle.
     generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
 
-    if mock_mode or generate_mocks_env == "true":
+    if generate_mocks_env == "true":
         _handle_mock_mode(metrics, prompt_length, response_length)
         return
 

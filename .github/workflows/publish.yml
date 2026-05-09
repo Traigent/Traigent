@@ -245,5 +245,5 @@ jobs:
     - name: Notify on success
       if: success()
       run: |
-        echo "✅ Package successfully published and verified on PyPI!" >> $GITHUB_STEP_SUMMARY
-        echo "Users can now install with: \`pip install traigent\`" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Package successfully published and verified on PyPI!" >> "$GITHUB_STEP_SUMMARY"
+        echo "Users can now install with: \`pip install traigent\`" >> "$GITHUB_STEP_SUMMARY"

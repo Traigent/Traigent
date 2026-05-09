@@ -71,13 +71,17 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 get_all_captured_responses,
                 patch_langchain_for_metadata_capture,
             )
+            from traigent.utils.litellm_interceptor import (
+                patch_litellm_for_metadata_capture,
+            )
 
             self._metrics_tracker = MetricsTracker()
             self._extract_llm_metrics = extract_llm_metrics
             self._clear_captured_responses = clear_captured_responses
             self._get_all_captured_responses = get_all_captured_responses
-            # Ensure LangChain patch is applied
+            # Ensure LangChain and LiteLLM patches are applied
             patch_langchain_for_metadata_capture()
+            patch_litellm_for_metadata_capture()
             self._metrics_available = True
         except ImportError:
             logger.warning(

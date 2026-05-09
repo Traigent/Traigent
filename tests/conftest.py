@@ -160,9 +160,33 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_slow)
 
 
+# Tests that need the metrics_tracker mock-mode token-estimation path.
+# S2-B Round 3 narrowed the scope of TRAIGENT_GENERATE_MOCKS=true so it is
+# only set for tests that actually exercise the mocked cost-estimation path
+# in metrics_tracker._calculate_cost_for_metrics. Setting it autouse for the
+# whole suite leaked into unrelated paths (e.g. credential_manager's
+# _is_development_mode), causing test pollution.
+_GENERATE_MOCKS_TEST_PATHS: tuple[str, ...] = (
+    "tests/unit/evaluators/test_metrics_tracker",
+    "tests/unit/evaluators/test_metrics.py",
+    "tests/unit/evaluators/test_local_evaluator_builtin_metrics",
+    "tests/integration/test_ctd_coverage_from_csv",
+    "tests/integration/test_ctd_execution_modes",
+)
+
+
+def _test_needs_generate_mocks(node) -> bool:
+    """Return True if the test's path matches a known cost-fixture-recording test."""
+    try:
+        path_str = str(node.fspath).replace(os.sep, "/")
+    except Exception:  # noqa: BLE001 — defensive; pytest internals vary by version
+        return False
+    return any(marker in path_str for marker in _GENERATE_MOCKS_TEST_PATHS)
+
+
 # Set JWT validation to development mode for all tests
 @pytest.fixture(autouse=True)
-def jwt_development_mode(monkeypatch):
+def jwt_development_mode(monkeypatch, request):
     """Set JWT validator to development mode for all tests."""
     monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "development")
     # Ensure mock LLM mode to avoid real LLM API calls during tests
@@ -170,6 +194,18 @@ def jwt_development_mode(monkeypatch):
     # Ensure offline mode to avoid real backend calls during tests
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
+    # TRAIGENT_GENERATE_MOCKS is an internal fixture-recording knob (NOT a
+    # user-facing mock-LLM toggle). Setting it globally leaked into unrelated
+    # paths such as credential_manager._is_development_mode, so it is now
+    # only applied to the specific tests that need the metrics_tracker
+    # mock-mode token-estimation path. Tests can still set it themselves
+    # via monkeypatch when needed.
+    if _test_needs_generate_mocks(request.node):
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "true")
+    else:
+        # Defensive: ensure the var is not inherited from the parent shell
+        # for tests that don't opt in.
+        monkeypatch.delenv("TRAIGENT_GENERATE_MOCKS", raising=False)
 
 
 # Global State Reset Fixture - Critical for test isolation

@@ -144,33 +144,31 @@ class InjectionOptions(BaseModel):
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
+    Note:
+        ``runtime`` and ``js_*`` execution fields were removed in 0.12.0 with
+        the temporary Python-orchestrated JS bridge. Use native ``@traigent/sdk``
+        for JavaScript optimization. See CHANGELOG.md and docs/guides/js-bridge.md.
+
     Attributes:
-        execution_mode: Execution mode (edge_analytics, cloud, local, hybrid).
+        execution_mode: Execution mode. Use ``edge_analytics`` for local
+            execution, ``hybrid`` for local trials plus backend/portal
+            tracking, or ``hybrid_api`` for external-agent API optimization.
+            ``cloud`` is reserved for future remote execution and currently
+            fails closed with guidance to use ``hybrid``.
         local_storage_path: Path for local result storage.
         minimal_logging: Whether to minimize logging output.
         parallel_config: Configuration for parallel execution.
         privacy_enabled: Whether to enable privacy-preserving mode.
         max_total_examples: Maximum total examples across all trials.
         samples_include_pruned: Whether to include pruned trials in sample count.
-        cloud_fallback_policy: Cloud fallback behavior on execution failure.
-            "auto" or "warn" falls back to local optimization; "never" re-raises.
+        cloud_fallback_policy: Legacy/future cloud fallback behavior. It does
+            not enable ``execution_mode="cloud"`` today; cloud remote execution
+            is not available yet.
         reps_per_trial: Number of repetitions per configuration for statistical stability.
             Running multiple repetitions helps account for LLM non-determinism.
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
         reps_aggregation: How to aggregate metrics across repetitions.
             Options: "mean" (default), "median", "min", "max".
-        runtime: Runtime to execute trials in ("python" or "node").
-            When set to "node", trials are executed in a Node.js subprocess.
-        js_module: Path to the JS module containing the trial function.
-            Required when runtime="node".
-        js_function: Name of the exported function to call in the JS module.
-            Default is "runTrial".
-        js_timeout: Timeout for JS trial execution in seconds.
-            Default is 300 (5 minutes).
-        js_use_npx: Whether to invoke the JS bridge runner via `npx traigent-js`.
-            Disable this when providing an explicit local runner path.
-        js_runner_path: Explicit path to the `traigent-js` CLI runner script.
-        js_node_executable: Node.js executable to use for explicit runner paths.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -184,15 +182,6 @@ class ExecutionOptions(BaseModel):
     samples_include_pruned: bool = True
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
-    # JS Bridge options
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
-    js_use_npx: bool = True
-    js_runner_path: str | None = None
-    js_node_executable: str = "node"
     # Hybrid API options
     hybrid_api_endpoint: str | None = None
     tunable_id: str | None = None
@@ -389,6 +378,9 @@ _REMOVED_PARAMETERS = frozenset(
 )
 _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
     (
+        "metric_limit",
+        "metric_name",
+        "metric_include_pruned",
         "budget_limit",
         "budget_metric",
         "budget_include_pruned",
@@ -900,29 +892,6 @@ def _resolve_injection_bundle_options(
     )
 
 
-@dataclass
-class JSRuntimeConfig:
-    """Configuration for JS runtime execution."""
-
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
-    js_use_npx: bool = True
-    js_runner_path: str | None = None
-    js_node_executable: str = "node"
-
-    @property
-    def is_js_runtime(self) -> bool:
-        """Return True if this is a JS runtime configuration.
-
-        Returns:
-            True if runtime is 'node', False otherwise.
-        """
-        return self.runtime == "node"
-
-
 @dataclass(slots=True)
 class ResolvedExecutionOptions:
     """Resolved execution options after merging direct and bundled settings."""
@@ -946,7 +915,6 @@ class ResolvedExecutionOptions:
     privacy_enabled: Any
     max_total_examples: Any
     samples_include_pruned: Any
-    js_runtime_config: JSRuntimeConfig | None
 
 
 def _resolve_execution_bundle_options(
@@ -970,30 +938,6 @@ def _resolve_execution_bundle_options(
             "reps_aggregation is not available in this version. "
             "This feature requires Traigent Enterprise. "
             "Contact sales@traigent.ai for more information."
-        )
-
-    # Build JS runtime config if runtime is "node"
-    js_runtime_config = None
-    if execution_bundle.runtime == "node":
-        if not execution_bundle.js_module:
-            raise ValueError(
-                "js_module is required when runtime='node'. "
-                "Specify the path to your JS module containing the trial function."
-            )
-        js_runtime_config = JSRuntimeConfig(
-            runtime=execution_bundle.runtime,
-            js_module=execution_bundle.js_module,
-            js_function=execution_bundle.js_function,
-            js_timeout=execution_bundle.js_timeout,
-            js_parallel_workers=execution_bundle.js_parallel_workers,
-            js_use_npx=execution_bundle.js_use_npx,
-            js_runner_path=execution_bundle.js_runner_path,
-            js_node_executable=execution_bundle.js_node_executable,
-        )
-    elif execution_bundle.runtime not in ("python", "node"):
-        raise ValueError(
-            f"Invalid runtime '{execution_bundle.runtime}'. "
-            "Supported values are 'python' (default) or 'node' (JavaScript)."
         )
 
     return ResolvedExecutionOptions(
@@ -1111,7 +1055,6 @@ def _resolve_execution_bundle_options(
             execution_bundle.samples_include_pruned,
             defaults,
         ),
-        js_runtime_config=js_runtime_config,
     )
 
 
@@ -1140,52 +1083,6 @@ def _resolve_injection_mode_enum(
         return InjectionMode(injection_mode)
     except ValueError:
         return injection_mode
-
-
-# Injection modes that are incompatible with JS runtime
-_JS_INCOMPATIBLE_INJECTION_MODES = frozenset(
-    {
-        InjectionMode.CONTEXT,  # Uses Python's contextvars
-        InjectionMode.SEAMLESS,  # Modifies Python source code
-    }
-)
-
-
-def _validate_js_runtime_injection_mode(
-    js_runtime_config: JSRuntimeConfig | None,
-    injection_mode: str | InjectionMode,
-) -> None:
-    """Validate that injection mode is compatible with JS runtime.
-
-    When runtime='node', Python-specific injection modes are not supported
-    because the trial config is passed directly to the JS function via the
-    NDJSON protocol.
-
-    Args:
-        js_runtime_config: JS runtime configuration (None if runtime='python')
-        injection_mode: The injection mode being used
-
-    Raises:
-        ValueError: If injection mode is incompatible with JS runtime
-    """
-    if js_runtime_config is None or not js_runtime_config.is_js_runtime:
-        return
-
-    # Normalize to enum for comparison
-    if isinstance(injection_mode, InjectionMode):
-        mode_enum = injection_mode
-    elif injection_mode in [m.value for m in InjectionMode]:
-        mode_enum = InjectionMode(injection_mode)
-    else:
-        mode_enum = None
-
-    if mode_enum in _JS_INCOMPATIBLE_INJECTION_MODES:
-        raise ValueError(
-            f"injection_mode='{mode_enum.value if mode_enum else injection_mode}' "
-            f"is not compatible with runtime='node'. "
-            f"When using JavaScript runtime, config is passed directly to the JS function "
-            f"via the trial protocol. Use injection_mode='parameter' or omit it."
-        )
 
 
 def _resolve_execution_mode_enum(
@@ -1278,7 +1175,8 @@ def _log_execution_mode_warnings(
     if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
         logger.warning(
             "local_storage_path is ignored when execution_mode='cloud'. "
-            "Cloud mode uses Traigent cloud storage."
+            "Cloud remote execution is not available yet; use hybrid for "
+            "portal-tracked optimization."
         )
 
     if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
@@ -1696,16 +1594,19 @@ def optimize(  # NOSONAR(S107)
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
-            execution_mode: Execution mode ("cloud", "edge_analytics", "privacy",
-                "standard"). Defaults to "edge_analytics".
+            execution_mode: Execution mode. Use "edge_analytics" for local
+                execution, "hybrid" for local trials plus backend/portal
+                tracking, or "hybrid_api" for external-agent API optimization.
+                "cloud" is reserved for future remote execution and fails
+                closed today.
             local_storage_path: Location for Edge Analytics storage. Falls back
                 to ``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent/`` when omitted.
             minimal_logging: Toggle for reduced logging noise in Edge mode.
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             privacy_enabled: Flag enabling hybrid privacy safeguards.
-            cloud_fallback_policy: Cloud failure policy: "auto"/"warn" fallback to
-                local, "never" to fail closed.
+            cloud_fallback_policy: Legacy/future cloud fallback policy. It does
+                not enable cloud remote execution today.
             max_total_examples: Global sample budget across all trials.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
 
@@ -1718,6 +1619,10 @@ def optimize(  # NOSONAR(S107)
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00.
             cost_approved: Skip cost approval prompt. Use with caution in production.
+            metric_limit: Soft cumulative stop for a named completed-trial metric.
+                Requires metric_name. Use for counters such as total tokens or
+                cumulative latency, not hard money-spend control.
+            metric_name: Metric summed by metric_limit.
 
         Additional controls:
             legacy: Adapter for the legacy decorator signature. Accepts either a
@@ -1725,7 +1630,8 @@ def optimize(  # NOSONAR(S107)
                 arguments. Values provided here merge with the explicit parameters.
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+                ``metric_limit`` (deprecated alias: ``budget_limit``), ``plateau_window``,
+                ``cost_limit``, and ``cost_approved``.
                 Tuned-variable detection controls are also available via runtime
                 overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
                 (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
@@ -1733,8 +1639,11 @@ def optimize(  # NOSONAR(S107)
                 ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
 
     Warning:
-        Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
+        Optimization runs multiple LLM calls. Use
+        ``traigent.testing.enable_mock_mode_for_quickstart()`` for local testing.
         Cost estimates are approximations; actual billing is determined by your LLM provider.
+        Traigent cost limits, alerts, thresholds, and stop conditions are best-effort
+        local guardrails, not provider-side billing caps.
         See DISCLAIMER.md for full liability terms.
 
     Important - Configuration Access:
@@ -2041,7 +1950,6 @@ def optimize(  # NOSONAR(S107)
         privacy_enabled=privacy_enabled,
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
-        js_runtime_config=None,
     )
     resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
@@ -2067,7 +1975,6 @@ def optimize(  # NOSONAR(S107)
     privacy_enabled = resolved_execution.privacy_enabled
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
-    js_runtime_config = resolved_execution.js_runtime_config
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -2124,9 +2031,6 @@ def optimize(  # NOSONAR(S107)
         actual_execution_mode = _resolve_actual_execution_mode(execution_mode)
 
         actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
-
-        # Validate injection mode is compatible with JS runtime
-        _validate_js_runtime_injection_mode(js_runtime_config, actual_injection_mode)
 
         execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
             actual_execution_mode, privacy_enabled
@@ -2238,8 +2142,6 @@ def optimize(  # NOSONAR(S107)
             # Config persistence
             auto_load_best=auto_load_best_config,
             load_from=load_from_config,
-            # JS runtime configuration
-            js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
             # Optimizer limits (extracted from combined_settings)

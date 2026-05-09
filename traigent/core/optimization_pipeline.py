@@ -24,7 +24,6 @@ from traigent.config.types import ExecutionMode, TraigentConfig, resolve_executi
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
-from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_config_space
 
@@ -262,34 +261,28 @@ def resolve_effective_parallel_config(
 def resolve_custom_evaluator(
     custom_evaluator: Callable[..., Any] | None,
     *,
-    mock_mode_config: dict[str, Any] | None,
+    mock_mode_config: dict[str, Any] | None,  # noqa: ARG001 - retained for API compat
     decorator_custom_evaluator: Callable[..., Any] | None,
 ) -> Callable[..., Any] | None:
-    """Resolve the effective custom evaluator based on mock mode settings.
+    """Resolve the effective custom evaluator.
+
+    The user-provided custom evaluator (from either the ``@optimize`` decorator
+    or the ``optimize()`` call) is always honoured. ``mock_mode_config`` is
+    accepted for backward compatibility with the public API but is otherwise
+    ignored: it previously combined with the now-retired ``TRAIGENT_MOCK_LLM``
+    env var to silently swap a user-supplied evaluator for ``LocalEvaluator``,
+    which was unsafe in production environments where the env var leaked.
 
     Args:
-        custom_evaluator: Custom evaluator from optimize() call
-        mock_mode_config: Mock mode configuration
-        decorator_custom_evaluator: Custom evaluator from decorator
+        custom_evaluator: Custom evaluator from optimize() call.
+        mock_mode_config: Ignored. Retained for backward-compatible signatures.
+        decorator_custom_evaluator: Custom evaluator from decorator.
 
     Returns:
         The custom evaluator to use, or None if LocalEvaluator should be used.
     """
-    mock_mode_env = is_mock_llm()
-    mock_config = mock_mode_config or {}
-    mock_enabled = mock_config.get("enabled", True)
-    override_evaluator = mock_config.get("override_evaluator", True)
-
     provided_custom_evaluator = custom_evaluator or decorator_custom_evaluator
-    has_custom = provided_custom_evaluator is not None
-
-    if mock_mode_env and mock_enabled and override_evaluator and has_custom:
-        logger.info(
-            "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
-        )
-        return None
-
-    return provided_custom_evaluator if has_custom else None
+    return provided_custom_evaluator if provided_custom_evaluator is not None else None
 
 
 def build_metric_functions(
@@ -434,45 +427,6 @@ def _create_hybrid_api_evaluator(
     )
 
 
-def _create_js_runtime_evaluator(js_config: Any) -> tuple[BaseEvaluator, Any]:
-    """Create the JS evaluator and optional process pool."""
-    from traigent.evaluators.js_evaluator import JSEvaluator
-
-    js_parallel_workers = getattr(js_config, "js_parallel_workers", 1)
-    process_pool = None
-
-    if js_parallel_workers > 1:
-        from traigent.bridges.process_pool import JSProcessPool, JSProcessPoolConfig
-
-        pool_config = JSProcessPoolConfig(
-            max_workers=js_parallel_workers,
-            module_path=js_config.js_module,
-            function_name=js_config.js_function,
-            trial_timeout=js_config.js_timeout,
-            use_npx=getattr(js_config, "js_use_npx", True),
-            runner_path=getattr(js_config, "js_runner_path", None),
-            node_executable=getattr(js_config, "js_node_executable", "node"),
-        )
-        process_pool = JSProcessPool(pool_config)
-        logger.info(
-            "Created JS process pool with %d workers for parallel execution",
-            js_parallel_workers,
-        )
-
-    return (
-        JSEvaluator(
-            js_module=js_config.js_module,
-            js_function=js_config.js_function,
-            js_timeout=js_config.js_timeout,
-            js_use_npx=getattr(js_config, "js_use_npx", True),
-            js_runner_path=getattr(js_config, "js_runner_path", None),
-            js_node_executable=getattr(js_config, "js_node_executable", "node"),
-            process_pool=process_pool,
-        ),
-        process_pool,
-    )
-
-
 def _create_local_evaluator(
     timeout: float | None,
     effective_batch_size: int | None,
@@ -515,7 +469,6 @@ def create_effective_evaluator(
     effective_privacy_enabled: bool,
     *,
     objectives: Sequence[str],
-    js_runtime_config: Any,
     execution_mode: str,
     mock_mode_config: dict[str, Any] | None,
     metric_functions: dict[str, Callable[..., Any]] | None,
@@ -532,7 +485,6 @@ def create_effective_evaluator(
         effective_thread_workers: Thread worker limit
         effective_privacy_enabled: Whether privacy mode is enabled
         objectives: Objective names
-        js_runtime_config: JS runtime configuration (or None)
         execution_mode: Execution mode string
         mock_mode_config: Mock mode configuration
         metric_functions: Explicit metric functions
@@ -540,7 +492,7 @@ def create_effective_evaluator(
         decorator_custom_evaluator: Custom evaluator from decorator
 
     Returns:
-        Tuple of (evaluator, js_process_pool_or_None)
+        Tuple of (evaluator, reserved auxiliary resource or None)
     """
     effective_evaluator = resolve_custom_evaluator(
         custom_evaluator,
@@ -564,11 +516,6 @@ def create_effective_evaluator(
             objectives=objectives,
             hybrid_api_options=hybrid_api_options,
         )
-
-    # Check if JS runtime is configured
-    js_config = js_runtime_config
-    if js_config is not None and getattr(js_config, "is_js_runtime", False):
-        return _create_js_runtime_evaluator(js_config)
 
     return _create_local_evaluator(
         timeout,
@@ -670,6 +617,9 @@ def collect_orchestrator_kwargs(
     }
 
     optional_keys = [
+        "metric_limit",
+        "metric_name",
+        "metric_include_pruned",
         "budget_limit",
         "budget_metric",
         "budget_include_pruned",

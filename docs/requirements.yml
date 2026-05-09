@@ -121,15 +121,18 @@
   status: active
 
 - id: REQ-CLOUD-009
-  name: "Cloud/hybrid sync"
-  title: "Cloud and hybrid execution with backend synchronization"
+  name: "Backend/hybrid sync and reserved cloud"
+  title: "Hybrid backend synchronization and future cloud execution"
   description: >
-    Support authenticated access to Traigent backend services for session
-    creation, trial suggestion/submission, dataset conversion, subset selection, and billing.
+    Support authenticated access to Traigent backend services for hybrid
+    session creation, trial/result submission, dataset conversion, subset
+    selection, and billing. Remote cloud execution is reserved for a future
+    product path and must fail closed until implemented.
   acceptance_criteria:
     - Unified auth manager resolves credentials (env, CLI-stored) and emits secure headers.
-    - Backend clients synchronize sessions/trials and recover from transient errors.
-    - Cloud operations handle privacy settings, hybrid modes, and cost tracking.
+    - Hybrid backend clients synchronize sessions/trials and recover from transient errors.
+    - Cloud remote-execution operations raise clear unavailable errors until implemented.
+    - Backend operations handle privacy settings, hybrid modes, and cost tracking.
   tags: [cloud, backend, hybrid]
   priority: high
   type: functional
@@ -286,16 +289,17 @@
   status: active
 
 - id: REQ-COST-020
-  name: "Cost tracking invariants"
-  title: "Cost enforcement maintains critical invariants"
+  name: "Cost tracking safety properties"
+  title: "Cost enforcement maintains critical safety properties"
   description: >
-    Cost enforcement system must maintain 8 invariants to ensure correct
-    budget tracking and prevent financial harm from bugs.
+    Cost enforcement system must maintain runtime state invariants and
+    admission-time guards to ensure correct budget tracking and prevent
+    financial harm from bugs.
   acceptance_criteria:
     - I1: in_flight_count >= 0 (never negative).
     - I2: reserved_cost >= 0 (never negative).
     - I3: len(active_permits) == in_flight_count (consistency).
-    - I4: accumulated + reserved <= limit + ε (budget bound).
+    - I4: Permit acquisition grants only when projected accumulated + reserved + estimated <= limit; completed actual cost may exceed estimates, including while other admitted permits are still in flight.
     - I5: Released permits have active=False.
     - I6: Permit IDs monotonically increasing.
     - I7: Denied permits have id=-1, amount=0, active=False.

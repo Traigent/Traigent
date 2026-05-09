@@ -29,6 +29,7 @@ from traigent.cloud.auth import (
     UnifiedAuthConfig,
 )
 from traigent.cloud.billing import UsageTracker
+from traigent.cloud.client import CloudServiceError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -96,11 +97,10 @@ class BackendClientConfig:
                 if parsed_origin:
                     api_path = path or BackendConfig.get_default_api_path()
                     self.api_base_url = f"{parsed_origin}{api_path}"
-        elif api_env:
+        elif api_env and not self.backend_explicitly_set:
             self.api_base_url = BackendConfig.get_backend_api_url()
             # Only derive backend_base_url from API URL if not explicitly provided
-            if not self.backend_explicitly_set:
-                self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
+            self.backend_base_url = BackendConfig.get_backend_url().rstrip("/")
         elif self.backend_base_url is not None:
             self.api_base_url = BackendConfig.build_api_base(self.backend_base_url)
 
@@ -139,17 +139,31 @@ class BackendAuthManager:
     async def augment_headers(
         self, headers: dict[str, str], target: str = "backend"
     ) -> dict[str, str]:
-        """Merge authentication headers into the provided dictionary."""
+        """Merge authentication headers into the provided dictionary.
+
+        B4 ROUND 4: ``AuthenticationError`` (and ``InvalidCredentialsError``)
+        must propagate. Previously this method swallowed every auth-side
+        exception and returned the caller's headers unchanged -- which
+        meant a backend-rejected key produced an unauthenticated request
+        instead of surfacing the auth failure. That is a parallel
+        fail-open path to the one in ``backend_client._ensure_session``.
+        """
 
         merged_headers = dict(headers)
+        # Auth errors are intentionally NOT caught here: callers must see
+        # the rejection rather than receive a silently-unauthenticated
+        # header dict. Other unexpected errors are wrapped so callers see a
+        # cloud-layer failure with diagnostic context instead of a raw helper
+        # exception.
         try:
             auth_headers = await self.auth.get_headers(target=target)
-        except AuthenticationError as exc:
-            logger.warning("Backend auth headers unavailable: %s", exc)
-            return merged_headers
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.debug("Unexpected error generating auth headers: %s", exc)
-            return merged_headers
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            logger.warning("Could not augment backend auth headers: %s", exc)
+            raise CloudServiceError(
+                f"Failed to augment backend auth headers: {exc}"
+            ) from exc
 
         for key, value in auth_headers.items():
             if key not in merged_headers:

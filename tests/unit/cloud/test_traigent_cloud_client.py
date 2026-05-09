@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.cloud.auth import AuthManager
 from traigent.cloud.client import (
     CloudOptimizationResult,
     CloudServiceError,
@@ -12,6 +13,24 @@ from traigent.cloud.client import (
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
+
+
+async def _stub_validate(self, api_key):  # noqa: ARG001
+    """Bypass backend API key validation for offline tests."""
+    return None
+
+
+def _patch_backend_validate():
+    """Patch ``AuthManager._validate_api_key_with_backend`` for offline tests.
+
+    B4 round 3 made ``get_auth_headers()`` fail closed when authentication
+    fails, so any test that calls a method which builds auth headers must
+    either authenticate against a working backend or stub the backend
+    validation hook.
+    """
+    return patch.object(
+        AuthManager, "_validate_api_key_with_backend", new=_stub_validate
+    )
 
 
 @pytest.fixture
@@ -87,11 +106,12 @@ class TestTraigentCloudClient:
         """Test async context manager functionality."""
 
         async def run_test():
-            async with mock_cloud_client as client:
-                assert client._session is not None
+            with _patch_backend_validate():
+                async with mock_cloud_client as client:
+                    assert client._session is not None
 
-            # Session should be closed after exit
-            assert mock_cloud_client._session is None
+                # Session should be closed after exit
+                assert mock_cloud_client._session is None
 
         asyncio.run(run_test())
 
@@ -110,8 +130,10 @@ class TestTraigentCloudClient:
 
         asyncio.run(run_test())
 
-    def test_optimize_function_success(self, mock_cloud_client, sample_dataset):
-        """Test successful optimization with cloud service."""
+    def test_optimize_function_remote_execution_unavailable(
+        self, mock_cloud_client, sample_dataset
+    ):
+        """Test cloud optimization fails closed until remote execution exists."""
 
         async def run_test():
             # Mock the auth and submission
@@ -136,23 +158,19 @@ class TestTraigentCloudClient:
                 }
 
                 async with mock_cloud_client as client:
-                    result = await client.optimize_function(
-                        function_name="test_function",
-                        dataset=sample_dataset,
-                        configuration_space={
-                            "param1": ["a", "b"],
-                            "param2": [0.1, 0.5, 0.9],
-                        },
-                        objectives=["accuracy", "speed"],
-                        max_trials=50,
-                    )
+                    with pytest.raises(CloudServiceError, match="use hybrid"):
+                        await client.optimize_function(
+                            function_name="test_function",
+                            dataset=sample_dataset,
+                            configuration_space={
+                                "param1": ["a", "b"],
+                                "param2": [0.1, 0.5, 0.9],
+                            },
+                            objectives=["accuracy", "speed"],
+                            max_trials=50,
+                        )
 
-                assert isinstance(result, CloudOptimizationResult)
-                assert result.best_config == {"param1": "value1", "param2": 0.5}
-                assert result.best_metrics == {"accuracy": 0.85, "speed": 0.9}
-                assert result.trials_count == 25
-                assert result.subset_used is True
-                assert result.cost_reduction > 0
+                mock_submit.assert_not_called()
 
         asyncio.run(run_test())
 
@@ -178,8 +196,10 @@ class TestTraigentCloudClient:
 
         asyncio.run(run_test())
 
-    def test_optimize_function_with_fallback(self, mock_cloud_client, sample_dataset):
-        """Test fallback to local optimization when cloud fails."""
+    def test_optimize_function_does_not_fallback(
+        self, mock_cloud_client, sample_dataset
+    ):
+        """Test remote cloud optimization does not silently fallback."""
 
         async def local_function(text: str, param: int = 1) -> str:
             return f"{text}:{param}"
@@ -222,21 +242,17 @@ class TestTraigentCloudClient:
                 )
 
                 async with mock_cloud_client as client:
-                    result = await client.optimize_function(
-                        function_name="test_function",
-                        dataset=sample_dataset,
-                        configuration_space={"param": [1, 2, 3]},
-                        objectives=["accuracy"],
-                        local_function=local_function,
-                    )
+                    with pytest.raises(CloudServiceError, match="use hybrid"):
+                        await client.optimize_function(
+                            function_name="test_function",
+                            dataset=sample_dataset,
+                            configuration_space={"param": [1, 2, 3]},
+                            objectives=["accuracy"],
+                            local_function=local_function,
+                        )
 
-                # Should get fallback result
-                assert isinstance(result, CloudOptimizationResult)
-                assert result.best_config == {"param": 1}
-                assert result.best_metrics == {"accuracy": 0.8}
-                assert result.trials_count == 2
-                assert result.subset_used is False
-                assert result.cost_reduction == 0.0
+                mock_get_optimizer.assert_not_called()
+                mock_orchestrator_class.assert_not_called()
 
         asyncio.run(run_test())
 
@@ -266,9 +282,7 @@ class TestTraigentCloudClient:
                 ),
             ):
                 async with client as c:
-                    with pytest.raises(
-                        CloudServiceError, match="Cloud optimization failed"
-                    ):
+                    with pytest.raises(CloudServiceError, match="use hybrid"):
                         await c.optimize_function(
                             function_name="test_function",
                             dataset=sample_dataset,
@@ -297,14 +311,15 @@ class TestTraigentCloudClient:
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            result = await mock_cloud_client._submit_optimization(
-                {
-                    "function_name": "test",
-                    "dataset": {},
-                    "configuration_space": {},
-                    "objectives": ["accuracy"],
-                }
-            )
+            with _patch_backend_validate():
+                result = await mock_cloud_client._submit_optimization(
+                    {
+                        "function_name": "test",
+                        "dataset": {},
+                        "configuration_space": {},
+                        "objectives": ["accuracy"],
+                    }
+                )
 
             assert result["best_config"] == {"param": "value"}
             assert result["best_metrics"] == {"accuracy": 0.9}
@@ -338,7 +353,9 @@ class TestTraigentCloudClient:
             ]
             mock_cloud_client._session = mock_session
 
-            with patch("asyncio.sleep", new_callable=AsyncMock):
+            with _patch_backend_validate(), patch(
+                "asyncio.sleep", new_callable=AsyncMock
+            ):
                 result = await mock_cloud_client._submit_optimization({})
 
             assert result["trials_count"] == 10
@@ -357,8 +374,9 @@ class TestTraigentCloudClient:
             mock_session.post.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            with pytest.raises(CloudServiceError, match="HTTP 500"):
-                await mock_cloud_client._submit_optimization({})
+            with _patch_backend_validate():
+                with pytest.raises(CloudServiceError, match="HTTP 500"):
+                    await mock_cloud_client._submit_optimization({})
 
         asyncio.run(run_test())
 
@@ -407,7 +425,8 @@ class TestTraigentCloudClient:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_cloud_client._session = mock_session
 
-            status = await mock_cloud_client.check_service_status()
+            with _patch_backend_validate():
+                status = await mock_cloud_client.check_service_status()
             assert status["status"] == "healthy"
             assert "uptime" in status
 
