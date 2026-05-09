@@ -13,8 +13,6 @@ import subprocess
 import sys
 import textwrap
 
-import pytest
-
 
 class TestTraigentInit:
     """Tests for traigent/__init__.py imports."""
@@ -30,6 +28,45 @@ class TestTraigentInit:
         assert hasattr(traigent, "LogRange")
         assert hasattr(traigent, "Choices")
         assert hasattr(traigent, "ParameterRange")
+
+    def test_main_module_import_stays_cold(self) -> None:
+        """Test plain import avoids heavy optional/runtime module cascades."""
+        script = textwrap.dedent(
+            """
+            import sys
+
+            before = set(sys.modules)
+            import traigent
+            loaded = set(sys.modules) - before
+
+            blocked_prefixes = (
+                "litellm",
+                "matplotlib",
+                "plotly",
+                "traigent.optimizers",
+                "traigent.visualization",
+            )
+            loaded_blocked = sorted(
+                module
+                for module in loaded
+                if any(
+                    module == prefix or module.startswith(f"{prefix}.")
+                    for prefix in blocked_prefixes
+                )
+            )
+            assert not loaded_blocked, loaded_blocked
+            assert hasattr(traigent, "__version__")
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
 
     def test_version_available(self) -> None:
         """Test that version is available."""

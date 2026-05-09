@@ -41,6 +41,7 @@ import builtins
 import os
 import sys
 import warnings
+from importlib import import_module
 
 
 # ---------------------------------------------------------------------------
@@ -110,203 +111,6 @@ __version__ = get_version()
 __author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
 
-from traigent.admin import (
-    EnterpriseAdminClient,
-    EnterpriseAdminConfig,
-    SSOProviderType,
-    TenantDTO,
-    TenantListResponse,
-    TenantMembershipDTO,
-    TenantMembershipListResponse,
-    TenantMembershipRole,
-    TenantMembershipStatus,
-    TenantSSOConfigDTO,
-)
-from traigent.api.config_space import ConfigSpace
-
-# TVL constraint system
-from traigent.api.constraints import (
-    AndCondition,
-    BoolExpr,
-    Condition,
-    Constraint,
-    ConstraintScopeError,
-    NotCondition,
-    OrCondition,
-    WhenBuilder,
-    constraints_to_callables,
-    implies,
-    normalize_constraints,
-    require,
-    when,
-)
-
-# Public API exports
-from traigent.api.decorators import optimize
-from traigent.api.functions import (
-    configure,
-    configure_for_budget,
-    get_available_strategies,
-    get_config,
-    get_current_config,
-    get_optimization_insights,
-    get_trial_config,
-    get_version_info,
-    initialize,
-    override_config,
-    set_strategy,
-    with_usage,
-)
-
-# SE-friendly parameter range classes
-from traigent.api.parameter_ranges import (
-    Choices,
-    IntRange,
-    LogRange,
-    ParameterRange,
-    Range,
-)
-
-# Core types
-from traigent.api.types import (
-    ConfigurationComparison,
-    OptimizationResult,
-    OptimizationStatus,
-    ParetoFront,
-    SensitivityAnalysis,
-    StrategyConfig,
-    TrialError,
-    TrialResult,
-    serialize_trials,
-)
-from traigent.api.validation_protocol import (
-    ConstraintValidator,
-    ConstraintViolation,
-    PythonConstraintValidator,
-    SatResult,
-    SatStatus,
-)
-from traigent.api.validation_protocol import (
-    ValidationResult as ConstraintValidationResult,
-)
-from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
-
-# Thread context helpers
-from traigent.config.context import copy_context_to_thread, get_trial_context
-
-# Configuration types
-from traigent.config.types import TraigentConfig
-from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
-
-# Lifecycle and state management
-from traigent.core.optimized_function import OptimizationState
-from traigent.core_metrics import CoreMetricsClient, CoreMetricsConfig
-from traigent.evaluation import (
-    AnnotationQueueDTO,
-    AnnotationQueueItemDTO,
-    AnnotationQueueItemListResponse,
-    AnnotationQueueItemStatus,
-    AnnotationQueueListResponse,
-    AnnotationQueueStatus,
-    BackfillResultDTO,
-    EvaluationClient,
-    EvaluationConfig,
-    EvaluationTargetRefDTO,
-    EvaluationTargetType,
-    EvaluatorDefinitionDTO,
-    EvaluatorListResponse,
-    EvaluatorRunDTO,
-    EvaluatorRunListResponse,
-    EvaluatorRunStatus,
-    JudgeConfigDTO,
-    MeasureValueType,
-    ScoreRecordDTO,
-    ScoreRecordListResponse,
-    ScoreSource,
-)
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.observability import (
-    CorrelationIds,
-    ObservabilityClient,
-    ObservabilityConfig,
-    ObservationDTO,
-    ObservationRecord,
-    ObservationType,
-    ObserveContext,
-    PaginationInfo,
-    SessionDTO,
-    SessionListResponse,
-    SessionRecord,
-    ThumbRating,
-    TraceCollaborationState,
-    TraceCommentRecord,
-    TraceCommentsResponse,
-    TraceDTO,
-    TraceFeedbackRecord,
-    TraceFeedbackResponse,
-    TraceFeedbackSummary,
-    TraceListResponse,
-    TraceObservationsResponse,
-    TraceRecord,
-    get_default_observability_client,
-    observe,
-    set_default_observability_client,
-)
-from traigent.projects import ProjectManagementClient, ProjectManagementConfig
-from traigent.prompts import (
-    ChatPromptMessage,
-    PromptDetail,
-    PromptListResponse,
-    PromptManagementClient,
-    PromptManagementConfig,
-    PromptPlaygroundConfig,
-    PromptPlaygroundResult,
-    PromptPlaygroundTokenUsage,
-    PromptSummary,
-    PromptType,
-    PromptVersionRecord,
-    ResolvedPrompt,
-)
-from traigent.utils.callbacks import (
-    LoggingCallback,
-    ProgressBarCallback,
-    StatisticsCallback,
-    get_default_callbacks,
-    get_verbose_callbacks,
-)
-from traigent.utils.constraints import (
-    ConstraintManager,
-    max_tokens_constraint,
-    model_cost_constraint,
-    temperature_constraint,
-)
-
-# Exceptions and warnings
-from traigent.utils.exceptions import (
-    ConfigAccessWarning,
-    DataIntegrityError,
-    DTOSerializationError,
-    MetricExtractionError,
-    OptimizationStateError,
-    TraigentDeprecationWarning,
-    TraigentWarning,
-    VendorPauseError,
-)
-from traigent.utils.importance import ParameterImportanceAnalyzer
-from traigent.utils.multi_objective import MultiObjectiveMetrics, ParetoFrontCalculator
-
-# Sprint 2 features
-from traigent.utils.persistence import PersistenceManager
-from traigent.utils.retry import RetryConfig, retry
-
-# Sprint 3 features
-from traigent.utils.validation import (
-    OptimizationValidator,
-    ValidationResult,
-    validate_and_suggest,
-)
-from traigent.visualization.plots import PlotGenerator, create_quick_plot
-
 
 def _is_missing_optional_module(
     exc: ModuleNotFoundError, module_prefixes: tuple[str, ...]
@@ -344,6 +148,266 @@ except ModuleNotFoundError as exc:
             ),
         }
     )
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    # Main decorator and configuration API
+    "optimize": ("traigent.api.decorators", "optimize"),
+    "ConfigSpace": ("traigent.api.config_space", "ConfigSpace"),
+    "configure": ("traigent.api.functions", "configure"),
+    "configure_for_budget": ("traigent.api.functions", "configure_for_budget"),
+    "get_available_strategies": (
+        "traigent.api.functions",
+        "get_available_strategies",
+    ),
+    "get_config": ("traigent.api.functions", "get_config"),
+    "get_current_config": ("traigent.api.functions", "get_current_config"),
+    "get_optimization_insights": (
+        "traigent.api.functions",
+        "get_optimization_insights",
+    ),
+    "get_trial_config": ("traigent.api.functions", "get_trial_config"),
+    "get_version_info": ("traigent.api.functions", "get_version_info"),
+    "initialize": ("traigent.api.functions", "initialize"),
+    "override_config": ("traigent.api.functions", "override_config"),
+    "set_strategy": ("traigent.api.functions", "set_strategy"),
+    "with_usage": ("traigent.api.functions", "with_usage"),
+    # SE-friendly parameter range classes
+    "Choices": ("traigent.api.parameter_ranges", "Choices"),
+    "IntRange": ("traigent.api.parameter_ranges", "IntRange"),
+    "LogRange": ("traigent.api.parameter_ranges", "LogRange"),
+    "ParameterRange": ("traigent.api.parameter_ranges", "ParameterRange"),
+    "Range": ("traigent.api.parameter_ranges", "Range"),
+    # TVL constraint system
+    "AndCondition": ("traigent.api.constraints", "AndCondition"),
+    "BoolExpr": ("traigent.api.constraints", "BoolExpr"),
+    "Condition": ("traigent.api.constraints", "Condition"),
+    "Constraint": ("traigent.api.constraints", "Constraint"),
+    "ConstraintScopeError": ("traigent.api.constraints", "ConstraintScopeError"),
+    "NotCondition": ("traigent.api.constraints", "NotCondition"),
+    "OrCondition": ("traigent.api.constraints", "OrCondition"),
+    "WhenBuilder": ("traigent.api.constraints", "WhenBuilder"),
+    "constraints_to_callables": (
+        "traigent.api.constraints",
+        "constraints_to_callables",
+    ),
+    "implies": ("traigent.api.constraints", "implies"),
+    "normalize_constraints": ("traigent.api.constraints", "normalize_constraints"),
+    "require": ("traigent.api.constraints", "require"),
+    "when": ("traigent.api.constraints", "when"),
+    # Core result and validation types
+    "ConfigurationComparison": ("traigent.api.types", "ConfigurationComparison"),
+    "OptimizationResult": ("traigent.api.types", "OptimizationResult"),
+    "OptimizationStatus": ("traigent.api.types", "OptimizationStatus"),
+    "ParetoFront": ("traigent.api.types", "ParetoFront"),
+    "SensitivityAnalysis": ("traigent.api.types", "SensitivityAnalysis"),
+    "StrategyConfig": ("traigent.api.types", "StrategyConfig"),
+    "TrialError": ("traigent.api.types", "TrialError"),
+    "TrialResult": ("traigent.api.types", "TrialResult"),
+    "serialize_trials": ("traigent.api.types", "serialize_trials"),
+    "ConstraintValidator": (
+        "traigent.api.validation_protocol",
+        "ConstraintValidator",
+    ),
+    "ConstraintViolation": (
+        "traigent.api.validation_protocol",
+        "ConstraintViolation",
+    ),
+    "ConstraintValidationResult": (
+        "traigent.api.validation_protocol",
+        "ValidationResult",
+    ),
+    "PythonConstraintValidator": (
+        "traigent.api.validation_protocol",
+        "PythonConstraintValidator",
+    ),
+    "SatResult": ("traigent.api.validation_protocol", "SatResult"),
+    "SatStatus": ("traigent.api.validation_protocol", "SatStatus"),
+    # Context and config helpers
+    "copy_context_to_thread": ("traigent.config.context", "copy_context_to_thread"),
+    "get_trial_context": ("traigent.config.context", "get_trial_context"),
+    "TraigentConfig": ("traigent.config.types", "TraigentConfig"),
+    "TraigentMetadata": ("traigent.core.meta_types", "TraigentMetadata"),
+    "is_traigent_metadata": ("traigent.core.meta_types", "is_traigent_metadata"),
+    "OptimizationState": ("traigent.core.optimized_function", "OptimizationState"),
+    # Client surfaces
+    "BenchmarkClient": ("traigent.cloud.benchmark_client", "BenchmarkClient"),
+    "BenchmarkClientConfig": (
+        "traigent.cloud.benchmark_client",
+        "BenchmarkClientConfig",
+    ),
+    "CoreMetricsClient": ("traigent.core_metrics", "CoreMetricsClient"),
+    "CoreMetricsConfig": ("traigent.core_metrics", "CoreMetricsConfig"),
+    "EnterpriseAdminClient": ("traigent.admin", "EnterpriseAdminClient"),
+    "EnterpriseAdminConfig": ("traigent.admin", "EnterpriseAdminConfig"),
+    "EvaluationClient": ("traigent.evaluation", "EvaluationClient"),
+    "EvaluationConfig": ("traigent.evaluation", "EvaluationConfig"),
+    "ObservabilityClient": ("traigent.observability", "ObservabilityClient"),
+    "ObservabilityConfig": ("traigent.observability", "ObservabilityConfig"),
+    "ProjectManagementClient": ("traigent.projects", "ProjectManagementClient"),
+    "ProjectManagementConfig": ("traigent.projects", "ProjectManagementConfig"),
+    "PromptManagementClient": ("traigent.prompts", "PromptManagementClient"),
+    "PromptManagementConfig": ("traigent.prompts", "PromptManagementConfig"),
+    # Admin DTOs
+    "SSOProviderType": ("traigent.admin", "SSOProviderType"),
+    "TenantDTO": ("traigent.admin", "TenantDTO"),
+    "TenantListResponse": ("traigent.admin", "TenantListResponse"),
+    "TenantMembershipDTO": ("traigent.admin", "TenantMembershipDTO"),
+    "TenantMembershipListResponse": (
+        "traigent.admin",
+        "TenantMembershipListResponse",
+    ),
+    "TenantMembershipRole": ("traigent.admin", "TenantMembershipRole"),
+    "TenantMembershipStatus": ("traigent.admin", "TenantMembershipStatus"),
+    "TenantSSOConfigDTO": ("traigent.admin", "TenantSSOConfigDTO"),
+    # Evaluation DTOs
+    "AnnotationQueueDTO": ("traigent.evaluation", "AnnotationQueueDTO"),
+    "AnnotationQueueItemDTO": ("traigent.evaluation", "AnnotationQueueItemDTO"),
+    "AnnotationQueueItemListResponse": (
+        "traigent.evaluation",
+        "AnnotationQueueItemListResponse",
+    ),
+    "AnnotationQueueItemStatus": (
+        "traigent.evaluation",
+        "AnnotationQueueItemStatus",
+    ),
+    "AnnotationQueueListResponse": (
+        "traigent.evaluation",
+        "AnnotationQueueListResponse",
+    ),
+    "AnnotationQueueStatus": ("traigent.evaluation", "AnnotationQueueStatus"),
+    "BackfillResultDTO": ("traigent.evaluation", "BackfillResultDTO"),
+    "Dataset": ("traigent.evaluators.base", "Dataset"),
+    "EvaluationExample": ("traigent.evaluators.base", "EvaluationExample"),
+    "EvaluationTargetRefDTO": ("traigent.evaluation", "EvaluationTargetRefDTO"),
+    "EvaluationTargetType": ("traigent.evaluation", "EvaluationTargetType"),
+    "EvaluatorDefinitionDTO": ("traigent.evaluation", "EvaluatorDefinitionDTO"),
+    "EvaluatorListResponse": ("traigent.evaluation", "EvaluatorListResponse"),
+    "EvaluatorRunDTO": ("traigent.evaluation", "EvaluatorRunDTO"),
+    "EvaluatorRunListResponse": ("traigent.evaluation", "EvaluatorRunListResponse"),
+    "EvaluatorRunStatus": ("traigent.evaluation", "EvaluatorRunStatus"),
+    "JudgeConfigDTO": ("traigent.evaluation", "JudgeConfigDTO"),
+    "MeasureValueType": ("traigent.evaluation", "MeasureValueType"),
+    "ScoreRecordDTO": ("traigent.evaluation", "ScoreRecordDTO"),
+    "ScoreRecordListResponse": ("traigent.evaluation", "ScoreRecordListResponse"),
+    "ScoreSource": ("traigent.evaluation", "ScoreSource"),
+    # Observability DTOs and helpers
+    "CorrelationIds": ("traigent.observability", "CorrelationIds"),
+    "ObserveContext": ("traigent.observability", "ObserveContext"),
+    "ObservationDTO": ("traigent.observability", "ObservationDTO"),
+    "ObservationRecord": ("traigent.observability", "ObservationRecord"),
+    "ObservationType": ("traigent.observability", "ObservationType"),
+    "PaginationInfo": ("traigent.observability", "PaginationInfo"),
+    "SessionDTO": ("traigent.observability", "SessionDTO"),
+    "SessionListResponse": ("traigent.observability", "SessionListResponse"),
+    "SessionRecord": ("traigent.observability", "SessionRecord"),
+    "ThumbRating": ("traigent.observability", "ThumbRating"),
+    "TraceCollaborationState": (
+        "traigent.observability",
+        "TraceCollaborationState",
+    ),
+    "TraceCommentRecord": ("traigent.observability", "TraceCommentRecord"),
+    "TraceCommentsResponse": ("traigent.observability", "TraceCommentsResponse"),
+    "TraceDTO": ("traigent.observability", "TraceDTO"),
+    "TraceFeedbackRecord": ("traigent.observability", "TraceFeedbackRecord"),
+    "TraceFeedbackResponse": ("traigent.observability", "TraceFeedbackResponse"),
+    "TraceFeedbackSummary": ("traigent.observability", "TraceFeedbackSummary"),
+    "TraceListResponse": ("traigent.observability", "TraceListResponse"),
+    "TraceObservationsResponse": (
+        "traigent.observability",
+        "TraceObservationsResponse",
+    ),
+    "TraceRecord": ("traigent.observability", "TraceRecord"),
+    "get_default_observability_client": (
+        "traigent.observability",
+        "get_default_observability_client",
+    ),
+    "observe": ("traigent.observability", "observe"),
+    "set_default_observability_client": (
+        "traigent.observability",
+        "set_default_observability_client",
+    ),
+    # Prompt DTOs and helpers
+    "ChatPromptMessage": ("traigent.prompts", "ChatPromptMessage"),
+    "PromptDetail": ("traigent.prompts", "PromptDetail"),
+    "PromptListResponse": ("traigent.prompts", "PromptListResponse"),
+    "PromptPlaygroundConfig": ("traigent.prompts", "PromptPlaygroundConfig"),
+    "PromptPlaygroundResult": ("traigent.prompts", "PromptPlaygroundResult"),
+    "PromptPlaygroundTokenUsage": (
+        "traigent.prompts",
+        "PromptPlaygroundTokenUsage",
+    ),
+    "PromptSummary": ("traigent.prompts", "PromptSummary"),
+    "PromptType": ("traigent.prompts", "PromptType"),
+    "PromptVersionRecord": ("traigent.prompts", "PromptVersionRecord"),
+    "ResolvedPrompt": ("traigent.prompts", "ResolvedPrompt"),
+    # Utilities
+    "ConfigAccessWarning": ("traigent.utils.exceptions", "ConfigAccessWarning"),
+    "ConstraintManager": ("traigent.utils.constraints", "ConstraintManager"),
+    "DataIntegrityError": ("traigent.utils.exceptions", "DataIntegrityError"),
+    "DTOSerializationError": (
+        "traigent.utils.exceptions",
+        "DTOSerializationError",
+    ),
+    "LoggingCallback": ("traigent.utils.callbacks", "LoggingCallback"),
+    "MetricExtractionError": ("traigent.utils.exceptions", "MetricExtractionError"),
+    "MultiObjectiveMetrics": (
+        "traigent.utils.multi_objective",
+        "MultiObjectiveMetrics",
+    ),
+    "OptimizationStateError": (
+        "traigent.utils.exceptions",
+        "OptimizationStateError",
+    ),
+    "OptimizationValidator": ("traigent.utils.validation", "OptimizationValidator"),
+    "ParameterImportanceAnalyzer": (
+        "traigent.utils.importance",
+        "ParameterImportanceAnalyzer",
+    ),
+    "ParetoFrontCalculator": (
+        "traigent.utils.multi_objective",
+        "ParetoFrontCalculator",
+    ),
+    "PersistenceManager": ("traigent.utils.persistence", "PersistenceManager"),
+    "PlotGenerator": ("traigent.visualization.plots", "PlotGenerator"),
+    "ProgressBarCallback": ("traigent.utils.callbacks", "ProgressBarCallback"),
+    "RetryConfig": ("traigent.utils.retry", "RetryConfig"),
+    "StatisticsCallback": ("traigent.utils.callbacks", "StatisticsCallback"),
+    "TraigentDeprecationWarning": (
+        "traigent.utils.exceptions",
+        "TraigentDeprecationWarning",
+    ),
+    "TraigentWarning": ("traigent.utils.exceptions", "TraigentWarning"),
+    "ValidationResult": ("traigent.utils.validation", "ValidationResult"),
+    "VendorPauseError": ("traigent.utils.exceptions", "VendorPauseError"),
+    "create_quick_plot": ("traigent.visualization.plots", "create_quick_plot"),
+    "get_default_callbacks": ("traigent.utils.callbacks", "get_default_callbacks"),
+    "get_verbose_callbacks": ("traigent.utils.callbacks", "get_verbose_callbacks"),
+    "max_tokens_constraint": ("traigent.utils.constraints", "max_tokens_constraint"),
+    "model_cost_constraint": ("traigent.utils.constraints", "model_cost_constraint"),
+    "retry": ("traigent.utils.retry", "retry"),
+    "temperature_constraint": (
+        "traigent.utils.constraints",
+        "temperature_constraint",
+    ),
+    "validate_and_suggest": ("traigent.utils.validation", "validate_and_suggest"),
+}
+
+
+def _load_lazy_export(name: str):
+    module_name, attr_name = _LAZY_EXPORTS[name]
+    try:
+        value = getattr(import_module(module_name), attr_name)
+    except ModuleNotFoundError as exc:
+        if _is_missing_optional_module(exc, (module_name,)):
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}. "
+                f"Export {name!r} requires optional module {module_name!r}."
+            ) from exc
+        raise
+
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # Main decorator
@@ -528,6 +592,8 @@ if "AgentCostBreakdown" in globals():
 def __getattr__(name: str):
     if name in _OPTIONAL_EXPORT_ERRORS:
         raise AttributeError(_OPTIONAL_EXPORT_ERRORS[name])
+    if name in _LAZY_EXPORTS:
+        return _load_lazy_export(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
