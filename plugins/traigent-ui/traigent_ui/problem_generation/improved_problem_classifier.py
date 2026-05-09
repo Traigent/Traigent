@@ -618,7 +618,6 @@ Respond with valid JSON only."""
                 prompt=prompt,
                 options=ClaudeCodeOptions(
                     system_prompt="You are an expert at problem classification. Always respond with valid JSON containing the requested fields.",
-                    permission_mode="bypassPermissions",
                     max_turns=1,  # We only need one response
                 ),
             ):

@@ -388,7 +388,6 @@ Keep the response simple and focused on these four key fields.
                 prompt=analysis_prompt,
                 options=ClaudeCodeOptions(
                     system_prompt="You are an expert at analyzing problem descriptions and understanding user intent for LLM task creation. Provide accurate, detailed analysis in valid JSON format.",
-                    permission_mode="bypassPermissions",
                     max_turns=1,
                 ),
             ):
@@ -676,7 +675,6 @@ For "elementary school math problems" → name: "elementary_math_word_problems"
                 prompt=spec_prompt,
                 options=ClaudeCodeOptions(
                     system_prompt="You are an expert at creating detailed, accurate problem specifications for LLM tasks. Generate comprehensive, contextually appropriate specifications in valid JSON format.",
-                    permission_mode="bypassPermissions",
                     max_turns=1,
                 ),
             ):
@@ -987,7 +985,6 @@ For "elementary school math problems" → name: "elementary_math_word_problems"
                     prompt=examples_prompt,
                     options=ClaudeCodeOptions(
                         system_prompt="You are an expert at creating diverse, high-quality examples for LLM training tasks. Generate contextually appropriate, realistic examples in valid JSON format. Never use placeholders like 'To be determined' - always provide complete, valid outputs.",
-                        permission_mode="bypassPermissions",
                         max_turns=1,
                     ),
                 ):

@@ -571,8 +571,11 @@ class TestValidateOfflineLicense:
             temp_path = f.name
 
         try:
-            validator = LicenseValidator(license_file=temp_path)
-            result = validator._validate_offline_license()
+            with patch.dict(
+                os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+            ):
+                validator = LicenseValidator(license_file=temp_path)
+                result = validator._validate_offline_license()
             assert result is not None
             assert result.tier == LicenseTier.PRO
             assert LicenseFeature.PARALLEL_EXECUTION in result.features
@@ -599,8 +602,11 @@ class TestValidateOfflineLicense:
             temp_path = f.name
 
         try:
-            validator = LicenseValidator(license_file=temp_path)
-            result = validator._validate_offline_license()
+            with patch.dict(
+                os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+            ):
+                validator = LicenseValidator(license_file=temp_path)
+                result = validator._validate_offline_license()
             assert result is None
         finally:
             os.unlink(temp_path)
@@ -620,18 +626,54 @@ class TestValidateOfflineLicense:
             os.unlink(temp_path)
 
     @staticmethod
-    def _create_token(payload: dict) -> str:
+    def _b64url_encode(data: bytes) -> str:
+        """Encode bytes as an unpadded JWT base64url segment."""
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    @classmethod
+    def _create_token(cls, payload: dict) -> str:
         """Create a simplified JWT-like token for testing."""
-        header = (
-            base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode())
-            .decode()
-            .rstrip("=")
-        )
-        body = (
-            base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-        )
-        signature = base64.urlsafe_b64encode(b"test-sig").decode().rstrip("=")
+        header = cls._b64url_encode(json.dumps({"alg": "none"}).encode())
+        body = cls._b64url_encode(json.dumps(payload).encode())
+        signature = cls._b64url_encode(b"test-sig")
         return f"{header}.{body}.{signature}"
+
+    @classmethod
+    def _create_rs256_token(cls, payload: dict, private_key) -> str:
+        """Create an RS256 JWT-like token for signature verification tests."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        header = cls._b64url_encode(json.dumps({"alg": "RS256"}).encode())
+        body = cls._b64url_encode(json.dumps(payload).encode())
+        signing_input = f"{header}.{body}".encode("ascii")
+        signature = private_key.sign(
+            signing_input,
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        return f"{header}.{body}.{cls._b64url_encode(signature)}"
+
+    @staticmethod
+    def _rsa_private_key():
+        """Create a small test RSA keypair."""
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    @staticmethod
+    def _public_key_pem(private_key) -> str:
+        """Serialize a test RSA public key to PEM."""
+        from cryptography.hazmat.primitives import serialization
+
+        return (
+            private_key.public_key()
+            .public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("ascii")
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -654,24 +696,71 @@ class TestDecodeLicenseToken:
         assert validator._decode_license_token("one.two.three.four") is None
 
     def test_valid_token_no_expiry(self):
-        """Test valid token without expiry is accepted."""
+        """Test a signed valid token without expiry is accepted."""
         payload = {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"}
-        token = TestValidateOfflineLicense._create_token(payload)
+        private_key = TestValidateOfflineLicense._rsa_private_key()
+        token = TestValidateOfflineLicense._create_rs256_token(payload, private_key)
 
-        validator = LicenseValidator()
-        result = validator._decode_license_token(token)
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_PUBLIC_KEY": TestValidateOfflineLicense._public_key_pem(
+                    private_key
+                )
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            result = validator._decode_license_token(token)
         assert result is not None
         assert result.tier == LicenseTier.ENTERPRISE
         assert LicenseFeature.CLOUD_EXECUTION in result.features
         assert result.organization == "Acme"
+        assert result.validation_source == "offline"
+
+    def test_signed_token_tampering_is_rejected(self):
+        """Test a signed token with a modified payload is rejected."""
+        private_key = TestValidateOfflineLicense._rsa_private_key()
+        token = TestValidateOfflineLicense._create_rs256_token(
+            {"tier": "free", "features": []}, private_key
+        )
+        header, _body, signature = token.split(".")
+        tampered_body = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"tier": "enterprise", "features": ["cloud_execution"]}).encode()
+        )
+        tampered_token = f"{header}.{tampered_body}.{signature}"
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_PUBLIC_KEY": TestValidateOfflineLicense._public_key_pem(
+                    private_key
+                )
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(tampered_token) is None
+
+    def test_unsigned_token_rejected_by_default(self):
+        """Test unsigned offline tokens are rejected unless explicitly allowed."""
+        payload = {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"}
+        token = TestValidateOfflineLicense._create_token(payload)
+
+        with patch.dict(os.environ, {}, clear=True):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(token) is None
 
     def test_valid_token_defaults_to_free(self):
-        """Test token with no tier defaults to free."""
+        """Test explicitly allowed legacy token with no tier defaults to free."""
         payload = {"features": []}
         token = TestValidateOfflineLicense._create_token(payload)
 
-        validator = LicenseValidator()
-        result = validator._decode_license_token(token)
+        with patch.dict(
+            os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+        ):
+            validator = LicenseValidator()
+            result = validator._decode_license_token(token)
         assert result is not None
         assert result.tier == LicenseTier.FREE
 
@@ -710,13 +799,16 @@ class TestDecodeLicenseToken:
     def test_base64_padding_handling(self):
         """Test that base64 padding is handled correctly for various payload lengths."""
         # Try payloads of different lengths to exercise the padding logic
-        for extra in ["", "x", "xx", "xxx"]:
-            payload = {"tier": "free", "features": [], "extra": extra}
-            token = TestValidateOfflineLicense._create_token(payload)
-            validator = LicenseValidator()
-            result = validator._decode_license_token(token)
-            assert result is not None
-            assert result.tier == LicenseTier.FREE
+        with patch.dict(
+            os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+        ):
+            for extra in ["", "x", "xx", "xxx"]:
+                payload = {"tier": "free", "features": [], "extra": extra}
+                token = TestValidateOfflineLicense._create_token(payload)
+                validator = LicenseValidator()
+                result = validator._decode_license_token(token)
+                assert result is not None
+                assert result.tier == LicenseTier.FREE
 
 
 # ---------------------------------------------------------------------------
@@ -892,11 +984,14 @@ class TestValidateAsync:
             temp_path = f.name
 
         try:
-            validator = LicenseValidator(
-                license_file=temp_path,
-                offline_mode=True,
-            )
-            result = await validator.validate_async()
+            with patch.dict(
+                os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+            ):
+                validator = LicenseValidator(
+                    license_file=temp_path,
+                    offline_mode=True,
+                )
+                result = await validator.validate_async()
             assert result.tier == LicenseTier.PRO
             # See C3 phased rollout: unsigned tokens use the legacy tag.
             assert result.validation_source == "offline_unsigned_legacy"
@@ -1122,8 +1217,11 @@ class TestHasFeatureSync:
             temp_path = f.name
 
         try:
-            validator = LicenseValidator(license_file=temp_path)
-            result = validator.has_feature_sync(LicenseFeature.PARALLEL_EXECUTION)
+            with patch.dict(
+                os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+            ):
+                validator = LicenseValidator(license_file=temp_path)
+                result = validator.has_feature_sync(LicenseFeature.PARALLEL_EXECUTION)
             assert result is True
         finally:
             os.unlink(temp_path)
