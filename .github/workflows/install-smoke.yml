@@ -17,8 +17,8 @@ on:
       - ".github/workflows/install-smoke.yml"
   workflow_dispatch:
 
-env:
-  TRAIGENT_SCHEMA_REF: "7d8539f45e978c5148e4335e8250843f097e3b67" # pragma: allowlist secret
+permissions:
+  contents: read
 
 jobs:
   # .[recommended] is the default user-facing bundle — test across all platforms
@@ -38,11 +38,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install .[recommended]
-        env:
-          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
-          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
-          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
-          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         shell: bash
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[recommended]"
@@ -67,11 +62,6 @@ jobs:
           python-version: "3.11"
 
       - name: Install .[enterprise]
-        env:
-          TRAIGENT_PRIVATE_DEPS_TOKEN: ${{ secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
-          TRAIGENT_SCHEMA_TOKEN: ${{ secrets.TRAIGENT_SCHEMA_TOKEN }}
-          TRAIGENT_SCHEMAS_PAT: ${{ secrets.TRAIGENT_SCHEMAS_PAT }}
-          TRAIGENT_SCHEMA_REF: ${{ env.TRAIGENT_SCHEMA_REF }}
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[enterprise]"
 

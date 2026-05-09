@@ -105,6 +105,30 @@ class TestCreateLocalhostConnector:
         assert connector is None
 
 
+class TestBackendDescription:
+    """Tests for backend context emitted in failure logs."""
+
+    def test_describe_backend_omits_api_key_preview(self):
+        """Backend context must not include masked or raw credential material."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.auth = Mock()
+        mock_client.auth_manager.auth.get_api_key_preview = Mock(
+            return_value="tg_a****xyz1"
+        )
+
+        ops = TrialOperations(mock_client)
+
+        description = ops._describe_backend()
+        fields = dict(part.split("=", 1) for part in description.split(", "))
+
+        assert fields["backend_url"] == "https://api.example.com"
+        assert "api_key" not in description
+        assert "tg_a" not in description
+
+
 class TestMeasuresDictValidationInSubmission:
     """Test MeasuresDict validation warning path in submit_trial_result_via_session."""
 

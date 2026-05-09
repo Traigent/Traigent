@@ -23,7 +23,9 @@ from typing import Any
 
 # Add SDK root to path to ensure traigent can be imported.
 # Set TRAIGENT_SDK_PATH to override when running from outside the repo tree.
-sys.path.insert(0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent)))
+sys.path.insert(
+    0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent))
+)
 
 from traigent.utils.logging import setup_logging  # noqa: E402
 
@@ -351,7 +353,9 @@ def _define_target(
                 print("🚨 CRITICAL ERROR: No Anthropic API key found!")
                 print("=" * 70)
                 print("Please set ANTHROPIC_API_KEY environment variable.")
+                # fmt: off
                 print("Example: export ANTHROPIC_API_KEY='sk-ant-api03-...'")  # pragma: allowlist secret
+                # fmt: on
                 print("=" * 70 + "\n")
                 raise ValueError(
                     "Missing ANTHROPIC_API_KEY - cannot proceed with Anthropic integration"
@@ -362,11 +366,9 @@ def _define_target(
         if api_key.startswith("sk-proj-") or api_key.startswith("sk-"):
             if not api_key.startswith("sk-ant-"):
                 print("\n" + "=" * 70)
-                print(
-                    "⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!"
-                )
+                print("⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!")
                 print("=" * 70)
-                print(f"Your API key starts with: {api_key[:10]}...")
+                print("Your API key appears to use a non-Anthropic prefix.")
                 print("This appears to be an OpenAI key, not an Anthropic key!")
                 print("\nAnthropic keys should start with: sk-ant-api03-...")
                 print("OpenAI keys typically start with: sk-proj-... or sk-...")
@@ -557,7 +559,8 @@ def _parse_row_config(row_id: int) -> ScenarioConfig:
         injection_mode=(row.get("injection_mode") or "context").strip(),
         framework_targets=_parse_json(row.get("framework_targets"), []) or [],
         dataset=(
-            row.get("dataset") or "examples/datasets/rag-optimization/evaluation_set.jsonl"
+            row.get("dataset")
+            or "examples/datasets/rag-optimization/evaluation_set.jsonl"
         ).strip(),
         parallel_config=parallel_config,
         privacy_enabled=_to_bool(row.get("privacy_enabled", "false")),

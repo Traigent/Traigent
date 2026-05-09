@@ -45,9 +45,11 @@ class TestSessionFinalizationIntegration:
             metadata={"test": "auto_finalization"},
         )
 
-        session_id, experiment_id, experiment_run_id = (
-            await client._create_traigent_session_via_api(session_request)
-        )
+        (
+            session_id,
+            experiment_id,
+            experiment_run_id,
+        ) = await client._create_traigent_session_via_api(session_request)
 
         assert session_id is not None
         assert experiment_id is not None
@@ -67,14 +69,14 @@ class TestSessionFinalizationIntegration:
         last_trial_auto_finalized = False
 
         for i, config in enumerate(trial_configs):
-            trial_id = f"trial_{i+1}"
+            trial_id = f"trial_{i + 1}"
 
             # Register trial start
             try:
                 await client._trial_ops.register_trial_start(
                     session_id=session_id, trial_id=trial_id, config=config
                 )
-                print(f"   Registered trial {i+1}: {trial_id}")
+                print(f"   Registered trial {i + 1}: {trial_id}")
             except Exception as e:
                 print(f"   Trial registration failed (may be optional): {e}")
 
@@ -88,7 +90,7 @@ class TestSessionFinalizationIntegration:
             )
 
             assert result is True
-            print(f"   ✅ Submitted trial {i+1} results")
+            print(f"   ✅ Submitted trial {i + 1} results")
 
             # On last trial, backend should auto-finalize
             if i == len(trial_configs) - 1:
@@ -132,16 +134,18 @@ class TestSessionFinalizationIntegration:
             metadata={"test": "early_termination"},
         )
 
-        session_id, experiment_id, experiment_run_id = (
-            await client._create_traigent_session_via_api(session_request)
-        )
+        (
+            session_id,
+            experiment_id,
+            experiment_run_id,
+        ) = await client._create_traigent_session_via_api(session_request)
 
         print(f"\n✅ Created session: {session_id}")
         print("   Max trials: 12 (but will terminate early)")
 
         # Submit only 3 trials and then explicitly finalize
         for i in range(3):
-            trial_id = f"trial_{i+1}"
+            trial_id = f"trial_{i + 1}"
             config = {"temperature": 0.3 + (i * 0.2), "max_tokens": 100 + (i * 50)}
 
             result = await client._trial_ops.submit_trial_result_via_session(
@@ -153,7 +157,7 @@ class TestSessionFinalizationIntegration:
             )
 
             assert result is True
-            print(f"   ✅ Submitted trial {i+1}")
+            print(f"   ✅ Submitted trial {i + 1}")
 
             # Simulate convergence check
             if i == 2:
@@ -188,9 +192,11 @@ class TestSessionFinalizationIntegration:
             metadata={"test": "idempotency"},
         )
 
-        session_id, experiment_id, experiment_run_id = (
-            await client._create_traigent_session_via_api(session_request)
-        )
+        (
+            session_id,
+            experiment_id,
+            experiment_run_id,
+        ) = await client._create_traigent_session_via_api(session_request)
 
         print(f"\n✅ Created session: {session_id}")
 
@@ -212,9 +218,9 @@ class TestSessionFinalizationIntegration:
         for i in range(3):
             try:
                 await client._session_ops.finalize_session(session_id)
-                print(f"   ✅ Finalize call #{i+1} succeeded (idempotent)")
+                print(f"   ✅ Finalize call #{i + 1} succeeded (idempotent)")
             except Exception as e:
-                print(f"   ⚠️  Finalize call #{i+1} failed: {e}")
+                print(f"   ⚠️  Finalize call #{i + 1} failed: {e}")
                 # This is OK if endpoint doesn't exist - backend auto-finalization may be enough
 
         print("\n✅ Idempotency test completed")
@@ -237,7 +243,7 @@ def test_integration_prerequisites():
         )
 
     print("\n✅ Integration test prerequisites:")
-    print(f"   API Key: {api_key[:10]}... (length: {len(api_key)})")
+    print("   API Key: configured")
     print(f"   Backend URL: {backend_url}")
 
     # Verify prerequisites are valid

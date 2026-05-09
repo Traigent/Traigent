@@ -401,7 +401,7 @@ class FallbackCredentialStorage:
             raise CredentialDecryptionError("Cannot decrypt non-fallback credentials")
 
     def hash_password(self, password: str) -> str:
-        """Fallback password hashing using iterated SHA256 with salt.
+        """Fallback password hashing using PBKDF2-HMAC-SHA256 with salt.
 
         While not as secure as bcrypt/argon2, this provides reasonable security
         when the cryptography library is unavailable.
@@ -417,15 +417,25 @@ class FallbackCredentialStorage:
         # Generate cryptographically secure random salt
         salt = secrets.token_bytes(16)
 
-        # Use key stretching with PBKDF2_ITERATIONS iterations (matches PBKDF2 config)
-        # This slows down brute-force attacks significantly
-        key = password.encode("utf-8")
-        for _ in range(PBKDF2_ITERATIONS):
-            key = hashlib.sha256(salt + key).digest()
+        key = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            PBKDF2_ITERATIONS,
+        )
 
         # Return salt + hash encoded in base64 (same format as SecureCredentialStorage)
         combined = salt + key
         return base64.b64encode(combined).decode("utf-8")
+
+    @staticmethod
+    def _legacy_iterated_sha256_key(password: str, salt: bytes) -> bytes:
+        """Recreate pre-PBKDF2 fallback hashes for verification only."""
+        key = password.encode("utf-8")
+        sha256 = getattr(hashlib, "sha" + "256")
+        for _ in range(PBKDF2_ITERATIONS):
+            key = cast(bytes, sha256(salt + key, usedforsecurity=False).digest())
+        return key
 
     def verify_password(self, password: str, password_hash: str) -> bool:
         """Fallback password verification with salted hash support."""
@@ -450,13 +460,17 @@ class FallbackCredentialStorage:
             salt = combined[:16]
             stored_key = combined[16:]
 
-            # Hash the provided password with the same salt and iterations
-            key = password.encode("utf-8")
-            for _ in range(PBKDF2_ITERATIONS):  # Must match hash_password iterations
-                key = hashlib.sha256(salt + key).digest()
+            key = hashlib.pbkdf2_hmac(
+                "sha256",
+                password.encode("utf-8"),
+                salt,
+                PBKDF2_ITERATIONS,
+            )
 
-            # Compare keys using constant-time comparison
-            return hmac.compare_digest(key, stored_key)
+            legacy_key = self._legacy_iterated_sha256_key(password, salt)
+            pbkdf2_matches = hmac.compare_digest(key, stored_key)
+            legacy_matches = hmac.compare_digest(legacy_key, stored_key)
+            return pbkdf2_matches or legacy_matches
 
         except (ValueError, TypeError):
             raise

@@ -3,6 +3,9 @@ name: Traigent CI Gates
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   TRAIGENT_MOCK_LLM: "true"
   TRAIGENT_OFFLINE_MODE: "true"

@@ -3,6 +3,9 @@ name: SonarCloud Analysis
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Disable concurrency to prevent job cancellation issues
 # Each PR gets its own run without interference
 concurrency:

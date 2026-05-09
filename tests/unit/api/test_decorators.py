@@ -279,9 +279,7 @@ class TestOptimizeDecorator:
     def test_decorator_loads_tvl_spec(self):
         """Supplying tvl_spec hydrates the configuration automatically."""
 
-        spec_path = Path(
-            "docs/tvl/tvl-website/client/public/examples/ch2_hello_tvl.tvl.yml"
-        )
+        spec_path = Path("tests/fixtures/tvl/hello_tvl.yml")
 
         @optimize(tvl_spec=spec_path)
         def tvl_wrapped(question: str) -> str:

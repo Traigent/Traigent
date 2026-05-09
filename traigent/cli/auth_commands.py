@@ -129,73 +129,6 @@ class TraigentAuthCLI:
             logger.error(f"Failed to save credentials: {e}")
             return None
 
-    def _save_api_key_to_env_file(
-        self, api_key: str, env_path: Path | None = None
-    ) -> bool:
-        """Save API key to .env file.
-
-        Args:
-            api_key: The API key to save
-            env_path: Path to .env file (defaults to cwd/.env)
-
-        Returns:
-            True if saved successfully
-        """
-        env_path = self._resolve_env_file_path(env_path)
-
-        try:
-            # Read existing content
-            existing_lines: list[str] = []
-
-            if env_path.exists():
-                with open(env_path) as f:
-                    for line in f:
-                        # Check if this line sets TRAIGENT_API_KEY (not commented)
-                        stripped = line.strip()
-                        if stripped.startswith("TRAIGENT_API_KEY="):
-                            # Comment out the old key
-                            existing_lines.append(
-                                f"# {line.rstrip()} # replaced by traigent auth login\n"
-                            )
-                        else:
-                            existing_lines.append(line)
-
-            # Add new API key
-            if not existing_lines or not existing_lines[-1].endswith("\n"):
-                existing_lines.append("\n")
-            existing_lines.append(f"TRAIGENT_API_KEY={api_key}\n")
-
-            # Write back with restrictive permissions
-            with open(env_path, "w") as f:
-                f.writelines(existing_lines)
-
-            # Set restrictive permissions (user read/write only)
-            env_path.chmod(0o600)
-            logger.debug(f"API key saved to {env_path}")
-            return True
-
-        except (OSError, ValueError) as e:
-            logger.error(f"Failed to save API key to .env: {e}")
-            return False
-
-    @staticmethod
-    def _resolve_env_file_path(env_path: Path | None = None) -> Path:
-        """Resolve a writable .env path under the current working directory."""
-        candidate = (env_path or (Path.cwd() / ".env")).expanduser().resolve()
-        cwd = Path.cwd().resolve()
-
-        if candidate.name != ".env":
-            raise ValueError("env_path must point to a .env file")
-
-        try:
-            candidate.relative_to(cwd)
-        except ValueError as exc:
-            raise ValueError(
-                "env_path must remain within the current working directory"
-            ) from exc
-
-        return candidate
-
     async def _validate_api_key(
         self, api_key: str, verbose: bool = False
     ) -> dict[str, Any] | None:
@@ -214,11 +147,8 @@ class TraigentAuthCLI:
         headers = {"X-API-Key": api_key}
 
         if verbose:
-            masked_key = (
-                f"{api_key[:10]}...{api_key[-4:]}" if len(api_key) > 14 else "***"
-            )
             console.print(f"[dim]POST {url}[/dim]")
-            console.print(f"[dim]X-API-Key: {masked_key}[/dim]")
+            console.print("[dim]X-API-Key: <redacted>[/dim]")
 
         try:
             async with aiohttp.ClientSession(
@@ -229,13 +159,6 @@ class TraigentAuthCLI:
 
                     if verbose:
                         console.print(f"[dim]Response status: {response.status}[/dim]")
-                        # Show first 200 chars of response for debugging
-                        preview = (
-                            response_text[:200]
-                            if len(response_text) > 200
-                            else response_text
-                        )
-                        console.print(f"[dim]Response: {preview}[/dim]")
 
                     if response.status == 200:
                         try:
@@ -330,7 +253,7 @@ class TraigentAuthCLI:
                         if k.lower() in ("content-type", "x-request-id", "x-trace-id")
                     }
                     console.print(f"[red]Headers: {safe_headers}[/red]")
-                    console.print(f"[red]Body: {response_text}[/red]")
+                    console.print("[red]Body: <suppressed>[/red]")
                     raise AuthenticationError(
                         f"Authentication failed (HTTP {response.status})"
                     ) from None
@@ -340,17 +263,15 @@ class TraigentAuthCLI:
                 except json.JSONDecodeError:
                     console.print(BACKEND_RESPONSE_HEADER)
                     console.print(f"[red]Status Code: {response.status}[/red]")
-                    console.print(f"[red]Body (not JSON): {response_text}[/red]")
+                    console.print("[red]Body (not JSON): <suppressed>[/red]")
                     raise AuthenticationError(
                         "Invalid JSON response from backend"
                     ) from None
 
                 if not login_data.get("success"):
                     console.print(BACKEND_RESPONSE_HEADER)
-                    console.print(
-                        f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
-                    )
                     error_msg = login_data.get("error", "Unknown error")
+                    console.print(f"[red]Error: {error_msg}[/red]")
                     raise InvalidCredentialsError(
                         f"Authentication failed: {error_msg}"
                     ) from None
@@ -360,9 +281,6 @@ class TraigentAuthCLI:
 
                 if not jwt_token:
                     console.print(BACKEND_RESPONSE_HEADER)
-                    console.print(
-                        f"[red]Body: {json.dumps(login_data, indent=2)}[/red]"
-                    )
                     raise AuthenticationError("No access_token in response") from None
 
                 # Show truncated token
@@ -419,7 +337,7 @@ class TraigentAuthCLI:
                     except (json.JSONDecodeError, KeyError) as e:
                         console.print("\n[yellow]--- API Key Response ---[/yellow]")
                         console.print(f"[yellow]Status: {response.status}[/yellow]")
-                        console.print(f"[yellow]Body: {response_text}[/yellow]")
+                        console.print("[yellow]Body: <suppressed>[/yellow]")
                         console.print(
                             f"[yellow]⚠️ Could not parse API key: {e}[/yellow]"
                         )
@@ -431,7 +349,7 @@ class TraigentAuthCLI:
                 else:
                     console.print("\n[yellow]--- API Key Response ---[/yellow]")
                     console.print(f"[yellow]Status Code: {response.status}[/yellow]")
-                    console.print(f"[yellow]Body: {response_text}[/yellow]")
+                    console.print("[yellow]Body: <suppressed>[/yellow]")
                     console.print(
                         "[yellow]⚠️ API key creation failed, using JWT token only[/yellow]"
                     )
@@ -565,23 +483,6 @@ class TraigentAuthCLI:
         else:
             console.print("\n[yellow]Could not save credentials to storage[/yellow]")
 
-    def _offer_env_file_save(self, api_key: str, non_interactive: bool) -> None:
-        """Offer to save API key to .env file."""
-        if non_interactive:
-            return
-
-        env_path = Path.cwd() / ".env"
-        save_to_env = Prompt.ask(
-            f"\nSave API key to [cyan]{env_path}[/cyan] for easy access?",
-            choices=["y", "n"],
-            default="y",
-        )
-        if save_to_env.lower() == "y":
-            if self._save_api_key_to_env_file(api_key, env_path):
-                console.print(f"[green]✅ API key added to {env_path}[/green]")
-            else:
-                console.print(f"[yellow]⚠️ Could not save to {env_path}[/yellow]")
-
     async def login(
         self, email: str | None = None, non_interactive: bool = False
     ) -> bool:
@@ -617,10 +518,6 @@ class TraigentAuthCLI:
             # Store and display results
             storage_location = self._save_credentials(credentials)
             self._display_login_success(credentials, email, storage_location)
-
-            # Offer to save API key to .env file
-            if credentials.get("api_key"):
-                self._offer_env_file_save(credentials["api_key"], non_interactive)
 
             console.print(
                 "\nYou can now use Traigent SDK with backend tracking enabled.\n"
@@ -729,12 +626,7 @@ class TraigentAuthCLI:
         table.add_row("Backend", creds.get("backend_url", self.backend_url))
 
         if creds.get("api_key"):
-            # Mask API key for security
-            api_key = creds["api_key"]
-            masked_key = (
-                f"{api_key[:10]}...{api_key[-4:]}" if len(api_key) > 14 else "***"
-            )
-            table.add_row("API Key", masked_key)
+            table.add_row("API Key", "configured")
         else:
             table.add_row("Auth Type", "JWT Token")
 

@@ -31,11 +31,8 @@ async def test_auth_flow():
 
     # Step 2: Check credential manager
     print("\n2. Testing credential manager...")
-    api_key = CredentialManager.get_api_key()
-    if api_key:
-        print(
-            f"   Found API key: {api_key[:10]}...{api_key[-4:] if len(api_key) > 14 else ''}"
-        )
+    if CredentialManager.is_authenticated():
+        print("   Found API key: configured")
     else:
         print("   No API key found")
 
@@ -43,7 +40,7 @@ async def test_auth_flow():
     print("\n3. Getting authentication headers...")
     headers = get_auth_headers()
     if headers:
-        print(f"   Headers: {list(headers.keys())}")
+        print("   Authentication headers: configured")
     else:
         print("   No authentication headers available")
 
@@ -51,11 +48,7 @@ async def test_auth_flow():
     print("\n4. Getting credential details...")
     creds = CredentialManager.get_credentials()
     if creds:
-        print(f"   Source: {creds.get('source', 'unknown')}")
-        print(f"   Backend URL: {creds.get('backend_url', 'not set')}")
-        if creds.get("user"):
-            user = creds["user"]
-            print(f"   User: {user.get('email', 'unknown')}")
+        print("   Credentials: configured")
     else:
         print("   No credentials found")
 
@@ -65,9 +58,7 @@ async def test_auth_flow():
 
     auth_manager = AuthManager()
     if auth_manager.has_api_key():
-        preview = auth_manager.get_api_key_preview() or "(unavailable)"
         print("   AuthManager has API key: Yes")
-        print(f"   Key preview: {preview}")
     else:
         print("   AuthManager has no API key")
 

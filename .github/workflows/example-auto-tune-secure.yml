@@ -32,6 +32,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+
 # Concurrency control to prevent abuse
 concurrency:
   group: example-auto-tune-${{ github.ref }}

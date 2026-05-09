@@ -269,10 +269,7 @@ class TraigentCloudService:
 
         multiplier = tier_multipliers.get(billing_tier)
         if multiplier is None:
-            logger.warning(
-                "Unknown billing tier '%s'; falling back to standard multiplier",
-                billing_tier,
-            )
+            logger.warning("Unknown billing tier; falling back to standard multiplier")
             multiplier = 1.0
 
         adjusted_max_trials = int(max_trials * multiplier)

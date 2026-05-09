@@ -205,9 +205,9 @@ When the user explicitly says to proceed:
 Models in the config space need corresponding provider keys. Traigent auto-validates keys before starting and raises `ProviderValidationError` with details if validation fails.
 
 ```bash
-export OPENAI_API_KEY="sk-..."         # For gpt-* models
-export ANTHROPIC_API_KEY="sk-ant-..."  # For claude-* models
-export GEMINI_API_KEY="..."            # For gemini-* models
+export OPENAI_API_KEY="sk-..."         # For gpt-* models  # pragma: allowlist secret
+export ANTHROPIC_API_KEY="sk-ant-..."  # For claude-* models  # pragma: allowlist secret
+export GEMINI_API_KEY="..."            # For gemini-* models  # pragma: allowlist secret
 ```
 
 ### 2. Skip the Mock-Mode Activation and Set Cost Controls

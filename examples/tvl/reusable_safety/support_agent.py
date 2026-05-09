@@ -199,15 +199,10 @@ def main() -> None:
     print("-" * 40)
 
     for query, customer_id in queries:
-        print(f"\nCustomer {customer_id}: {query}")
-        result = support_agent(query, customer_id)
-        print(f"Agent: {result['response'][:100]}...")
-        print(
-            f"   Latency: {result['latency_ms']:.1f}ms | Cost: ${result['cost_usd']:.4f}"
-        )
-        print(
-            f"   Canned response: {'Yes' if result['used_canned_response'] else 'No'}"
-        )
+        print(f"\nCustomer {customer_id}: support query received")
+        support_agent(query, customer_id)
+        print("Agent: response generated")
+        print("   Metrics: collected")
 
     print()
     print("=" * 60)

@@ -13,10 +13,8 @@ import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from examples.langchain_problems.base import (
-    ProblemConfig,
-    ProblemDefinition,
-)
+from examples.langchain_problems.base import ProblemConfig, ProblemDefinition
+
 from . import register_problem
 
 
@@ -711,7 +709,7 @@ if __name__ == "__main__":
     base_func = problem.create_function(dataset)
     if dataset:
         result = base_func(dataset[0], problem.config)
-        print(f"Sample result: {result}")
+        print(f"Sample result type: {type(result).__name__}")
 
 
 # Register this problem

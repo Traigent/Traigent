@@ -222,3 +222,37 @@ class TestIsValidTarget:
 
         assert not is_valid_target("tests/optimizer_validation/../unit/test_foo.py")
         assert not is_valid_target("tests/optimizer_validation/../../etc/passwd")
+
+
+class TestResolveProjectFile:
+    """Tests for viewer file path resolution."""
+
+    def test_resolves_relative_project_file(self) -> None:
+        """Relative paths should resolve inside the project root."""
+        from tests.optimizer_validation.viewer.serve import (
+            PROJECT_ROOT_RESOLVED,
+            resolve_project_file,
+        )
+
+        resolved = resolve_project_file(
+            "tests/optimizer_validation/viewer/test_serve.py"
+        )
+
+        assert resolved == PROJECT_ROOT_RESOLVED / (
+            "tests/optimizer_validation/viewer/test_serve.py"
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/etc/passwd",
+            "../outside.txt",
+            "%2Fetc%2Fpasswd",
+        ],
+    )
+    def test_rejects_paths_outside_project(self, path: str) -> None:
+        """Absolute and traversal paths should be rejected."""
+        from tests.optimizer_validation.viewer.serve import resolve_project_file
+
+        with pytest.raises(ValueError):
+            resolve_project_file(path)
