@@ -36,6 +36,44 @@ def test_explicit_local_backend_still_enables_dev_mode():
         assert handler._is_dev_mode_enabled() is True
 
 
+def test_dev_mode_still_enforces_credential_format():
+    """Dev mode must not allow malformed email/password dictionaries."""
+    handler = PasswordAuthHandler()
+
+    with patch.object(handler, "_is_dev_mode_enabled", return_value=True):
+        assert handler._validate_credentials({"email": "bad", "password": "x"}) is False
+
+
+def test_validated_backend_api_url_rejects_private_host_outside_dev_mode():
+    """Password login must not send credentials to private hosts in production mode."""
+    handler = PasswordAuthHandler()
+
+    with patch.object(handler, "_is_dev_mode_enabled", return_value=False):
+        with pytest.raises(ValueError, match="host is not allowed"):
+            handler._validated_backend_api_url("http://127.0.0.1:5000/api/v1")
+
+
+def test_validated_backend_api_url_allows_local_host_in_dev_mode():
+    """Explicit dev mode may target a local backend."""
+    handler = PasswordAuthHandler()
+
+    with patch.object(handler, "_is_dev_mode_enabled", return_value=True):
+        assert (
+            handler._validated_backend_api_url("http://localhost:5000/api/v1/")
+            == "http://localhost:5000/api/v1"
+        )
+
+
+def test_validated_backend_api_url_rejects_embedded_credentials():
+    """Backend URL validation should fail before credentials are posted."""
+    handler = PasswordAuthHandler()
+
+    with pytest.raises(ValueError, match="must not include credentials"):
+        handler._validated_backend_api_url(
+            "https://user:pass@portal.traigent.ai/api/v1"  # pragma: allowlist secret
+        )
+
+
 @pytest.mark.asyncio
 async def test_invalid_credentials_propagate_even_in_dev_mode():
     """Wrong credentials should fail loudly instead of returning mock tokens."""
