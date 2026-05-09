@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30  # Job-level timeout
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Shallow clones disabled for better analysis
 

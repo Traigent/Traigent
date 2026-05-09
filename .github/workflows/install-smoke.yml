@@ -30,7 +30,7 @@ jobs:
         python-version: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -54,7 +54,7 @@ jobs:
   install-enterprise:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -79,7 +79,7 @@ jobs:
   pip-install-quickstart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4  # needed to build the wheel
+      - uses: actions/checkout@v6  # needed to build the wheel
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5

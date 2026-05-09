@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout Python SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: Traigent
 
@@ -56,7 +56,7 @@ jobs:
       # copy or the latest npm-published tag.
       - name: Checkout JS SDK
         if: steps.cross-repo-token.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Traigent/traigent-js
           ref: main
@@ -65,7 +65,7 @@ jobs:
 
       - name: Checkout TraigentSchema
         if: steps.cross-repo-token.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Traigent/TraigentSchema
           ref: main
