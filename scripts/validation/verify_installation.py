@@ -31,6 +31,7 @@ def main() -> int:
     print("Traigent Installation Verification")
     print("=" * 50)
     print('Expected install path: pip install -e ".[recommended]"')
+    print('Equivalent uv path:    uv venv --python 3.11 && uv pip install -e ".[recommended]"')
 
     all_ok = True
 
@@ -139,6 +140,7 @@ def main() -> int:
     print("Installation verification failed.")
     print("\nReinstall the documented source bundle:")
     print('  pip install -e ".[recommended]"')
+    print('  # or: uv venv --python 3.11 && uv pip install -e ".[recommended]"')
     return 1
 
 

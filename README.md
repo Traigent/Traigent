@@ -1,11 +1,5 @@
 # Traigent
 
-**Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
-
-**Our mission:** Anything you can measure, we can improve. Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
-
-
-
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
   <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
@@ -363,6 +357,7 @@ traigent --help                              # Full command reference
 | `ModuleNotFoundError` | `pip install -e ".[recommended]"` or check venv is activated |
 | 0.0% accuracy | Check dataset format; for local demos, import and call `enable_mock_mode_for_quickstart()` from `traigent.testing` |
 | Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
+| `pytest` rejects `-n` / `--dist` | Install dev test tooling first: `pip install -e ".[all,dev]"` |
 | `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](docs/guides/js-bridge.md). |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
