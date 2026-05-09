@@ -1,0 +1,52 @@
+name: Dispatch G8 Validation
+
+on:
+  workflow_run:
+    workflows: ["Tests", "release-gate"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch validation-spine G8
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch validation-spine repository_dispatch
+        env:
+          GH_TOKEN: ${{ secrets.VALIDATION_CI_PAT }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_WORKFLOW: ${{ github.event.workflow_run.name }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
+            echo "Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
+            exit 0
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_EVENT" != "pull_request" ]; then
+            echo "Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
+            exit 0
+          fi
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::VALIDATION_CI_PAT is not configured; skipping validation-spine dispatch."
+            exit 0
+          fi
+
+          source_sha="${SOURCE_HEAD_SHA:-$GITHUB_SHA}"
+          source_branch="${SOURCE_HEAD_BRANCH:-$GITHUB_REF_NAME}"
+          source_run_id="${SOURCE_RUN_ID:-$GITHUB_RUN_ID}"
+          source_workflow="${SOURCE_WORKFLOW:-$GITHUB_WORKFLOW}"
+
+          gh api --method POST repos/Traigent/traigent-validation-spine/dispatches \
+            -f event_type=validation-g8 \
+            -f client_payload[source_repo]="$SOURCE_REPO" \
+            -f client_payload[source_workflow]="$source_workflow" \
+            -f client_payload[source_run_id]="$source_run_id" \
+            -f client_payload[source_head_branch]="$source_branch" \
+            -f client_payload[source_head_sha]="$source_sha"
