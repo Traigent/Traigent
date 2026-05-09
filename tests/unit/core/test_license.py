@@ -655,11 +655,35 @@ class TestValidateOfflineLicense:
         return f"{header}.{body}.{cls._b64url_encode(signature)}"
 
     @staticmethod
+    def _create_es256_token(payload: dict, private_key) -> str:
+        """Create an ES256 JWT-like token for signature verification tests."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+        header = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"alg": "ES256"}).encode()
+        )
+        body = TestValidateOfflineLicense._b64url_encode(json.dumps(payload).encode())
+        signing_input = f"{header}.{body}".encode("ascii")
+        der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+        r, s = utils.decode_dss_signature(der_signature)
+        raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+        signature = TestValidateOfflineLicense._b64url_encode(raw_signature)
+        return f"{header}.{body}.{signature}"
+
+    @staticmethod
     def _rsa_private_key():
         """Create a small test RSA keypair."""
         from cryptography.hazmat.primitives.asymmetric import rsa
 
         return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    @staticmethod
+    def _ec_private_key():
+        """Create a P-256 test keypair."""
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        return ec.generate_private_key(ec.SECP256R1())
 
     @staticmethod
     def _public_key_pem(private_key) -> str:
@@ -718,6 +742,53 @@ class TestDecodeLicenseToken:
         assert result.organization == "Acme"
         assert result.validation_source == "offline"
 
+    def test_valid_es256_token_is_accepted(self):
+        """Test a valid ES256 token exercises the ECDSA verification branch."""
+        payload = {"tier": "pro", "features": ["parallel_execution"], "org": "Acme"}
+        private_key = TestValidateOfflineLicense._ec_private_key()
+        token = TestValidateOfflineLicense._create_es256_token(payload, private_key)
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_PUBLIC_KEY": TestValidateOfflineLicense._public_key_pem(
+                    private_key
+                )
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            result = validator._decode_license_token(token)
+        assert result is not None
+        assert result.tier == LicenseTier.PRO
+        assert LicenseFeature.PARALLEL_EXECUTION in result.features
+        assert result.organization == "Acme"
+        assert result.validation_source == "offline"
+
+    def test_es256_token_tampering_is_rejected(self):
+        """Test ES256 payload tampering fails after raw-signature conversion."""
+        private_key = TestValidateOfflineLicense._ec_private_key()
+        token = TestValidateOfflineLicense._create_es256_token(
+            {"tier": "free", "features": []}, private_key
+        )
+        header, _body, signature = token.split(".")
+        tampered_body = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"tier": "pro", "features": ["parallel_execution"]}).encode()
+        )
+        tampered_token = f"{header}.{tampered_body}.{signature}"
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_PUBLIC_KEY": TestValidateOfflineLicense._public_key_pem(
+                    private_key
+                )
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(tampered_token) is None
+
     def test_signed_token_tampering_is_rejected(self):
         """Test a signed token with a modified payload is rejected."""
         private_key = TestValidateOfflineLicense._rsa_private_key()
@@ -748,6 +819,22 @@ class TestDecodeLicenseToken:
         token = TestValidateOfflineLicense._create_token(payload)
 
         with patch.dict(os.environ, {}, clear=True):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(token) is None
+
+    def test_require_signed_overrides_unsigned_legacy_escape_hatch(self):
+        """Test require-signed mode rejects unsigned tokens even if legacy is allowed."""
+        payload = {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"}
+        token = TestValidateOfflineLicense._create_token(payload)
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true",
+                "TRAIGENT_REQUIRE_SIGNED_LICENSE": "true",
+            },
+            clear=True,
+        ):
             validator = LicenseValidator()
             assert validator._decode_license_token(token) is None
 
