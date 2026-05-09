@@ -13,6 +13,20 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
 ```
 
+### Fast path (uv)
+
+Use this path if your environment already uses `uv`. It installs the same
+source checkout and extras; `pip` remains fully supported. Replace `3.11` with
+any supported Python 3.11-3.13 interpreter available in your environment.
+
+```bash
+git clone https://github.com/Traigent/Traigent.git
+cd Traigent
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -e ".[recommended]"        # Same recommended bundle as the pip path
+```
+
 ### PyPI vs source installs
 
 `0.10.0` release validation uses the source install from this repository. Use a published package only if your team separately validates that artifact for your environment.
@@ -37,12 +51,20 @@ pip install -e ".[recommended]"           # Recommended bundle: integrations, an
 
 ## Common Scenarios
 
-- **Run examples (no API keys):**
+- **Run examples from a pip-managed source checkout (no API keys):**
 
   ```bash
   pip install -e ".[recommended]"
   export TRAIGENT_MOCK_LLM=true
-  python examples/core/rag-optimization/run.py
+  python hello_world.py
+  ```
+
+- **Run examples from a uv-managed source checkout (no API keys):**
+
+  ```bash
+  uv pip install -e ".[recommended]"
+  export TRAIGENT_MOCK_LLM=true
+  python hello_world.py
   ```
 
 - **Develop/contribute:**

@@ -13,9 +13,20 @@ python -m traigent.examples.quickstart
 
 Or from a source checkout:
 
+Pip:
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"
+python hello_world.py
+```
+
+Uv:
+
+```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -e ".[recommended]"
 python hello_world.py
 ```
 
