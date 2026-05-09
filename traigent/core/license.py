@@ -15,20 +15,21 @@ Enterprise Configuration:
 Offline-license signature configuration (phased rollout):
     TRAIGENT_LICENSE_PUBLIC_KEY - PEM-encoded RSA/EC public key inline.
     TRAIGENT_LICENSE_PUBLIC_KEY_FILE - Path to a PEM public-key file.
+    TRAIGENT_ALLOW_UNSIGNED_LICENSE - "true" temporarily accepts the
+        legacy unsigned offline-license format for migration only.
     TRAIGENT_REQUIRE_SIGNED_LICENSE - "true" rejects unsigned tokens
-        even when no public key is configured. Use this in strict /
-        enterprise / air-gapped deployments that cannot accept the
-        legacy unsigned format under any condition.
+        even when TRAIGENT_ALLOW_UNSIGNED_LICENSE is also set.
 
 Behavior:
     - If a public key is configured (env or file) the offline token's
       signature is verified and rejected if invalid.
-    - If TRAIGENT_REQUIRE_SIGNED_LICENSE is truthy, unsigned tokens are
-      rejected regardless.
-    - Otherwise the legacy unsigned format is still accepted with a
-      loud deprecation warning, and the resulting LicenseInfo is tagged
-      ``validation_source="offline_unsigned_legacy"`` so callers and
-      observability can distinguish trusted from legacy validations.
+    - If no public key is configured, offline tokens are rejected by
+      default because their signature cannot be verified.
+    - The legacy unsigned format is accepted only when
+      TRAIGENT_ALLOW_UNSIGNED_LICENSE=true, and the resulting
+      LicenseInfo is tagged ``validation_source="offline_unsigned_legacy"``
+      so callers and observability can distinguish trusted from legacy
+      validations.
 """
 
 # Traceability: CONC-Layer-Core FUNC-LICENSING REQ-LICENSE-001
@@ -306,13 +307,12 @@ class LicenseValidator:
     def _decode_license_token(self, token: str) -> LicenseInfo | None:
         """Decode and validate an offline license token.
 
-        Phased rollout: a public key (inline or file) verifies the
-        signature when configured; ``TRAIGENT_REQUIRE_SIGNED_LICENSE``
-        forces strict mode even when no key is configured. Otherwise the
-        legacy unsigned format is still accepted with a loud deprecation
-        warning and tagged ``validation_source="offline_unsigned_legacy"``
-        so air-gapped deployments are not broken in this release while
-        signed-only workflows can be enforced today.
+        A public key (inline or file) verifies the signature when
+        configured. Without a public key, the validator fails closed by
+        default because accepting the payload without verifying the
+        signature makes license forgery trivial. A short-term legacy
+        escape hatch is available via ``TRAIGENT_ALLOW_UNSIGNED_LICENSE``
+        and is tagged ``validation_source="offline_unsigned_legacy"``.
 
         If a public key is configured but cannot be loaded (unreadable
         file, malformed PEM, empty inline value), the validator MUST
@@ -328,6 +328,7 @@ class LicenseValidator:
         """
         public_key, key_was_configured = self._resolve_license_public_key()
         require_signed = self._truthy(os.environ.get("TRAIGENT_REQUIRE_SIGNED_LICENSE"))
+        allow_unsigned = self._truthy(os.environ.get("TRAIGENT_ALLOW_UNSIGNED_LICENSE"))
 
         if public_key is not None:
             return self._decode_signed_license_token(token, public_key)
@@ -352,38 +353,74 @@ class LicenseValidator:
             )
             return None
 
+        if not allow_unsigned:
+            logger.error(
+                "Offline license token cannot be verified because no "
+                "license public key is configured. Set "
+                "TRAIGENT_LICENSE_PUBLIC_KEY or "
+                "TRAIGENT_LICENSE_PUBLIC_KEY_FILE to verify signed "
+                "offline licenses. For a temporary legacy migration only, "
+                "set TRAIGENT_ALLOW_UNSIGNED_LICENSE=true."
+            )
+            return None
+
         logger.warning(
-            "Accepting an UNSIGNED offline license token. This format is "
-            "deprecated and will be removed in a future Traigent SDK "
-            "release. Provision a signing keypair and set "
-            "TRAIGENT_LICENSE_PUBLIC_KEY (or _FILE) to verify offline "
-            "licenses; set TRAIGENT_REQUIRE_SIGNED_LICENSE=true to refuse "
-            "unsigned tokens immediately."
+            "Accepting an UNSIGNED offline license token because "
+            "TRAIGENT_ALLOW_UNSIGNED_LICENSE=true. This format is "
+            "deprecated and must be used only for short-term migration. "
+            "Provision a signing keypair and set TRAIGENT_LICENSE_PUBLIC_KEY "
+            "(or _FILE) to verify offline licenses."
         )
         return self._decode_unsigned_license_token(token)
+
+    @staticmethod
+    def _b64url_decode(segment: str) -> bytes:
+        """Decode a JWT base64url segment strictly."""
+        padded = segment + "=" * ((-len(segment)) % 4)
+        return base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+
+    @classmethod
+    def _decode_jwt_json_segment(cls, segment: str, name: str) -> dict | None:
+        """Decode a JWT JSON segment into an object dictionary."""
+        try:
+            value = json.loads(cls._b64url_decode(segment).decode("utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to decode license token %s: %s", name, exc)
+            return None
+        if not isinstance(value, dict):
+            logger.warning("Invalid license token %s: expected object", name)
+            return None
+        return value
 
     def _decode_signed_license_token(
         self, token: str, public_key
     ) -> LicenseInfo | None:
         """Verify the JWT signature on the offline license and decode it."""
         try:
-            import jwt as pyjwt
-        except ImportError:
-            logger.error(
-                "PyJWT is required to verify signed license tokens but is "
-                "not installed."
-            )
-            return None
+            parts = token.split(".")
+            if len(parts) != 3:
+                logger.warning("Invalid license token format")
+                return None
 
-        try:
-            payload = pyjwt.decode(
-                token,
-                public_key,
-                algorithms=list(self._SUPPORTED_LICENSE_ALGORITHMS),
-                options={"verify_aud": False},
-            )
+            header = self._decode_jwt_json_segment(parts[0], "header")
+            if header is None:
+                return None
+
+            alg = header.get("alg")
+            if alg not in self._SUPPORTED_LICENSE_ALGORITHMS:
+                logger.warning("Unsupported offline license signing algorithm: %s", alg)
+                return None
+
+            signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+            signature = self._b64url_decode(parts[2])
+            self._verify_license_signature(alg, public_key, signature, signing_input)
+
+            payload = self._decode_jwt_json_segment(parts[1], "payload")
         except Exception as exc:
             logger.warning("Signed license verification failed: %s", exc)
+            return None
+
+        if payload is None:
             return None
 
         info = self._build_license_info(payload, validation_source="offline")
@@ -394,6 +431,34 @@ class LicenseValidator:
             return None
         return info
 
+    @staticmethod
+    def _verify_license_signature(
+        alg: str, public_key, signature: bytes, signing_input: bytes
+    ) -> None:
+        """Verify a JWT signature with cryptography's public-key APIs."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, padding, utils
+
+        if alg == "RS256":
+            public_key.verify(
+                signature,
+                signing_input,
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+            return
+
+        if alg == "ES256":
+            if len(signature) != 64:
+                raise ValueError("ES256 signature must be 64 raw bytes")
+            r = int.from_bytes(signature[:32], "big")
+            s = int.from_bytes(signature[32:], "big")
+            der_signature = utils.encode_dss_signature(r, s)
+            public_key.verify(der_signature, signing_input, ec.ECDSA(hashes.SHA256()))
+            return
+
+        raise ValueError(f"Unsupported offline license signing algorithm: {alg}")
+
     def _decode_unsigned_license_token(self, token: str) -> LicenseInfo | None:
         """Legacy path: base64-decode the middle segment without verifying."""
         try:
@@ -402,12 +467,22 @@ class LicenseValidator:
                 logger.warning("Invalid license token format")
                 return None
 
-            payload_b64 = parts[1]
-            payload_b64 += "=" * ((-len(payload_b64)) % 4)
-            payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
-            payload = json.loads(payload_json)
+            header = self._decode_jwt_json_segment(parts[0], "header")
+            if header is None:
+                return None
+            if str(header.get("alg", "none")).lower() != "none":
+                logger.warning(
+                    "Refusing to parse a signed-looking license token without "
+                    "signature verification."
+                )
+                return None
+
+            payload = self._decode_jwt_json_segment(parts[1], "payload")
         except Exception as exc:
             logger.warning("Failed to decode license token: %s", exc)
+            return None
+
+        if payload is None:
             return None
 
         info = self._build_license_info(

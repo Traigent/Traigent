@@ -208,7 +208,6 @@ class ClaudeCodeSDKProvider(LLMProvider):
                 prompt=generation_prompt,
                 options=ClaudeCodeOptions(
                     system_prompt="You are an expert at generating diverse, high-quality training examples for LLM optimization problems. Always respond with valid JSON only.",
-                    permission_mode="bypassPermissions",  # Since we're just generating text
                     max_turns=1,  # We only need one response
                 ),
             ):
