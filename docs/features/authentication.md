@@ -164,7 +164,15 @@ Credentials are stored using file-based storage with restricted permissions:
 The SDK checks for credentials in this order:
 1. Environment variables (highest priority)
 2. CLI stored credentials (from `traigent auth login`)
-3. Default test credentials (development mode only)
+3. Explicit dev-mode credentials — only when **both** of these are set:
+   - `TRAIGENT_DEV_MODE=true` (or `TRAIGENT_GENERATE_MOCKS=true`)
+   - `TRAIGENT_DEV_API_KEY=<value>`
+
+   Setting only the dev-mode flag (without `TRAIGENT_DEV_API_KEY`) returns no
+   credential — the SDK does **not** ship a hard-coded sentinel string fallback.
+   This keeps an accidental `TRAIGENT_DEV_MODE=true` in production strictly
+   inert rather than handing out a known string the backend may have hardcoded
+   for testing.
 
 ## Security Features
 
