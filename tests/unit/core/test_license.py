@@ -687,7 +687,7 @@ class TestValidateOfflineLicense:
 
     @staticmethod
     def _public_key_pem(private_key) -> str:
-        """Serialize a test RSA public key to PEM."""
+        """Serialize a test public key (RSA or EC) to PEM."""
         from cryptography.hazmat.primitives import serialization
 
         return (
@@ -880,6 +880,22 @@ class TestDecodeLicenseToken:
         token = TestValidateOfflineLicense._create_rs256_token(
             {"tier": "pro", "features": ["parallel_execution"]}, private_key
         )
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+        ):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(token) is None
+
+    def test_null_algorithm_token_rejected_even_when_legacy_is_allowed(self):
+        """Test legacy mode requires an explicit alg=none header."""
+        header = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"alg": None}).encode()
+        )
+        body = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"tier": "pro", "features": ["parallel_execution"]}).encode()
+        )
+        token = f"{header}.{body}.{TestValidateOfflineLicense._b64url_encode(b'sig')}"
 
         with patch.dict(
             os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True

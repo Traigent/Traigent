@@ -470,7 +470,7 @@ class LicenseValidator:
             header = self._decode_jwt_json_segment(parts[0], "header")
             if header is None:
                 return None
-            if str(header.get("alg", "none")).lower() != "none":
+            if header.get("alg", "none") != "none":
                 logger.warning(
                     "Refusing to parse a signed-looking license token without "
                     "signature verification."
