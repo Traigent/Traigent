@@ -23,6 +23,7 @@ from traigent.evaluators.base import (
     _maybe_restore_trial_context,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.optimization_logger import sanitize_for_logging
 
 logger = get_logger(__name__)
 
@@ -389,7 +390,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             EvaluationError: If evaluation fails
         """
         logger.info(
-            f"Starting custom evaluation with {len(dataset.examples)} examples, config: {config}"
+            "Starting custom evaluation with %s examples, config: %s",
+            len(dataset.examples),
+            sanitize_for_logging(config),
         )
 
         start_time = time.time()
