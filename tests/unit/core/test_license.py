@@ -976,11 +976,15 @@ class TestDecodeLicenseToken:
 
     def test_invalid_base64_payload(self):
         """Test token with invalid base64 payload returns None."""
+        header = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"alg": "none"}).encode()
+        )
+        token = f"{header}.!!!invalid!!!.signature"
         with patch.dict(
             os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
         ):
             validator = LicenseValidator()
-            result = validator._decode_license_token("header.!!!invalid!!!.signature")
+            result = validator._decode_license_token(token)
         assert result is None
 
     def test_invalid_json_payload(self):
