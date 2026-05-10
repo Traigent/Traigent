@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from datetime import UTC
+from random import SystemRandom
 from typing import Any, TypeVar
 
 from traigent.api.types import TrialResult
@@ -27,6 +28,8 @@ from traigent.optimizers.remote_services import (
 )
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
+
+_SECURE_RANDOM = SystemRandom()
 
 T = TypeVar("T")
 logger = get_logger(__name__)
@@ -314,9 +317,7 @@ class CloudOptimizer(BaseOptimizer):
                     self.optimization_strategy.min_examples_per_trial, len(full_dataset)
                 )
 
-                import random
-
-                selected_examples = random.sample(full_dataset, subset_size)
+                selected_examples = _SECURE_RANDOM.sample(full_dataset, subset_size)
 
                 dataset_subset = DatasetSubset(
                     examples=selected_examples,

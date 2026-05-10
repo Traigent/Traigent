@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from random import SystemRandom
 from typing import Any, cast
 
 from traigent.api.types import TrialResult
@@ -24,6 +25,7 @@ from traigent.utils.exceptions import ServiceError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_SECURE_RANDOM = SystemRandom()
 
 
 class ServiceStatus(StrEnum):
@@ -415,13 +417,11 @@ class RemoteOptimizationService(ABC):
         )
 
         # Create simple dataset subset
-        import random
-
         subset_size = min(strategy.min_examples_per_trial, len(full_dataset))
         if strategy.max_examples_per_trial:
             subset_size = min(subset_size, strategy.max_examples_per_trial)
 
-        selected_examples = random.sample(full_dataset, subset_size)
+        selected_examples = _SECURE_RANDOM.sample(full_dataset, subset_size)
         subset = DatasetSubset(
             examples=selected_examples,
             selection_strategy="random_fallback",
@@ -871,18 +871,14 @@ class MockRemoteService(RemoteOptimizationService):
             for param_name, param_def in session.config_space.items():
                 if isinstance(param_def, list):
                     # Categorical parameter
-                    import random
-
-                    config[param_name] = random.choice(param_def)
+                    config[param_name] = _SECURE_RANDOM.choice(param_def)
                 elif isinstance(param_def, tuple) and len(param_def) == 2:
                     # Continuous parameter
-                    import random
-
                     low, high = param_def
                     if isinstance(low, int) and isinstance(high, int):
-                        config[param_name] = random.randint(low, high)
+                        config[param_name] = _SECURE_RANDOM.randint(low, high)
                     else:
-                        config[param_name] = random.uniform(low, high)
+                        config[param_name] = _SECURE_RANDOM.uniform(low, high)
                 else:
                     # Fixed parameter
                     config[param_name] = param_def
@@ -1046,8 +1042,6 @@ class MockRemoteService(RemoteOptimizationService):
         trial_count: int,
     ) -> DatasetSubset:
         """Select strategic dataset subset based on optimization state."""
-        import random
-
         total_examples = len(full_dataset)
         min_size = strategy.min_examples_per_trial
         max_size = strategy.max_examples_per_trial or total_examples
@@ -1073,7 +1067,7 @@ class MockRemoteService(RemoteOptimizationService):
         subset_size = min(subset_size, total_examples)
 
         # Mock selection currently ignores strategy; the real service would vary sampling.
-        selected = random.sample(full_dataset, subset_size)
+        selected = _SECURE_RANDOM.sample(full_dataset, subset_size)
 
         return DatasetSubset(
             examples=selected,

@@ -11,12 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from random import SystemRandom
 from typing import Any
 
 from traigent.api.types import OptimizationStatus, Trial, TrialResult, TrialStatus
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_SECURE_RANDOM = SystemRandom()
 
 # Re-export Trial from api.types for backward compatibility
 
@@ -252,18 +254,16 @@ class ConfigurationSpace:
         Returns:
             Dictionary with random values for all parameters
         """
-        import random
-
         config = {}
         for param in self.parameters:
             if param.type == ParameterType.FLOAT:
-                config[param.name] = random.uniform(*param.bounds)
+                config[param.name] = _SECURE_RANDOM.uniform(*param.bounds)
             elif param.type == ParameterType.INTEGER:
-                config[param.name] = random.randint(*param.bounds)
+                config[param.name] = _SECURE_RANDOM.randint(*param.bounds)
             elif param.type == ParameterType.CATEGORICAL:
-                config[param.name] = random.choice(param.bounds)
+                config[param.name] = _SECURE_RANDOM.choice(param.bounds)
             elif param.type == ParameterType.BOOLEAN:
-                config[param.name] = random.choice([True, False])
+                config[param.name] = _SECURE_RANDOM.choice([True, False])
 
         return config
 
