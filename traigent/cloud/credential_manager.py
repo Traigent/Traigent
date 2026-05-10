@@ -108,6 +108,11 @@ class CredentialManager:
                     "backend_url": BackendConfig.get_backend_url(),
                     "source": "development",
                 }
+            logger.debug(
+                "Development mode is enabled but TRAIGENT_DEV_API_KEY is not set; "
+                "returning empty credentials. Set TRAIGENT_DEV_API_KEY to a value "
+                "the backend recognizes for dev-mode auth."
+            )
 
         return {}
 
