@@ -57,10 +57,22 @@ class CredentialManager:
                 logger.debug("Using JWT token from CLI credentials")
                 return cast(str, stored_creds["jwt_token"])
 
-        # Development fallback
+        # Development fallback. The dev-mode credential is no longer hard-coded
+        # in source: the operator must explicitly set TRAIGENT_DEV_API_KEY when
+        # they enable development mode. This removes the SAST blocker on a
+        # literal credential string in source (Sonar python:S6418) and makes
+        # accidental dev-mode-in-production strictly inert rather than handing
+        # out a known sentinel string.
         if cls._is_development_environment():
-            logger.debug("Using default test credentials (development only)")
-            return "test_api_key_for_development"
+            dev_key = cls._get_dev_api_key()
+            if dev_key:
+                logger.debug("Using TRAIGENT_DEV_API_KEY (development only)")
+                return dev_key
+            logger.debug(
+                "Development mode is enabled but TRAIGENT_DEV_API_KEY is not set; "
+                "no dev-mode credential will be returned. Set TRAIGENT_DEV_API_KEY "
+                "to a value the backend recognizes for dev-mode auth."
+            )
 
         logger.debug("No API key found in any source")
         return None
@@ -87,13 +99,15 @@ class CredentialManager:
             stored_creds["source"] = "cli"
             return stored_creds
 
-        # Development fallback
+        # Development fallback (env-driven; see get_api_key for rationale).
         if cls._is_development_environment():
-            return {
-                "api_key": "test_api_key_for_development",  # pragma: allowlist secret
-                "backend_url": BackendConfig.get_backend_url(),
-                "source": "development",
-            }
+            dev_key = cls._get_dev_api_key()
+            if dev_key:
+                return {
+                    "api_key": dev_key,
+                    "backend_url": BackendConfig.get_backend_url(),
+                    "source": "development",
+                }
 
         return {}
 
@@ -203,6 +217,18 @@ class CredentialManager:
         """Return API key from supported environment variables."""
 
         return os.environ.get("TRAIGENT_API_KEY")
+
+    @staticmethod
+    def _get_dev_api_key() -> str | None:
+        """Return the development-mode API key from TRAIGENT_DEV_API_KEY.
+
+        Used only when :meth:`_is_development_environment` is true. Empty or
+        unset values yield None — the SDK does NOT fall back to a hard-coded
+        sentinel string, so accidentally enabling dev mode in production is
+        inert rather than handing out a known credential.
+        """
+        value = os.environ.get("TRAIGENT_DEV_API_KEY", "").strip()
+        return value or None
 
     @classmethod
     def clear_credentials(cls) -> bool:
