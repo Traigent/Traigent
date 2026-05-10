@@ -543,6 +543,54 @@ class TestBuildCredentialsFromTokenData:
         set_key_fn.assert_called_once()
 
 
+class TestOAuth2RefreshHardening:
+    """Security regressions for OAuth2 token refresh."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_rejects_local_cloud_base_url(self, config):
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        result = await tm.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "OAuth2 cloud_base_url is not allowed"
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_error_message_does_not_return_raw_body(
+        self, token_manager_with_callbacks
+    ):
+        token_manager, _credentials = token_manager_with_callbacks
+
+        async def fail_refresh(*_args, **_kwargs):
+            raise RuntimeError(
+                "500: {'access_token':'secret-token-value','password':'secret'}"  # pragma: allowlist secret
+            )
+
+        with patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            side_effect=fail_refresh,
+        ):
+            result = await token_manager.refresh_jwt_secure("refresh_token")
+
+        assert result.success is False
+        assert result.error_message == "Token refresh failed"
+        assert "secret-token-value" not in result.error_message
+        assert "password" not in result.error_message
+
+
 class TestGetAuthorizationHeader:
     """Test authorization header generation."""
 
