@@ -2,20 +2,21 @@
 """Generate Traigent API key from email/password.
 
 Usage:
-    # Via command line args:
-    python scripts/auth/get_api_key.py --email user@example.com --password yourpass
+    # Via interactive prompt:
+    python scripts/auth/get_api_key.py --email user@example.com
 
     # Via environment variables:
     export TRAIGENT_AUTH_EMAIL=user@example.com
     export TRAIGENT_AUTH_PASSWORD=yourpass
     python scripts/auth/get_api_key.py
 
-    # Mixed (CLI args take precedence):
-    export TRAIGENT_AUTH_PASSWORD=yourpass
-    python scripts/auth/get_api_key.py --email user@example.com
+    # Via stdin for automation:
+    printf '%s\n' "$TRAIGENT_AUTH_PASSWORD" | \
+        python scripts/auth/get_api_key.py --email user@example.com --password-stdin
 """
 
 import argparse
+import getpass
 import ipaddress
 import json
 import os
@@ -23,9 +24,10 @@ import socket
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlparse, urlunparse
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 # Auto-load .env file if python-dotenv is available
 try:
@@ -76,6 +78,14 @@ def _safe_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
         else:
             safe_headers[key] = value
     return safe_headers
+
+
+def _read_password_from_stdin() -> str:
+    """Read one password line from stdin without exposing it in process args."""
+    password = sys.stdin.readline().rstrip("\r\n")
+    if not password:
+        raise ValueError("No password received on stdin") from None
+    return password
 
 
 def normalize_backend_url(backend_url: str) -> str:
@@ -249,7 +259,7 @@ def get_api_key(
     if key_resp.status_code != 201:
         raise Exception(f"API key creation failed: HTTP {key_resp.status_code}")
 
-    api_key = key_data["data"]["key"]
+    api_key = cast(str, key_data["data"]["key"])
     print("\n✅ API key created successfully!")
 
     return api_key
@@ -265,9 +275,9 @@ def main() -> None:
         help="Email address (or set TRAIGENT_AUTH_EMAIL env var)",
     )
     parser.add_argument(
-        "--password",
-        "-p",
-        help="Password (or set TRAIGENT_AUTH_PASSWORD env var)",
+        "--password-stdin",
+        action="store_true",
+        help="Read password from stdin instead of TRAIGENT_AUTH_PASSWORD or prompt",
     )
     parser.add_argument(
         "--backend-url",
@@ -279,7 +289,7 @@ def main() -> None:
         "-v",
         action="store_true",
         default=True,
-        help="Show full response bodies (default: True)",
+        help="Show redacted response diagnostics (default: True)",
     )
     parser.add_argument(
         "--quiet",
@@ -290,9 +300,14 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Get values from args or env vars (args take precedence)
+    # Get values from args or env vars. Passwords are intentionally never accepted
+    # as argv because local users can inspect process arguments on many systems.
     email = args.email or os.environ.get("TRAIGENT_AUTH_EMAIL")
-    password = args.password or os.environ.get("TRAIGENT_AUTH_PASSWORD")
+    password = os.environ.get("TRAIGENT_AUTH_PASSWORD")
+    if args.password_stdin:
+        password = _read_password_from_stdin()
+    elif not password and sys.stdin.isatty():
+        password = getpass.getpass("Password: ")
     backend_url = (
         args.backend_url
         or os.environ.get("TRAIGENT_BACKEND_URL")
@@ -305,7 +320,10 @@ def main() -> None:
         sys.exit(1)
 
     if not password:
-        print("Error: Password required. Use --password or set TRAIGENT_AUTH_PASSWORD")
+        print(
+            "Error: Password required. Set TRAIGENT_AUTH_PASSWORD, use "
+            "--password-stdin, or run from an interactive terminal."
+        )
         sys.exit(1)
 
     verbose = not args.quiet
