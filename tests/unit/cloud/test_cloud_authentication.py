@@ -1290,8 +1290,8 @@ class TestPasswordAuthentication:
 
         assert result is False
 
-    def test_validate_login_credentials_dev_mode_skips_validation(self):
-        """Test _validate_login_credentials skips validation in dev mode."""
+    def test_validate_login_credentials_dev_mode_enforces_format(self):
+        """Test _validate_login_credentials still validates format in dev mode."""
         manager = AuthManager()
         credentials = {
             "email": "bad",
@@ -1303,7 +1303,7 @@ class TestPasswordAuthentication:
         ):
             result = manager._validate_login_credentials(credentials)
 
-        assert result is True
+        assert result is False
 
     def test_should_rate_limit_login_no_failures(self):
         """Test _should_rate_limit_login returns False with no failures."""

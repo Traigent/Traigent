@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import secrets
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.core.constants import MAX_RETRIES
@@ -164,9 +166,9 @@ class PasswordAuthHandler:
         """Validate email/password credentials without logging sensitive values."""
         if self._is_dev_mode_enabled():
             logger.warning(
-                "Development mode enabled - skipping strict credential validation"
+                "Development mode enabled - backend outage fallback is allowed, "
+                "but credential format is still enforced"
             )
-            return True
 
         required_fields = {"email", "password"}
         if not all(field in credentials for field in required_fields):
@@ -210,6 +212,40 @@ class PasswordAuthHandler:
 
         return False
 
+    def _validated_backend_api_url(self, backend_api_url: str) -> str:
+        """Validate the backend login target before sending credentials."""
+        candidate = (backend_api_url or "").strip().rstrip("/")
+        parsed = urlparse(candidate)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Backend API URL is invalid") from None
+        if parsed.username or parsed.password:
+            raise ValueError("Backend API URL must not include credentials") from None
+        if parsed.query or parsed.fragment:
+            raise ValueError(
+                "Backend API URL must not include query or fragment data"
+            ) from None
+
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("Backend API URL is invalid") from None
+
+        normalized_host = hostname.strip("[]").rstrip(".").lower()
+        allow_local = self._is_dev_mode_enabled()
+        if not allow_local and (
+            normalized_host in {"localhost", "localhost.localdomain"}
+            or normalized_host.endswith(".localhost")
+        ):
+            raise ValueError("Backend API URL host is not allowed") from None
+
+        try:
+            host_ip = ipaddress.ip_address(normalized_host)
+        except ValueError:
+            return candidate
+
+        if not allow_local and not host_ip.is_global:
+            raise ValueError("Backend API URL host is not allowed") from None
+        return candidate
+
     async def _perform_authentication(
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
@@ -222,7 +258,9 @@ class PasswordAuthHandler:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_cloud_api_url()
+        backend_api_url = self._validated_backend_api_url(
+            BackendConfig.get_cloud_api_url()
+        )
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
@@ -246,15 +284,17 @@ class PasswordAuthHandler:
                     if response.status == 401:
                         raise InvalidCredentialsError("Invalid credentials")
                     if response.status == 429:
-                        error_msg = await response.text()
-                        raise Exception(f"429 Rate Limited: {error_msg}")
+                        await response.text()
+                        raise RuntimeError("Backend authentication rate limited")
                     if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"{response.status}: {error_text}")
+                        await response.text()
+                        raise RuntimeError(
+                            f"Backend authentication failed with status {response.status}"
+                        )
 
                     data = await response.json()
                     if not data.get("success"):
-                        raise ValueError(data.get("error", "Authentication failed"))
+                        raise ValueError("Authentication failed")
 
                     token_data = data.get("data", {})
                     access_token = token_data.get("access_token", "")
@@ -276,9 +316,10 @@ class PasswordAuthHandler:
                     return token_data
 
         try:
-            return await client.execute_with_retry(
+            result = await client.execute_with_retry(
                 perform_login, operation_name="backend_authentication"
             )
+            return cast(dict[str, Any] | None, result)
         except InvalidCredentialsError:
             raise
         except Exception as exc:
