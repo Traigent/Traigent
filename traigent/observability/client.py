@@ -92,11 +92,13 @@ class _SyncBatchTransport:
         batch_size: int,
         max_buffer_age: float,
         max_queue_size: int,
+        max_batch_bytes: int,
     ) -> None:
         self._sender = sender
         self.batch_size = batch_size
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
+        self.max_batch_bytes = max_batch_bytes
         self._retry_handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
         self._buffer: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
@@ -189,9 +191,17 @@ class _SyncBatchTransport:
                     self._stats["pending_items"] = 0
                     return
 
-                batch_items = []
+                batch_items: list[tuple[str, dict[str, Any]]] = []
+                batch_bytes = 0
                 for _ in range(min(self.batch_size, len(self._buffer))):
+                    item = next(iter(self._buffer.items()))
+                    item_bytes = len(
+                        json.dumps({"traces": [item[1]]}, default=str).encode("utf-8")
+                    )
+                    if batch_items and batch_bytes + item_bytes > self.max_batch_bytes:
+                        break
                     batch_items.append(self._buffer.popitem(last=False))
+                    batch_bytes += item_bytes
                 self._stats["pending_items"] = len(self._buffer)
 
             self._send_batch(batch_items)
@@ -663,6 +673,7 @@ class ObservabilityClient:
             batch_size=self.config.batch_size,
             max_buffer_age=self.config.max_buffer_age,
             max_queue_size=self.config.max_queue_size,
+            max_batch_bytes=self.config.max_batch_bytes,
         )
 
     def _send_payload_batch(
