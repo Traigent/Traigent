@@ -128,6 +128,41 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
     assert result.items_dropped >= 1
 
 
+def test_observability_client_chunks_flushes_by_byte_limit():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            max_batch_bytes=1,
+        ),
+        sender=sender,
+    )
+
+    for index in range(3):
+        trace_id = client.start_trace(
+            f"trace-{index}",
+            trace_id=f"trace_{index}",
+            input_data={"prompt": "hello"},
+        )
+        client.end_trace(trace_id, output_data={"answer": "hi"})
+
+    result = client.flush()
+    client.close()
+
+    assert result.success is True
+    assert [len(batch) for batch in sent_batches] == [1, 1, 1]
+    assert result.items_pending == 0
+    assert result.successful_batches == 3
+
+
 def test_observability_client_preserves_existing_usage_fields_on_update():
     sent_batches: list[list[dict]] = []
 
