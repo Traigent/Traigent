@@ -61,9 +61,6 @@ def _patched_merge(self, aggregated_metrics, comprehensive_metrics):
 
 _le.LocalEvaluator._merge_comprehensive_metrics = _patched_merge
 
-_orig_agg = _le.LocalEvaluator._compute_aggregated_custom_metrics
-
-
 def _patched_agg(self, example_results, tracker_example_metrics=None):
     aggregated = {}
     for metric_name in self.metric_functions:
@@ -175,10 +172,9 @@ async def main() -> None:
 
     trials = result.trials if hasattr(result, "trials") and result.trials else []
     best_metrics = {}
-    if trials:
-        best_trial = max(
-            trials,
-            key=lambda t: t.metrics.get("accuracy", t.metrics.get("score", float("-inf"))),
+    if trials and result.best_config:
+        best_trial = next(
+            (t for t in trials if t.config == result.best_config), trials[0]
         )
         best_metrics = {
             k: v for k, v in best_trial.metrics.items()
