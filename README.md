@@ -123,7 +123,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | Goal | Resource | Time |
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
-| **Understand the architecture** | [Architecture Overview](#-architecture-overview) | 5 min |
+| **Understand the architecture** | [Architecture Overview](#architecture-overview) | 5 min |
 | **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
 | **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
@@ -153,6 +153,8 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Agent Configuration Hooks** | [![Agent Hooks Demo](docs/demos/output/github-hooks-still.svg)](docs/demos/output/github-hooks.svg) |
 
 </details>
+
+<a id="architecture-overview"></a>
 
 <details>
 <summary>🏗️ Architecture Overview — how it works</summary>
