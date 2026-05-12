@@ -48,6 +48,10 @@ from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
 
 logger = get_logger(__name__)
 
+_TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
+_TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
+_TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
+
 
 def _new_trace_id() -> str:
     return f"trace_{uuid.uuid4().hex}"
@@ -192,10 +196,11 @@ class _SyncBatchTransport:
                     return
 
                 batch_items: list[tuple[str, dict[str, Any]]] = []
-                batch_payloads: list[dict[str, Any]] = []
+                batch_body_bytes = 0
                 for _ in range(min(self.batch_size, len(self._buffer))):
                     item_id, payload = next(iter(self._buffer.items()))
-                    item_bytes = self._batch_payload_size([payload])
+                    payload_bytes = self._payload_json_size(payload)
+                    item_bytes = self._batch_payload_size_from_body(payload_bytes)
                     if item_bytes > self.max_batch_bytes:
                         self._buffer.popitem(last=False)
                         self._stats["dropped_items"] += 1
@@ -213,13 +218,16 @@ class _SyncBatchTransport:
                         )
                         continue
 
-                    projected_bytes = self._batch_payload_size(
-                        [*batch_payloads, payload]
+                    projected_body_bytes = batch_body_bytes + payload_bytes
+                    if batch_items:
+                        projected_body_bytes += _TRACE_BATCH_ITEM_SEPARATOR_BYTES
+                    projected_bytes = self._batch_payload_size_from_body(
+                        projected_body_bytes
                     )
                     if batch_items and projected_bytes > self.max_batch_bytes:
                         break
                     batch_items.append(self._buffer.popitem(last=False))
-                    batch_payloads.append(payload)
+                    batch_body_bytes = projected_body_bytes
                 self._stats["pending_items"] = len(self._buffer)
 
             if not batch_items:
@@ -229,6 +237,14 @@ class _SyncBatchTransport:
     @staticmethod
     def _batch_payload_size(payloads: list[dict[str, Any]]) -> int:
         return len(json.dumps({"traces": payloads}, default=str).encode("utf-8"))
+
+    @staticmethod
+    def _payload_json_size(payload: dict[str, Any]) -> int:
+        return len(json.dumps(payload, default=str).encode("utf-8"))
+
+    @staticmethod
+    def _batch_payload_size_from_body(body_bytes: int) -> int:
+        return _TRACE_BATCH_PREFIX_BYTES + body_bytes + _TRACE_BATCH_SUFFIX_BYTES
 
     def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
         payloads = [payload for _, payload in batch_items]
