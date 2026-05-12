@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 from datetime import datetime, timezone
 from urllib import error
@@ -16,9 +17,14 @@ from traigent.observability import (
     ThumbRating,
     observe,
 )
+from traigent.observability.client import _SyncBatchTransport
 from traigent.observability.decorators import set_default_observability_client
 from traigent.observability.dtos import ObservationDTO
 from traigent.utils.exceptions import AuthenticationError, ClientError
+
+
+def _encoded_trace_batch_size(traces: list[dict]) -> int:
+    return len(json.dumps({"traces": traces}, default=str).encode("utf-8"))
 
 
 def test_observability_client_flushes_trace_payloads():
@@ -134,33 +140,58 @@ def test_observability_client_chunks_flushes_by_byte_limit():
     def sender(traces):
         sent_batches.append(traces)
 
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=100,
-            max_buffer_age=999.0,
-            max_queue_size=10,
-            max_batch_bytes=1,
-        ),
+    payloads = [
+        {"id": f"trace_{index}", "input_data": {"prompt": "x" * 64}}
+        for index in range(3)
+    ]
+    max_batch_bytes = _encoded_trace_batch_size(payloads[:2])
+    assert _encoded_trace_batch_size(payloads[:3]) > max_batch_bytes
+
+    transport = _SyncBatchTransport(
         sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=max_batch_bytes,
     )
 
-    for index in range(3):
-        trace_id = client.start_trace(
-            f"trace-{index}",
-            trace_id=f"trace_{index}",
-            input_data={"prompt": "hello"},
-        )
-        client.end_trace(trace_id, output_data={"answer": "hi"})
+    for payload in payloads:
+        transport.submit(payload["id"], payload)
 
-    result = client.flush()
-    client.close()
+    result = transport.flush()
+    transport.close()
 
     assert result.success is True
-    assert [len(batch) for batch in sent_batches] == [1, 1, 1]
+    assert [len(batch) for batch in sent_batches] == [2, 1]
     assert result.items_pending == 0
-    assert result.successful_batches == 3
+    assert result.successful_batches == 2
+
+
+def test_observability_client_drops_single_payload_over_byte_limit():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    payload = {"id": "trace_oversized", "input_data": {"prompt": "x" * 128}}
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=_encoded_trace_batch_size([payload]) - 1,
+    )
+
+    assert transport.submit(payload["id"], payload) is True
+
+    result = transport.flush()
+    transport.close()
+
+    assert sent_batches == []
+    assert result.items_sent == 0
+    assert result.items_dropped == 1
+    assert result.items_pending == 0
+    assert "exceeding max_batch_bytes" in result.errors[0]
 
 
 def test_observability_client_preserves_existing_usage_fields_on_update():

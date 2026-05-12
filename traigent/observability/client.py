@@ -192,19 +192,43 @@ class _SyncBatchTransport:
                     return
 
                 batch_items: list[tuple[str, dict[str, Any]]] = []
-                batch_bytes = 0
+                batch_payloads: list[dict[str, Any]] = []
                 for _ in range(min(self.batch_size, len(self._buffer))):
-                    item = next(iter(self._buffer.items()))
-                    item_bytes = len(
-                        json.dumps({"traces": [item[1]]}, default=str).encode("utf-8")
+                    item_id, payload = next(iter(self._buffer.items()))
+                    item_bytes = self._batch_payload_size([payload])
+                    if item_bytes > self.max_batch_bytes:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is {item_bytes} bytes, exceeding "
+                            f"max_batch_bytes={self.max_batch_bytes}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "its encoded size %d exceeds max_batch_bytes=%d",
+                            item_id,
+                            item_bytes,
+                            self.max_batch_bytes,
+                        )
+                        continue
+
+                    projected_bytes = self._batch_payload_size(
+                        [*batch_payloads, payload]
                     )
-                    if batch_items and batch_bytes + item_bytes > self.max_batch_bytes:
+                    if batch_items and projected_bytes > self.max_batch_bytes:
                         break
                     batch_items.append(self._buffer.popitem(last=False))
-                    batch_bytes += item_bytes
+                    batch_payloads.append(payload)
                 self._stats["pending_items"] = len(self._buffer)
 
+            if not batch_items:
+                continue
             self._send_batch(batch_items)
+
+    @staticmethod
+    def _batch_payload_size(payloads: list[dict[str, Any]]) -> int:
+        return len(json.dumps({"traces": payloads}, default=str).encode("utf-8"))
 
     def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
         payloads = [payload for _, payload in batch_items]
