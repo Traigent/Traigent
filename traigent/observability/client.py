@@ -235,10 +235,6 @@ class _SyncBatchTransport:
             self._send_batch(batch_items)
 
     @staticmethod
-    def _batch_payload_size(payloads: list[dict[str, Any]]) -> int:
-        return len(json.dumps({"traces": payloads}, default=str).encode("utf-8"))
-
-    @staticmethod
     def _payload_json_size(payload: dict[str, Any]) -> int:
         return len(json.dumps(payload, default=str).encode("utf-8"))
 
