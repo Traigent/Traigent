@@ -658,7 +658,9 @@ class TestSyncManager:
         """A 404 from an existing /datasets endpoint should not hit the legacy route."""
         benchmark_data = {"id": "bench_123", "name": "Test Benchmark"}
 
-        sync_manager._session.post.return_value = Mock(status_code=404, text="dataset not found")
+        sync_manager._session.post.return_value = Mock(
+            status_code=404, text="dataset not found"
+        )
         sync_manager._session.get.return_value = Mock(status_code=200)
 
         result = sync_manager._sync_benchmark(benchmark_data)
@@ -670,6 +672,21 @@ class TestSyncManager:
             json=benchmark_data,
             timeout=sync_manager._request_timeout,
         )
+
+    def test_dataset_route_probe_exception_does_not_cache_support(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Transient probe failures should not become cached route truth."""
+        sync_manager._session.get.side_effect = requests.Timeout("timed out")
+
+        assert sync_manager._supports_dataset_route() is True
+        assert sync_manager._dataset_route_supported is None
+
+        sync_manager._session.get.side_effect = None
+        sync_manager._session.get.return_value = Mock(status_code=404)
+
+        assert sync_manager._supports_dataset_route() is False
+        assert sync_manager._dataset_route_supported is False
 
     def test_sync_experiment_success(self, sync_manager: SyncManager) -> None:
         """Test successful experiment sync."""

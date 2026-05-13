@@ -1178,7 +1178,7 @@ class CostTracker:
                     "sync_timestamp": time.time(),
                 }
 
-                # Simulate server sync (would be actual HTTP call in production)
+                # Attempt server sync through the configured transport.
                 success = await self._send_costs_to_server(sync_payload)
 
                 if success:
@@ -1208,11 +1208,12 @@ class CostTracker:
         Returns:
             True if successful
         """
-        # Placeholder for actual server communication
-        # In production, this would make HTTP requests to the backend
-        logger.debug(f"Simulating server sync of {len(payload['cost_items'])} items")
-        await asyncio.sleep(0.1)  # Simulate network delay
-        return True
+        logger.warning(
+            "Cost server sync requested for %d items, but no billing sync "
+            "transport is configured",
+            len(payload["cost_items"]),
+        )
+        return False
 
     # Utility Methods
 

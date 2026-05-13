@@ -365,22 +365,12 @@ class TraigentCloudService:
         Returns:
             List of optimization records
         """
-        # In real implementation, this would query a database
-        # For demo, return mock data
-        mock_history = []
-        for i in range(min(limit, 10)):
-            mock_history.append(
-                {
-                    "request_id": f"opt_{int(time.time() * 1000) - i * 60000}",
-                    "function_name": f"function_{i % 3 + 1}",
-                    "timestamp": time.time() - i * 3600,
-                    "trials_count": 25 + i * 5,
-                    "cost_reduction": 0.6 + (i % 3) * 0.1,
-                    "status": "completed",
-                }
-            )
-
-        return mock_history
+        logger.warning(
+            "Optimization history retrieval is not wired to persistent storage; "
+            "returning no records",
+            extra={"user_id": user_id, "limit": limit},
+        )
+        return []
 
     def create_optimization_request(
         self,
