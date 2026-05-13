@@ -235,7 +235,7 @@ class ServiceCapabilities:
     """
 
     version: str
-    supports_evaluate: bool = True
+    supports_evaluate: bool = False
     supports_evaluation_kwargs: bool = False
     supports_keep_alive: bool = False
     supports_streaming: bool = False
@@ -248,7 +248,7 @@ class ServiceCapabilities:
         """Create from dictionary (API response)."""
         return cls(
             version=data.get("version", "1.0"),
-            supports_evaluate=data.get("supports_evaluate", True),
+            supports_evaluate=data.get("supports_evaluate", False),
             supports_evaluation_kwargs=data.get("supports_evaluation_kwargs", False),
             supports_keep_alive=data.get("supports_keep_alive", False),
             supports_streaming=data.get("supports_streaming", False),

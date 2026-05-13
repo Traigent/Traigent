@@ -167,8 +167,11 @@ class OptimizationOrchestrator:
         )
 
         raw_constraints = kwargs.pop("constraints", None)
+        raw_safety_constraints = kwargs.pop("safety_constraints", None)
         default_config = kwargs.pop("default_config", None)
-        self._init_constraints(raw_constraints)
+        combined_constraints = list(raw_constraints or [])
+        combined_constraints.extend(raw_safety_constraints or [])
+        self._init_constraints(combined_constraints)
 
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema

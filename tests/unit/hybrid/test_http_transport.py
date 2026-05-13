@@ -676,7 +676,7 @@ class TestHTTPTransportAdditionalMethods:
             caps = await transport.capabilities()
 
         assert caps.version == "1.0"
-        assert caps.supports_evaluate is True  # Default
+        assert caps.supports_evaluate is False  # Safe default
 
     @pytest.mark.asyncio
     async def test_discover_config_space(self, transport: HTTPTransport) -> None:

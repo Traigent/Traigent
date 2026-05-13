@@ -718,6 +718,27 @@ class TestDecoratorIntegration:
         assert len(my_func.safety_constraints) == 1
         assert isinstance(my_func.safety_constraints[0], CompoundSafetyConstraint)
 
+    def test_safety_constraints_are_post_eval_orchestrator_constraints(self) -> None:
+        """Safety constraints must be wired into runtime post-eval enforcement."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.evaluators.local import LocalEvaluator
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        constraint = custom_safety(
+            "must_pass",
+            lambda config, metrics: metrics.get("safety_score", 0.0),
+        ).above(1.0)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=RandomSearchOptimizer({"p": [1]}, ["accuracy"], max_trials=1),
+            evaluator=LocalEvaluator(metrics=["accuracy"]),
+            max_trials=1,
+            safety_constraints=[constraint],
+        )
+
+        assert constraint in orchestrator._constraints_post_eval
+        assert constraint({"p": 1}, {"safety_score": 0.0}) is False
+
 
 class TestAPIExports:
     """Tests for public API exports."""

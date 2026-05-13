@@ -296,8 +296,8 @@ class HTTPTransport:
             )
             return self._capabilities
         except TransportError:
-            # If capabilities endpoint not available, return defaults
-            logger.warning("Capabilities endpoint not available, using defaults")
+            # Missing capabilities must not claim support for optional endpoints.
+            logger.warning("Capabilities endpoint not available, using safe defaults")
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 

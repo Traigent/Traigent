@@ -154,7 +154,10 @@ class MetricsComputer:
             else:
                 computed_metrics["avg_output_length"] = 0.0
 
-        # Custom metric computation can be added here
+        custom_metrics = self.compute_custom_metrics(
+            invocation_results, expected_outputs
+        )
+        computed_metrics.update(custom_metrics)
 
         end_time = time.time()
         duration = end_time - start_time

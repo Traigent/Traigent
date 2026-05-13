@@ -831,6 +831,40 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "best_for": "Expensive evaluations, continuous optimization, sample efficiency",
             }
 
+        elif algorithm in {
+            "optuna",
+            "optuna_tpe",
+            "tpe",
+            "optuna_random",
+            "optuna_grid",
+            "optuna_cmaes",
+            "optuna_nsga2",
+            "nsga2",
+        }:
+            optuna_names = {
+                "optuna": "Optuna TPE Optimization",
+                "optuna_tpe": "Optuna TPE Optimization",
+                "tpe": "Optuna TPE Optimization",
+                "optuna_random": "Optuna Random Search",
+                "optuna_grid": "Optuna Grid Search",
+                "optuna_cmaes": "Optuna CMA-ES Optimization",
+                "optuna_nsga2": "Optuna NSGA-II Optimization",
+                "nsga2": "Optuna NSGA-II Optimization",
+            }
+            strategies[algorithm] = {
+                "name": optuna_names[algorithm],
+                "description": "Optuna-backed optimization strategy",
+                "supports_continuous": algorithm not in {"optuna_grid"},
+                "supports_categorical": True,
+                "deterministic": algorithm in {"optuna_grid"},
+                "parameters": {
+                    "max_trials": "Maximum number of trials",
+                    "random_seed": "Random seed for reproducibility when supported",
+                    "objective_weights": "Weights for multi-objective aggregation",
+                },
+                "best_for": "Advanced search strategies and multi-objective optimization",
+            }
+
         # Add more algorithms as they are implemented
 
         else:

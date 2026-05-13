@@ -342,7 +342,7 @@ class TestMCPTransportCapabilities:
         caps = await transport.capabilities()
 
         assert caps.version == "1.0"
-        assert caps.supports_evaluate is True  # Default
+        assert caps.supports_evaluate is False  # Safe default
         assert caps.supports_keep_alive is False  # Default
 
 
