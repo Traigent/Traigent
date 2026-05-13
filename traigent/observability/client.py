@@ -48,6 +48,10 @@ from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
 
 logger = get_logger(__name__)
 
+_TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
+_TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
+_TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
+
 
 def _new_trace_id() -> str:
     return f"trace_{uuid.uuid4().hex}"
@@ -92,11 +96,13 @@ class _SyncBatchTransport:
         batch_size: int,
         max_buffer_age: float,
         max_queue_size: int,
+        max_batch_bytes: int,
     ) -> None:
         self._sender = sender
         self.batch_size = batch_size
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
+        self.max_batch_bytes = max_batch_bytes
         self._retry_handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
         self._buffer: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
@@ -189,12 +195,67 @@ class _SyncBatchTransport:
                     self._stats["pending_items"] = 0
                     return
 
-                batch_items = []
+                batch_items: list[tuple[str, dict[str, Any]]] = []
+                batch_body_bytes = 0
                 for _ in range(min(self.batch_size, len(self._buffer))):
+                    item_id, payload = next(iter(self._buffer.items()))
+                    try:
+                        payload_bytes = self._payload_json_size(payload)
+                    except TypeError as exc:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is not JSON serializable: {exc}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "it is not JSON serializable: %s",
+                            item_id,
+                            exc,
+                        )
+                        continue
+                    item_bytes = self._batch_payload_size_from_body(payload_bytes)
+                    if item_bytes > self.max_batch_bytes:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is {item_bytes} bytes, exceeding "
+                            f"max_batch_bytes={self.max_batch_bytes}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "its encoded size %d exceeds max_batch_bytes=%d",
+                            item_id,
+                            item_bytes,
+                            self.max_batch_bytes,
+                        )
+                        continue
+
+                    projected_body_bytes = batch_body_bytes + payload_bytes
+                    if batch_items:
+                        projected_body_bytes += _TRACE_BATCH_ITEM_SEPARATOR_BYTES
+                    projected_bytes = self._batch_payload_size_from_body(
+                        projected_body_bytes
+                    )
+                    if batch_items and projected_bytes > self.max_batch_bytes:
+                        break
                     batch_items.append(self._buffer.popitem(last=False))
+                    batch_body_bytes = projected_body_bytes
                 self._stats["pending_items"] = len(self._buffer)
 
+            if not batch_items:
+                continue
             self._send_batch(batch_items)
+
+    @staticmethod
+    def _payload_json_size(payload: dict[str, Any]) -> int:
+        return len(json.dumps(payload).encode("utf-8"))
+
+    @staticmethod
+    def _batch_payload_size_from_body(body_bytes: int) -> int:
+        return _TRACE_BATCH_PREFIX_BYTES + body_bytes + _TRACE_BATCH_SUFFIX_BYTES
 
     def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
         payloads = [payload for _, payload in batch_items]
@@ -663,6 +724,7 @@ class ObservabilityClient:
             batch_size=self.config.batch_size,
             max_buffer_age=self.config.max_buffer_age,
             max_queue_size=self.config.max_queue_size,
+            max_batch_bytes=self.config.max_batch_bytes,
         )
 
     def _send_payload_batch(
