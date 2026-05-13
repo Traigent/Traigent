@@ -487,6 +487,7 @@ class TestGetVersionInfo:
         assert features["constraint_handling"] is True
         assert features["async_evaluation"] is True
         assert features["parallel_evaluation"] is True
+        assert features["seamless_injection"] is True
 
         # Check integrations
         integrations = info["integrations"]
