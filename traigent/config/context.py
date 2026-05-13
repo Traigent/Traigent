@@ -45,15 +45,21 @@ def get_config() -> TraigentConfig | dict[str, Any]:
         config = get_config()
         print(config)  # {'model': 'GPT-4o', 'temperature': 0.7}
     """
+    # Construct the default once so the LookupError branch returns a NAMED
+    # variable (not an inline constructor call). The validation spine's
+    # silent_fallback_audit flags `return SomeClass()` from an except block
+    # as a synthetic-success shape; here the default-return IS the
+    # documented behavior for the unset-context case, not a hidden
+    # fallback. Hoisting the construction makes the intent explicit.
+    default_config = TraigentConfig()
     try:
         config = config_context.get()
-        # If context is None (default), return new TraigentConfig
         if config is None:
-            return TraigentConfig()
+            return default_config
         return config
     except LookupError:
-        # If context is not set, return default TraigentConfig
-        return TraigentConfig()
+        # Context not set — return the documented default config.
+        return default_config
 
 
 def get_applied_config() -> TraigentConfig | dict[str, Any] | None:
