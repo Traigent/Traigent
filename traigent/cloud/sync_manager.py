@@ -512,10 +512,10 @@ class SyncManager:
             )
         except requests.RequestException as exc:
             logger.warning(
-                "Failed probing /datasets route support; assuming canonical endpoint exists: %s",
+                "Failed probing /datasets route support; using canonical endpoint "
+                "for this attempt without caching route support: %s",
                 exc,
             )
-            self._dataset_route_supported = True
             return True
 
         self._dataset_route_supported = response.status_code != 404

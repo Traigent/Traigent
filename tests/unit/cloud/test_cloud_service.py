@@ -657,48 +657,38 @@ class TestTraigentCloudService:
         asyncio.run(run_test())
 
     def test_get_optimization_history(self, cloud_service):
-        """Test getting optimization history."""
+        """Unwired history retrieval should return no records."""
 
         async def run_test():
             history = await cloud_service.get_optimization_history(
                 user_id="test_user", limit=5
             )
 
-            assert len(history) == 5
-            for record in history:
-                assert "request_id" in record
-                assert "function_name" in record
-                assert "timestamp" in record
-                assert "trials_count" in record
-                assert "cost_reduction" in record
-                assert "status" in record
-                assert record["status"] == "completed"
+            assert history == []
 
         import asyncio
 
         asyncio.run(run_test())
 
     def test_get_optimization_history_large_limit(self, cloud_service):
-        """Test optimization history with large limit."""
+        """Large limits should not synthesize fake history."""
 
         async def run_test():
             history = await cloud_service.get_optimization_history(limit=100)
 
-            # Should return max 10 records (mock data limit)
-            assert len(history) == 10
+            assert history == []
 
         import asyncio
 
         asyncio.run(run_test())
 
     def test_get_optimization_history_no_user_id(self, cloud_service):
-        """Test optimization history without user ID."""
+        """Missing user IDs should not synthesize fake history."""
 
         async def run_test():
             history = await cloud_service.get_optimization_history(limit=3)
 
-            assert len(history) == 3
-            # Should work without user_id (demo mode)
+            assert history == []
 
         import asyncio
 

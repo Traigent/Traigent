@@ -11,6 +11,7 @@ and MCP client operations.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 import time
 from dataclasses import dataclass, field
@@ -531,9 +532,7 @@ class IntegrationManager:
                 logger.warning(f"No integration found for session {session_id}")
                 return None
 
-            mode = integration["mode"]
-
-            if mode == "private":
+            if self._is_privacy_integration(integration):
                 suggestion = await self._backend_client.get_next_privacy_trial(
                     session_id, previous_results
                 )
@@ -604,13 +603,32 @@ class IntegrationManager:
 
             # Submit to backend client
             integration = self._get_integration_for_session(session_id)
-            if integration and integration["mode"] == "private":
-                success = await self._backend_client.submit_privacy_trial_results(
+            if not integration:
+                logger.warning(f"No integration found for session {session_id}")
+                return False
+
+            if self._is_privacy_integration(integration):
+                submit_results = getattr(
+                    self._backend_client,
+                    "submit_privacy_trial_results",
+                    None,
+                )
+                if submit_results is None:
+                    logger.warning(
+                        "Backend client does not support privacy trial result submission"
+                    )
+                    return False
+
+                success = await submit_results(
                     session_id, trial_id, config, metrics, duration, error_message
                 )
                 return cast(bool, success)
 
-            return True
+            logger.warning(
+                "Trial result submission is not implemented for integration mode %s",
+                self._integration_mode_name(integration),
+            )
+            return False
 
         except asyncio.CancelledError:
             raise
@@ -676,6 +694,9 @@ class IntegrationManager:
         Returns:
             True if cancellation successful
         """
+        if self._backend_client is None:
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
+
         try:
             validate_or_raise(
                 CoreValidators.validate_string_non_empty(session_id, "session_id")
@@ -685,7 +706,27 @@ class IntegrationManager:
             return False
 
         try:
-            # Cancel in lifecycle manager
+            backend_cancel = getattr(self._backend_client, "cancel_session", None)
+            if backend_cancel is None:
+                logger.warning(
+                    "Backend client does not expose cancel_session; "
+                    "session %s was not cancelled",
+                    session_id,
+                )
+                return False
+
+            backend_result = backend_cancel(session_id)
+            if inspect.isawaitable(backend_result):
+                backend_result = await backend_result
+
+            if not backend_result:
+                logger.warning(
+                    "Backend cancellation for session %s did not succeed",
+                    session_id,
+                )
+                return False
+
+            # Cancel in lifecycle manager after backend cancellation succeeds.
             lifecycle_manager.cancel_session(session_id)
 
             # Update integration tracking
@@ -714,6 +755,26 @@ class IntegrationManager:
                 if integration["result"].session_id == session_id:
                     return integration
         return None
+
+    @staticmethod
+    def _integration_mode_name(integration: dict[str, Any]) -> str:
+        """Return the effective integration mode name."""
+        result = integration.get("result")
+        result_metadata = getattr(result, "metadata", None)
+        if not isinstance(result_metadata, dict):
+            result_metadata = {}
+        mode = result_metadata.get("mode", integration.get("mode", ""))
+        if isinstance(mode, IntegrationMode):
+            return mode.value
+        return str(mode)
+
+    @classmethod
+    def _is_privacy_integration(cls, integration: dict[str, Any]) -> bool:
+        """Return whether an active integration uses the privacy workflow."""
+        return cls._integration_mode_name(integration) in {
+            IntegrationMode.PRIVACY.value,
+            "private",
+        }
 
     def _get_integration_id_for_session(self, session_id: str) -> str | None:
         """Get integration ID for session."""

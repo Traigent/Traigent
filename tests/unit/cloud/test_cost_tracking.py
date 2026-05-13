@@ -453,6 +453,26 @@ class TestCostTrackerAsync:
             with pytest.raises(asyncio.CancelledError):
                 await tracker._sync_loop()
 
+    @pytest.mark.asyncio
+    async def test_manual_sync_fails_closed_without_server_transport(self):
+        """Manual sync must not clear pending items without a real transport."""
+        tracker = CostTracker(
+            CostTrackingConfig(enable_server_sync=True, cache_costs_locally=False)
+        )
+        tracker.track_custom_cost(
+            session_id="session-123",
+            category=CostCategory.COMPUTE,
+            description="compute",
+            cost=0.1,
+        )
+
+        success = await tracker.manual_sync()
+
+        assert success is False
+        assert len(tracker._pending_sync_items) == 1
+        assert tracker._stats["failed_syncs"] == 1
+        assert tracker._stats["successful_syncs"] == 0
+
 
 class TestCostTrackerIntegration:
     """Integration tests for CostTracker."""
