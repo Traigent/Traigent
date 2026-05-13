@@ -950,9 +950,15 @@ def get_version_info() -> dict[str, Any]:
                 registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
                 or "bayesian" in algorithms  # Fallback: check if registered
             ),
-            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE) or True,
-            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL) or True,
-            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS) or True,
+            # Batch 2 fix: removed `or True` bypasses. These three features
+            # were unconditionally advertised as available regardless of
+            # whether the registry actually registered them. If a downstream
+            # user needs them to always report True, the registry should
+            # declare them at base-SDK init time, NOT a presentation-layer
+            # bypass.
+            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE),
+            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL),
+            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS),
             "cloud_execution": registry.has_feature(FEATURE_CLOUD),
             "tracing": registry.has_feature(FEATURE_TRACING),
             "analytics": registry.has_feature(FEATURE_ANALYTICS),
