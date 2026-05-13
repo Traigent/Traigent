@@ -283,13 +283,21 @@ class TestCredentialSecurity:
             result2 = asyncio.run(auth_manager.authenticate(credentials))
             assert result2.success
 
-        headers2 = asyncio.run(auth_manager.get_auth_headers())
+            headers2 = asyncio.run(auth_manager.get_auth_headers())
 
-        # Headers should be different (if session tokens are used)
-        # This test may need adjustment based on actual implementation
-        assert (
-            headers1 == headers2 or True
-        )  # Currently always passes due to stateless auth
+        # Stateless auth: headers are derived from credentials each call,
+        # NOT from a server-issued session token. So `headers1 == headers2`
+        # IS the prevention property — there's no session ID for an
+        # attacker to fix between authentications.
+        # If this test starts failing because the headers differ, it means
+        # hidden session state crept in and the fixation-prevention guarantee
+        # needs re-verification (potentially restructure the test to assert
+        # the new session token differs from any prior one).
+        assert headers1 == headers2, (
+            "Stateless auth should produce identical headers on re-authentication "
+            "with the same credentials; any difference indicates hidden session "
+            "state that could be vulnerable to fixation attacks."
+        )
 
     def test_credential_injection_attempts(self):
         """Test prevention of credential injection attacks."""
