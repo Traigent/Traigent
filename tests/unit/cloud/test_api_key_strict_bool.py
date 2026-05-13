@@ -172,6 +172,22 @@ async def test_validate_rejects_invalid_backend_validation_url():
 
 
 @pytest.mark.asyncio
+async def test_validate_rejects_plaintext_backend_validation_url():
+    """Backend key validation must not send API keys over plaintext HTTP."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://backend.example.test"
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL must use HTTPS"
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "backend_url",
     [

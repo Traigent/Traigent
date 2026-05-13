@@ -1089,8 +1089,8 @@ class AuthManager:
                 error_message="Invalid API key format",
             )
 
-        # Structured warning: never log the key value or any value derived from it.
-        logger.warning(
+        # Structured diagnostic: never log the key value or any value derived from it.
+        logger.debug(
             "auth.api_key.validate_start",
             extra={
                 "auth_mode": AuthMode.API_KEY.value,
@@ -1296,7 +1296,7 @@ class AuthManager:
         var is not set, development auth is rejected with a migration-friendly
         error message rather than silently passing.
         """
-        logger.warning(
+        logger.debug(
             "auth.development.attempt",
             extra={
                 "auth_mode": AuthMode.DEVELOPMENT.value,
@@ -1473,6 +1473,8 @@ class AuthManager:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return "backend validation URL is invalid"
+        if parsed.scheme != "https":
+            return "backend validation URL must use HTTPS"
         if parsed.username or parsed.password:
             return "backend validation URL must not include credentials"
         hostname = parsed.hostname
