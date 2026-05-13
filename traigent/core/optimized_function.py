@@ -1519,6 +1519,7 @@ class OptimizedFunction:
             agent_measures=getattr(self, "agent_measures", None),
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
+            safety_constraints=getattr(self, "safety_constraints", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured

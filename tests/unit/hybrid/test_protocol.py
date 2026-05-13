@@ -208,12 +208,18 @@ class TestServiceCapabilities:
         """Test default capabilities."""
         caps = ServiceCapabilities(version="1.0")
         assert caps.version == "1.0"
-        assert caps.supports_evaluate is True
+        assert caps.supports_evaluate is False
         assert caps.supports_evaluation_kwargs is False
         assert caps.supports_keep_alive is False
         assert caps.supports_streaming is False
         assert caps.max_batch_size == 100
         assert caps.max_payload_bytes is None
+
+    def test_from_dict_defaults_do_not_claim_evaluate(self) -> None:
+        """Missing optional endpoint flags should fail closed."""
+        caps = ServiceCapabilities.from_dict({"version": "1.0"})
+
+        assert caps.supports_evaluate is False
 
     def test_from_dict(self) -> None:
         """Test creating from dictionary."""

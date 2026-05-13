@@ -591,6 +591,7 @@ def collect_orchestrator_kwargs(
     agent_measures: dict[str, Any] | None,
     global_measures: dict[str, Any] | None,
     promotion_gate: Any | None,
+    safety_constraints: list[Any] | None = None,
     invocations_per_example: int = 1,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
@@ -605,6 +606,7 @@ def collect_orchestrator_kwargs(
         agent_measures: Agent measures mapping
         global_measures: Global measures mapping
         promotion_gate: Promotion gate configuration
+        safety_constraints: Post-evaluation safety constraints
         invocations_per_example: Number of invocations per example (default: 1)
 
     Returns:
@@ -642,6 +644,7 @@ def collect_orchestrator_kwargs(
         ("agent_measures", agent_measures, None),
         ("global_measures", global_measures, None),
         ("promotion_gate", promotion_gate, None),
+        ("safety_constraints", safety_constraints, None),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:
