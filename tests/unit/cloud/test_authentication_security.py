@@ -283,7 +283,7 @@ class TestCredentialSecurity:
             result2 = asyncio.run(auth_manager.authenticate(credentials))
             assert result2.success
 
-        headers2 = asyncio.run(auth_manager.get_auth_headers())
+            headers2 = asyncio.run(auth_manager.get_auth_headers())
 
         # Stateless auth: headers are derived from credentials each call,
         # NOT from a server-issued session token. So `headers1 == headers2`
