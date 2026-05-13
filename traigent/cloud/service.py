@@ -365,10 +365,11 @@ class TraigentCloudService:
         Returns:
             List of optimization records
         """
-        logger.warning(
+        logger.debug(
             "Optimization history retrieval is not wired to persistent storage; "
-            "returning no records",
-            extra={"user_id": user_id, "limit": limit},
+            "returning no records (user_id=%s, limit=%d)",
+            user_id,
+            limit,
         )
         return []
 

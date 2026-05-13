@@ -1208,7 +1208,7 @@ class CostTracker:
         Returns:
             True if successful
         """
-        logger.warning(
+        logger.debug(
             "Cost server sync requested for %d items, but no billing sync "
             "transport is configured",
             len(payload["cost_items"]),

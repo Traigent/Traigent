@@ -237,6 +237,33 @@ async def test_cancel_session_returns_backend_cancel_result(monkeypatch):
     manager._backend_client.cancel_session.assert_awaited_once_with("session-1")
 
 
+@pytest.mark.asyncio
+async def test_cancel_session_success_removes_active_integration(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        cancel_session=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "privacy",
+        }
+    }
+    manager._integration_stats["active_sessions"] = 1
+
+    success = await manager.cancel_session("session-1")
+
+    assert success is True
+    assert lifecycle_stub.calls == [("cancel_session", "session-1")]
+    manager._backend_client.cancel_session.assert_awaited_once_with("session-1")
+    assert manager._active_integrations == {}
+    assert manager._integration_stats["active_sessions"] == 0
+
+
 # Tests for RuntimeError when clients are not initialized
 
 
