@@ -199,7 +199,22 @@ class _SyncBatchTransport:
                 batch_body_bytes = 0
                 for _ in range(min(self.batch_size, len(self._buffer))):
                     item_id, payload = next(iter(self._buffer.items()))
-                    payload_bytes = self._payload_json_size(payload)
+                    try:
+                        payload_bytes = self._payload_json_size(payload)
+                    except TypeError as exc:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is not JSON serializable: {exc}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "it is not JSON serializable: %s",
+                            item_id,
+                            exc,
+                        )
+                        continue
                     item_bytes = self._batch_payload_size_from_body(payload_bytes)
                     if item_bytes > self.max_batch_bytes:
                         self._buffer.popitem(last=False)
@@ -236,7 +251,7 @@ class _SyncBatchTransport:
 
     @staticmethod
     def _payload_json_size(payload: dict[str, Any]) -> int:
-        return len(json.dumps(payload, default=str).encode("utf-8"))
+        return len(json.dumps(payload).encode("utf-8"))
 
     @staticmethod
     def _batch_payload_size_from_body(body_bytes: int) -> int:

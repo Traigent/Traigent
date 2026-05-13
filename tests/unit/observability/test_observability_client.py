@@ -24,7 +24,7 @@ from traigent.utils.exceptions import AuthenticationError, ClientError
 
 
 def _encoded_trace_batch_size(traces: list[dict]) -> int:
-    return len(json.dumps({"traces": traces}, default=str).encode("utf-8"))
+    return len(json.dumps({"traces": traces}).encode("utf-8"))
 
 
 def test_observability_client_flushes_trace_payloads():
@@ -192,6 +192,33 @@ def test_observability_client_drops_single_payload_over_byte_limit():
     assert result.items_dropped == 1
     assert result.items_pending == 0
     assert "exceeding max_batch_bytes" in result.errors[0]
+
+
+def test_observability_client_drops_non_json_payload_before_send():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+
+    assert transport.submit("trace_bad", {"id": "trace_bad", "when": datetime.now()})
+    assert transport.submit("trace_good", {"id": "trace_good", "name": "ok"})
+
+    result = transport.flush()
+    transport.close()
+
+    assert sent_batches == [[{"id": "trace_good", "name": "ok"}]]
+    assert result.items_sent == 1
+    assert result.items_dropped == 1
+    assert result.items_pending == 0
+    assert "not JSON serializable" in result.errors[0]
 
 
 def test_observability_client_preserves_existing_usage_fields_on_update():
