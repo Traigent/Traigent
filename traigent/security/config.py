@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from typing import NoReturn
 
 
 class SecurityProfile(Enum):
@@ -99,7 +100,7 @@ def get_security_flags() -> SecurityFlags:
     )
 
 
-def reset_security_cache() -> None:
+def reset_security_cache() -> NoReturn:
     """Compatibility shim. Previously a silent `return None`, which the
     validation spine flagged as a `public_stub_runtime` (Batch 1 of the
     public-surface gate). Either a real cache-reset implementation lands
