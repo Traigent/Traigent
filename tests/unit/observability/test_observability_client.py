@@ -239,6 +239,42 @@ def test_observability_client_redacts_trace_payloads_before_submit():
     assert "[REDACTED:bearer_token]" in payload_blob
 
 
+def test_sync_batch_transport_redacts_direct_submitted_payloads():
+    """Direct transport submissions must be scrubbed before buffering and sending."""
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    transport = _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=10_000,
+    )
+
+    accepted = transport.submit(
+        "trace_direct",
+        {
+            "id": "trace_direct",
+            "user_id": "alice@example.com",
+            "metadata": {"api_key": FAKE_TRACE_API_KEY},
+        },
+    )
+
+    result = transport.flush()
+    transport.close()
+
+    payload_blob = str(sent_batches)
+    assert accepted is True
+    assert result.success is True
+    assert "alice@example.com" not in payload_blob
+    assert FAKE_TRACE_API_KEY not in payload_blob
+    assert "[REDACTED:email]" in payload_blob
+    assert "[REDACTED:api_key]" in payload_blob
+
+
 def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
     sent_batches: list[list[dict]] = []
 
