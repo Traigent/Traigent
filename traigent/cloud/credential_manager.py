@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.config.backend_config import BackendConfig
+from traigent.security.credentials import SecurityError, get_secure_credential_store
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -23,6 +24,7 @@ logger = get_logger(__name__)
 # Constants matching CLI auth
 TRAIGENT_CONFIG_DIR = Path.home() / ".traigent"
 CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
+SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
 
 
 class CredentialManager:
@@ -127,7 +129,26 @@ class CredentialManager:
         Returns:
             Stored credentials or None
         """
+        secure_credentials = cls._load_secure_cli_credentials()
+        if secure_credentials is not None:
+            return secure_credentials
+
         if CREDENTIALS_FILE.exists():
+            if os.getenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", "").lower() not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                logger.warning(
+                    "Ignoring legacy plaintext CLI credentials at %s. Configure "
+                    "TRAIGENT_MASTER_PASSWORD and rerun 'traigent auth login', or "
+                    "set TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS=true only for "
+                    "one-time migration.",
+                    CREDENTIALS_FILE,
+                )
+                return None
+
             # Best-effort permission tightening (may fail on NFS/containers)
             try:
                 file_mode = CREDENTIALS_FILE.stat().st_mode & 0o777
@@ -151,6 +172,31 @@ class CredentialManager:
                 logger.debug("Failed to load credentials file: %s", e)
 
         return None
+
+    @classmethod
+    def _load_secure_cli_credentials(cls) -> dict[str, Any] | None:
+        """Load encrypted CLI credentials from the secure credential store."""
+        try:
+            store = get_secure_credential_store()
+            serialized = store.get(SECURE_CLI_CREDENTIAL_NAME, check_env=False)
+        except SecurityError as e:
+            logger.debug("Secure CLI credential store unavailable: %s", e)
+            return None
+
+        if not serialized:
+            return None
+
+        try:
+            credentials = json.loads(serialized)
+        except (TypeError, ValueError) as e:
+            logger.warning("Secure CLI credential payload is invalid JSON: %s", e)
+            return None
+
+        if not isinstance(credentials, dict):
+            logger.warning("Secure CLI credential payload must be a JSON object")
+            return None
+
+        return dict(credentials)
 
     @classmethod
     def get_stored_api_key_only(cls) -> str | None:

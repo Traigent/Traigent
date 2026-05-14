@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -268,8 +269,8 @@ class TrialError:
             "timestamp": _serialize_datetime(
                 self.timestamp, datetime_format=datetime_format
             ),
-            "config": _json_safe_trial_value(
-                self.config, datetime_format=datetime_format
+            "config": redact_sensitive_data(
+                _json_safe_trial_value(self.config, datetime_format=datetime_format)
             ),
         }
 
@@ -361,16 +362,16 @@ class TrialResult:
         }
 
         if include_config:
-            result["config"] = _json_safe_trial_value(
-                self.config, datetime_format=datetime_format
+            result["config"] = redact_sensitive_data(
+                _json_safe_trial_value(self.config, datetime_format=datetime_format)
             )
         if include_metrics:
             result["metrics"] = _json_safe_trial_value(
                 self.metrics, datetime_format=datetime_format
             )
         if include_metadata:
-            result["metadata"] = _json_safe_trial_value(
-                self.metadata, datetime_format=datetime_format
+            result["metadata"] = redact_sensitive_data(
+                _json_safe_trial_value(self.metadata, datetime_format=datetime_format)
             )
 
         return result

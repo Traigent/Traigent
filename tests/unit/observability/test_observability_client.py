@@ -8,6 +8,7 @@ from urllib import error
 
 import pytest
 
+from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
     ObservabilityClient,
@@ -132,6 +133,51 @@ def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
 
     assert stats["dropped_items"] >= 1
     assert result.items_dropped >= 1
+
+
+def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
+    """Transport rejections must be visible instead of silently dropping traces."""
+
+    class RejectingTransport:
+        def submit(self, trace_id, payload):
+            assert trace_id == "trace_rejected"
+            assert payload["id"] == "trace_rejected"
+            return False
+
+        def get_stats(self):
+            return {"errors": ["queue full for api-secret_123456789012345"]}
+
+        def close(self):
+            return BatchFlushResult(
+                success=True,
+                items_sent=0,
+                items_pending=0,
+                items_dropped=0,
+                successful_batches=0,
+                failed_batches=0,
+                errors=[],
+                warnings=[],
+            )
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            max_queue_size=1,
+        )
+    )
+    client._transport = RejectingTransport()
+
+    caplog.set_level(logging.WARNING, logger="traigent.observability.client")
+    trace_id = client.start_trace("trace-rejected", trace_id="trace_rejected")
+
+    client._queue_trace_snapshot(trace_id)
+    client.close()
+
+    assert "trace_rejected" in caplog.text
+    assert "queue full" in caplog.text
+    assert "api-secret_123456789012345" not in caplog.text
+    assert "[REDACTED:api_key]" in caplog.text
 
 
 def test_observability_client_chunks_flushes_by_byte_limit():

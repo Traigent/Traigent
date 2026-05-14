@@ -38,6 +38,11 @@ from traigent.cloud.auth import (
 from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
+from traigent.security.credentials import (
+    CredentialType,
+    SecurityError,
+    get_secure_credential_store,
+)
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -50,6 +55,8 @@ BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 
 # Storage location identifier
 STORAGE_FILE = "file"
+STORAGE_SECURE = "secure"
+SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
 
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
 MSG_CHECK_NETWORK = "Please check your network connection and try again.\n"
@@ -86,7 +93,25 @@ class TraigentAuthCLI:
         Returns:
             Stored credentials or None if not found
         """
+        secure_credentials = self._load_secure_credentials()
+        if secure_credentials is not None:
+            return secure_credentials
+
         if self.credentials_file.exists():
+            if os.getenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", "").lower() not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                logger.warning(
+                    "Ignoring legacy plaintext credentials at %s. Configure "
+                    "TRAIGENT_MASTER_PASSWORD and run 'traigent auth login' again, "
+                    "or set TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS=true only for "
+                    "one-time migration.",
+                    self.credentials_file,
+                )
+                return None
             try:
                 with open(self.credentials_file) as f:
                     data = json.load(f)
@@ -103,8 +128,32 @@ class TraigentAuthCLI:
 
         return None
 
+    def _load_secure_credentials(self) -> dict[str, Any] | None:
+        """Load encrypted CLI credentials from the secure credential store."""
+        try:
+            store = get_secure_credential_store()
+            serialized = store.get(SECURE_CLI_CREDENTIAL_NAME, check_env=False)
+        except SecurityError as exc:
+            logger.debug("Secure credential store unavailable: %s", exc)
+            return None
+
+        if not serialized:
+            return None
+
+        try:
+            decoded = json.loads(serialized)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Secure CLI credential payload is invalid JSON: %s", exc)
+            return None
+
+        if not isinstance(decoded, dict):
+            logger.warning("Secure CLI credential payload must be a JSON object")
+            return None
+
+        return dict(decoded)
+
     def _save_credentials(self, credentials: dict[str, Any]) -> str | None:
-        """Save credentials to local file with restricted permissions.
+        """Save credentials to encrypted local storage.
 
         Args:
             credentials: Credentials to save
@@ -113,20 +162,21 @@ class TraigentAuthCLI:
             Storage location string if saved successfully, None if failed
         """
         try:
-            self.credentials_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            # Use os.open with explicit mode to avoid a window where the
-            # file is world-readable between creation and chmod.
-            fd = os.open(
-                str(self.credentials_file),
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                0o600,
+            store = get_secure_credential_store()
+            store.set(
+                SECURE_CLI_CREDENTIAL_NAME,
+                json.dumps(credentials, separators=(",", ":")),
+                CredentialType.TOKEN,
+                metadata={"source": "traigent-cli"},
             )
-            with os.fdopen(fd, "w") as f:
-                json.dump(credentials, f, indent=2)
-            logger.debug(f"Credentials saved to {self.credentials_file}")
-            return STORAGE_FILE
-        except OSError as e:
-            logger.error(f"Failed to save credentials: {e}")
+            logger.debug("Credentials saved to secure credential store")
+            return STORAGE_SECURE
+        except (OSError, SecurityError) as e:
+            logger.error(
+                "Failed to save credentials securely: %s. Set "
+                "TRAIGENT_MASTER_PASSWORD before running auth commands.",
+                e,
+            )
             return None
 
     async def _validate_api_key(
@@ -193,6 +243,14 @@ class TraigentAuthCLI:
             except OSError as e:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
+
+        try:
+            store = get_secure_credential_store()
+            deleted = store.delete_secure(SECURE_CLI_CREDENTIAL_NAME)
+            if deleted:
+                logger.debug("Cleared secure CLI credentials")
+        except SecurityError as e:
+            logger.debug("Secure credential store unavailable during logout: %s", e)
 
         return success
 
@@ -473,15 +531,20 @@ class TraigentAuthCLI:
 
     def _display_storage_location(self, storage_location: str | None) -> None:
         """Display where credentials are stored."""
-        if storage_location == STORAGE_FILE:
+        if storage_location == STORAGE_SECURE:
             console.print(
-                f"\n[bold]Credentials stored in:[/bold] [cyan]{self.credentials_file}[/cyan]"
+                "\n[bold]Credentials stored in encrypted local storage[/bold]"
             )
+        elif storage_location == STORAGE_FILE:
             console.print(
-                f"  [dim]View with:[/dim] [cyan]cat {self.credentials_file}[/cyan]"
+                f"\n[yellow]Legacy plaintext credentials are present at:[/yellow] "
+                f"[cyan]{self.credentials_file}[/cyan]"
             )
         else:
-            console.print("\n[yellow]Could not save credentials to storage[/yellow]")
+            console.print(
+                "\n[yellow]Could not save credentials securely. Set "
+                "TRAIGENT_MASTER_PASSWORD and rerun the command.[/yellow]"
+            )
 
     async def login(
         self, email: str | None = None, non_interactive: bool = False
@@ -777,7 +840,7 @@ class TraigentAuthCLI:
             storage_location = self._save_credentials(credentials)
             if storage_location:
                 console.print("[green]✅ API key stored securely[/green]")
-                console.print(f"[dim]Location: {self.credentials_file}[/dim]\n")
+                console.print("[dim]Location: encrypted local credential store[/dim]\n")
             else:
                 console.print("[red]❌ Failed to store API key[/red]\n")
         else:

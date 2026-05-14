@@ -1941,10 +1941,13 @@ class BaseEvaluator(ABC):
         if not available or record_fn is None:
             return
 
+        privacy_enabled = getattr(self, "privacy_enabled", False)
+        actual_output = None if privacy_enabled else result.actual_output
+
         record_fn(
             span,
             success=result.success,
-            actual_output=result.actual_output,
+            actual_output=actual_output,
             metrics=result.metrics,
             error=result.error_message,
             execution_time=result.execution_time,
@@ -1972,16 +1975,16 @@ class BaseEvaluator(ABC):
             yield None
             return
 
-        # Get input data for tracing (respect privacy settings)
-        input_data = (
-            None if getattr(self, "privacy_enabled", False) else (example.input_data)
-        )
+        # Get input/output data for tracing (respect privacy settings)
+        privacy_enabled = getattr(self, "privacy_enabled", False)
+        input_data = None if privacy_enabled else example.input_data
+        expected_output = None if privacy_enabled else example.expected_output
 
         with span_fn(
             example_id=example_id,
             example_index=example_index,
             input_data=input_data,
-            expected_output=example.expected_output,
+            expected_output=expected_output,
         ) as span:
             yield span
 

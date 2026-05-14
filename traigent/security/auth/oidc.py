@@ -135,7 +135,13 @@ class OIDCAuthProvider:
                 claims.get("email", f"{claims['sub']}@oidc"),
                 default_domain="oidc.local",
             )
-            roles = sanitize_roles(claims.get("roles", claims.get("groups", ["user"])))
+            try:
+                roles = sanitize_roles(
+                    claims.get("roles", claims.get("groups", ["user"])), strict=True
+                )
+            except ValueError as exc:
+                logger.warning("OIDC token contains invalid role claims: %s", exc)
+                return None
 
             user = User(
                 user_id=user_id,

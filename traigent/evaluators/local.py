@@ -475,15 +475,15 @@ class LocalEvaluator(BaseEvaluator):
         # Estimate output tokens
         example_metric.tokens.output_tokens = max(1, len(output) // 4)
 
-        # Estimate input tokens if not in privacy mode
-        if not self.privacy_enabled:
-            input_length = self._calculate_prompt_template_length(
-                example_input, config=config
-            )
-            if input_length is None:
-                # Preserve historical behavior for non-template fallback.
-                input_length = len(str(example_input))
-            example_metric.tokens.input_tokens = max(1, input_length // 4)
+        # Estimate input tokens from local lengths only. Privacy mode may not
+        # retain raw prompts, but it still needs length-derived cost metrics.
+        input_length = self._calculate_prompt_template_length(
+            example_input, config=config
+        )
+        if input_length is None:
+            # Preserve historical behavior for non-template fallback.
+            input_length = len(str(example_input))
+        example_metric.tokens.input_tokens = max(1, input_length // 4)
 
         # Update total
         example_metric.tokens.total_tokens = (
