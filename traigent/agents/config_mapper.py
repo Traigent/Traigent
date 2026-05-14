@@ -124,11 +124,21 @@ class ConfigurationMapper:
             ) from e
 
     def get_supported_platforms(self) -> list[str]:
-        """Get list of supported platforms.
+        """Get executable platforms that can run through the agent registry.
 
         Returns:
-            List of platform names
+            List of executable platform names.
         """
+        from traigent.agents.platforms import PlatformRegistry
+
+        return [
+            platform
+            for platform in self._platform_mappings
+            if platform in PlatformRegistry.list_platforms()
+        ]
+
+    def get_mapping_platforms(self) -> list[str]:
+        """Get all platforms with configuration mappings, including mapping-only."""
         return list(self._platform_mappings.keys())
 
     def get_platform_mapping(self, platform: str) -> PlatformMapping | None:
@@ -646,9 +656,14 @@ def register_platform_mapping(mapping: PlatformMapping) -> None:
 
 
 def get_supported_platforms() -> list[str]:
-    """Get list of supported platforms.
+    """Get executable platforms.
 
     Returns:
-        List of platform names
+        List of executable platform names.
     """
     return config_mapper.get_supported_platforms()
+
+
+def get_mapping_platforms() -> list[str]:
+    """Get all mapping platforms, including mapping-only targets."""
+    return config_mapper.get_mapping_platforms()

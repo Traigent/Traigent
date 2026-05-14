@@ -17,6 +17,7 @@ class TestSessionInfo:
         assert info.session_id == "test"
         assert info.is_alive is True
         assert info.heartbeat_count == 0
+        assert info.keep_alive_status == "alive"
 
 
 class TestAgentLifecycleManager:
@@ -183,6 +184,7 @@ class TestAgentLifecycleManager:
         info = manager.get_session_info("test")
         assert info is not None
         assert info.is_alive is False
+        assert info.keep_alive_status == "dead"
 
         await manager.release()
 
@@ -191,7 +193,7 @@ class TestAgentLifecycleManager:
         self,
         mock_transport: MagicMock,
     ) -> None:
-        """Test behavior when keep-alive not supported."""
+        """Unsupported keep-alive is unknown, not a positive alive signal."""
         mock_transport.keep_alive = AsyncMock(side_effect=NotImplementedError)
 
         manager = AgentLifecycleManager(
@@ -202,9 +204,65 @@ class TestAgentLifecycleManager:
         await manager.register("test")
         await asyncio.sleep(0.1)
 
-        # Session should still be considered alive
         info = manager.get_session_info("test")
         assert info is not None
-        assert info.is_alive is True
+        assert info.is_alive is False
+        assert info.keep_alive_status == "unsupported"
+        assert not manager.is_session_alive("test")
+
+        await manager.release()
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_not_supported_does_not_mark_other_sessions_alive(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        """Unsupported keep-alive should not rewrite unrelated sessions to alive."""
+        mock_transport.keep_alive = AsyncMock(side_effect=NotImplementedError)
+
+        manager = AgentLifecycleManager(
+            transport=mock_transport,
+            heartbeat_interval=0.05,
+        )
+
+        await manager.register("session-1")
+        await manager.register("session-2")
+        await asyncio.sleep(0.16)
+
+        for session_id in ("session-1", "session-2"):
+            info = manager.get_session_info(session_id)
+            assert info is not None
+            assert info.is_alive is False
+            assert info.keep_alive_status == "unsupported"
+
+        await manager.release()
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_not_supported_marks_all_sessions_in_one_pass(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        """Unsupported keep-alive must process every active session in one pass."""
+        mock_transport.keep_alive = AsyncMock(side_effect=NotImplementedError)
+
+        manager = AgentLifecycleManager(
+            transport=mock_transport,
+            heartbeat_interval=3600.0,
+        )
+
+        manager._sessions = {
+            "session-1": SessionInfo(session_id="session-1"),
+            "session-2": SessionInfo(session_id="session-2"),
+        }
+        manager._missed_heartbeats = {"session-1": 0, "session-2": 0}
+
+        await manager._send_heartbeats()
+
+        assert mock_transport.keep_alive.await_count == 2
+        for session_id in ("session-1", "session-2"):
+            info = manager.get_session_info(session_id)
+            assert info is not None
+            assert info.is_alive is False
+            assert info.keep_alive_status == "unsupported"
 
         await manager.release()

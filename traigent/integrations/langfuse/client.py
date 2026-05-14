@@ -137,6 +137,7 @@ class LangfuseTraceMetrics:
     trace_metadata: dict[str, Any] = field(default_factory=dict)
     session_id: str | None = None
     user_id: str | None = None
+    observations_partial: bool = False
 
     def to_measures_dict(
         self,
@@ -160,6 +161,7 @@ class LangfuseTraceMetrics:
             f"{prefix}total_input_tokens": self.total_input_tokens,
             f"{prefix}total_output_tokens": self.total_output_tokens,
             f"{prefix}total_tokens": self.total_tokens,
+            f"{prefix}observations_partial": int(self.observations_partial),
         }
 
         if include_per_agent:
@@ -229,6 +231,7 @@ class LangfuseClient:
         )
         self.host = resolved_host.rstrip("/")
         self.timeout = timeout
+        self._observations_partial_by_trace: dict[str, bool] = {}
 
         # Initialize SDK client if available
         self._sdk_client: LangfuseType | None = None
@@ -343,6 +346,7 @@ class LangfuseClient:
                 # SDK method to get observations
                 observations = self._sdk_client.get_observations(trace_id=trace_id)
                 if observations:
+                    self._observations_partial_by_trace[trace_id] = False
                     return [
                         self._observation_to_model(obs) for obs in observations.data
                     ]
@@ -369,6 +373,7 @@ class LangfuseClient:
 
         observations: list[LangfuseObservation] = []
         page = 1
+        self._observations_partial_by_trace[trace_id] = False
 
         try:
             while page <= max_pages:
@@ -402,10 +407,12 @@ class LangfuseClient:
                     f"Hit max_pages limit ({max_pages}) fetching observations "
                     f"for trace {trace_id}. Some observations may be missing."
                 )
+                self._observations_partial_by_trace[trace_id] = True
 
             return observations
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 
     def wait_for_trace(
@@ -496,6 +503,7 @@ class LangfuseClient:
 
         observations: list[LangfuseObservation] = []
         page = 1
+        self._observations_partial_by_trace[trace_id] = False
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -534,10 +542,12 @@ class LangfuseClient:
                     f"Hit max_pages limit ({max_pages}) fetching observations "
                     f"for trace {trace_id}. Some observations may be missing."
                 )
+                self._observations_partial_by_trace[trace_id] = True
 
             return observations
         except aiohttp.ClientError as e:
             logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 
     async def wait_for_trace_async(
@@ -715,12 +725,19 @@ class LangfuseClient:
 
         # Get observations (may be embedded or need separate fetch)
         observations: list[LangfuseObservation] = []
+        observations_partial = bool(
+            trace_data.get("observations_partial")
+            or trace_data.get("observationsPartial")
+        )
         if "observations" in trace_data:
             for obs_data in trace_data["observations"]:
                 observations.append(self._dict_to_observation(obs_data))
         else:
             # Fetch observations separately
             observations = self.get_observations_for_trace(trace_id)
+            observations_partial = self._observations_partial_by_trace.get(
+                trace_id, False
+            )
 
         # Aggregate metrics
         total_cost = 0.0
@@ -773,6 +790,7 @@ class LangfuseClient:
             trace_metadata=trace_metadata,
             session_id=session_id,
             user_id=user_id,
+            observations_partial=observations_partial,
         )
 
 

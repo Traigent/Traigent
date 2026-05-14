@@ -33,6 +33,7 @@ class SessionInfo:
         last_heartbeat: Timestamp of last successful heartbeat
         heartbeat_count: Number of successful heartbeats
         is_alive: Whether session is currently alive
+        keep_alive_status: Last keep-alive status: alive, dead, or unsupported
     """
 
     session_id: str
@@ -40,6 +41,7 @@ class SessionInfo:
     last_heartbeat: float = 0.0
     heartbeat_count: int = 0
     is_alive: bool = True
+    keep_alive_status: str = "alive"
 
 
 class AgentLifecycleManager:
@@ -225,6 +227,7 @@ class AgentLifecycleManager:
                 if alive:
                     info.last_heartbeat = asyncio.get_event_loop().time()
                     info.heartbeat_count += 1
+                    info.keep_alive_status = "alive"
                     self._missed_heartbeats[session_id] = 0
                     logger.debug(
                         f"Heartbeat success for session {session_id} "
@@ -238,10 +241,10 @@ class AgentLifecycleManager:
                 logger.debug(
                     f"Keep-alive not supported, skipping heartbeat for {session_id}"
                 )
-                # Mark all sessions as needing no heartbeat
-                for s_info in self._sessions.values():
-                    s_info.is_alive = True  # Assume alive
-                return  # No point continuing
+                info.is_alive = False
+                info.keep_alive_status = "unsupported"
+                self._missed_heartbeats[session_id] = 0
+                continue
 
             except Exception as e:
                 self._handle_heartbeat_failure(session_id, info, str(e))
@@ -271,6 +274,7 @@ class AgentLifecycleManager:
 
         if missed >= self._max_missed_heartbeats:
             info.is_alive = False
+            info.keep_alive_status = "dead"
             logger.error(
                 f"Session {session_id} marked as dead after {missed} missed heartbeats"
             )

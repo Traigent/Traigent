@@ -395,6 +395,14 @@ class TestLangChainAgentExecutor:
         assert "async" in capabilities
 
     @pytest.mark.asyncio
+    async def test_estimate_cost_fails_closed(self, langchain_agent_spec):
+        """LangChain must not inherit a fake zero-cost estimate."""
+        executor = LangChainAgentExecutor()
+
+        with pytest.raises(NotImplementedError, match="cost estimation"):
+            await executor.estimate_cost(langchain_agent_spec, {"question": "test"})
+
+    @pytest.mark.asyncio
     async def test_execute_without_langchain(self, langchain_agent_spec):
         """Test execution when LangChain is not available."""
         executor = LangChainAgentExecutor()
@@ -708,6 +716,9 @@ class TestPlatformRegistry:
 
         assert "langchain" in platforms
         assert "openai" in platforms
+        assert "anthropic" not in platforms
+        assert "cohere" not in platforms
+        assert "huggingface" not in platforms
 
     def test_get_executor_for_platform(self):
         """Test getting executor instance."""
