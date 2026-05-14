@@ -21,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -569,23 +570,95 @@ class BillingManager:
             - current_month_stats["total_credits"],
         }
 
-    def upgrade_plan(self, new_plan: str) -> bool:
-        """Upgrade to a new billing plan.
+    # Tier ordering for upgrade-direction enforcement (SDK#924). Higher
+    # index = higher quota. `upgrade_plan` rejects any change that
+    # increases the index, since the SDK has no authority to grant
+    # itself a higher tier — that has to be a backend/billing-portal
+    # action, validated against the user's actual subscription.
+    _TIER_ORDER: tuple[str, ...] = ("free", "standard", "professional", "enterprise")
 
-        Args:
-            new_plan: Name of new billing plan
+    def upgrade_plan(self, new_plan: str) -> bool:
+        """Change to a different billing plan locally.
+
+        Honest semantics (SDK#924 fix):
+          * Downgrades are allowed — a user can locally cap themselves
+            to a lower tier (e.g. "use the free quota for this run
+            even though I'm on professional"). Caps the user's own
+            usage; never grants additional rights.
+          * Upgrades are REJECTED — locally bumping `current_plan`
+            from `free` to `enterprise` would let the SDK claim
+            unlimited credits / max trials / etc. with no server-side
+            validation, bypassing whatever subscription the user
+            actually has.
+
+        Pre-fix: this method blindly set `self.current_plan = new_plan`
+        for any known plan, granting a free SDK process enterprise
+        quotas (100k monthly_credits + unlimited trials). Codex
+        consultation (#924) flagged this as a billing-bypass:
+
+            > Local plan upgrade grants enterprise quota.
+            > Recommended action: fail-closed/de-export. Remove public
+            > local upgrade authority; derive tier from validated
+            > server/account state.
+
+        Real plan upgrades happen via the backend portal; the SDK
+        learns about them by re-authenticating, not by self-mutation.
 
         Returns:
-            True if upgrade successful
+            True iff the change was applied (a downgrade or no-op).
+            False if the requested plan is unknown.
+
+        Raises:
+            ConfigurationError: if `new_plan` is a known plan but
+                represents an upgrade above the current tier, OR if
+                either current_plan or new_plan exists in
+                `billing_plans` but is missing from `_TIER_ORDER`
+                (Greptile P1 of PR #968: silent fallback to "free"
+                index re-opened the bypass for any future tier added
+                without an _TIER_ORDER update).
         """
         if new_plan not in self.usage_tracker.billing_plans:
             logger.error(f"Unknown billing plan: {new_plan}")
             return False
 
         old_plan = self.current_plan
-        self.current_plan = new_plan
+        # Greptile P1#1 of PR #968: do NOT fall back to free index for
+        # unknown tiers. Either tier missing from _TIER_ORDER is a
+        # configuration error — fail-closed means raising, not
+        # silently treating it as "free".
+        try:
+            old_idx = self._TIER_ORDER.index(old_plan)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Current plan '{old_plan}' is not in the known tier "
+                f"ordering (SDK#924). Cannot evaluate upgrade direction. "
+                f"Add '{old_plan}' to BillingManager._TIER_ORDER if it is "
+                f"a legitimate plan."
+            ) from exc
+        try:
+            new_idx = self._TIER_ORDER.index(new_plan)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Target plan '{new_plan}' is in billing_plans but absent "
+                f"from BillingManager._TIER_ORDER (SDK#924). Update "
+                f"_TIER_ORDER to include this plan in the correct position "
+                f"before allowing it to be applied — silently allowing "
+                f"unknown-position plans would re-open the upgrade bypass."
+            ) from exc
 
-        logger.info(f"Upgraded billing plan: {old_plan} → {new_plan}")
+        if new_idx > old_idx:
+            raise ConfigurationError(
+                f"Cannot upgrade billing plan locally: '{old_plan}' → "
+                f"'{new_plan}' (SDK#924). Plan upgrades must happen via "
+                f"the backend billing portal and be reflected in the "
+                f"user's authenticated state — the SDK has no authority "
+                f"to grant itself a higher tier. Re-authenticate after "
+                f"completing the upgrade in the portal."
+            )
+
+        # Downgrade or no-op: allowed.
+        self.current_plan = new_plan
+        logger.info(f"Changed billing plan: {old_plan} → {new_plan}")
         return True
 
     def get_current_plan_info(self) -> dict[str, Any]:

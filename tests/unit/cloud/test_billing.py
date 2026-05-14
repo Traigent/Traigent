@@ -576,15 +576,92 @@ class TestBillingManager:
 
         asyncio.run(run_test())
 
-    def test_upgrade_plan_success(self):
-        """Test successful plan upgrade."""
+    def test_upgrade_plan_rejects_local_upgrade_to_paid_tier(self):
+        """SDK#924: post-fix, locally upgrading from `free` to a paid
+        tier (`standard`/`professional`/`enterprise`) must raise
+        ConfigurationError. The SDK has no authority to grant itself
+        a higher subscription tier — that has to be a backend/billing-
+        portal action.
+
+        Pre-fix this returned True and silently set
+        `self.current_plan = "professional"`, granting the SDK
+        professional-tier quotas (10k credits + 500 max trials)
+        without any server-side validation."""
+        from traigent.utils.exceptions import ConfigurationError
+
         tracker = UsageTracker()
         manager = BillingManager(tracker)
 
-        result = manager.upgrade_plan("professional")
+        for upgrade_target in ("standard", "professional", "enterprise"):
+            with pytest.raises(ConfigurationError, match="SDK#924"):
+                manager.upgrade_plan(upgrade_target)
+            assert manager.current_plan == "free", (
+                f"upgrade_plan('{upgrade_target}') must not mutate "
+                f"current_plan when it raises"
+            )
 
+    def test_upgrade_plan_allows_downgrade(self):
+        """SDK#924: downgrades are allowed — a user can cap themselves
+        to a lower tier (uses LESS quota, never more)."""
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        # Simulate a user already on professional via the backend (set
+        # the field directly to skip the upgrade-block).
+        manager.current_plan = "professional"
+
+        for downgrade_target in ("standard", "free"):
+            result = manager.upgrade_plan(downgrade_target)
+            assert result is True
+            assert manager.current_plan == downgrade_target
+            manager.current_plan = "professional"
+
+    def test_upgrade_plan_no_op_same_tier_succeeds(self):
+        """SDK#924: same-tier set must succeed (idempotent reconcile)."""
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        result = manager.upgrade_plan("free")
         assert result is True
-        assert manager.current_plan == "professional"
+        assert manager.current_plan == "free"
+
+    def test_upgrade_plan_unknown_target_in_billing_plans_but_missing_tier_order_raises(self):
+        """Greptile P1 of PR #968: a plan registered in billing_plans
+        but absent from _TIER_ORDER must raise ConfigurationError.
+        Pre-fix this fell back to index 0 (free) and silently allowed
+        the change — re-opening the upgrade bypass for any future
+        tier added without an _TIER_ORDER update."""
+        from traigent.cloud.billing import BillingPlan
+        from traigent.utils.exceptions import ConfigurationError
+
+        tracker = UsageTracker()
+        # Inject a fictitious tier into billing_plans WITHOUT updating
+        # _TIER_ORDER (simulating the maintenance gap Greptile flagged).
+        tracker.billing_plans["super_secret_unlimited"] = BillingPlan(
+            name="Super Secret",
+            monthly_credits=999_999_999,
+            cost_per_credit=0.0,
+            max_trials_per_optimization=-1,
+            max_dataset_size=-1,
+        )
+        manager = BillingManager(tracker)
+
+        with pytest.raises(ConfigurationError, match="_TIER_ORDER"):
+            manager.upgrade_plan("super_secret_unlimited")
+
+    def test_upgrade_plan_current_plan_not_in_tier_order_raises(self):
+        """Greptile P1 of PR #968 (symmetric case): if current_plan is
+        somehow set to a value missing from _TIER_ORDER (e.g., a
+        legitimate plan added to billing_plans but not yet ordered),
+        upgrade_plan must raise instead of misclassifying as free."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        # Force current_plan to a non-ordered value (skipping the
+        # upgrade-block by direct attribute assignment).
+        manager.current_plan = "unknown_legacy_tier"
+
+        with pytest.raises(ConfigurationError, match="_TIER_ORDER"):
+            manager.upgrade_plan("free")
 
     def test_upgrade_plan_invalid(self):
         """Test plan upgrade with invalid plan."""
