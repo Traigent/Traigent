@@ -37,7 +37,7 @@ class PasswordAuthHandler:
     - Email/password validation
     - Rate limiting of login attempts
     - Backend authentication calls
-    - Development mode mocking
+    - Explicit development-only mock fallback
     """
 
     def __init__(self) -> None:
@@ -166,8 +166,7 @@ class PasswordAuthHandler:
         """Validate email/password credentials without logging sensitive values."""
         if self._is_dev_mode_enabled():
             logger.warning(
-                "Development mode enabled - backend outage fallback is allowed, "
-                "but credential format is still enforced"
+                "Development mode enabled - credential format is still enforced"
             )
 
         required_fields = {"email", "password"}
@@ -211,6 +210,17 @@ class PasswordAuthHandler:
             logger.debug(f"Could not check local backend status: {e}")
 
         return False
+
+    def _is_mock_auth_fallback_enabled(self) -> bool:
+        """Return True only for explicit development mock-auth fallback."""
+        if not self._is_dev_mode_enabled():
+            return False
+        return os.getenv("TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _validated_backend_api_url(self, backend_api_url: str) -> str:
         """Validate the backend login target before sending credentials."""
@@ -323,9 +333,9 @@ class PasswordAuthHandler:
         except InvalidCredentialsError:
             raise
         except Exception as exc:
-            if self._is_dev_mode_enabled():
+            if self._is_mock_auth_fallback_enabled():
                 logger.warning(
-                    "Dev mode enabled - using mock tokens because backend login failed: %s",
+                    "Explicit mock password auth enabled - using mock tokens because backend login failed: %s",
                     exc,
                 )
                 return self._build_dev_token_payload(credentials)

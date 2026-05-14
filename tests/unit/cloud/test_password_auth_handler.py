@@ -95,8 +95,8 @@ async def test_invalid_credentials_propagate_even_in_dev_mode():
 
 
 @pytest.mark.asyncio
-async def test_dev_mode_still_falls_back_on_backend_outage():
-    """Explicit dev mode may still use mock tokens for non-auth backend failures."""
+async def test_dev_mode_backend_outage_fails_without_mock_opt_in():
+    """Dev mode alone must not turn backend outages into authenticated tokens."""
     handler = PasswordAuthHandler()
     credentials = {
         "email": "dev@example.com",
@@ -112,5 +112,58 @@ async def test_dev_mode_still_falls_back_on_backend_outage():
     ):
         token_data = await handler._perform_authentication(credentials)
 
+    assert token_data is None
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_mock_auth_requires_explicit_opt_in():
+    """Mock password auth is allowed only after explicit local opt-in."""
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH": "true"},  # pragma: allowlist secret
+            clear=True,
+        ),
+        patch.object(handler, "_is_dev_mode_enabled", return_value=True),
+        patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            new=AsyncMock(side_effect=RuntimeError("backend down")),
+        ),
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is not None
     assert token_data["dev_mode"] is True
     assert token_data["user"]["email"] == credentials["email"]
+
+
+@pytest.mark.asyncio
+async def test_mock_auth_opt_in_is_ignored_outside_dev_mode():
+    """The mock-auth escape hatch must still require dev/local mode."""
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH": "true"},  # pragma: allowlist secret
+            clear=True,
+        ),
+        patch.object(handler, "_is_dev_mode_enabled", return_value=False),
+        patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            new=AsyncMock(side_effect=RuntimeError("backend down")),
+        ),
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is None
