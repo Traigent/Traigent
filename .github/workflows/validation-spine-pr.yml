@@ -1,0 +1,146 @@
+# Validation Spine — PR-time scope-mode run.
+#
+# Runs the Traigent validation spine's `security-ledger` detector against
+# only this PR's changed files. Calibrated against the 2026-05-07 → 2026-05-14
+# burn-down — see ops/_validation/catalog/security_markers.yaml (Phase A
+# section) for the marker classes this currently catches:
+#
+#   - weak_crypto_constant         (Traigent #948 hard-coded salt)
+#   - permission_default_too_permissive (Traigent #937, #945)
+#   - placeholder_return_pattern   (Traigent #949, #947, #951)
+#   - assert_in_production         (Schema-pattern asserts)
+#   - llm_permission_bypass        (CWE-917 bypassPermissions calls)
+#   - sql_injection / path_traversal / command_injection / ... (pre-existing classes)
+#
+# This run is **advisory** for the first calibration window — it uploads
+# the gap report as an artifact and surfaces critical findings as a soft
+# warning. Promote to blocking (`--gate`) only after the false-positive
+# rate has been confirmed acceptable. See
+# /home/nimrodbu/.claude/plans/async-plotting-stardust.md Phase D and E1.
+
+name: validation-spine-pr
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "traigent/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/validation-spine-pr.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: validation-spine-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spine-pr-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true  # advisory mode — promote to blocking after calibration
+
+    steps:
+      # Checkout the product repo as $GITHUB_WORKSPACE/Traigent/ so the
+      # spine's hardcoded multi-repo layout (`_PYTHON_REPOS` in
+      # security_ledger/graph.py) finds the source under the expected
+      # `<workspace>/Traigent/` subpath. Other product repos in
+      # `_PYTHON_REPOS` are simply absent from this CI checkout, which
+      # the spine handles by skipping missing dirs.
+      - name: Checkout product repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: Traigent
+
+      - name: Checkout validation spine
+        uses: actions/checkout@v4
+        with:
+          repository: Traigent/traigent-validation-spine
+          # TODO: pin to a tagged spine release once the WIP on
+          # chore/l6-and-batch1-fixes lands on develop. Until then this
+          # tracks develop; if develop diverges, set `ref:` explicitly.
+          ref: develop
+          path: .spine
+          token: ${{ secrets.SPINE_RO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Install spine
+        working-directory: .spine
+        run: uv sync --extra dev
+
+      - name: Run security_ledger against product repo
+        id: spine-run
+        working-directory: .spine
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.spine-health"
+          # Advisory mode: do NOT pass --gate yet. Promote once calibrated.
+          # NOTE: this currently scans the FULL product repo on every PR
+          # rather than only the PR's changed files. PR-incremental scope
+          # (`--base-ref`) requires `resolve_change_scope` to separate
+          # "where to run git" from "anchor for path reanchoring", which
+          # is a spine-internal refactor tracked as a follow-up. For now
+          # we accept the backlog noise — `continue-on-error: true`
+          # makes findings advisory.
+          ./.venv/bin/validation security-ledger run \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --health-dir "$GITHUB_WORKSPACE/.spine-health" \
+            --file-limit 500
+
+      - name: Summarize new critical findings
+        if: always()
+        working-directory: .spine
+        run: |
+          set -e
+          GAPS="$GITHUB_WORKSPACE/.spine-health/latest-security-ledger-gaps.json"
+          if [[ ! -f "$GAPS" ]]; then
+            echo "::warning::no gap report emitted (spine run failed?)"
+            exit 0
+          fi
+          # Count critical / high gaps the new run produced. The summary
+          # is informational; reviewers should also browse the uploaded
+          # artifact for full context.
+          ./.venv/bin/python - <<'PY'
+          import json, os, pathlib
+          gaps_path = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / ".spine-health" / "latest-security-ledger-gaps.json"
+          data = json.loads(gaps_path.read_text())
+          by_severity = (data.get("summary") or {}).get("by_severity") or {}
+          critical = by_severity.get("critical", 0)
+          high     = by_severity.get("high", 0)
+          medium   = by_severity.get("medium", 0)
+          step_summary = pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with step_summary.open("a") as fh:
+              fh.write(f"## Validation Spine — PR scan\n\n")
+              fh.write(f"| Severity | Count |\n| --- | ---: |\n")
+              fh.write(f"| critical | {critical} |\n| high | {high} |\n| medium | {medium} |\n\n")
+              if critical:
+                  fh.write("**Critical findings — review before merge.** ")
+                  fh.write("Full detail in the `validation-spine-gaps` artifact below.\n")
+              else:
+                  fh.write("No critical findings.\n")
+          print(f"critical={critical} high={high} medium={medium}")
+          if critical:
+              # Soft warning — does not fail the job (continue-on-error is on
+              # at the job level too). Promote to `exit 1` once calibrated.
+              print(f"::warning::spine reported {critical} critical finding(s); see artifact")
+          PY
+
+      - name: Upload spine gap artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-spine-gaps
+          path: .spine-health/
+          retention-days: 14
+          if-no-files-found: warn
