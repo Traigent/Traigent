@@ -633,7 +633,9 @@ If these are missing, optimization may still run locally but backend sync can be
 
 ### Optimization Objectives
 
-Traigent can optimize for any metrics you return:
+Traigent can optimize for any metrics you return. Two equivalent forms:
+
+**Explicit (dict mapping each metric to its direction):**
 
 ```python
 @traigent.optimize(
@@ -643,9 +645,19 @@ Traigent can optimize for any metrics you return:
         "total_cost_usd": "minimize",
         "hallucination_score": "minimize",
     },
-    # Or use shorthand (all minimize by default except accuracy)
+)
+def my_pipeline(prompt: str) -> dict:
+    ...
+```
+
+**Shorthand (list of metric names — `accuracy` defaults to maximize, others minimize):**
+
+```python
+@traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
 )
+def my_pipeline(prompt: str) -> dict:
+    ...
 ```
 
 ---
