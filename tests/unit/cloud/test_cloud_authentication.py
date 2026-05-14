@@ -75,11 +75,13 @@ class TestAPIKey:
         assert api_key.usage_limit == 1000
 
     def test_api_key_default_permissions(self):
-        """Test APIKey with default permissions."""
+        """Missing APIKey permissions fail closed."""
         api_key = APIKey(key="test_key", name="test", created_at=datetime.now(UTC))
 
-        expected_permissions = {"optimize": True, "analytics": True, "billing": False}
-        assert api_key.permissions == expected_permissions
+        assert api_key.permissions == {}
+        assert api_key.has_permission("optimize") is False
+        assert api_key.has_permission("analytics") is False
+        assert api_key.has_permission("billing") is False
 
     def test_api_key_is_valid_not_expired(self):
         """Test API key validity when not expired."""
@@ -392,7 +394,8 @@ class TestDemoAuthManager:
         with _mock_backend_validate():
             await manager.authenticate()
         assert manager._api_key is not None
-        assert manager._api_key.has_permission("optimize") is True
+        assert manager._api_key.permissions == {}
+        assert manager._api_key.has_permission("optimize") is False
 
     @pytest.mark.asyncio
     async def test_demo_auth_headers(self):
@@ -1485,72 +1488,81 @@ class TestPasswordAuthentication:
 
 
 # ---------------------------------------------------------------------------
-# SDK#920 anti-regression: APIKey instances created from local credentials
-# (CLI auth response, env vars, secure storage) must NOT fabricate
-# `billing: True` or any admin-tier permission. The SDK has no way to
-# know what the backend actually granted; pretending it does is forgery.
+# SDK#937 anti-regression: APIKey instances created from local credentials
+# (CLI auth response, env vars, secure storage) must NOT fabricate any
+# permission grants. The SDK has no way to know what the backend actually
+# granted; pretending it does is forgery.
 # ---------------------------------------------------------------------------
 
 
-class TestSDK920_NoFabricatedBillingPermission:
-    """Pin: locally-constructed APIKey objects use the safe default
-    permissions (billing=False) — they do not invent admin claims."""
+class TestSDK937_NoFabricatedPermissionGrants:
+    """Locally-constructed APIKey objects do not invent claims."""
 
-    def test_apikey_default_post_init_has_billing_false(self):
-        """The dataclass default permissions must explicitly deny
-        billing. Was true on develop already; this test pins it so
-        a future refactor can't quietly flip the default."""
+    @staticmethod
+    def _assert_no_hardcoded_api_key_permission_grants(module) -> None:
+        """Inspect APIKey(...) calls, ignoring comments/docstrings."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(module))
+        forbidden_permissions = {"optimize", "analytics", "billing"}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "APIKey":
+                continue
+            permissions_kw = next(
+                (kw for kw in node.keywords if kw.arg == "permissions"),
+                None,
+            )
+            if permissions_kw is None or not isinstance(permissions_kw.value, ast.Dict):
+                continue
+            for key_node, value_node in zip(
+                permissions_kw.value.keys,
+                permissions_kw.value.values,
+                strict=False,
+            ):
+                if not isinstance(key_node, ast.Constant):
+                    continue
+                if key_node.value not in forbidden_permissions:
+                    continue
+                if isinstance(value_node, ast.Constant) and value_node.value is True:
+                    pytest.fail(
+                        f"{module.__name__} must not hard-code "
+                        f"{key_node.value}: True in APIKey permissions (SDK#937)"
+                    )
+
+    def test_apikey_default_post_init_has_empty_permissions(self):
+        """The dataclass default must not grant local permissions."""
         from datetime import UTC, datetime
 
         from traigent.cloud.auth import APIKey
 
         api_key = APIKey(key="test", name="t", created_at=datetime.now(UTC))
-        assert api_key.permissions is not None
-        assert api_key.permissions.get("billing") is False, (
-            "APIKey default permissions must NOT grant billing locally"
-        )
+        assert api_key.permissions == {}
+        assert api_key.has_permission("optimize") is False
+        assert api_key.has_permission("analytics") is False
+        assert api_key.has_permission("billing") is False
 
-    def test_api_key_manager_set_credentials_does_not_grant_billing(self):
+    def test_api_key_manager_set_credentials_does_not_grant_permissions(self):
         """Pin: APIKeyManager.set_credentials_for_environment (or
         equivalent local-credential constructor) does NOT explicitly
-        override permissions to grant billing. Pre-fix it set
-        `permissions={"optimize": True, "analytics": True, "billing": True}`
-        — the SDK can't know what the backend granted."""
-        import inspect
-
+        override permissions to grant capabilities. The SDK can't know
+        what the backend granted."""
         from traigent.cloud import api_key_manager
 
-        source = inspect.getsource(api_key_manager)
-        # Greptile P2 of PR #967: regex-based check tolerates quote
-        # variants (single vs double) and whitespace differences (no
-        # space after colon). The previous string-equality test would
-        # silently miss `'billing': True` (single quotes) or
-        # `"billing":True` (no space).
-        import re
+        self._assert_no_hardcoded_api_key_permission_grants(api_key_manager)
 
-        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
-            "api_key_manager.py must not hard-code `billing: True` in "
-            "any APIKey construction (SDK#920)"
-        )
-
-    def test_authmanager_apply_token_data_does_not_grant_billing(self):
+    def test_authmanager_apply_token_data_does_not_grant_permissions(self):
         """Pin: AuthManager.apply_token_data (or equivalent) does NOT
-        construct an APIKey with `billing: True`. Pre-fix it did."""
-        import inspect
-        import re
-
+        construct an APIKey with local permission grants."""
         from traigent.cloud import auth
 
-        source = inspect.getsource(auth)
-        # Greptile P2 of PR #967: regex pattern tolerates quote/spacing
-        # variants — see the sister assertion above.
-        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
-            "auth.py must not hard-code `billing: True` in any APIKey "
-            "construction (SDK#920)"
-        )
+        self._assert_no_hardcoded_api_key_permission_grants(auth)
 
     def test_get_info_for_env_keyed_path_returns_empty_permissions(self):
-        """SDK#920: when reporting info for an env-keyed source (the
+        """SDK#937: when reporting info for an env-keyed source (the
         SDK never received an APIKey object from the backend), the
         permissions field must be `{}` not the previously-fabricated
         `{"optimize": True, "analytics": True}`. Empty dict is the

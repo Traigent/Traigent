@@ -183,9 +183,9 @@ class APIKey:
     usage_limit: int | None = None
 
     def __post_init__(self) -> None:
-        """Initialise default permissions when not provided."""
+        """Initialise missing permissions to no local grants."""
         if self.permissions is None:
-            self.permissions = {"optimize": True, "analytics": True, "billing": False}
+            self.permissions = {}
 
         # Normalise date fields to timezone-aware datetime instances.
         self.created_at = self._coerce_datetime(self.created_at, "created_at")
@@ -1796,14 +1796,10 @@ class AuthManager:
         # AuthManager-specific: update _api_key if present
         api_key = token_data.get("api_key") or token_data.get("apiKey")
         if api_key and self._validate_key_format(api_key):
-            # SDK#920 fix: do not fabricate `billing: True` (or any
-            # admin-tier permission) locally. The auth response payload
-            # does not include real backend-granted permissions, so we
-            # let `APIKey.__post_init__` default to the safer
-            # `{optimize: True, analytics: True, billing: False}`.
-            # Authorization for sensitive operations is the backend's
-            # responsibility; the SDK must never claim rights it
-            # cannot prove.
+            # SDK#937 fix: do not fabricate any permission grants from
+            # locally available credentials. If the backend does not
+            # return authoritative claims, APIKey.__post_init__ keeps
+            # permissions empty and has_permission() fails closed.
             self._api_key = APIKey(
                 key=api_key,
                 name="cli",
