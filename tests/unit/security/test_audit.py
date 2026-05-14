@@ -23,6 +23,9 @@ STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
 COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting subsystem is not yet implemented"
 PERSISTENT_STORAGE_NOT_IMPLEMENTED = "Persistent audit storage is not yet implemented"
 TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
+FAKE_AUDIT_API_KEY = (
+    "sk-ant-canary-DO-NOT-USE-123456789abcdef"  # pragma: allowlist secret
+)
 
 
 class TestAuditEvent:
@@ -280,6 +283,35 @@ class TestAuditLogger:
 
         # Event should be queued for processing
         assert not audit_logger.event_queue.empty()
+
+    def test_log_event_redacts_sensitive_payloads_before_storage(self):
+        """Audit events should not store raw PII or credential-like values."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+
+        event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="alice@example.com",
+            session_id="session-4111111111111234",
+            tenant_id="tenant-123-45-6789",
+            resource_id=FAKE_AUDIT_API_KEY,
+            message="Bearer canary.jwt.header.payload.signature",
+            details={
+                "email": "alice@example.com",
+                "api_key": FAKE_AUDIT_API_KEY,
+            },
+        )
+
+        event_blob = str(event.to_dict())
+        assert "alice@example.com" not in event_blob
+        assert "4111111111111234" not in event_blob
+        assert "123-45-6789" not in event_blob
+        assert FAKE_AUDIT_API_KEY not in event_blob
+        assert "canary.jwt.header.payload.signature" not in event_blob
+        assert "[REDACTED:email]" in event_blob
+        assert "[REDACTED:credit_card]" in event_blob
+        assert "[REDACTED:ssn]" in event_blob
+        assert "[REDACTED:api_key]" in event_blob
+        assert "[REDACTED:bearer_token]" in event_blob
 
     def test_log_authentication_events(self):
         """Test logging authentication events"""
