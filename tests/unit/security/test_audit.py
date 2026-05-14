@@ -308,6 +308,7 @@ class TestAuditLogger:
         assert "123-45-6789" not in event_blob
         assert FAKE_AUDIT_API_KEY not in event_blob
         assert "canary.jwt.header.payload.signature" not in event_blob
+        assert event.message == "[REDACTED:bearer_token]"
         assert "[REDACTED:email]" in event_blob
         assert "[REDACTED:credit_card]" in event_blob
         assert "[REDACTED:ssn]" in event_blob

@@ -274,6 +274,16 @@ class TrialError:
             ),
         }
 
+    def __repr__(self) -> str:
+        return (
+            "TrialError("
+            "message='<redacted>', "
+            f"error_type={self.error_type!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "config='<redacted>'"
+            ")"
+        )
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
         """Reconstruct a structured trial error from a dictionary."""
@@ -331,6 +341,21 @@ class TrialResult:
     def error_traceback(self) -> str | None:
         """Get the formatted traceback for a failed trial, when available."""
         return self.error.traceback if self.error else None
+
+    def __repr__(self) -> str:
+        return (
+            "TrialResult("
+            f"trial_id={self.trial_id!r}, "
+            "config='<redacted>', "
+            f"metrics={self.metrics!r}, "
+            f"status={self.status!r}, "
+            f"duration={self.duration!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "error_message='<redacted>', "
+            "metadata='<redacted>', "
+            f"error_type={self.error_type!r}"
+            ")"
+        )
 
     def to_dict(
         self,
