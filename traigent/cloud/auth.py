@@ -1796,11 +1796,18 @@ class AuthManager:
         # AuthManager-specific: update _api_key if present
         api_key = token_data.get("api_key") or token_data.get("apiKey")
         if api_key and self._validate_key_format(api_key):
+            # SDK#920 fix: do not fabricate `billing: True` (or any
+            # admin-tier permission) locally. The auth response payload
+            # does not include real backend-granted permissions, so we
+            # let `APIKey.__post_init__` default to the safer
+            # `{optimize: True, analytics: True, billing: False}`.
+            # Authorization for sensitive operations is the backend's
+            # responsibility; the SDK must never claim rights it
+            # cannot prove.
             self._api_key = APIKey(
                 key=api_key,
                 name="cli",
                 created_at=datetime.now(UTC),
-                permissions={"optimize": True, "analytics": True, "billing": True},
             )
 
         return credentials
