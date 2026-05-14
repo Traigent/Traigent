@@ -485,21 +485,79 @@ _credential_storage_instance: (
 _credential_storage_lock = threading.Lock()
 
 
+def _is_non_production_environment() -> bool:
+    """Mirror SecureCredentialStorage.__init__'s environment classification.
+
+    Non-production iff one of the canonical environment flags is set to
+    a known dev/test/local value. Default (no flag set) is production —
+    matches the SDK-wide safety convention that an unset env defaults
+    to the strict path. Keep this in sync with the equivalent block at
+    the top of `SecureCredentialStorage.__init__`.
+    """
+    environment = (
+        (
+            os.environ.get("TRAIGENT_ENVIRONMENT")
+            or os.environ.get("TRAIGENT_ENV")
+            or os.environ.get("ENVIRONMENT")
+            or "production"
+        )
+        .strip()
+        .lower()
+    )
+    return environment in {"development", "dev", "test", "local"}
+
+
 def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStorage:
-    """Get appropriate credential storage implementation (thread-safe)."""
+    """Get appropriate credential storage implementation (thread-safe).
+
+    Production safety contract (SDK#896 fix):
+      * In production (no `TRAIGENT_ENV*` flag set, or set to anything
+        other than dev/test/local), the SDK MUST use real AES-256
+        encryption. If `cryptography` is unavailable OR
+        `SecureCredentialStorage.__init__` cannot construct (e.g.,
+        `TRAIGENT_ENCRYPTION_KEY` missing), this function raises
+        `RuntimeError` rather than silently returning the base64-only
+        `FallbackCredentialStorage`. Silent fallback was the
+        production-credential-storage fail-open Codex review of the
+        2026-05-13 audit pass identified as SDK#896.
+      * In non-production (`TRAIGENT_ENV=development|dev|test|local`),
+        the previous fallback behavior is preserved so local
+        development without `cryptography` installed still works.
+
+    The legacy `FallbackCredentialStorage` class is kept for those
+    non-production paths and for decrypting any historical
+    base64-stored credentials a developer may have on disk; production
+    callers will never see it from this factory function.
+    """
     global _credential_storage_instance
 
     if _credential_storage_instance is None:
         with _credential_storage_lock:
             # Double-checked locking pattern
             if _credential_storage_instance is None:
-                if CRYPTOGRAPHY_AVAILABLE:
+                non_prod = _is_non_production_environment()
+                if not CRYPTOGRAPHY_AVAILABLE:
+                    if not non_prod:
+                        raise RuntimeError(
+                            "cryptography library is required in production for "
+                            "credential storage. The base64 fallback is dev-only "
+                            "(SDK#896). Install with: pip install cryptography, or "
+                            "set TRAIGENT_ENV=development to opt into the local "
+                            "fallback for development."
+                        )
+                    _credential_storage_instance = FallbackCredentialStorage()
+                else:
                     try:
                         _credential_storage_instance = SecureCredentialStorage()
                     except RuntimeError:
+                        # SecureCredentialStorage already raised the production-
+                        # safety RuntimeError (e.g. TRAIGENT_ENCRYPTION_KEY
+                        # missing). DO NOT swallow it in production — that was
+                        # the SDK#896 fail-open. Only fall back when the caller
+                        # has explicitly opted into a non-production environment.
+                        if not non_prod:
+                            raise
                         _credential_storage_instance = FallbackCredentialStorage()
-                else:
-                    _credential_storage_instance = FallbackCredentialStorage()
 
     if _credential_storage_instance is None:
         return FallbackCredentialStorage()
