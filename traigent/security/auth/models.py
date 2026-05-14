@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .helpers import EMAIL_PATTERN
+from .helpers import EMAIL_PATTERN, sanitize_roles
 
 
 @dataclass
@@ -53,10 +53,17 @@ class User:
         # Role normalization (SDK#939 fail-closed):
         # Three cases (see method docstring above):
         #   1. Empty/falsy → safe default ["user"].
-        #   2. Non-empty AND every item invalid → raise.
-        #   3. Non-empty AND any item invalid → raise (mirrors
-        #      sanitize_roles(strict=True) — defense-in-depth, per
-        #      Codex Q3 of PR #969).
+        #   2. Non-empty AND any item invalid → raise.
+        #
+        # Greptile P1 of PR #969: previously this loop only checked
+        # `isinstance(r, str) and r.strip()`, which would silently
+        # accept inputs like `["super admin"]` (space), `["!!!hack!!!"]`
+        # (special chars), or `["a" * 100]` (overlong) — all of which
+        # would be rejected by `sanitize_roles(strict=True)` via
+        # ROLE_PATTERN + sanitize_string + 50-char cap. To make the
+        # User constructor's validation actually mirror the strict
+        # sanitizer (as the docstring promises), delegate to
+        # `sanitize_roles(strict=True)` directly.
         roles_provided = bool(self.roles)  # truthy = caller asserted SOMETHING
         if not isinstance(self.roles, list):
             self.roles = [str(self.roles)] if self.roles else []
@@ -64,20 +71,15 @@ class User:
             self.roles = list(self.roles)
 
         if roles_provided:
-            normalized: list[str] = []
-            for r in self.roles:
-                if isinstance(r, str) and r.strip():
-                    normalized.append(r.strip().lower())
-                else:
-                    raise ValueError(
-                        f"Invalid roles: at least one item is not a non-empty "
-                        f"string (SDK#939 fail-closed; mirrors "
-                        f"sanitize_roles(strict=True) semantics). Got "
-                        f"item of type {type(r).__name__}={r!r}. Pass "
-                        f"roles=None or roles=[] for the default ['user'] "
-                        f"role; do not mix valid and invalid items."
-                    )
-            self.roles = normalized
+            try:
+                self.roles = sanitize_roles(self.roles, strict=True)
+            except ValueError as exc:
+                # Re-raise with SDK#939 marker so test/anti-regression
+                # checks can pin the source of the fail-closed.
+                raise ValueError(
+                    f"Invalid roles in User construction (SDK#939 "
+                    f"fail-closed; via sanitize_roles strict mode): {exc}"
+                ) from exc
         else:
             # Case 1: nothing provided → safe default.
             self.roles: list[Any] = ["user"]

@@ -74,3 +74,29 @@ class TestUserRoleValidation_SDK939:
         to `["admin"]` (preserves pre-fix behavior for this happy case)."""
         u = User(**_VALID_USER_KWARGS, roles="admin")
         assert u.roles == ["admin"]
+
+    def test_user_with_role_having_special_chars_raises(self):
+        """Greptile P1 of PR #969: role strings with special characters
+        like `!!!hack!!!` previously passed the User constructor's
+        loose isinstance check but would be rejected by ROLE_PATTERN
+        in sanitize_roles(strict=True). Now User delegates to the
+        strict sanitizer so both paths agree."""
+        for invalid in (["!!!hack!!!"], ["super admin"], ["role with spaces"]):
+            with pytest.raises(ValueError, match="SDK#939"):
+                User(**_VALID_USER_KWARGS, roles=invalid)
+
+    def test_user_with_role_too_long_truncated_per_sanitize_roles_contract(self):
+        """Note on Greptile P1 of PR #969: \`sanitize_roles(strict=True)\`
+        actually TRUNCATES overlong role strings via
+        \`sanitize_string(max_length=50)\` rather than rejecting them.
+        Since User now delegates to sanitize_roles, it inherits the
+        truncation behavior. This test pins that behavior so anyone
+        tightening sanitize_roles to reject (rather than truncate)
+        knows to also update User construction tests."""
+        # Long valid-character role gets truncated to 50 chars, not
+        # rejected. The User accepts it (no raise).
+        too_long = "a" * 100
+        u = User(**_VALID_USER_KWARGS, roles=[too_long])
+        assert u.roles == ["a" * 50], (
+            f"sanitize_roles(strict=True) truncates to 50 chars; got {u.roles}"
+        )
