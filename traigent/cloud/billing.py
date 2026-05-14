@@ -569,23 +569,77 @@ class BillingManager:
             - current_month_stats["total_credits"],
         }
 
-    def upgrade_plan(self, new_plan: str) -> bool:
-        """Upgrade to a new billing plan.
+    # Tier ordering for upgrade-direction enforcement (SDK#924). Higher
+    # index = higher quota. `upgrade_plan` rejects any change that
+    # increases the index, since the SDK has no authority to grant
+    # itself a higher tier — that has to be a backend/billing-portal
+    # action, validated against the user's actual subscription.
+    _TIER_ORDER: tuple[str, ...] = ("free", "standard", "professional", "enterprise")
 
-        Args:
-            new_plan: Name of new billing plan
+    def upgrade_plan(self, new_plan: str) -> bool:
+        """Change to a different billing plan locally.
+
+        Honest semantics (SDK#924 fix):
+          * Downgrades are allowed — a user can locally cap themselves
+            to a lower tier (e.g. "use the free quota for this run
+            even though I'm on professional"). Caps the user's own
+            usage; never grants additional rights.
+          * Upgrades are REJECTED — locally bumping `current_plan`
+            from `free` to `enterprise` would let the SDK claim
+            unlimited credits / max trials / etc. with no server-side
+            validation, bypassing whatever subscription the user
+            actually has.
+
+        Pre-fix: this method blindly set `self.current_plan = new_plan`
+        for any known plan, granting a free SDK process enterprise
+        quotas (100k monthly_credits + unlimited trials). Codex
+        consultation (#924) flagged this as a billing-bypass:
+
+            > Local plan upgrade grants enterprise quota.
+            > Recommended action: fail-closed/de-export. Remove public
+            > local upgrade authority; derive tier from validated
+            > server/account state.
+
+        Real plan upgrades happen via the backend portal; the SDK
+        learns about them by re-authenticating, not by self-mutation.
 
         Returns:
-            True if upgrade successful
+            True iff the change was applied (a downgrade or no-op).
+            False if the requested plan is unknown.
+
+        Raises:
+            ConfigurationError: if `new_plan` is a known plan but
+                represents an upgrade above the current tier.
         """
+        from traigent.utils.exceptions import ConfigurationError
+
         if new_plan not in self.usage_tracker.billing_plans:
             logger.error(f"Unknown billing plan: {new_plan}")
             return False
 
         old_plan = self.current_plan
-        self.current_plan = new_plan
+        try:
+            old_idx = self._TIER_ORDER.index(old_plan)
+        except ValueError:
+            old_idx = 0  # Unknown current plan → treat as free
+        try:
+            new_idx = self._TIER_ORDER.index(new_plan)
+        except ValueError:
+            new_idx = 0  # Unknown target plan → treat as free for ordering
 
-        logger.info(f"Upgraded billing plan: {old_plan} → {new_plan}")
+        if new_idx > old_idx:
+            raise ConfigurationError(
+                f"Cannot upgrade billing plan locally: '{old_plan}' → "
+                f"'{new_plan}' (SDK#924). Plan upgrades must happen via "
+                f"the backend billing portal and be reflected in the "
+                f"user's authenticated state — the SDK has no authority "
+                f"to grant itself a higher tier. Re-authenticate after "
+                f"completing the upgrade in the portal."
+            )
+
+        # Downgrade or no-op: allowed.
+        self.current_plan = new_plan
+        logger.info(f"Changed billing plan: {old_plan} → {new_plan}")
         return True
 
     def get_current_plan_info(self) -> dict[str, Any]:

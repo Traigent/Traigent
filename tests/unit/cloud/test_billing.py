@@ -576,15 +576,52 @@ class TestBillingManager:
 
         asyncio.run(run_test())
 
-    def test_upgrade_plan_success(self):
-        """Test successful plan upgrade."""
+    def test_upgrade_plan_rejects_local_upgrade_to_paid_tier(self):
+        """SDK#924: post-fix, locally upgrading from `free` to a paid
+        tier (`standard`/`professional`/`enterprise`) must raise
+        ConfigurationError. The SDK has no authority to grant itself
+        a higher subscription tier — that has to be a backend/billing-
+        portal action.
+
+        Pre-fix this returned True and silently set
+        `self.current_plan = "professional"`, granting the SDK
+        professional-tier quotas (10k credits + 500 max trials)
+        without any server-side validation."""
+        from traigent.utils.exceptions import ConfigurationError
+
         tracker = UsageTracker()
         manager = BillingManager(tracker)
 
-        result = manager.upgrade_plan("professional")
+        for upgrade_target in ("standard", "professional", "enterprise"):
+            with pytest.raises(ConfigurationError, match="SDK#924"):
+                manager.upgrade_plan(upgrade_target)
+            assert manager.current_plan == "free", (
+                f"upgrade_plan('{upgrade_target}') must not mutate "
+                f"current_plan when it raises"
+            )
 
+    def test_upgrade_plan_allows_downgrade(self):
+        """SDK#924: downgrades are allowed — a user can cap themselves
+        to a lower tier (uses LESS quota, never more)."""
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        # Simulate a user already on professional via the backend (set
+        # the field directly to skip the upgrade-block).
+        manager.current_plan = "professional"
+
+        for downgrade_target in ("standard", "free"):
+            result = manager.upgrade_plan(downgrade_target)
+            assert result is True
+            assert manager.current_plan == downgrade_target
+            manager.current_plan = "professional"
+
+    def test_upgrade_plan_no_op_same_tier_succeeds(self):
+        """SDK#924: same-tier set must succeed (idempotent reconcile)."""
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        result = manager.upgrade_plan("free")
         assert result is True
-        assert manager.current_plan == "professional"
+        assert manager.current_plan == "free"
 
     def test_upgrade_plan_invalid(self):
         """Test plan upgrade with invalid plan."""
