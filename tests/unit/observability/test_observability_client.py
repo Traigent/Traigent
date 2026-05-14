@@ -180,6 +180,50 @@ def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
     assert "[REDACTED:api_key]" in caplog.text
 
 
+def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    trace_id = client.start_trace("close-flush", trace_id="trace_close_flush")
+    client.record_observation(trace_id, name="close-observation")
+
+    result = client.close()
+
+    assert result.success is True
+    assert result.items_sent == 1
+    assert sent_batches[-1][-1]["id"] == "trace_close_flush"
+
+
+def test_sync_batch_transport_records_closed_transport_drops():
+    transport = _SyncBatchTransport(
+        sender=lambda traces: None,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=10,
+        max_batch_bytes=1024,
+    )
+
+    transport.close()
+    accepted = transport.submit("trace_after_close", {"id": "trace_after_close"})
+
+    assert accepted is False
+    stats = transport.get_stats()
+    assert "transport closed; dropped payload for item 'trace_after_close'" in stats["errors"]
+
+
 def test_observability_client_chunks_flushes_by_byte_limit():
     sent_batches: list[list[dict]] = []
 

@@ -1941,9 +1941,9 @@ class BaseEvaluator(ABC):
         if not available or record_fn is None:
             return
 
-        privacy_enabled = getattr(self, "privacy_enabled", False)
-        actual_output = None if privacy_enabled else result.actual_output
-
+        actual_output = (
+            None if getattr(self, "privacy_enabled", False) else result.actual_output
+        )
         record_fn(
             span,
             success=result.success,

@@ -124,6 +124,9 @@ class _SyncBatchTransport:
         send_now = False
         with self._lock:
             if self._closed:
+                self._append_error(
+                    f"transport closed; dropped payload for item '{item_id}'"
+                )
                 return False
 
             if item_id in self._buffer:
@@ -561,6 +564,11 @@ class ObservabilityClient:
                 errors=[],
                 warnings=[],
             )
+
+        with self._lock:
+            trace_ids = list(self._trace_states.keys())
+        for trace_id in trace_ids:
+            self._queue_trace_snapshot(trace_id)
 
         self._closed = True
         result = self._transport.close()
