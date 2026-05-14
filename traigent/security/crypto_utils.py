@@ -33,6 +33,27 @@ except ImportError:
 PBKDF2_ITERATIONS = 100000  # OWASP/NIST recommended minimum for key derivation
 
 
+def _is_non_production_environment() -> bool:
+    """Return whether the current environment explicitly opts into dev behavior.
+
+    Non-production iff one of the canonical environment flags is set to
+    a known dev/test/local value. Default (no flag set) is production —
+    matches the SDK-wide safety convention that an unset env defaults
+    to the strict path.
+    """
+    environment = (
+        (
+            os.environ.get("TRAIGENT_ENVIRONMENT")
+            or os.environ.get("TRAIGENT_ENV")
+            or os.environ.get("ENVIRONMENT")
+            or "production"
+        )
+        .strip()
+        .lower()
+    )
+    return environment in {"development", "dev", "test", "local"}
+
+
 class CredentialEncryptionError(Exception):
     """Error during credential encryption."""
 
@@ -481,28 +502,6 @@ _credential_storage_instance: (
 _credential_storage_lock = threading.Lock()
 
 
-def _is_non_production_environment() -> bool:
-    """Mirror SecureCredentialStorage.__init__'s environment classification.
-
-    Non-production iff one of the canonical environment flags is set to
-    a known dev/test/local value. Default (no flag set) is production —
-    matches the SDK-wide safety convention that an unset env defaults
-    to the strict path. Keep this in sync with the equivalent block at
-    the top of `SecureCredentialStorage.__init__`.
-    """
-    environment = (
-        (
-            os.environ.get("TRAIGENT_ENVIRONMENT")
-            or os.environ.get("TRAIGENT_ENV")
-            or os.environ.get("ENVIRONMENT")
-            or "production"
-        )
-        .strip()
-        .lower()
-    )
-    return environment in {"development", "dev", "test", "local"}
-
-
 def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStorage:
     """Get appropriate credential storage implementation (thread-safe).
 
@@ -556,7 +555,11 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
                         _credential_storage_instance = FallbackCredentialStorage()
 
     if _credential_storage_instance is None:
-        return FallbackCredentialStorage()
+        raise RuntimeError(
+            "Credential storage initialization failed without selecting a secure "
+            "or explicitly non-production storage backend. Refusing to fall back "
+            "silently (SDK#896)."
+        )
     return _credential_storage_instance
 
 

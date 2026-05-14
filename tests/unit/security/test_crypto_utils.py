@@ -825,3 +825,20 @@ class TestProductionFailClosed_SDK896:
         # the shared helper, both classify as non-prod → no raise.
         storage = get_credential_storage()
         assert storage is not None
+
+    def test_factory_tail_guard_fails_closed_if_singleton_remains_unset(
+        self, monkeypatch
+    ):
+        """Greptile PR #964: the terminal guard must not silently return
+        FallbackCredentialStorage if a future refactor leaves the singleton
+        unset after the lock body."""
+        import traigent.security.crypto_utils as crypto_module
+
+        monkeypatch.setenv("TRAIGENT_ENV", "development")
+        monkeypatch.setattr(crypto_module, "CRYPTOGRAPHY_AVAILABLE", True)
+        monkeypatch.setattr(crypto_module, "SecureCredentialStorage", lambda: None)
+
+        with pytest.raises(
+            RuntimeError, match="Credential storage initialization failed"
+        ):
+            get_credential_storage()
