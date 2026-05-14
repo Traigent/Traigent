@@ -33,6 +33,17 @@ _TAMPER_DETECTION_NOT_IMPLEMENTED = (
 )
 
 
+def _redact_filterable_identifier(value: str | None, label: str) -> str | None:
+    """Redact sensitive identifiers while preserving exact-match filtering."""
+    if value is None:
+        return None
+    redacted = redact_sensitive_text(value)
+    if redacted == value:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"[REDACTED:{label}:{digest}]"
+
+
 class AuditSeverity(Enum):
     """Audit event severity levels."""
 
@@ -254,9 +265,9 @@ class AuditLogger:
             event_id=secrets.token_urlsafe(16),
             event_type=event_type,
             timestamp=datetime.now(UTC),
-            user_id=redact_sensitive_text(user_id),
+            user_id=_redact_filterable_identifier(user_id, "user_id"),
             session_id=redact_sensitive_text(session_id),
-            tenant_id=redact_sensitive_text(tenant_id),
+            tenant_id=_redact_filterable_identifier(tenant_id, "tenant_id"),
             message=redact_sensitive_text(message) or "",
             resource_id=redact_sensitive_text(resource_id),
             resource_type=redact_sensitive_text(resource_type),
@@ -283,7 +294,9 @@ class AuditLogger:
         )  # Store in AuditStorage (thread-safe internally)
         self.event_queue.put(event)  # Add to queue for async processing (thread-safe)
 
-        actor = redact_sensitive_text(user_id) if user_id else "system"
+        actor = (
+            _redact_filterable_identifier(user_id, "user_id") if user_id else "system"
+        )
         logger.info("Audit event logged: %s by %s", event_type.value, actor)
         return event
 
@@ -583,7 +596,8 @@ class ComplianceReporter:
         ]
 
         if tenant_id:
-            events = [e for e in events if e.tenant_id == tenant_id]
+            normalized_tenant_id = _redact_filterable_identifier(tenant_id, "tenant_id")
+            events = [e for e in events if e.tenant_id == normalized_tenant_id]
 
         return events
 
@@ -748,7 +762,10 @@ class AuditStorage:
         if end_time:
             filtered_events = [e for e in filtered_events if e.timestamp <= end_time]
         if user_id:
-            filtered_events = [e for e in filtered_events if e.user_id == user_id]
+            normalized_user_id = _redact_filterable_identifier(user_id, "user_id")
+            filtered_events = [
+                e for e in filtered_events if e.user_id == normalized_user_id
+            ]
         if event_types:
             filtered_events = [
                 e for e in filtered_events if e.event_type in event_types

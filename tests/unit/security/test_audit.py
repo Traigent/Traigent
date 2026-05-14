@@ -297,6 +297,7 @@ class TestAuditLogger:
             message="Bearer canary.jwt.header.payload.signature",
             details={
                 "email": "alice@example.com",
+                "ssn": "123-45-6789",
                 "api_key": FAKE_AUDIT_API_KEY,
             },
         )
@@ -312,6 +313,30 @@ class TestAuditLogger:
         assert "[REDACTED:ssn]" in event_blob
         assert "[REDACTED:api_key]" in event_blob
         assert "[REDACTED:bearer_token]" in event_blob
+
+    def test_email_user_filter_matches_only_the_original_redacted_identifier(self):
+        """Email user IDs should stay filterable without storing raw addresses."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        alice_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="alice@example.com",
+            message="Alice event",
+        )
+        bob_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="bob@example.com",
+            message="Bob event",
+        )
+
+        alice_events = audit_logger.storage.get_events(user_id="alice@example.com")
+        redacted_bucket_events = audit_logger.storage.get_events(
+            user_id="[REDACTED:email]"
+        )
+
+        assert alice_events == [alice_event]
+        assert bob_event not in alice_events
+        assert redacted_bucket_events == []
+        assert "alice@example.com" not in str(alice_event.to_dict())
 
     def test_log_authentication_events(self):
         """Test logging authentication events"""
@@ -534,6 +559,32 @@ class TestComplianceReporter:
 
         with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
             reporter.generate_gdpr_report(start_date, end_date)
+
+    def test_tenant_period_filter_matches_redacted_sensitive_identifier(self):
+        """Tenant filters should work when stored tenant IDs are pseudonymized."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        tenant_id = "tenant-123-45-6789"
+        matching_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            tenant_id=tenant_id,
+            message="Tenant event",
+        )
+        other_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            tenant_id="tenant-987-65-4321",
+            message="Other tenant event",
+        )
+        start_date = datetime.now(UTC) - timedelta(minutes=1)
+        end_date = datetime.now(UTC) + timedelta(minutes=1)
+
+        events = reporter._get_events_for_period(
+            start_date, end_date, tenant_id=tenant_id
+        )
+
+        assert events == [matching_event]
+        assert other_event not in events
+        assert tenant_id not in str(matching_event.to_dict())
 
     def test_security_incident_analysis_fails_loud(self):
         """Incident compliance analysis fails loudly instead of faking resolution."""
