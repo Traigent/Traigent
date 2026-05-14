@@ -633,24 +633,9 @@ If these are missing, optimization may still run locally but backend sync can be
 
 ### Optimization Objectives
 
-Traigent can optimize for any metrics you return. Two equivalent forms:
+Traigent can optimize for any metrics you return. The `objectives` parameter accepts two forms:
 
-**Explicit (dict mapping each metric to its direction):**
-
-```python
-@traigent.optimize(
-    # Minimize cost and latency, maximize accuracy
-    objectives={
-        "accuracy": "maximize",
-        "total_cost_usd": "minimize",
-        "hallucination_score": "minimize",
-    },
-)
-def my_pipeline(prompt: str) -> dict:
-    ...
-```
-
-**Shorthand (list of metric names — `accuracy` defaults to maximize, others minimize):**
+**Shorthand — a list of metric names.** Direction is inferred from the name: `accuracy`, `precision`, `recall`, and `f1` default to *maximize*; `cost`, `latency`, `error`, `loss`, `time`, and `memory` default to *minimize*. Unknown names default to *maximize*.
 
 ```python
 @traigent.optimize(
@@ -659,6 +644,29 @@ def my_pipeline(prompt: str) -> dict:
 def my_pipeline(prompt: str) -> dict:
     ...
 ```
+
+**Explicit — an `ObjectiveSchema` for full control over orientation, weights, and custom metrics.** Construct it from `ObjectiveDefinition` entries via `ObjectiveSchema.from_objectives(...)`:
+
+```python
+from traigent.core.objectives import (
+    ObjectiveDefinition,
+    ObjectiveSchema,
+)
+
+schema = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition(name="accuracy", orientation="maximize", weight=2.0),
+    ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
+    ObjectiveDefinition(name="hallucination_score", orientation="minimize", weight=1.0),
+])
+
+@traigent.optimize(
+    objectives=schema,
+)
+def my_pipeline(prompt: str) -> dict:
+    ...
+```
+
+> **Note:** `objectives` does not accept a plain `dict`. Pass either `list[str]` (shorthand) or an `ObjectiveSchema` instance. Passing anything else raises `TypeError` at runtime (see `traigent/core/objectives.py:normalize_objectives`).
 
 ---
 
