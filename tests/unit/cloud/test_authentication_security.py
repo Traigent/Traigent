@@ -18,6 +18,7 @@ from traigent.cloud.auth import (
     AuthCredentials,
     AuthManager,
     AuthMode,
+    InvalidCredentialsError,
     UnifiedAuthConfig,
 )
 from traigent.utils.logging import get_logger
@@ -100,9 +101,9 @@ class TestCredentialSecurity:
             # Check file permissions (should be 0o600)
             if cache_file.exists():
                 file_mode = cache_file.stat().st_mode & 0o777
-                assert (
-                    file_mode == 0o600
-                ), f"Cache file has insecure permissions: {oct(file_mode)}"
+                assert file_mode == 0o600, (
+                    f"Cache file has insecure permissions: {oct(file_mode)}"
+                )
 
     def test_weak_credential_encryption_detection(self):
         """Test detection of weak credential encryption."""
@@ -254,9 +255,9 @@ class TestCredentialSecurity:
                     f"Development mode: JWT validation may be permissive for token: {token[:50]}..."
                 )
             # Ensure result is an AuthResult object regardless of success/failure
-            assert hasattr(
-                result, "success"
-            ), f"Invalid result type for token: {token[:50]}..."
+            assert hasattr(result, "success"), (
+                f"Invalid result type for token: {token[:50]}..."
+            )
 
     def test_session_fixation_prevention(self):
         """Test prevention of session fixation attacks."""
@@ -721,6 +722,162 @@ class TestEnvironmentSecurity:
                 os.environ[test_env_key] = original_value
             else:
                 os.environ.pop(test_env_key, None)
+
+
+class TestAuthManagerLegacyAuthSecurity:
+    """Regression coverage for legacy AuthManager auth helpers."""
+
+    @pytest.mark.asyncio
+    async def test_oauth2_client_credentials_rejects_private_cloud_base_url(self):
+        manager = AuthManager(
+            UnifiedAuthConfig(cloud_base_url="https://127.0.0.1:5000")
+        )
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+
+        with pytest.raises(RuntimeError, match="cloud_base_url is not allowed"):
+            await manager._oauth2_client_credentials_flow(credentials)
+
+    @pytest.mark.asyncio
+    async def test_oauth2_client_credentials_success_uses_validated_url(self):
+        manager = AuthManager(UnifiedAuthConfig(cloud_base_url="https://auth.example"))
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+            scopes=["read"],
+        )
+        token_data = {"access_token": "access-token", "expires_in": 3600}
+        captured: dict[str, object] = {}
+
+        class _Response:
+            status = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def json(self):
+                return token_data
+
+        class _Session:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            def post(self, url, data):
+                captured["url"] = url
+                captured["data"] = data
+                return _Response()
+
+        with patch("traigent.cloud.auth.aiohttp.ClientSession", new=_Session):
+            result = await manager._oauth2_client_credentials_flow(credentials)
+
+        assert result == token_data
+        assert captured["url"] == "https://auth.example/oauth/token"
+
+    @pytest.mark.asyncio
+    async def test_oauth2_client_credentials_error_redacts_response_body(self):
+        manager = AuthManager(UnifiedAuthConfig(cloud_base_url="https://auth.example"))
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+
+        class _Response:
+            status = 503
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def text(self):
+                return "upstream leaked token=secret-value"
+
+        class _Session:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            def post(self, *_args, **_kwargs):
+                return _Response()
+
+        with patch("traigent.cloud.auth.aiohttp.ClientSession", new=_Session):
+            with pytest.raises(RuntimeError) as exc_info:
+                await manager._oauth2_client_credentials_flow(credentials)
+
+        assert str(exc_info.value) == "OAuth2 flow failed with HTTP 503"
+
+    @pytest.mark.asyncio
+    async def test_legacy_password_auth_does_not_mock_without_explicit_opt_in(self):
+        manager = AuthManager(UnifiedAuthConfig())
+
+        async def _raise_invalid_credentials(*_args, **_kwargs):
+            raise InvalidCredentialsError("Invalid credentials")
+
+        with (
+            patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True),
+            patch(
+                "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+                new=_raise_invalid_credentials,
+            ),
+        ):
+            with pytest.raises(InvalidCredentialsError):
+                await manager._perform_password_authentication(
+                    {
+                        "email": "user@example.com",
+                        "password": "password123",  # pragma: allowlist secret
+                    }
+                )
+
+    @pytest.mark.asyncio
+    async def test_legacy_password_auth_mock_requires_explicit_opt_in(self):
+        manager = AuthManager(UnifiedAuthConfig())
+
+        async def _raise_backend_outage(*_args, **_kwargs):
+            raise RuntimeError("backend down")
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TRAIGENT_ENV": "development",
+                    "TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH": "1",
+                },
+                clear=True,
+            ),
+            patch(
+                "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+                new=_raise_backend_outage,
+            ),
+        ):
+            token_data = await manager._perform_password_authentication(
+                {
+                    "email": "user@example.com",
+                    "password": "password123",  # pragma: allowlist secret
+                }
+            )
+
+        assert token_data is not None
+        assert token_data["dev_mode"] is True
 
 
 if __name__ == "__main__":
