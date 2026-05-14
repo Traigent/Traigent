@@ -290,7 +290,6 @@ class AgentExecutor(ABC):
         Returns:
             Cost estimation dictionary
         """
-        await asyncio.sleep(0)
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement cost estimation"
         )

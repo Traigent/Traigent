@@ -244,7 +244,7 @@ class AgentLifecycleManager:
                 info.is_alive = False
                 info.keep_alive_status = "unsupported"
                 self._missed_heartbeats[session_id] = 0
-                return
+                continue
 
             except Exception as e:
                 self._handle_heartbeat_failure(session_id, info, str(e))

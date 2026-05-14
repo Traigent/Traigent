@@ -236,3 +236,33 @@ class TestAgentLifecycleManager:
             assert info.keep_alive_status == "unsupported"
 
         await manager.release()
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_not_supported_marks_all_sessions_in_one_pass(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        """Unsupported keep-alive must process every active session in one pass."""
+        mock_transport.keep_alive = AsyncMock(side_effect=NotImplementedError)
+
+        manager = AgentLifecycleManager(
+            transport=mock_transport,
+            heartbeat_interval=3600.0,
+        )
+
+        manager._sessions = {
+            "session-1": SessionInfo(session_id="session-1"),
+            "session-2": SessionInfo(session_id="session-2"),
+        }
+        manager._missed_heartbeats = {"session-1": 0, "session-2": 0}
+
+        await manager._send_heartbeats()
+
+        assert mock_transport.keep_alive.await_count == 2
+        for session_id in ("session-1", "session-2"):
+            info = manager.get_session_info(session_id)
+            assert info is not None
+            assert info.is_alive is False
+            assert info.keep_alive_status == "unsupported"
+
+        await manager.release()
