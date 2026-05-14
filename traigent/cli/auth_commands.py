@@ -417,9 +417,16 @@ class TraigentAuthCLI:
         # We'll need to extract it from the initial auth response
         user_info: dict[str, str] = {}
 
+        # SDK#908 fix: do NOT fabricate `refresh_token = jwt_token`. The
+        # backend's auth response did not return a real refresh token,
+        # so storing the JWT under that key was misleading — downstream
+        # callers (e.g. `auth_commands.py:_perform_token_refresh`) would
+        # try to use the JWT as a refresh token at the auth server,
+        # which fails. The honest behavior: omit the field entirely.
+        # Refresh-needing flows already gracefully degrade to "please
+        # re-login" when no refresh_token is present (see line 772).
         return {
             "jwt_token": jwt_token,
-            "refresh_token": jwt_token,  # Use same token as refresh for now
             "api_key": api_key,
             "user": user_info,
             "backend_url": self.backend_url,

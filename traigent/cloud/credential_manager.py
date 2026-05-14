@@ -51,13 +51,31 @@ class CredentialManager:
         # Check for CLI stored credentials
         stored_creds = cls._load_cli_credentials()
         if stored_creds:
-            # Prefer API key over JWT
             if stored_creds.get("api_key"):
                 logger.debug("Using API key from CLI credentials")
                 return cast(str, stored_creds["api_key"])
-            elif stored_creds.get("jwt_token"):
-                logger.debug("Using JWT token from CLI credentials")
-                return cast(str, stored_creds["jwt_token"])
+            # SDK#908 fix: previously this fell back to using the
+            # stored `jwt_token` as if it were an API key. JWTs expire
+            # within minutes; using one as a long-lived API key leaks
+            # an expired token into request headers, which the
+            # backend's auth middleware then has to reject. The
+            # symptom is "401 unauthorized after the JWT expires" —
+            # impossible for the user to diagnose because the SDK
+            # claimed it had valid credentials.
+            #
+            # Honest behavior: if the user has only a JWT (no API
+            # key), we don't have a long-lived credential. Returning
+            # None forces the caller down the unauthenticated path,
+            # which surfaces the missing-credential condition
+            # immediately instead of after the JWT expires.
+            if stored_creds.get("jwt_token"):
+                logger.warning(
+                    "CLI credentials have a stored jwt_token but no "
+                    "api_key. JWT tokens are short-lived and unsafe to "
+                    "use as a long-lived API key. Run "
+                    "'traigent auth login' to refresh and create an "
+                    "API key (SDK#908)."
+                )
 
         # Development fallback. The dev-mode credential is no longer hard-coded
         # in source: the operator must explicitly set TRAIGENT_DEV_API_KEY when
