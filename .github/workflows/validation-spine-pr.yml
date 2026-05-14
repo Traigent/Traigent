@@ -15,8 +15,7 @@
 # This run is **advisory** for the first calibration window — it uploads
 # the gap report as an artifact and surfaces critical findings as a soft
 # warning. Promote to blocking (`--gate`) only after the false-positive
-# rate has been confirmed acceptable. See
-# /home/nimrodbu/.claude/plans/async-plotting-stardust.md Phase D and E1.
+# rate has been confirmed acceptable.
 
 name: validation-spine-pr
 
@@ -43,6 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true  # advisory mode — promote to blocking after calibration
+    env:
+      SPINE_REF: 0dc2d057e7e33e71acc882388b546e5808e4002b  # pragma: allowlist secret
+      SPINE_FILE_LIMIT: "5000"
+      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN }}
 
     steps:
       # Checkout the product repo as $GITHUB_WORKSPACE/Traigent/ so the
@@ -54,34 +57,47 @@ jobs:
       - name: Checkout product repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           path: Traigent
 
       - name: Checkout validation spine
+        if: env.SPINE_RO_TOKEN != ''
         uses: actions/checkout@v4
         with:
           repository: Traigent/traigent-validation-spine
-          # TODO: pin to a tagged spine release once the WIP on
-          # chore/l6-and-batch1-fixes lands on develop. Until then this
-          # tracks develop; if develop diverges, set `ref:` explicitly.
-          ref: develop
+          ref: ${{ env.SPINE_REF }}
           path: .spine
-          token: ${{ secrets.SPINE_RO_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ env.SPINE_RO_TOKEN }}
+
+      - name: Note skipped spine scan
+        if: env.SPINE_RO_TOKEN == ''
+        run: |
+          echo "::warning::SPINE_RO_TOKEN is not configured; validation spine scan skipped."
+          {
+            echo "## Validation Spine — PR scan"
+            echo
+            echo "Skipped: repository secret \`SPINE_RO_TOKEN\` is not configured."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.11
+        if: env.SPINE_RO_TOKEN != ''
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install uv
-        run: pip install --upgrade pip uv
+        if: env.SPINE_RO_TOKEN != ''
+        run: pip install --upgrade pip "uv==0.8.13"
 
       - name: Install spine
+        if: env.SPINE_RO_TOKEN != ''
         working-directory: .spine
         run: uv sync --extra dev
 
       - name: Run security_ledger against product repo
+        if: env.SPINE_RO_TOKEN != ''
         id: spine-run
+        continue-on-error: true
         working-directory: .spine
         run: |
           mkdir -p "$GITHUB_WORKSPACE/.spine-health"
@@ -96,10 +112,10 @@ jobs:
           ./.venv/bin/validation security-ledger run \
             --workspace-root "$GITHUB_WORKSPACE" \
             --health-dir "$GITHUB_WORKSPACE/.spine-health" \
-            --file-limit 500
+            --file-limit "$SPINE_FILE_LIMIT"
 
       - name: Summarize new critical findings
-        if: always()
+        if: always() && env.SPINE_RO_TOKEN != ''
         working-directory: .spine
         run: |
           set -e
@@ -137,7 +153,7 @@ jobs:
           PY
 
       - name: Upload spine gap artifacts
-        if: always()
+        if: always() && env.SPINE_RO_TOKEN != ''
         uses: actions/upload-artifact@v4
         with:
           name: validation-spine-gaps
