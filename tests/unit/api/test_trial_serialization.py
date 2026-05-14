@@ -133,9 +133,10 @@ def test_trial_result_to_dict_redacts_config_and_repr_hides_payloads() -> None:
         trial_id="trial-redaction",
         config={"api_key": FAKE_TRIAL_API_KEY},
         metrics={"accuracy": 1.0},
-        status=TrialStatus.COMPLETED,
+        status=TrialStatus.FAILED,
         duration=0.1,
         timestamp=datetime(2026, 3, 13, 12, 1, tzinfo=UTC),
+        error_message=f"Provider returned {FAKE_TRIAL_API_KEY}",
         metadata={"owner_email": "alice@example.com"},
     )
 
@@ -145,6 +146,7 @@ def test_trial_result_to_dict_redacts_config_and_repr_hides_payloads() -> None:
     serialized_blob = str(serialized)
 
     assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
+    assert serialized["error_message"] == "Provider returned [REDACTED:api_key]"
     assert serialized["metadata"]["owner_email"] == "[REDACTED:email]"
     assert FAKE_TRIAL_API_KEY not in serialized_blob
     assert "alice@example.com" not in serialized_blob
@@ -154,11 +156,11 @@ def test_trial_result_to_dict_redacts_config_and_repr_hides_payloads() -> None:
     assert "alice@example.com" not in str(trial)
 
 
-def test_trial_error_to_dict_redacts_raw_config_directly() -> None:
+def test_trial_error_to_dict_redacts_raw_strings_and_config_directly() -> None:
     error = TrialError(
-        message="Provider failed",
+        message=f"Provider failed for {FAKE_TRIAL_API_KEY}",
         error_type="ProviderError",
-        traceback="Traceback omitted",
+        traceback=f"Traceback included alice@example.com and {FAKE_TRIAL_API_KEY}",
         timestamp=datetime(2026, 3, 13, 12, 2, tzinfo=UTC),
         config={"api_key": FAKE_TRIAL_API_KEY},
     )
@@ -167,8 +169,14 @@ def test_trial_error_to_dict_redacts_raw_config_directly() -> None:
 
     serialized = error.to_dict()
 
+    assert serialized["message"] == "Provider failed for [REDACTED:api_key]"
+    assert (
+        serialized["traceback"]
+        == "Traceback included [REDACTED:email] and [REDACTED:api_key]"
+    )
     assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
     assert FAKE_TRIAL_API_KEY not in str(serialized)
+    assert "alice@example.com" not in str(serialized)
     assert FAKE_TRIAL_API_KEY not in repr(error)
 
 
