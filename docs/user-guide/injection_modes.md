@@ -360,6 +360,7 @@ We chose to remove the mode rather than ship a footgun that silently produced wr
 | Type-safe config access | `injection_mode="parameter"` + an explicit config arg |
 | Zero-touch override of local variables | `injection_mode="seamless"` |
 | External monitoring (reading `my_func.current_config` from a sidecar) | Switch to `context` and emit the active config from inside the function via your normal observability pipeline (logs / metrics / spans) |
+| Stateful buffers / mutable state previously hung off the function object | Move state into an explicit container keyed by the active config — see the stateful-buffers example below |
 
 **Example migration — basic case:**
 
@@ -412,6 +413,48 @@ def text_generation_api(prompt: str) -> str:
         max_length=config["max_length"],
         temperature=config["temperature"],
     )
+```
+
+**Example migration — stateful buffers (mutable state that v1.x stored on the function attribute):**
+
+If you previously hung mutable state directly off the optimized function (e.g., `buffered_writer.buffer = []`), move that state into an explicit container and look it up by the active config. This is thread-safe under parallel trials: each trial sees its own config and addresses its own state slot.
+
+```python
+# Before (v1.x): mutable state read/written via func.<attr>
+#   buffered_writer.buffer = []
+#   buffered_writer.last_flush = time.time()
+#   ...inside the function: read buffered_writer.current_config
+
+# After (v2.x): keep state in an explicit container keyed by config
+import threading, time
+
+_BUFFERS: dict[tuple, dict] = {}     # key: (buffer_size, flush_interval, compression)
+_BUFFERS_LOCK = threading.Lock()
+
+@traigent.optimize(
+    injection_mode="context",
+    configuration_space={
+        "buffer_size": [100, 1000, 10000],
+        "flush_interval": [1, 5, 10],
+        "compression": ["none", "gzip", "lz4"],
+    },
+)
+def buffered_writer(data: bytes) -> None:
+    config = traigent.get_config()
+    key = (config["buffer_size"], config["flush_interval"], config["compression"])
+    with _BUFFERS_LOCK:
+        state = _BUFFERS.setdefault(key, {"buffer": [], "last_flush": time.time()})
+
+    payload = compress(data, config["compression"]) if config["compression"] != "none" else data
+    state["buffer"].append(payload)
+
+    if (
+        len(state["buffer"]) >= config["buffer_size"]
+        or time.time() - state["last_flush"] > config["flush_interval"]
+    ):
+        flush_buffer(state["buffer"])
+        state["buffer"] = []
+        state["last_flush"] = time.time()
 ```
 
 For a cross-link to the runtime enum see the [InjectionMode reference](../api-reference/complete-function-specification.md#injectionmode) — the enum has only `CONTEXT`, `PARAMETER`, and `SEAMLESS`; the previous fourth member is no longer present.
