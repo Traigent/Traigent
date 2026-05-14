@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from traigent.security.redaction import redact_sensitive_data
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -263,9 +263,9 @@ class TrialError:
     ) -> dict[str, Any]:
         """Convert structured error details to a JSON-ready dictionary."""
         return {
-            "message": self.message,
+            "message": redact_sensitive_text(self.message),
             "error_type": self.error_type,
-            "traceback": self.traceback,
+            "traceback": redact_sensitive_text(self.traceback),
             "timestamp": _serialize_datetime(
                 self.timestamp, datetime_format=datetime_format
             ),
@@ -273,6 +273,16 @@ class TrialError:
                 _json_safe_trial_value(self.config, datetime_format=datetime_format)
             ),
         }
+
+    def __repr__(self) -> str:
+        return (
+            "TrialError("
+            "message='<redacted>', "
+            f"error_type={self.error_type!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "config='<redacted>'"
+            ")"
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
@@ -332,6 +342,21 @@ class TrialResult:
         """Get the formatted traceback for a failed trial, when available."""
         return self.error.traceback if self.error else None
 
+    def __repr__(self) -> str:
+        return (
+            "TrialResult("
+            f"trial_id={self.trial_id!r}, "
+            "config='<redacted>', "
+            f"metrics={self.metrics!r}, "
+            f"status={self.status!r}, "
+            f"duration={self.duration!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "error_message='<redacted>', "
+            "metadata='<redacted>', "
+            f"error_type={self.error_type!r}"
+            ")"
+        )
+
     def to_dict(
         self,
         *,
@@ -355,7 +380,7 @@ class TrialResult:
             "timestamp": _serialize_datetime(
                 self.timestamp, datetime_format=datetime_format
             ),
-            "error_message": self.error_message,
+            "error_message": redact_sensitive_text(self.error_message),
             "error": _json_safe_trial_value(
                 self.error, datetime_format=datetime_format
             ),

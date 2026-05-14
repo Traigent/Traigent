@@ -138,7 +138,9 @@ class _SyncBatchTransport:
                 )
                 return False
 
-            self._buffer[item_id] = copy.deepcopy(payload)
+            # Direct transport callers bypass ObservabilityClient's trace redaction.
+            redacted_payload = cast(dict[str, Any], redact_sensitive_data(payload))
+            self._buffer[item_id] = copy.deepcopy(redacted_payload)
             self._stats["submitted_items"] += 1
             self._stats["pending_items"] = len(self._buffer)
 

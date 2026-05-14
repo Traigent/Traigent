@@ -9,6 +9,10 @@ import pytest
 from traigent import serialize_trials
 from traigent.api.types import ExampleResult, TrialError, TrialResult, TrialStatus
 
+FAKE_TRIAL_API_KEY = (
+    "sk-ant-canary-DO-NOT-USE-trial-123456789abcdef"  # pragma: allowlist secret
+)
+
 
 class _NestedTimestampedPayload:
     """Test helper exposing a no-arg ``to_dict`` with nested datetimes."""
@@ -122,6 +126,58 @@ def test_trial_result_to_dict_serializes_structured_error_context() -> None:
         "model": "gpt-4o-mini",
         "temperature": 0.2,
     }
+
+
+def test_trial_result_to_dict_redacts_config_and_repr_hides_payloads() -> None:
+    trial = TrialResult(
+        trial_id="trial-redaction",
+        config={"api_key": FAKE_TRIAL_API_KEY},
+        metrics={"accuracy": 1.0},
+        status=TrialStatus.FAILED,
+        duration=0.1,
+        timestamp=datetime(2026, 3, 13, 12, 1, tzinfo=UTC),
+        error_message=f"Provider returned {FAKE_TRIAL_API_KEY}",
+        metadata={"owner_email": "alice@example.com"},
+    )
+
+    assert trial.config["api_key"] == FAKE_TRIAL_API_KEY
+
+    serialized = trial.to_dict()
+    serialized_blob = str(serialized)
+
+    assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
+    assert serialized["error_message"] == "Provider returned [REDACTED:api_key]"
+    assert serialized["metadata"]["owner_email"] == "[REDACTED:email]"
+    assert FAKE_TRIAL_API_KEY not in serialized_blob
+    assert "alice@example.com" not in serialized_blob
+    assert FAKE_TRIAL_API_KEY not in repr(trial)
+    assert "alice@example.com" not in repr(trial)
+    assert FAKE_TRIAL_API_KEY not in str(trial)
+    assert "alice@example.com" not in str(trial)
+
+
+def test_trial_error_to_dict_redacts_raw_strings_and_config_directly() -> None:
+    error = TrialError(
+        message=f"Provider failed for {FAKE_TRIAL_API_KEY}",
+        error_type="ProviderError",
+        traceback=f"Traceback included alice@example.com and {FAKE_TRIAL_API_KEY}",
+        timestamp=datetime(2026, 3, 13, 12, 2, tzinfo=UTC),
+        config={"api_key": FAKE_TRIAL_API_KEY},
+    )
+
+    assert error.config["api_key"] == FAKE_TRIAL_API_KEY
+
+    serialized = error.to_dict()
+
+    assert serialized["message"] == "Provider failed for [REDACTED:api_key]"
+    assert (
+        serialized["traceback"]
+        == "Traceback included [REDACTED:email] and [REDACTED:api_key]"
+    )
+    assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
+    assert FAKE_TRIAL_API_KEY not in str(serialized)
+    assert "alice@example.com" not in str(serialized)
+    assert FAKE_TRIAL_API_KEY not in repr(error)
 
 
 def test_trial_result_to_dict_serializes_nested_to_dict_datetimes() -> None:

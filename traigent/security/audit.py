@@ -260,6 +260,7 @@ class AuditLogger:
 
         # Handle source_ip alias
         final_ip = ip_address or source_ip
+        redacted_message = redact_sensitive_text(message)
 
         event = AuditEvent(
             event_id=secrets.token_urlsafe(16),
@@ -268,7 +269,7 @@ class AuditLogger:
             user_id=_redact_filterable_identifier(user_id, "user_id"),
             session_id=redact_sensitive_text(session_id),
             tenant_id=_redact_filterable_identifier(tenant_id, "tenant_id"),
-            message=redact_sensitive_text(message) or "",
+            message=redacted_message if redacted_message is not None else "",
             resource_id=redact_sensitive_text(resource_id),
             resource_type=redact_sensitive_text(resource_type),
             resource=redact_sensitive_text(resource),  # Add resource field
