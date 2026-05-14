@@ -74,7 +74,7 @@ class CredentialManager:
                     "api_key. JWT tokens are short-lived and unsafe to "
                     "use as a long-lived API key. Run "
                     "'traigent auth login' to refresh and create an "
-                    "API key (SDK#908)."
+                    "API key."
                 )
 
         # Development fallback. The dev-mode credential is no longer hard-coded
