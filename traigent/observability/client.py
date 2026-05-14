@@ -123,6 +123,9 @@ class _SyncBatchTransport:
         send_now = False
         with self._lock:
             if self._closed:
+                self._append_error(
+                    f"transport closed; dropped payload for item '{item_id}'"
+                )
                 return False
 
             if item_id in self._buffer:
@@ -561,6 +564,11 @@ class ObservabilityClient:
                 warnings=[],
             )
 
+        with self._lock:
+            trace_ids = list(self._trace_states.keys())
+        for trace_id in trace_ids:
+            self._queue_trace_snapshot(trace_id)
+
         self._closed = True
         result = self._transport.close()
         return FlushResult(
@@ -873,7 +881,12 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = state.to_payload()
-        self._transport.submit(trace_id, payload)
+        if not self._transport.submit(trace_id, payload):
+            logger.warning(
+                "Observability transport did not accept snapshot for trace %s; "
+                "inspect flush() or get_stats() for delivery errors",
+                trace_id,
+            )
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str] = {}
