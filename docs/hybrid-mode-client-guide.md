@@ -645,7 +645,7 @@ def my_pipeline(prompt: str) -> dict:
     ...
 ```
 
-**Explicit — an `ObjectiveSchema` for full control over orientation, weights, and custom metrics.** Construct it from `ObjectiveDefinition` entries via `ObjectiveSchema.from_objectives(...)`:
+**Explicit — an `ObjectiveSchema` for full control over orientation, weights, and custom metrics.** Construct it from `ObjectiveDefinition` entries via `ObjectiveSchema.from_objectives(...)`. The example below covers the same three metrics as the shorthand above but doubles the weight on `accuracy` (so it matters more in the trade-off) — equivalent only if every weight were `1.0`:
 
 ```python
 from traigent.core.objectives import (
@@ -655,8 +655,8 @@ from traigent.core.objectives import (
 
 schema = ObjectiveSchema.from_objectives([
     ObjectiveDefinition(name="accuracy", orientation="maximize", weight=2.0),
-    ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
-    ObjectiveDefinition(name="hallucination_score", orientation="minimize", weight=1.0),
+    ObjectiveDefinition(name="cost",     orientation="minimize", weight=1.0),
+    ObjectiveDefinition(name="latency",  orientation="minimize", weight=1.0),
 ])
 
 @traigent.optimize(
@@ -665,6 +665,8 @@ schema = ObjectiveSchema.from_objectives([
 def my_pipeline(prompt: str) -> dict:
     ...
 ```
+
+The explicit form also lets you add custom metrics that aren't in the shorthand defaults — for example `ObjectiveDefinition(name="hallucination_score", orientation="minimize", weight=1.0)`.
 
 > **Note:** `objectives` does not accept a plain `dict`. Pass either `list[str]` (shorthand) or an `ObjectiveSchema` instance. Passing anything else raises `TypeError` at runtime (see `traigent/core/objectives.py:normalize_objectives`).
 
