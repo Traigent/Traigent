@@ -19,7 +19,7 @@ EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 # Regex pattern for validating role names. Enterprise IdPs commonly emit
 # separators such as "api:read", "team.member", and "org/admin".
-ROLE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_:/.-]{0,49}$")
+ROLE_PATTERN = re.compile(r"^[a-z0-9_-][a-z0-9_:/.-]{0,49}$")
 
 # Security constant: Delay to prevent timing attacks on authentication.
 # This intentionally blocks to ensure constant-time failure responses.

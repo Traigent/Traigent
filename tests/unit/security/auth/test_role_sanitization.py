@@ -22,8 +22,9 @@ def test_sanitize_roles_strict_rejects_malformed_claims() -> None:
 
 def test_sanitize_roles_strict_accepts_common_idp_separators() -> None:
     assert sanitize_roles(
-        ["admin", "api:read", "team.member", "org/admin"], strict=True
-    ) == ["admin", "api:read", "team.member", "org/admin"]
+        ["admin", "api:read", "team.member", "org/admin", "_internal", "-system"],
+        strict=True,
+    ) == ["admin", "api:read", "team.member", "org/admin", "_internal", "-system"]
 
 
 def test_sanitize_roles_legacy_non_strict_falls_back() -> None:
