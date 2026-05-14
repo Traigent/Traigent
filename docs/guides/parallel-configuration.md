@@ -112,21 +112,23 @@ Not all injection modes are safe for parallel trial execution:
 | `context` | ✅ Yes | Uses contextvars (task-local); see [Thread Pool Examples](../api-reference/thread-pool-examples.md) for thread pools |
 | `parameter` | ✅ Yes | Config passed explicitly per call |
 | `seamless` | ✅ Yes | Uses context under the hood |
-| `attribute` | ⚠️ No | Shared function attribute causes races |
 
-### Attribute Mode Blocked
+### Attribute Mode Removed
 
-`injection_mode="attribute"` is **not compatible** with parallel trials. Traigent
-raises `ValueError` if you attempt this combination - no workarounds exist.
+The function-attribute-based injection mode was **removed in v2.x** — it cannot
+be made thread-safe under parallel trials, and we are no longer willing to ship
+a mode that silently corrupts data when concurrency is enabled. Passing the
+removed value as `injection_mode` now raises `ConfigurationError` at decoration
+time with migration guidance.
 
-**Why?** Attribute mode fundamentally relies on a shared mutable function
-attribute (`my_func.current_config`) that cannot be made thread-safe:
+**Why it was removed.** Attribute mode relied on a shared mutable function
+attribute (`my_func.current_config`):
 
-- Concurrent trials overwrite the same attribute simultaneously
-- There is no isolation between trials - all share the same function object
-- Race conditions cause silent data corruption
+- Concurrent trials overwrote the same attribute simultaneously.
+- There was no isolation between trials — all shared the same function object.
+- Races caused silent data corruption with no surfaced error.
 
-**Use these thread-safe alternatives instead:**
+**Use these thread-safe alternatives:**
 
 ```python
 # ✅ Context mode (recommended for parallel)
@@ -148,17 +150,12 @@ def my_func(query: str) -> str:
 )
 def my_func(query: str, config: dict) -> str:
     return process(query, config)
-
-# ✅ Attribute mode with sequential execution only
-@traigent.optimize(
-    injection_mode="attribute",
-    parallel_config={"trial_concurrency": 1},  # Sequential = safe
-    ...
-)
-def my_func(query: str) -> str:
-    config = my_func.current_config
-    return process(query, config)
 ```
+
+> If you previously relied on attribute mode for external observation
+> (e.g., reading `my_func.current_config` from a monitoring sidecar), migrate
+> to `context` mode and read the active configuration from inside the optimized
+> function — see [Thread Pool Examples](../api-reference/thread-pool-examples.md).
 
 ## Related Documentation
 

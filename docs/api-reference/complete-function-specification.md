@@ -501,10 +501,11 @@ class OptimizationStatus(Enum):
 Configuration class for Traigent settings
 
 ### InjectionMode
-- `CONTEXT`: Use configuration context (default)
+- `CONTEXT`: Use configuration context (default; thread-safe via contextvars)
 - `PARAMETER`: Pass as function parameter
-- `ATTRIBUTE`: Store configuration on a function attribute ("decorator" alias is deprecated)
 - `SEAMLESS`: AST-based override of simple variable assignments
+
+> **Removed in v2.x:** the function-attribute-based injection mode (and its `decorator` alias) — it cannot be made thread-safe under parallel trials. Migrate to `CONTEXT` (recommended) or `SEAMLESS`. Passing the removed value raises `ConfigurationError` at decoration time with migration guidance; see [User Guide / Section 4](../user-guide/injection_modes.md#4-attribute-mode-removed-in-v2x).
 
 ## Examples
 
