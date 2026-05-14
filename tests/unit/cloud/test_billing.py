@@ -623,6 +623,46 @@ class TestBillingManager:
         assert result is True
         assert manager.current_plan == "free"
 
+    def test_upgrade_plan_unknown_target_in_billing_plans_but_missing_tier_order_raises(self):
+        """Greptile P1 of PR #968: a plan registered in billing_plans
+        but absent from _TIER_ORDER must raise ConfigurationError.
+        Pre-fix this fell back to index 0 (free) and silently allowed
+        the change — re-opening the upgrade bypass for any future
+        tier added without an _TIER_ORDER update."""
+        from traigent.cloud.billing import BillingPlan
+        from traigent.utils.exceptions import ConfigurationError
+
+        tracker = UsageTracker()
+        # Inject a fictitious tier into billing_plans WITHOUT updating
+        # _TIER_ORDER (simulating the maintenance gap Greptile flagged).
+        tracker.billing_plans["super_secret_unlimited"] = BillingPlan(
+            name="Super Secret",
+            monthly_credits=999_999_999,
+            cost_per_credit=0.0,
+            max_trials_per_optimization=-1,
+            max_dataset_size=-1,
+        )
+        manager = BillingManager(tracker)
+
+        with pytest.raises(ConfigurationError, match="_TIER_ORDER"):
+            manager.upgrade_plan("super_secret_unlimited")
+
+    def test_upgrade_plan_current_plan_not_in_tier_order_raises(self):
+        """Greptile P1 of PR #968 (symmetric case): if current_plan is
+        somehow set to a value missing from _TIER_ORDER (e.g., a
+        legitimate plan added to billing_plans but not yet ordered),
+        upgrade_plan must raise instead of misclassifying as free."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        tracker = UsageTracker()
+        manager = BillingManager(tracker)
+        # Force current_plan to a non-ordered value (skipping the
+        # upgrade-block by direct attribute assignment).
+        manager.current_plan = "unknown_legacy_tier"
+
+        with pytest.raises(ConfigurationError, match="_TIER_ORDER"):
+            manager.upgrade_plan("free")
+
     def test_upgrade_plan_invalid(self):
         """Test plan upgrade with invalid plan."""
         tracker = UsageTracker()

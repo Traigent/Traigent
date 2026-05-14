@@ -21,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -609,23 +610,41 @@ class BillingManager:
 
         Raises:
             ConfigurationError: if `new_plan` is a known plan but
-                represents an upgrade above the current tier.
+                represents an upgrade above the current tier, OR if
+                either current_plan or new_plan exists in
+                `billing_plans` but is missing from `_TIER_ORDER`
+                (Greptile P1 of PR #968: silent fallback to "free"
+                index re-opened the bypass for any future tier added
+                without an _TIER_ORDER update).
         """
-        from traigent.utils.exceptions import ConfigurationError
-
         if new_plan not in self.usage_tracker.billing_plans:
             logger.error(f"Unknown billing plan: {new_plan}")
             return False
 
         old_plan = self.current_plan
+        # Greptile P1#1 of PR #968: do NOT fall back to free index for
+        # unknown tiers. Either tier missing from _TIER_ORDER is a
+        # configuration error — fail-closed means raising, not
+        # silently treating it as "free".
         try:
             old_idx = self._TIER_ORDER.index(old_plan)
-        except ValueError:
-            old_idx = 0  # Unknown current plan → treat as free
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Current plan '{old_plan}' is not in the known tier "
+                f"ordering (SDK#924). Cannot evaluate upgrade direction. "
+                f"Add '{old_plan}' to BillingManager._TIER_ORDER if it is "
+                f"a legitimate plan."
+            ) from exc
         try:
             new_idx = self._TIER_ORDER.index(new_plan)
-        except ValueError:
-            new_idx = 0  # Unknown target plan → treat as free for ordering
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Target plan '{new_plan}' is in billing_plans but absent "
+                f"from BillingManager._TIER_ORDER (SDK#924). Update "
+                f"_TIER_ORDER to include this plan in the correct position "
+                f"before allowing it to be applied — silently allowing "
+                f"unknown-position plans would re-open the upgrade bypass."
+            ) from exc
 
         if new_idx > old_idx:
             raise ConfigurationError(
