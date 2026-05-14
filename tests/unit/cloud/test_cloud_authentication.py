@@ -1521,9 +1521,14 @@ class TestSDK920_NoFabricatedBillingPermission:
         from traigent.cloud import api_key_manager
 
         source = inspect.getsource(api_key_manager)
-        # The exact bug-line literal must not be present anywhere in
-        # the module.
-        assert '"billing": True' not in source, (
+        # Greptile P2 of PR #967: regex-based check tolerates quote
+        # variants (single vs double) and whitespace differences (no
+        # space after colon). The previous string-equality test would
+        # silently miss `'billing': True` (single quotes) or
+        # `"billing":True` (no space).
+        import re
+
+        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
             "api_key_manager.py must not hard-code `billing: True` in "
             "any APIKey construction (SDK#920)"
         )
@@ -1532,12 +1537,14 @@ class TestSDK920_NoFabricatedBillingPermission:
         """Pin: AuthManager.apply_token_data (or equivalent) does NOT
         construct an APIKey with `billing: True`. Pre-fix it did."""
         import inspect
+        import re
 
         from traigent.cloud import auth
 
         source = inspect.getsource(auth)
-        # The pre-fix literal MUST NOT appear in auth.py.
-        assert '"billing": True' not in source, (
+        # Greptile P2 of PR #967: regex pattern tolerates quote/spacing
+        # variants — see the sister assertion above.
+        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
             "auth.py must not hard-code `billing: True` in any APIKey "
             "construction (SDK#920)"
         )
