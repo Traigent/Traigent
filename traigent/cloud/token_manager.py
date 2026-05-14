@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 
 if TYPE_CHECKING:
@@ -298,9 +299,11 @@ class TokenManager:
                 )
 
             except Exception as exc:
-                logger.error(f"Token refresh failed: {exc}")
+                logger.error("Token refresh failed: %s", type(exc).__name__)
                 return AuthResult(
-                    success=False, status=AuthStatus.INVALID, error_message=str(exc)
+                    success=False,
+                    status=AuthStatus.INVALID,
+                    error_message="Token refresh failed",
                 )
 
     async def refresh_jwt_secure(self, refresh_token_value: str) -> AuthResult:
@@ -320,9 +323,22 @@ class TokenManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.build_api_base(
-            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-        )
+        try:
+            backend_api_url = await validate_cloud_base_url_async(
+                BackendConfig.build_api_base(
+                    self.config.backend_base_url
+                    or BackendConfig.get_cloud_backend_url()
+                ),
+                purpose="JWT token refresh",
+            )
+        except ValueError as exc:
+            logger.warning("Rejected JWT token refresh URL: %s", exc)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=str(exc),
+            )
+
         refresh_url = f"{backend_api_url}/auth/refresh"
 
         client = ResilientClient(
@@ -343,15 +359,17 @@ class TokenManager:
                     if response.status == 401:
                         raise ValueError("Refresh token invalid or expired")
                     if response.status == 429:
-                        error_msg = await response.text()
-                        raise Exception(f"429 Rate Limited: {error_msg}")
+                        await response.text()
+                        raise RuntimeError("Backend token refresh rate limited")
                     if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"{response.status}: {error_text}")
+                        await response.text()
+                        raise RuntimeError(
+                            f"Backend token refresh failed with status {response.status}"
+                        )
 
                     data = await response.json()
                     if not data.get("success"):
-                        raise ValueError(data.get("error", "Token refresh failed"))
+                        raise ValueError("Token refresh failed")
 
                     payload = data.get("data", {})
                     if "refresh_token" not in payload or not payload["refresh_token"]:
@@ -404,11 +422,11 @@ class TokenManager:
                 error_message=str(exc),
             )
         except Exception as exc:
-            logger.error(f"Token refresh error: {type(exc).__name__}: {exc}")
+            logger.error("Token refresh error: %s", type(exc).__name__)
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
-                error_message=str(exc),
+                error_message="Token refresh failed",
             )
 
     async def refresh_oauth2(self) -> AuthResult:
@@ -430,7 +448,19 @@ class TokenManager:
                 error_message="No refresh token available",
             )
 
-        token_url = f"{self.config.cloud_base_url}/oauth/token"
+        try:
+            cloud_base_url = await validate_cloud_base_url_async(
+                self.config.cloud_base_url, purpose="OAuth2 token refresh"
+            )
+        except ValueError as exc:
+            logger.warning("Rejected OAuth2 token refresh URL: %s", exc)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=str(exc),
+            )
+
+        token_url = f"{cloud_base_url}/oauth/token"
 
         if credentials.client_id is None or credentials.client_secret is None:
             return AuthResult(
@@ -446,37 +476,54 @@ class TokenManager:
             "client_secret": credentials.client_secret,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=data) as response:
-                if response.status == 200:
-                    token_data = await response.json()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(token_url, data=data) as response:
+                    if response.status == 200:
+                        token_data = await response.json()
 
-                    # Update credentials
-                    credentials.jwt_token = token_data["access_token"]
-                    if "refresh_token" in token_data:
-                        credentials.refresh_token = token_data["refresh_token"]
-                    credentials.expires_at = time.time() + token_data.get(
-                        "expires_in", 3600
+                        # Update credentials
+                        credentials.jwt_token = token_data["access_token"]
+                        if "refresh_token" in token_data:
+                            credentials.refresh_token = token_data["refresh_token"]
+                        credentials.expires_at = time.time() + token_data.get(
+                            "expires_in", 3600
+                        )
+
+                        if self._set_credentials_fn:
+                            self._set_credentials_fn(
+                                credentials, AuthStatus.AUTHENTICATED
+                            )
+
+                        # Cache updated credentials
+                        if self.config.cache_credentials and self._cache_credentials_fn:
+                            await self._cache_credentials_fn(credentials)
+
+                        return AuthResult(
+                            success=True,
+                            status=AuthStatus.AUTHENTICATED,
+                            credentials=credentials,
+                            expires_in=token_data.get("expires_in", 3600),
+                        )
+
+                    await response.text()
+                    logger.warning(
+                        "OAuth2 token refresh failed with status %s", response.status
                     )
-
-                    if self._set_credentials_fn:
-                        self._set_credentials_fn(credentials, AuthStatus.AUTHENTICATED)
-
-                    # Cache updated credentials
-                    if self.config.cache_credentials and self._cache_credentials_fn:
-                        await self._cache_credentials_fn(credentials)
-
                     return AuthResult(
-                        success=True,
-                        status=AuthStatus.AUTHENTICATED,
-                        credentials=credentials,
-                        expires_in=token_data.get("expires_in", 3600),
+                        success=False,
+                        status=AuthStatus.INVALID,
+                        error_message=(
+                            f"OAuth2 token refresh failed with status {response.status}"
+                        ),
                     )
-                else:
-                    error_text = await response.text()
-                    raise RuntimeError(
-                        f"Token refresh failed: {response.status} {error_text}"
-                    )
+        except Exception as exc:
+            logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message="OAuth2 token refresh failed",
+            )
 
     def build_credentials_from_token_data(
         self, token_data: dict[str, Any]

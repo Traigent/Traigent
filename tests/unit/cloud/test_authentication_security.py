@@ -100,9 +100,9 @@ class TestCredentialSecurity:
             # Check file permissions (should be 0o600)
             if cache_file.exists():
                 file_mode = cache_file.stat().st_mode & 0o777
-                assert (
-                    file_mode == 0o600
-                ), f"Cache file has insecure permissions: {oct(file_mode)}"
+                assert file_mode == 0o600, (
+                    f"Cache file has insecure permissions: {oct(file_mode)}"
+                )
 
     def test_weak_credential_encryption_detection(self):
         """Test detection of weak credential encryption."""
@@ -254,9 +254,9 @@ class TestCredentialSecurity:
                     f"Development mode: JWT validation may be permissive for token: {token[:50]}..."
                 )
             # Ensure result is an AuthResult object regardless of success/failure
-            assert hasattr(
-                result, "success"
-            ), f"Invalid result type for token: {token[:50]}..."
+            assert hasattr(result, "success"), (
+                f"Invalid result type for token: {token[:50]}..."
+            )
 
     def test_session_fixation_prevention(self):
         """Test prevention of session fixation attacks."""

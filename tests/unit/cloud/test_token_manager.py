@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE
 from traigent.cloud.auth import (
     AuthCredentials,
     AuthMode,
@@ -427,6 +428,97 @@ class TestRefreshAccessToken:
             await token_manager.refresh_access_token()
 
         assert token_manager.last_refresh_attempt >= before
+
+
+class TestRefreshSecurity:
+    """Security regressions around token refresh network boundaries."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_rejects_private_cloud_base_url_in_production(
+        self, token_manager
+    ):
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="test_refresh_token_12345",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        token_manager.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+        token_manager.config.cloud_base_url = "https://127.0.0.1:5000"
+
+        with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+            result = await token_manager.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "private or loopback" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_rejects_private_backend_url_in_production(
+        self, token_manager
+    ):
+        token_manager.config.backend_base_url = "https://127.0.0.1:5000"
+
+        with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+            result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "private or loopback" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_redacts_unexpected_server_errors(
+        self, token_manager, monkeypatch
+    ):
+        if not AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp unavailable")
+
+        async def _raise_sensitive_error(*_args, **_kwargs):
+            raise RuntimeError("upstream leaked token=secret-value")
+
+        monkeypatch.setattr(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            _raise_sensitive_error,
+        )
+
+        result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+    @pytest.mark.asyncio
+    async def test_refresh_access_token_redacts_unexpected_refresh_errors(
+        self, token_manager
+    ):
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="test_token_12345",
+            refresh_token="test_refresh_token_12345",
+        )
+        token_manager.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        with patch.object(
+            token_manager,
+            "refresh_jwt_secure",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("upstream leaked token=secret-value"),
+        ):
+            result = await token_manager.refresh_access_token()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
 
 
 class TestBuildCredentialsFromTokenData:

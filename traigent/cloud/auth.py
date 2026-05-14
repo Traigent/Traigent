@@ -31,6 +31,7 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 
@@ -1580,7 +1581,10 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
-        token_url = f"{self.config.cloud_base_url}/oauth/token"
+        cloud_base_url = await validate_cloud_base_url_async(
+            self.config.cloud_base_url, purpose="OAuth2 client credentials"
+        )
+        token_url = f"{cloud_base_url}/oauth/token"
 
         data = {
             "grant_type": "client_credentials",
@@ -1598,9 +1602,9 @@ class AuthManager:
                 if response.status == 200:
                     return cast(dict[str, Any], await response.json())
                 else:
-                    error_text = await response.text()
+                    await response.text()
                     raise RuntimeError(
-                        f"OAuth2 flow failed: {response.status} {error_text}"
+                        f"OAuth2 flow failed with status {response.status}"
                     )
 
     async def _refresh_token(self) -> AuthResult:
@@ -1698,8 +1702,11 @@ class AuthManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.build_api_base(
-            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+        backend_api_url = await validate_cloud_base_url_async(
+            BackendConfig.build_api_base(
+                self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+            ),
+            purpose="password authentication",
         )
         login_url = f"{backend_api_url}/auth/login"
 
@@ -1726,15 +1733,17 @@ class AuthManager:
                     if response.status == 401:
                         raise InvalidCredentialsError("Invalid credentials")
                     if response.status == 429:
-                        error_msg = await response.text()
-                        raise Exception(f"429 Rate Limited: {error_msg}")
+                        await response.text()
+                        raise RuntimeError("Backend authentication rate limited")
                     if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"{response.status}: {error_text}")
+                        await response.text()
+                        raise RuntimeError(
+                            f"Backend authentication failed with status {response.status}"
+                        )
 
                     data = await response.json()
                     if not data.get("success"):
-                        raise ValueError(data.get("error", "Authentication failed"))
+                        raise ValueError("Authentication failed")
 
                     token_data = data.get("data", {})
                     access_token = token_data.get("access_token", "")
@@ -1760,21 +1769,21 @@ class AuthManager:
                 perform_login, operation_name="backend_authentication"
             )
         except InvalidCredentialsError:
-            if self._is_dev_mode_enabled():
+            if self._password_auth_handler._is_mock_auth_fallback_enabled():
                 logger.warning(
-                    "Dev mode enabled - returning mock tokens despite invalid credentials"
+                    "Explicit mock password auth enabled - returning mock tokens despite invalid credentials"
                 )
                 return self._build_dev_token_payload(credentials)
             raise
         except Exception as exc:
-            if self._is_dev_mode_enabled():
+            if self._password_auth_handler._is_mock_auth_fallback_enabled():
                 logger.warning(
-                    "Dev mode enabled - using mock tokens because backend login failed: %s",
-                    exc,
+                    "Explicit mock password auth enabled - using mock tokens because backend login failed: %s",
+                    type(exc).__name__,
                 )
                 return self._build_dev_token_payload(credentials)
 
-            logger.error(f"Authentication error: {exc}")
+            logger.error("Authentication error: %s", type(exc).__name__)
             return None
 
     async def _refresh_jwt_token_secure(self, refresh_token_value: str) -> AuthResult:

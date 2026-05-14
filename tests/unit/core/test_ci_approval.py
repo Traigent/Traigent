@@ -9,7 +9,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -212,7 +212,7 @@ class TestValidateHmacToken:
         assert _validate_hmac_token(token) is False
 
     def test_no_secret_with_valid_expiry(self) -> None:
-        """When secret is not set, token is accepted if not expired (with warning)."""
+        """When the secret is not set, HMAC tokens fail closed."""
         future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         token = {
             "approver": "ci-bot",
@@ -222,7 +222,7 @@ class TestValidateHmacToken:
         }
         env = {k: v for k, v in os.environ.items() if k != "TRAIGENT_APPROVAL_SECRET"}
         with patch.dict(os.environ, env, clear=True):
-            assert _validate_hmac_token(token) is True
+            assert _validate_hmac_token(token) is False
 
     def test_no_secret_with_expired_token(self) -> None:
         past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
@@ -283,11 +283,7 @@ class TestCheckCiApproval:
         config = MagicMock()
         config.is_edge_analytics_mode.return_value = True
         config.get_local_storage_path.return_value = str(tmp_path)
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "TRAIGENT_RUN_APPROVED"
-        }
+        env = {k: v for k, v in os.environ.items() if k != "TRAIGENT_RUN_APPROVED"}
         env["TRAIGENT_MOCK_LLM"] = "true"
         with (
             patch("traigent.core.ci_approval._is_ci_environment", return_value=True),
