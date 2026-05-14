@@ -788,3 +788,40 @@ class TestProductionFailClosed_SDK896:
 
         storage = get_credential_storage()
         assert storage is not None
+
+    def test_production_without_cryptography_library_raises(self, monkeypatch):
+        """Codex Q4 of PR #964: when `CRYPTOGRAPHY_AVAILABLE=False`
+        in production, `get_credential_storage()` must raise instead
+        of silently using `FallbackCredentialStorage` (base64 only)."""
+        import traigent.security.crypto_utils as crypto_module
+
+        monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+        monkeypatch.setattr(crypto_module, "CRYPTOGRAPHY_AVAILABLE", False)
+
+        with pytest.raises(RuntimeError, match="cryptography library is required"):
+            get_credential_storage()
+
+    def test_environment_classification_consistent_between_init_and_factory(
+        self, monkeypatch
+    ):
+        """Codex Q3 of PR #964: __init__ and the factory's classifier
+        helper must agree on environment normalization (whitespace,
+        case). Previously __init__ did `.lower()` only, while the
+        helper did `.strip().lower()`, so `" test "` would be
+        classified as non-prod by the factory but prod by __init__.
+        Now both go through `_is_non_production_environment()`."""
+        import traigent.security.crypto_utils as crypto_module
+
+        # Whitespace-padded value: must be treated as non-prod by both
+        # paths since they share the helper.
+        monkeypatch.setenv("TRAIGENT_ENV", "  test  ")
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+        # If the two checks disagree, this would either raise from
+        # __init__ (treating as prod) OR succeed silently with the
+        # factory falling back to FallbackCredentialStorage. With
+        # the shared helper, both classify as non-prod → no raise.
+        storage = get_credential_storage()
+        assert storage is not None

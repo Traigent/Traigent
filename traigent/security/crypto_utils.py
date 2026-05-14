@@ -63,14 +63,10 @@ class SecureCredentialStorage:
         import warnings
 
         env_password = os.environ.get("TRAIGENT_ENCRYPTION_KEY")
-        # Use canonical environment flags; default to production for safety
-        environment = (
-            os.environ.get("TRAIGENT_ENVIRONMENT")
-            or os.environ.get("TRAIGENT_ENV")
-            or os.environ.get("ENVIRONMENT")
-            or "production"
-        ).lower()
-        is_non_prod = environment in {"development", "dev", "test", "local"}
+        # Defer to the shared classifier so __init__ and the factory can
+        # never disagree on environment normalization (Codex Q3 P2 of
+        # PR #964 caught a `.strip()` drift between the two).
+        is_non_prod = _is_non_production_environment()
 
         if password:
             self.password = password
