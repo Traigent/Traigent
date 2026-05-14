@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.core.constants import MAX_RETRIES
+from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -210,6 +211,17 @@ class PasswordAuthHandler:
 
         return False
 
+    def _is_mock_auth_fallback_enabled(self) -> bool:
+        """Return True only for explicit development mock-auth fallback."""
+        if not self._is_dev_mode_enabled():
+            return False
+        return os.getenv("TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     async def _perform_authentication(
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
@@ -222,7 +234,18 @@ class PasswordAuthHandler:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.get_cloud_api_url()
+        try:
+            backend_api_url = validate_outbound_url(
+                BackendConfig.get_cloud_api_url(),
+                purpose="password authentication backend_url",
+                allow_private_hosts=self._is_dev_mode_enabled(),
+            )
+        except UnsafeUrlError as exc:
+            logger.warning(
+                "Rejected unsafe password authentication backend_url: %s", exc
+            )
+            return None
+
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
@@ -246,15 +269,17 @@ class PasswordAuthHandler:
                     if response.status == 401:
                         raise InvalidCredentialsError("Invalid credentials")
                     if response.status == 429:
-                        error_msg = await response.text()
-                        raise Exception(f"429 Rate Limited: {error_msg}")
+                        await response.text()
+                        raise RuntimeError("Backend authentication rate limited")
                     if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"{response.status}: {error_text}")
+                        await response.text()
+                        raise RuntimeError(
+                            f"Backend authentication failed with HTTP {response.status}"
+                        )
 
                     data = await response.json()
                     if not data.get("success"):
-                        raise ValueError(data.get("error", "Authentication failed"))
+                        raise ValueError("Authentication failed")
 
                     token_data = data.get("data", {})
                     access_token = token_data.get("access_token", "")
@@ -282,14 +307,14 @@ class PasswordAuthHandler:
         except InvalidCredentialsError:
             raise
         except Exception as exc:
-            if self._is_dev_mode_enabled():
+            if self._is_mock_auth_fallback_enabled():
                 logger.warning(
-                    "Dev mode enabled - using mock tokens because backend login failed: %s",
-                    exc,
+                    "Explicit mock password auth enabled - using mock tokens because backend login failed: %s",
+                    type(exc).__name__,
                 )
                 return self._build_dev_token_payload(credentials)
 
-            logger.error(f"Authentication error: {exc}")
+            logger.error("Authentication error: %s", type(exc).__name__)
             return None
 
     def _build_dev_token_payload(
