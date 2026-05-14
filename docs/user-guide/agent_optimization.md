@@ -519,7 +519,7 @@ response = await client.optimize_agent(
 
 1. **"Platform not supported"**
 
-   - Check available platforms: `get_supported_platforms()`
+   - Check executable platforms with `get_supported_platforms()`; use `get_mapping_platforms()` when you need mapping-only targets.
    - Register custom platform if needed
 
 2. **"Configuration validation failed"**

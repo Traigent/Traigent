@@ -293,12 +293,8 @@ class TestAgentExecutor:
         """Test cost estimation."""
         input_data = {"query": "test"}
 
-        # Default implementation returns zero cost
-        estimate = await mock_executor.estimate_cost(sample_agent_spec, input_data)
-
-        assert estimate["estimated_cost"] == 0.0
-        assert estimate["estimated_tokens"] == 0
-        assert estimate["confidence"] == 0.0
+        with pytest.raises(NotImplementedError, match="cost estimation"):
+            await mock_executor.estimate_cost(sample_agent_spec, input_data)
 
     @pytest.mark.asyncio
     async def test_cleanup(self, mock_executor):

@@ -290,10 +290,10 @@ class AgentExecutor(ABC):
         Returns:
             Cost estimation dictionary
         """
-        # Default implementation - platforms can override with async operations
-        # Add minimal async operation to satisfy linter
         await asyncio.sleep(0)
-        return {"estimated_cost": 0.0, "estimated_tokens": 0, "confidence": 0.0}
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement cost estimation"
+        )
 
     async def validate_configuration(self, config: dict[str, Any]) -> dict[str, Any]:
         """Validate configuration for the platform.

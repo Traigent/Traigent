@@ -7,6 +7,7 @@ from traigent.agents.config_mapper import (
     ParameterMapping,
     PlatformMapping,
     apply_config_to_agent,
+    get_mapping_platforms,
     get_supported_platforms,
     register_platform_mapping,
     validate_config_compatibility,
@@ -150,7 +151,7 @@ class TestConfigurationMapper:
         mapper = ConfigurationMapper()
         mapper.register_platform_mapping(custom_platform_mapping)
 
-        platforms = mapper.get_supported_platforms()
+        platforms = mapper.get_mapping_platforms()
         assert "custom" in platforms
 
         retrieved = mapper.get_platform_mapping("custom")
@@ -408,9 +409,10 @@ class TestModuleFunctions:
         # Register the mapping
         register_platform_mapping(custom_platform_mapping)
 
-        # Should be available in supported platforms
-        platforms = get_supported_platforms()
+        # Should be available in mapping platforms without becoming executable.
+        platforms = get_mapping_platforms()
         assert "custom" in platforms
+        assert "custom" not in get_supported_platforms()
 
     def test_get_supported_platforms(self):
         """Test get_supported_platforms function."""

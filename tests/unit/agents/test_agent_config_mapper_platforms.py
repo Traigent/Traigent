@@ -11,6 +11,7 @@ from traigent.agents.config_mapper import (
     ParameterMapping,
     PlatformMapping,
     apply_config_to_agent,
+    get_mapping_platforms,
     get_supported_platforms,
     register_platform_mapping,
     validate_config_compatibility,
@@ -81,7 +82,7 @@ class TestConfigMapperPlatforms:
 
     def test_anthropic_platform_mapping_exists(self, config_mapper):
         """Test that Anthropic platform mapping is registered by default."""
-        platforms = config_mapper.get_supported_platforms()
+        platforms = config_mapper.get_mapping_platforms()
         assert "anthropic" in platforms
 
         mapping = config_mapper.get_platform_mapping("anthropic")
@@ -90,7 +91,7 @@ class TestConfigMapperPlatforms:
 
     def test_cohere_platform_mapping_exists(self, config_mapper):
         """Test that Cohere platform mapping is registered by default."""
-        platforms = config_mapper.get_supported_platforms()
+        platforms = config_mapper.get_mapping_platforms()
         assert "cohere" in platforms
 
         mapping = config_mapper.get_platform_mapping("cohere")
@@ -99,7 +100,7 @@ class TestConfigMapperPlatforms:
 
     def test_huggingface_platform_mapping_exists(self, config_mapper):
         """Test that HuggingFace platform mapping is registered by default."""
-        platforms = config_mapper.get_supported_platforms()
+        platforms = config_mapper.get_mapping_platforms()
         assert "huggingface" in platforms
 
         mapping = config_mapper.get_platform_mapping("huggingface")
@@ -384,7 +385,7 @@ class TestConfigMapperPlatforms:
         config_mapper.register_platform_mapping(custom_mapping)
 
         # Verify it was registered
-        assert "custom_llm" in config_mapper.get_supported_platforms()
+        assert "custom_llm" in config_mapper.get_mapping_platforms()
         assert config_mapper.get_platform_mapping("custom_llm") is not None
 
         # Test using the custom mapping
@@ -544,15 +545,16 @@ class TestConfigMapperPlatforms:
         )
         assert validation_result["compatible"] is True
 
-        # Test get_supported_platforms
+        # Test executable and mapping platform lists stay separated
         platforms = get_supported_platforms()
-        assert "anthropic" in platforms
-        assert "cohere" in platforms
-        assert "huggingface" in platforms
         assert "openai" in platforms
         assert "langchain" in platforms
+        mapping_platforms = get_mapping_platforms()
+        assert "anthropic" in mapping_platforms
+        assert "cohere" in mapping_platforms
+        assert "huggingface" in mapping_platforms
 
         # Test register_platform_mapping
         test_mapping = PlatformMapping(platform="test_global")
         register_platform_mapping(test_mapping)
-        assert "test_global" in get_supported_platforms()
+        assert "test_global" in get_mapping_platforms()

@@ -15,6 +15,7 @@ from .config_mapper import (
     ParameterMapping,
     PlatformMapping,
     apply_config_to_agent,
+    get_mapping_platforms,
     get_supported_platforms,
     register_platform_mapping,
     validate_config_compatibility,
@@ -52,6 +53,7 @@ __all__ = [
     "validate_config_compatibility",
     "register_platform_mapping",
     "get_supported_platforms",
+    "get_mapping_platforms",
 ]
 
 # Only include platform-specific exports if platforms are available
