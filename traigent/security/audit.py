@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 
 from ..utils.logging import get_logger
+from .redaction import redact_sensitive_data, redact_sensitive_text
 
 logger = get_logger(__name__)
 
@@ -253,19 +254,19 @@ class AuditLogger:
             event_id=secrets.token_urlsafe(16),
             event_type=event_type,
             timestamp=datetime.now(UTC),
-            user_id=user_id,
-            session_id=session_id,
-            tenant_id=tenant_id,
-            message=message,
-            resource_id=resource_id,
-            resource_type=resource_type,
-            resource=resource,  # Add resource field
-            action=action,
+            user_id=redact_sensitive_text(user_id),
+            session_id=redact_sensitive_text(session_id),
+            tenant_id=redact_sensitive_text(tenant_id),
+            message=redact_sensitive_text(message) or "",
+            resource_id=redact_sensitive_text(resource_id),
+            resource_type=redact_sensitive_text(resource_type),
+            resource=redact_sensitive_text(resource),  # Add resource field
+            action=redact_sensitive_text(action),
             result=result,
-            ip_address=final_ip,
-            source_ip=final_ip,  # Set both for compatibility
-            user_agent=user_agent,
-            details=details or {},
+            ip_address=redact_sensitive_text(final_ip),
+            source_ip=redact_sensitive_text(final_ip),  # Set both for compatibility
+            user_agent=redact_sensitive_text(user_agent),
+            details=redact_sensitive_data(details or {}),
             severity=severity,
             compliance_tags=compliance_tags or [],
         )
@@ -282,7 +283,8 @@ class AuditLogger:
         )  # Store in AuditStorage (thread-safe internally)
         self.event_queue.put(event)  # Add to queue for async processing (thread-safe)
 
-        logger.info(f"Audit event logged: {event_type.value} by {user_id or 'system'}")
+        actor = redact_sensitive_text(user_id) if user_id else "system"
+        logger.info("Audit event logged: %s by %s", event_type.value, actor)
         return event
 
     def _calculate_checksum(self, event: AuditEvent) -> str:
