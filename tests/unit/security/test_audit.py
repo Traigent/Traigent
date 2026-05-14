@@ -2,6 +2,7 @@
 Tests for audit logging and compliance reporting systems
 """
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
@@ -172,6 +173,31 @@ class TestAuditStorage:
         assert event1 in user123_events
         assert event3 in user123_events
         assert event2 not in user123_events
+
+    def test_filter_events_by_redacted_email_user_id(self):
+        """Email user IDs stay redacted while exact-match storage filters work."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        user_id = "alice@example.com"
+        other_user_id = "bob@example.com"
+
+        matching_event = audit_logger.log_event(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id=user_id,
+            message="Alice login",
+        )
+        other_event = audit_logger.log_event(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id=other_user_id,
+            message="Bob login",
+        )
+
+        events = audit_logger.storage.get_events(user_id=user_id)
+
+        assert events == [matching_event]
+        assert other_event not in events
+        assert matching_event.user_id != other_event.user_id
+        assert matching_event.user_id.startswith("[REDACTED:user_id:")
+        assert user_id not in json.dumps(matching_event.to_dict(), sort_keys=True)
 
     def test_filter_events_by_type(self):
         """Test filtering events by event type"""
