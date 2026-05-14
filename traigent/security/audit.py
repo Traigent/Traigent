@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 
 from ..utils.logging import get_logger
+from .redaction import redact_sensitive_data, redact_sensitive_text
 
 logger = get_logger(__name__)
 
@@ -30,6 +31,17 @@ _TAMPER_DETECTION_NOT_IMPLEMENTED = (
     "Tamper-detection is not yet implemented; verify_integrity will be available "
     "in a future release"
 )
+
+
+def _redact_filterable_identifier(value: str | None, label: str) -> str | None:
+    """Redact sensitive identifiers while preserving exact-match filtering."""
+    if value is None:
+        return None
+    redacted = redact_sensitive_text(value)
+    if redacted == value:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"[REDACTED:{label}:{digest}]"
 
 
 class AuditSeverity(Enum):
@@ -253,19 +265,19 @@ class AuditLogger:
             event_id=secrets.token_urlsafe(16),
             event_type=event_type,
             timestamp=datetime.now(UTC),
-            user_id=user_id,
-            session_id=session_id,
-            tenant_id=tenant_id,
-            message=message,
-            resource_id=resource_id,
-            resource_type=resource_type,
-            resource=resource,  # Add resource field
-            action=action,
+            user_id=_redact_filterable_identifier(user_id, "user_id"),
+            session_id=redact_sensitive_text(session_id),
+            tenant_id=_redact_filterable_identifier(tenant_id, "tenant_id"),
+            message=redact_sensitive_text(message) or "",
+            resource_id=redact_sensitive_text(resource_id),
+            resource_type=redact_sensitive_text(resource_type),
+            resource=redact_sensitive_text(resource),  # Add resource field
+            action=redact_sensitive_text(action),
             result=result,
-            ip_address=final_ip,
-            source_ip=final_ip,  # Set both for compatibility
-            user_agent=user_agent,
-            details=details or {},
+            ip_address=redact_sensitive_text(final_ip),
+            source_ip=redact_sensitive_text(final_ip),  # Set both for compatibility
+            user_agent=redact_sensitive_text(user_agent),
+            details=redact_sensitive_data(details or {}),
             severity=severity,
             compliance_tags=compliance_tags or [],
         )
@@ -282,7 +294,10 @@ class AuditLogger:
         )  # Store in AuditStorage (thread-safe internally)
         self.event_queue.put(event)  # Add to queue for async processing (thread-safe)
 
-        logger.info(f"Audit event logged: {event_type.value} by {user_id or 'system'}")
+        actor = (
+            _redact_filterable_identifier(user_id, "user_id") if user_id else "system"
+        )
+        logger.info("Audit event logged: %s by %s", event_type.value, actor)
         return event
 
     def _calculate_checksum(self, event: AuditEvent) -> str:
@@ -581,7 +596,8 @@ class ComplianceReporter:
         ]
 
         if tenant_id:
-            events = [e for e in events if e.tenant_id == tenant_id]
+            normalized_tenant_id = _redact_filterable_identifier(tenant_id, "tenant_id")
+            events = [e for e in events if e.tenant_id == normalized_tenant_id]
 
         return events
 
@@ -746,7 +762,10 @@ class AuditStorage:
         if end_time:
             filtered_events = [e for e in filtered_events if e.timestamp <= end_time]
         if user_id:
-            filtered_events = [e for e in filtered_events if e.user_id == user_id]
+            normalized_user_id = _redact_filterable_identifier(user_id, "user_id")
+            filtered_events = [
+                e for e in filtered_events if e.user_id == normalized_user_id
+            ]
         if event_types:
             filtered_events = [
                 e for e in filtered_events if e.event_type in event_types

@@ -32,6 +32,12 @@ from traigent.evaluators.base import (
     EvaluationExample,
     EvaluationResult,
 )
+from traigent.observability import (
+    ObservabilityClient,
+    ObservabilityConfig,
+    ObservationType,
+)
+from traigent.security.audit import AuditEventType, AuditLogger
 
 # ---------------------------------------------------------------------------
 # Canary catalogue
@@ -164,9 +170,7 @@ class _ScanReport:
         return "\n".join(f"  - {target}: {reason}" for target, reason in self.gaps)
 
 
-def _scan_trial_results(
-    trials: Iterable[TrialResult], report: _ScanReport
-) -> None:
+def _scan_trial_results(trials: Iterable[TrialResult], report: _ScanReport) -> None:
     """Scan in-memory TrialResult objects for canaries.
 
     This is the most-local surface: if canaries survive to here, every
@@ -181,13 +185,10 @@ def _scan_trial_results(
             for i, output in enumerate(trial.outputs or []):
                 blobs.append((f"trial[{trial.trial_id}].outputs[{i}]", str(output)))
         if getattr(trial, "metadata", None):
-            blobs.append(
-                (f"trial[{trial.trial_id}].metadata", str(trial.metadata))
-            )
-        if getattr(trial, "config", None):
-            blobs.append(
-                (f"trial[{trial.trial_id}].config", str(trial.config))
-            )
+            blobs.append((f"trial[{trial.trial_id}].metadata", str(trial.metadata)))
+        # Raw config stays available in memory so callers can replay or apply the
+        # selected configuration. The external serialization scanner below owns
+        # the public leak boundary for config payloads.
         for location, blob in blobs:
             hits = _contains_canary(blob)
             if hits:
@@ -209,25 +210,41 @@ def _scan_serialized_trial_results(
             )
 
 
-def _scan_audit_log(report: _ScanReport) -> None:
+def _scan_audit_log(events: Iterable[Any], report: _ScanReport) -> None:
     """Scan the audit chain (traigent.security.audit) for canaries.
 
-    This offline orchestrator path does not enable AuditLogger. If a future
-    optimization path wires audit logging into this run, it must add a test sink
-    here and keep this test as a hard assertion.
+    The canary test exercises an AuditLogger sink explicitly so this scanner
+    stays a hard assertion instead of a placeholder.
     """
+    for index, event in enumerate(events):
+        payload = event.to_dict() if hasattr(event, "to_dict") else event
+        hits = _contains_canary(str(payload))
+        if hits:
+            report.record_hit("audit_log", f"event[{index}]", hits)
 
 
-def _scan_observability_traces(report: _ScanReport) -> None:
+def _scan_observability_traces(
+    trace_batches: Iterable[Iterable[dict[str, Any]]], report: _ScanReport
+) -> None:
     """Scan observability traces for canaries.
 
-    This offline orchestrator path does not enable ObservabilityClient or
-    workflow-trace submission. Enabled observability paths must expose a capture
-    sink here before they can be added to this canary test.
+    The canary test exercises ObservabilityClient with an in-memory sender so
+    trace payload redaction is covered before data leaves the SDK.
     """
+    for batch_index, trace_batch in enumerate(trace_batches):
+        for trace_index, trace_payload in enumerate(trace_batch):
+            hits = _contains_canary(str(trace_payload))
+            if hits:
+                report.record_hit(
+                    "observability_trace",
+                    f"batch[{batch_index}].trace[{trace_index}]",
+                    hits,
+                )
 
 
-def _scan_stdout_capture(capsys: pytest.CaptureFixture[str], report: _ScanReport) -> None:
+def _scan_stdout_capture(
+    capsys: pytest.CaptureFixture[str], report: _ScanReport
+) -> None:
     """Scan captured stdout/stderr for canaries.
 
     This one IS live today — any print() or logger.* in the pipeline will
@@ -239,6 +256,69 @@ def _scan_stdout_capture(capsys: pytest.CaptureFixture[str], report: _ScanReport
         hits = _contains_canary(stream)
         if hits:
             report.record_hit("stdout_capture", stream_name, hits)
+
+
+def _exercise_audit_sink() -> list[Any]:
+    """Write canaries through AuditLogger and return stored events for scanning."""
+    audit_logger = AuditLogger("CanaryAuditSecret-1234567890!abcdef")
+    audit_logger.log_event(
+        AuditEventType.DATA_READ,
+        user_id=CANARY_VALUES[0],
+        session_id=f"session-{CANARY_VALUES[1]}",
+        tenant_id=f"tenant-{CANARY_VALUES[2]}",
+        resource_id=f"resource-{CANARY_VALUES[3]}",
+        resource_type="dataset",
+        action="read",
+        message=f"Audit canary payload {CANARY_VALUES[4]}",
+        details={
+            "input": CANARY_VALUES[0],
+            "expected": CANARY_VALUES[1],
+            "token": CANARY_VALUES[3],
+        },
+    )
+    return audit_logger.get_events()
+
+
+def _exercise_observability_sink() -> list[list[dict[str, Any]]]:
+    """Write canaries through ObservabilityClient and return captured batches."""
+    sent_batches: list[list[dict[str, Any]]] = []
+
+    def sender(traces: list[dict[str, Any]]) -> None:
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=1,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+    trace_id = client.start_trace(
+        "pii-canary-trace",
+        trace_id="trace_pii_canary",
+        user_id=CANARY_VALUES[0],
+        metadata={"credit_card": CANARY_VALUES[1]},
+        input_data={"ssn": CANARY_VALUES[2]},
+    )
+    client.record_observation(
+        trace_id,
+        name="pii-canary-observation",
+        observation_type=ObservationType.GENERATION,
+        input_data={"api_key": CANARY_VALUES[3]},
+        output_data={"bearer": CANARY_VALUES[4]},
+        metadata={"email": CANARY_VALUES[0]},
+    )
+    client.end_trace(
+        trace_id,
+        output_data={"answer": CANARY_VALUES[3]},
+        metadata={"ssn": CANARY_VALUES[2]},
+    )
+    client.flush()
+    client.close()
+    return sent_batches
 
 
 # ---------------------------------------------------------------------------
@@ -289,17 +369,17 @@ async def test_canaries_do_not_leak_through_optimization_pipeline(
 
     result = await orchestrator.optimize(lambda x: x, canary_dataset)
     assert result.trials, "optimization produced no trials; canary test vacuous"
+    audit_events = _exercise_audit_sink()
+    observability_trace_batches = _exercise_observability_sink()
 
-    trials = [
-        t for t in result.trials if t.status == TrialStatus.COMPLETED
-    ]
+    trials = [t for t in result.trials if t.status == TrialStatus.COMPLETED]
     assert trials, "no completed trials; cannot assess canary leakage"
 
     report = _ScanReport()
     _scan_trial_results(trials, report)
     _scan_serialized_trial_results(trials, report)
-    _scan_audit_log(report)
-    _scan_observability_traces(report)
+    _scan_audit_log(audit_events, report)
+    _scan_observability_traces(observability_trace_batches, report)
     _scan_stdout_capture(capsys, report)
 
     # Assertion: zero leaks, no unresolved gaps.
@@ -321,7 +401,9 @@ def test_canary_regexes_match_their_own_values() -> None:
     meaningless even if it passes.
     """
     for label, value, rx in CANARIES:
-        assert rx.search(value), f"canary regex for {label!r} does not match its seed value"
+        assert rx.search(value), (
+            f"canary regex for {label!r} does not match its seed value"
+        )
 
 
 def test_contains_canary_detects_partial_embeddings() -> None:

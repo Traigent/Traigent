@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib import error
 
 import pytest
@@ -26,6 +26,11 @@ from traigent.utils.exceptions import AuthenticationError, ClientError
 
 def _encoded_trace_batch_size(traces: list[dict]) -> int:
     return len(json.dumps({"traces": traces}).encode("utf-8"))
+
+
+FAKE_TRACE_API_KEY = (
+    "sk-ant-canary-DO-NOT-USE-123456789abcdef"  # pragma: allowlist secret
+)
 
 
 def test_observability_client_flushes_trace_payloads():
@@ -180,6 +185,60 @@ def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
     assert "[REDACTED:api_key]" in caplog.text
 
 
+def test_observability_client_redacts_trace_payloads_before_submit():
+    """Trace payloads must be scrubbed before they reach the transport."""
+    sent_batches: list[list[dict]] = []
+
+    def sender(traces):
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=1,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+    trace_id = client.start_trace(
+        "trace-redaction",
+        trace_id="trace_redaction",
+        user_id="alice@example.com",
+        metadata={"token": FAKE_TRACE_API_KEY},
+        input_data={"ssn": "123-45-6789"},
+    )
+    client.record_observation(
+        trace_id,
+        name="llm-call",
+        observation_type=ObservationType.GENERATION,
+        input_data={"prompt": "card 4111111111111234"},
+        output_data={"answer": "Bearer canary.jwt.header.payload.signature"},
+        metadata={"email": "alice@example.com"},
+    )
+    client.end_trace(
+        trace_id,
+        output_data={"answer": FAKE_TRACE_API_KEY},
+    )
+
+    client.flush()
+    client.close()
+
+    payload_blob = str(sent_batches)
+    assert "alice@example.com" not in payload_blob
+    assert "123-45-6789" not in payload_blob
+    assert "4111111111111234" not in payload_blob
+    assert FAKE_TRACE_API_KEY not in payload_blob
+    assert "canary.jwt.header.payload.signature" not in payload_blob
+    assert "[REDACTED:email]" in payload_blob
+    assert "[REDACTED:ssn]" in payload_blob
+    assert "[REDACTED:credit_card]" in payload_blob
+    assert "[REDACTED:api_key]" in payload_blob
+    assert "[REDACTED:bearer_token]" in payload_blob
+
+
 def test_observability_client_close_flushes_active_trace_payloads_without_explicit_flush():
     sent_batches: list[list[dict]] = []
 
@@ -221,7 +280,10 @@ def test_sync_batch_transport_records_closed_transport_drops():
 
     assert accepted is False
     stats = transport.get_stats()
-    assert "transport closed; dropped payload for item 'trace_after_close'" in stats["errors"]
+    assert (
+        "transport closed; dropped payload for item 'trace_after_close'"
+        in stats["errors"]
+    )
 
 
 def test_observability_client_chunks_flushes_by_byte_limit():
@@ -376,7 +438,9 @@ def test_observe_decorator_creates_nested_observations():
     )
     set_default_observability_client(client)
 
-    @observe("inner-operation", client=client, observation_type=ObservationType.TOOL_CALL)
+    @observe(
+        "inner-operation", client=client, observation_type=ObservationType.TOOL_CALL
+    )
     def inner(value: int) -> int:
         return value + 1
 
@@ -694,7 +758,9 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
                     "bookmarked_at": "2026-03-10T14:13:00+00:00"
                     if payload.get("is_bookmarked")
                     else None,
-                    "bookmarked_by": "sdk-user" if payload.get("is_bookmarked") else None,
+                    "bookmarked_by": "sdk-user"
+                    if payload.get("is_bookmarked")
+                    else None,
                     "is_published": bool(payload.get("is_published")),
                     "published_at": "2026-03-10T14:14:00+00:00"
                     if payload.get("is_published")
@@ -750,7 +816,11 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
     assert published.is_published is True
     assert request_calls == [
         ("GET", "/traces/trace_sdk/comments", None),
-        ("POST", "/traces/trace_sdk/comments", {"content": "Ship this after QA review."}),
+        (
+            "POST",
+            "/traces/trace_sdk/comments",
+            {"content": "Ship this after QA review."},
+        ),
         (
             "PUT",
             "/traces/trace_sdk/feedback",
@@ -923,7 +993,7 @@ def test_observability_client_query_helpers_follow_backend_contract():
         per_page=10,
         environment="production",
         tags=["demo"],
-        start_time_from=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        start_time_from=datetime(2026, 3, 10, 12, 0, 0, tzinfo=UTC),
     )
     trace = client.get_trace("trace_sdk_query")
     observations = client.get_trace_observations("trace_sdk_query")
@@ -955,7 +1025,9 @@ def test_observability_client_rejects_collaboration_requests_after_close():
             max_queue_size=10,
         ),
         sender=lambda traces: None,
-        request_sender=lambda method, path, payload: request_calls.append((method, path, payload)) or {"data": {}},
+        request_sender=lambda method, path, payload: (
+            request_calls.append((method, path, payload)) or {"data": {}}
+        ),
     )
     client.close()
 
@@ -979,7 +1051,9 @@ def test_observability_client_validates_feedback_correction_output():
     )
 
     with pytest.raises(ClientError, match="correction_output"):
-        client.submit_feedback("trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}})
+        client.submit_feedback(
+            "trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}}
+        )
 
     client.close()
 
@@ -1043,7 +1117,7 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
         def read(self):
             return (
                 b'{"data":{"warnings":["Prompt reference could not be resolved for trace '
-                b'\'trace_warn\': support/missing (label=latest)"]}}'
+                b"'trace_warn': support/missing (label=latest)\"]}}"
             )
 
     client = ObservabilityClient(
@@ -1063,7 +1137,9 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
     )
 
     with caplog.at_level(logging.WARNING):
-        client._post_batch_sync([{"id": "trace_warn", "name": "warn-trace", "observations": []}])
+        client._post_batch_sync(
+            [{"id": "trace_warn", "name": "warn-trace", "observations": []}]
+        )
 
     client.close()
 
@@ -1073,11 +1149,21 @@ def test_observability_client_logs_ingest_warnings(monkeypatch, caplog):
 @pytest.mark.parametrize(
     ("method_name", "args", "message"),
     [
-        ("_post_batch_sync", ([{"id": "trace_sdk"}],), "Observability ingest failed with status 500"),
-        ("_request_json_sync", ("GET", "/traces/trace_sdk", None), "Observability request failed with status 500"),
+        (
+            "_post_batch_sync",
+            ([{"id": "trace_sdk"}],),
+            "Observability ingest failed with status 500",
+        ),
+        (
+            "_request_json_sync",
+            ("GET", "/traces/trace_sdk", None),
+            "Observability request failed with status 500",
+        ),
     ],
 )
-def test_observability_client_closes_http_errors(monkeypatch, method_name, args, message):
+def test_observability_client_closes_http_errors(
+    monkeypatch, method_name, args, message
+):
     http_error = error.HTTPError(
         url="http://localhost:5000",
         code=500,

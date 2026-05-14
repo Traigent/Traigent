@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -244,9 +245,9 @@ def _build_success_trial_metadata(
     }
 
     example_results = getattr(eval_result, "example_results", None)
-    if example_results:
+    if isinstance(example_results, list) and example_results:
         trial_metadata["example_results"] = redact_sensitive_data(
-            _to_redactable_payloads(list(example_results))
+            _to_redactable_payloads(example_results)
         )
 
     if examples_attempted is not None:
@@ -342,7 +343,7 @@ def build_success_result(
 
     trial_result = TrialResult(
         trial_id=trial_id,
-        config=redact_sensitive_data(evaluation_config),
+        config=copy.deepcopy(evaluation_config),
         metrics=getattr(eval_result, "metrics", {}) or {},
         status=TrialStatus.COMPLETED,
         duration=duration,
@@ -485,7 +486,7 @@ def build_pruned_result(
 
     return TrialResult(
         trial_id=trial_id,
-        config=redact_sensitive_data(evaluation_config),
+        config=copy.deepcopy(evaluation_config),
         metrics=metrics,
         status=TrialStatus.PRUNED,
         duration=duration,
@@ -509,7 +510,6 @@ def build_failed_result(
     error_details = TrialError.from_exception(error, config=evaluation_config)
     error_details.message = redact_sensitive_text(error_details.message)
     error_details.traceback = redact_sensitive_text(error_details.traceback)
-    error_details.config = redact_sensitive_data(error_details.config)
 
     metadata: dict[str, Any] = (
         {"optuna_trial_id": optuna_trial_id} if optuna_trial_id is not None else {}
@@ -546,7 +546,7 @@ def build_failed_result(
 
     return TrialResult(
         trial_id=trial_id,
-        config=redact_sensitive_data(evaluation_config),
+        config=copy.deepcopy(evaluation_config),
         metrics=metrics,
         status=TrialStatus.FAILED,
         duration=duration,

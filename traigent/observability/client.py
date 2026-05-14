@@ -38,7 +38,7 @@ from traigent.observability.dtos import (
     TraceRecord,
     utc_now,
 )
-from traigent.security.redaction import redact_sensitive_text
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -881,7 +881,7 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed:
                 return
-            payload = state.to_payload()
+            payload = cast(dict[str, Any], redact_sensitive_data(state.to_payload()))
         submitted = self._transport.submit(trace_id, payload)
         if not submitted:
             stats = self._transport.get_stats()

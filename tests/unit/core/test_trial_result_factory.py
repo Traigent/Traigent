@@ -28,6 +28,9 @@ class ExamplePayload:
         }
 
 
+FAKE_API_KEY = "sk-ant-canary-DO-NOT-USE-123456789abcdef"  # pragma: allowlist secret
+
+
 @pytest.fixture
 def eval_config():
     """Create evaluation configuration."""
@@ -90,6 +93,33 @@ class TestBuildSuccessResult:
             "total_cost": 0.05,
         }
 
+    def test_success_config_is_raw_in_memory_but_redacted_when_serialized(
+        self, eval_result
+    ):
+        """Config remains replayable in memory; to_dict owns public redaction."""
+        eval_result.to_dict.return_value = {"metrics": eval_result.metrics}
+        eval_result.example_results = []
+        eval_result.summary_stats = None
+        eval_config = {
+            "model": "gpt-4",
+            "api_key": FAKE_API_KEY,
+        }
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=None,
+            total_cost=None,
+            optuna_trial_id=None,
+        )
+
+        assert result.config == eval_config
+        serialized = result.to_dict()
+        assert FAKE_API_KEY not in str(serialized)
+        assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
+
     def test_metadata_fields(self, eval_config, eval_result):
         """Test metadata fields are populated correctly."""
         result = build_success_result(
@@ -125,7 +155,9 @@ class TestBuildSuccessResult:
         assert "example_results" in result.metadata
         assert len(result.metadata["example_results"]) == 2
 
-    def test_example_results_are_serialized_before_redaction(self, eval_config, eval_result):
+    def test_example_results_are_serialized_before_redaction(
+        self, eval_config, eval_result
+    ):
         """Dataclass-like example result objects must not bypass metadata redaction."""
         eval_result.example_results = [ExamplePayload()]
 
@@ -353,9 +385,7 @@ class TestBuildSuccessResult:
         assert comparability["coverage_ratio"] == pytest.approx(1.0)
         assert comparability["ranking_eligible"] is True
 
-    def test_invalid_ranking_eligible_in_summary_metadata_falls_back(
-        self, eval_config
-    ):
+    def test_invalid_ranking_eligible_in_summary_metadata_falls_back(self, eval_config):
         """Invalid nested summary comparability should not leak through unchanged."""
         eval_result = Mock()
         eval_result.metrics = {"accuracy": 0.85, "cost": 0.05}
@@ -412,6 +442,29 @@ class TestBuildPrunedResult:
         assert result.duration == 0.5
         assert result.metadata["pruned"] is True
         assert result.metadata["pruned_step"] == 5
+
+    def test_pruned_config_is_raw_in_memory_but_redacted_when_serialized(
+        self, prune_error
+    ):
+        """Pruned trial configs remain usable for replay and redact on export."""
+        eval_config = {
+            "model": "gpt-4",
+            "api_key": FAKE_API_KEY,
+        }
+
+        result = build_pruned_result(
+            trial_id="trial_456",
+            evaluation_config=eval_config,
+            duration=0.5,
+            prune_error=prune_error,
+            progress_state=None,
+            optuna_trial_id=None,
+        )
+
+        assert result.config == eval_config
+        serialized = result.to_dict()
+        assert FAKE_API_KEY not in str(serialized)
+        assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
 
     def test_pruned_with_progress_state(self, eval_config, prune_error, progress_state):
         """Test pruned result with progress state."""
@@ -569,6 +622,30 @@ class TestBuildFailedResult:
         assert "raise ValueError" in result.error.traceback
         assert result.error.config == eval_config
         assert result.error.timestamp.tzinfo == UTC
+
+    def test_failed_config_is_raw_in_memory_but_redacted_when_serialized(self):
+        """Failed trial config and TrialError config redact at serialization."""
+        eval_config = {
+            "model": "gpt-4",
+            "api_key": FAKE_API_KEY,
+        }
+
+        result = build_failed_result(
+            trial_id="trial_789",
+            evaluation_config=eval_config,
+            duration=0.3,
+            error=ValueError("Test error"),
+            progress_state=None,
+            optuna_trial_id=None,
+        )
+
+        assert result.config == eval_config
+        assert result.error is not None
+        assert result.error.config == eval_config
+        serialized = result.to_dict()
+        assert FAKE_API_KEY not in str(serialized)
+        assert serialized["config"]["api_key"] == "[REDACTED:api_key]"
+        assert serialized["error"]["config"]["api_key"] == "[REDACTED:api_key]"
 
     def test_failed_with_progress_state(self, eval_config, progress_state):
         """Test failed result with progress state."""

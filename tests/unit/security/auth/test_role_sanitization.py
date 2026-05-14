@@ -20,5 +20,12 @@ def test_sanitize_roles_strict_rejects_malformed_claims() -> None:
         sanitize_roles({"role": "admin"}, strict=True)
 
 
+def test_sanitize_roles_strict_accepts_common_idp_separators() -> None:
+    assert sanitize_roles(
+        ["admin", "api:read", "team.member", "org/admin", "_internal", "-system"],
+        strict=True,
+    ) == ["admin", "api:read", "team.member", "org/admin", "_internal", "-system"]
+
+
 def test_sanitize_roles_legacy_non_strict_falls_back() -> None:
     assert sanitize_roles(["bad role with spaces"]) == ["user"]
