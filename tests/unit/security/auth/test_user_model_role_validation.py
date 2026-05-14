@@ -54,12 +54,20 @@ class TestUserRoleValidation_SDK939:
             with pytest.raises(ValueError, match="SDK#939"):
                 User(**_VALID_USER_KWARGS, roles=invalid)
 
-    def test_user_with_mixed_valid_and_invalid_roles_keeps_valid(self):
-        """A mix of valid + invalid: keep the valid ones (caller
-        provided some real roles, we preserve them; we only fail
-        when EVERYTHING is invalid)."""
-        u = User(**_VALID_USER_KWARGS, roles=["admin", 123, None, "user"])
-        assert u.roles == ["admin", "user"]
+    def test_user_with_mixed_valid_and_invalid_roles_raises(self):
+        """SDK#939 + Codex Q3 of PR #969 (defense-in-depth parity with
+        `sanitize_roles(strict=True)`): a mix of valid + invalid items
+        must RAISE, not silently filter to the valid ones. Mixed input
+        signals caller confusion or an injection attempt."""
+        invalid_mixed = [
+            ["admin", 123],
+            ["admin", None],
+            ["admin", ""],
+            ["valid", {"role": "x"}],
+        ]
+        for invalid in invalid_mixed:
+            with pytest.raises(ValueError, match="SDK#939"):
+                User(**_VALID_USER_KWARGS, roles=invalid)
 
     def test_user_with_string_role_not_list_coerced(self):
         """Backward-compat: a single string `roles="admin"` is coerced

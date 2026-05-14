@@ -22,7 +22,25 @@ class User:
     metadata: dict[str, Any]
 
     def __post_init__(self) -> None:
-        """Validate user data after initialization."""
+        """Validate user data after initialization.
+
+        Role-validation contract (SDK#939):
+          * `roles=None`/`[]`/falsy → safe default `["user"]`. Use this
+            for programmatic User construction without an IdP claim.
+          * `roles=["admin", "operator"]` → preserved (lowercased+trimmed).
+          * `roles=[123, 456]` (non-empty AND every item invalid) → raises
+            ValueError. Pre-fix this silently demoted to `["user"]`,
+            hiding upstream IdP misconfigurations.
+          * `roles=["admin", 123]` (mixed valid + invalid) → raises
+            ValueError. Mirrors `sanitize_roles(strict=True)` semantics:
+            ANY malformed item in a caller-provided list signals
+            confusion or attack and must surface as a hard error.
+
+        OIDC/SAML callers already pre-sanitize via
+        `helpers.sanitize_roles(strict=True)`; this defense-in-depth
+        validation catches direct `User(...)` construction outside the
+        OIDC/SAML happy path.
+        """
         if not self.user_id or not isinstance(self.user_id, str):
             raise ValueError("Invalid user_id") from None
 
@@ -32,45 +50,37 @@ class User:
         if not self.email or not EMAIL_PATTERN.match(self.email):
             raise ValueError("Invalid email format")
 
-        # Role normalization (SDK#939):
-        # The auth flow callers (OIDC at oidc.py:138, SAML at saml.py:114)
-        # already pass `roles` through `sanitize_roles(strict=True)`,
-        # which raises on invalid IdP claims. This block is defense-in-
-        # depth for direct `User(...)` construction outside the
-        # OIDC/SAML happy path.
-        #
-        # Distinguish two cases:
-        #   1. Caller passes `roles=None`/`[]`/`""`/falsy → no roles
-        #      provided. Default to `["user"]` (legitimate default for
-        #      programmatic User construction without an IdP).
-        #   2. Caller passes a non-empty `roles` value but every item
-        #      filters out as invalid (non-strings, empty strings) →
-        #      raise. This is the silent-fallback bug class #939
-        #      flagged: previously the User would quietly become a
-        #      `["user"]`-roled account, hiding the upstream
-        #      misconfiguration.
+        # Role normalization (SDK#939 fail-closed):
+        # Three cases (see method docstring above):
+        #   1. Empty/falsy → safe default ["user"].
+        #   2. Non-empty AND every item invalid → raise.
+        #   3. Non-empty AND any item invalid → raise (mirrors
+        #      sanitize_roles(strict=True) — defense-in-depth, per
+        #      Codex Q3 of PR #969).
         roles_provided = bool(self.roles)  # truthy = caller asserted SOMETHING
         if not isinstance(self.roles, list):
             self.roles = [str(self.roles)] if self.roles else []
         else:
             self.roles = list(self.roles)
 
-        normalized = [
-            r.strip().lower() for r in self.roles if isinstance(r, str) and r.strip()
-        ]
-        if not normalized:
-            if roles_provided:
-                # Case 2: caller provided roles but all were invalid.
-                raise ValueError(
-                    "Invalid roles: all provided role claims filtered out as "
-                    "invalid (SDK#939 fail-closed). Pass `roles=None` or "
-                    "`roles=[]` for the default ['user'] role; do not pass a "
-                    "non-empty roles list with no string items."
-                )
+        if roles_provided:
+            normalized: list[str] = []
+            for r in self.roles:
+                if isinstance(r, str) and r.strip():
+                    normalized.append(r.strip().lower())
+                else:
+                    raise ValueError(
+                        f"Invalid roles: at least one item is not a non-empty "
+                        f"string (SDK#939 fail-closed; mirrors "
+                        f"sanitize_roles(strict=True) semantics). Got "
+                        f"item of type {type(r).__name__}={r!r}. Pass "
+                        f"roles=None or roles=[] for the default ['user'] "
+                        f"role; do not mix valid and invalid items."
+                    )
+            self.roles = normalized
+        else:
             # Case 1: nothing provided → safe default.
             self.roles: list[Any] = ["user"]
-        else:
-            self.roles = normalized
 
         if not isinstance(self.metadata, dict):
             self.metadata: dict[str, Any] = {}
