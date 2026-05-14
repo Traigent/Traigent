@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,11 +15,30 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 
 logger = get_logger(__name__)
+
+
+def _to_redactable_payload(value: Any) -> Any:
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            payload = to_dict()
+        except Exception:
+            payload = None
+        if payload is not None:
+            return payload
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)  # type: ignore[arg-type]
+    return value
+
+
+def _to_redactable_payloads(values: list[Any]) -> list[Any]:
+    return [_to_redactable_payload(value) for value in values]
 
 
 def _coerce_non_negative_int(value: Any) -> int:
@@ -207,6 +227,11 @@ def _build_success_trial_metadata(
     total_cost: float | None,
 ) -> dict[str, Any]:
     """Build metadata for a successful trial result."""
+    evaluation_result_payload = (
+        eval_result.to_dict()
+        if hasattr(eval_result, "to_dict") and callable(eval_result.to_dict)
+        else eval_result
+    )
     trial_metadata: dict[str, Any] = {
         "success_rate": getattr(eval_result, "success_rate", None),
         "has_errors": getattr(eval_result, "has_errors", None),
@@ -215,12 +240,14 @@ def _build_success_trial_metadata(
             if getattr(eval_result, "outputs", None) is not None
             else 0
         ),
-        "evaluation_result": eval_result,
+        "evaluation_result": redact_sensitive_data(evaluation_result_payload),
     }
 
     example_results = getattr(eval_result, "example_results", None)
     if example_results:
-        trial_metadata["example_results"] = example_results
+        trial_metadata["example_results"] = redact_sensitive_data(
+            _to_redactable_payloads(list(example_results))
+        )
 
     if examples_attempted is not None:
         trial_metadata["examples_attempted"] = int(examples_attempted)
@@ -315,7 +342,7 @@ def build_success_result(
 
     trial_result = TrialResult(
         trial_id=trial_id,
-        config=evaluation_config,
+        config=redact_sensitive_data(evaluation_config),
         metrics=getattr(eval_result, "metrics", {}) or {},
         status=TrialStatus.COMPLETED,
         duration=duration,
@@ -345,7 +372,9 @@ def build_success_result(
         )
 
     if getattr(eval_result, "summary_stats", None):
-        trial_result.summary_stats = eval_result.summary_stats  # type: ignore[attr-defined]
+        trial_result.summary_stats = redact_sensitive_data(  # type: ignore[attr-defined]
+            eval_result.summary_stats
+        )
 
     trial_result.metadata["comparability"] = _extract_success_comparability(eval_result)
 
@@ -403,7 +432,9 @@ def build_pruned_result(
     # Include partial example_results from the pruned trial
     # These are captured by the evaluator before raising TrialPrunedError
     if prune_error.example_results:
-        metadata["example_results"] = prune_error.example_results
+        metadata["example_results"] = redact_sensitive_data(
+            _to_redactable_payloads(list(prune_error.example_results))
+        )
         logger.info(
             "📊 Captured %d partial example results for pruned trial %s",
             len(prune_error.example_results),
@@ -454,12 +485,12 @@ def build_pruned_result(
 
     return TrialResult(
         trial_id=trial_id,
-        config=evaluation_config,
+        config=redact_sensitive_data(evaluation_config),
         metrics=metrics,
         status=TrialStatus.PRUNED,
         duration=duration,
         timestamp=datetime.now(UTC),
-        metadata=metadata,
+        metadata=redact_sensitive_data(metadata),
     )
 
 
@@ -476,6 +507,9 @@ def build_failed_result(
 
     logger.warning("Trial %s failed: %s", trial_id, error)
     error_details = TrialError.from_exception(error, config=evaluation_config)
+    error_details.message = redact_sensitive_text(error_details.message)
+    error_details.traceback = redact_sensitive_text(error_details.traceback)
+    error_details.config = redact_sensitive_data(error_details.config)
 
     metadata: dict[str, Any] = (
         {"optuna_trial_id": optuna_trial_id} if optuna_trial_id is not None else {}
@@ -512,13 +546,13 @@ def build_failed_result(
 
     return TrialResult(
         trial_id=trial_id,
-        config=evaluation_config,
+        config=redact_sensitive_data(evaluation_config),
         metrics=metrics,
         status=TrialStatus.FAILED,
         duration=duration,
         timestamp=datetime.now(UTC),
-        error_message=str(error),
-        metadata=metadata,
+        error_message=redact_sensitive_text(str(error)),
+        metadata=redact_sensitive_data(metadata),
         error=error_details,
     )
 

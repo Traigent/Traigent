@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 import time
 from collections import defaultdict, deque
@@ -216,8 +217,6 @@ class SecureTokenBucket:
 class SecureRateLimiter:
     """Production-hardened rate limiter with enhanced security."""
 
-    _DEFAULT_IDENTIFIER_SECRET = b"traigent-rate-limiter-identifier-v1"
-
     def __init__(self, config: SecureRateLimitConfig) -> None:
         """Initialize secure rate limiter."""
         self.config = config
@@ -226,10 +225,25 @@ class SecureRateLimiter:
         self.token_buckets: dict[str, SecureTokenBucket] = {}
         self._lock = Lock()
 
+        if self.config.enable_distributed:
+            raise NotImplementedError(
+                "Distributed rate limiting is not implemented in the SDK. "
+                "Do not set enable_distributed=True until a Redis-backed "
+                "counter implementation is available."
+            )
+
         # Initialize cryptographic salt if not provided
         if self.config.use_cryptographic_ids and not self.config.identifier_salt:
-            self.config.identifier_salt = secrets.token_bytes(32)
-            logger.info("Generated new identifier salt for rate limiting")
+            env_salt = os.getenv("TRAIGENT_RATE_LIMIT_IDENTIFIER_SALT")
+            if env_salt:
+                self.config.identifier_salt = env_salt.encode("utf-8")
+            else:
+                self.config.identifier_salt = secrets.token_bytes(32)
+                logger.warning(
+                    "Generated process-local identifier salt for rate limiting. "
+                    "Set TRAIGENT_RATE_LIMIT_IDENTIFIER_SALT for stable "
+                    "deployment-wide buckets."
+                )
 
         # Security metrics
         self._metrics: dict[str, Any] = {
@@ -242,7 +256,9 @@ class SecureRateLimiter:
 
     @classmethod
     def _keyed_identifier(cls, secret: bytes | None, value: str) -> str:
-        key = secret or cls._DEFAULT_IDENTIFIER_SECRET
+        if not secret:
+            raise ValueError("identifier_salt is required for keyed identifiers")
+        key = secret
         mac = hmac.HMAC(key, hashes.SHA256())
         mac.update(value.encode("utf-8"))
         return cast(bytes, mac.finalize()).hex()

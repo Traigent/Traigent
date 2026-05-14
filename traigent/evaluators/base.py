@@ -1975,7 +1975,7 @@ class BaseEvaluator(ABC):
             yield None
             return
 
-        # Get input data for tracing (respect privacy settings)
+        # Get input/output data for tracing (respect privacy settings)
         privacy_enabled = getattr(self, "privacy_enabled", False)
         input_data = None if privacy_enabled else example.input_data
         expected_output = None if privacy_enabled else example.expected_output

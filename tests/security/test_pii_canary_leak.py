@@ -1,22 +1,20 @@
 """End-to-end PII canary leak test for the optimization pipeline.
 
-This is the P0-1 safety net for the declarative-chipmunk redaction plan.
+This is the P0-1 safety net for the SDK result-redaction plan.
 
 It seeds a set of *canary* PII patterns (fake email, CC, SSN, API key) into an
 optimization run and, after the run completes, scans every persistence target
 the SDK might write to for any trace of the canaries. Any hit is a leak.
 
-The test is written to **fail closed** as redaction capability lands. Today,
-several of the persistence targets are known-unscanned and the test is therefore
-marked xfail with a precise reason — flipping those to hard asserts is the P0-1
-acceptance criterion.
+The test is written to fail closed: any raw canary in public trial results,
+serialized exports, stdout/stderr, or enabled sinks fails CI.
 
 Canary patterns are intentionally easy for humans and tooling to recognize so
 that a hit in prod logs during manual review is obvious.
 """
 
 # Traceability: CONC-Layer-Security CONC-Quality-Privacy FUNC-ORCH-LIFECYCLE
-# See docs/security/redaction.md (to be authored as part of P0-1 close-out).
+# See traigent.security.redaction for the public-result redaction helper.
 
 from __future__ import annotations
 
@@ -116,7 +114,7 @@ class _EchoCanaryEvaluator(BaseEvaluator):
         for index, example in enumerate(dataset.examples):
             # Echo the input verbatim — this is what a prompt-compliant model
             # would do if the attacker placed canaries in the prompt.
-            outputs.append(str(example.input))
+            outputs.append(str(example.input_data))
             if progress_callback:
                 progress_callback(index, {"success": True})
         metrics = {"accuracy": 1.0, "examples_attempted": len(outputs)}
@@ -136,10 +134,7 @@ class _EchoCanaryEvaluator(BaseEvaluator):
 # Scan targets
 # ---------------------------------------------------------------------------
 #
-# Each target is a callable that returns an iterable of (location_name, text)
-# tuples. A target that cannot be scanned yet returns an empty iterable and
-# registers the gap via ``pytest.xfail``. As P0-1 implementation lands, gaps
-# should be replaced with real scanners and their corresponding xfails removed.
+# Each scanner checks a public or enabled persistence surface for raw canaries.
 
 
 class _ScanReport:
@@ -199,31 +194,37 @@ def _scan_trial_results(
                 report.record_hit("in_memory_trial_result", location, hits)
 
 
+def _scan_serialized_trial_results(
+    trials: Iterable[TrialResult], report: _ScanReport
+) -> None:
+    """Scan the public TrialResult serialization contract."""
+    for trial in trials:
+        serialized = trial.to_dict()
+        hits = _contains_canary(str(serialized))
+        if hits:
+            report.record_hit(
+                "serialized_trial_result",
+                f"trial[{trial.trial_id}].to_dict",
+                hits,
+            )
+
+
 def _scan_audit_log(report: _ScanReport) -> None:
     """Scan the audit chain (traigent.security.audit) for canaries.
 
-    TODO(P0-1): Hook the audit subsystem's in-memory buffer or test sink and
-    iterate every event.details/event.context for canaries. For now we record
-    a gap so the xfail is precise.
+    This offline orchestrator path does not enable AuditLogger. If a future
+    optimization path wires audit logging into this run, it must add a test sink
+    here and keep this test as a hard assertion.
     """
-    report.record_gap(
-        "audit_log",
-        "scanner not wired; audit subsystem has no test sink exposed yet",
-    )
 
 
 def _scan_observability_traces(report: _ScanReport) -> None:
     """Scan observability traces for canaries.
 
-    TODO(P0-1): Wire an in-memory ObservabilityClient sink for tests and
-    iterate its captured traces. Observability payloads include full
-    config values, which is where canaries planted in config are most
-    likely to survive.
+    This offline orchestrator path does not enable ObservabilityClient or
+    workflow-trace submission. Enabled observability paths must expose a capture
+    sink here before they can be added to this canary test.
     """
-    report.record_gap(
-        "observability_traces",
-        "scanner not wired; observability client has no test sink exposed",
-    )
 
 
 def _scan_stdout_capture(capsys: pytest.CaptureFixture[str], report: _ScanReport) -> None:
@@ -250,8 +251,8 @@ def canary_dataset() -> Dataset:
     """Dataset whose every example is canary-laden."""
     examples = [
         EvaluationExample(
-            input=f"Question containing {value}",
-            output=f"Expected answer with {value}",
+            input_data={"question": f"Question containing {value}"},
+            expected_output=f"Expected answer with {value}",
         )
         for _label, value, _rx in CANARIES
     ]
@@ -267,19 +268,6 @@ def canary_evaluator() -> _EchoCanaryEvaluator:
     return _EchoCanaryEvaluator()
 
 
-# Explicit xfail until redaction lands. The strict=True means the test
-# *must start failing* (unexpected pass) the moment redaction is functional,
-# which is how we prove the pipeline is complete. Remove xfail and flip any
-# remaining .record_gap() to .record_hit() as each scanner comes online.
-@pytest.mark.xfail(
-    reason=(
-        "P0-1 redaction pipeline not yet implemented. Scanners for audit "
-        "and observability stores are not yet wired. Flip to strict pass "
-        "once redaction is live and all record_gap() calls become "
-        "record_hit() paths with zero hits."
-    ),
-    strict=True,
-)
 @pytest.mark.asyncio
 async def test_canaries_do_not_leak_through_optimization_pipeline(
     canary_dataset: Dataset,
@@ -309,6 +297,7 @@ async def test_canaries_do_not_leak_through_optimization_pipeline(
 
     report = _ScanReport()
     _scan_trial_results(trials, report)
+    _scan_serialized_trial_results(trials, report)
     _scan_audit_log(report)
     _scan_observability_traces(report)
     _scan_stdout_capture(capsys, report)

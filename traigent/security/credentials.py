@@ -40,6 +40,10 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @overload
 def _ensure_utc(dt: None) -> None: ...
 
@@ -239,7 +243,6 @@ class EnhancedCredentialStore:
     def _init_secure_encryption(self, master_password: str | None = None) -> None:
         """Initialize encryption with secure key derivation."""
         master_key_path = self._master_password_path()
-        # Variable initialization, not a hardcoded value
         master_key_value: str | None = None
         master_key_source = "parameter"
 
@@ -255,24 +258,36 @@ class EnhancedCredentialStore:
             if env_value:
                 master_key_value = env_value
                 master_key_source = "environment"
-            elif master_key_path.exists():
+            elif master_key_path.exists() and _truthy(
+                os.environ.get("TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD")
+            ):
                 master_key_value = self._load_master_password_from_file(master_key_path)
-                master_key_source = "file"
+                master_key_source = "legacy_file"
+            elif master_key_path.exists():
+                logger.warning(
+                    "Ignoring legacy local master password file at %s. Set "
+                    "TRAIGENT_MASTER_PASSWORD or explicitly enable "
+                    "TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD=true to migrate "
+                    "old local vaults.",
+                    master_key_path,
+                )
 
         if master_key_value is None:
-            # Cryptographically secure random generation, not hardcoded
-            master_key_value = secrets.token_urlsafe(32)
-            master_key_source = "generated"
-            self._store_master_password(master_key_value, master_key_path)
+            raise SecurityError(
+                "A credential-store master password is required. Set "
+                "TRAIGENT_MASTER_PASSWORD or pass master_password explicitly; "
+                "the SDK no longer generates and stores a local master password "
+                "beside encrypted credentials."
+            )
 
         self._master_password = SecureString(master_key_value)
         # Dereference (doesn't wipe underlying string from memory, but clears local ref)
         del master_key_value
 
-        if master_key_source == "generated":
-            logger.critical(
-                "Generated new master password and stored it at %s with restricted permissions. "
-                "Move it to a dedicated secret manager and configure TRAIGENT_MASTER_PASSWORD.",
+        if master_key_source == "legacy_file":
+            logger.warning(
+                "Using legacy local master password file at %s. Move this secret "
+                "to TRAIGENT_MASTER_PASSWORD or a dedicated secret manager.",
                 master_key_path,
             )
 

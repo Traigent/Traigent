@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from traigent.cloud.credential_manager import CredentialManager
@@ -108,3 +109,56 @@ def test_get_auth_headers_opaque_dev_key_uses_x_api_key(monkeypatch) -> None:
         headers = CredentialManager.get_auth_headers()
 
     assert headers == {"X-API-Key": "tg_opaque_token_value"}
+
+
+class _FakeSecureStore:
+    def __init__(self, payload: str | None) -> None:
+        self.payload = payload
+
+    def get(self, name: str, check_env: bool = True) -> str | None:
+        assert name == "cli_credentials"
+        assert check_env is False
+        return self.payload
+
+
+def test_load_cli_credentials_prefers_secure_store(monkeypatch) -> None:
+    """CLI credentials are read from the encrypted credential store."""
+    _clear_env(monkeypatch)
+    payload = json.dumps(
+        {
+            "api_key": "secure-api-key",  # pragma: allowlist secret
+            "backend_url": "https://api.example.test",
+        }
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.get_secure_credential_store",
+        lambda: _FakeSecureStore(payload),
+    )
+
+    assert CredentialManager.get_api_key() == "secure-api-key"  # pragma: allowlist secret
+    assert CredentialManager.get_stored_backend_url() == "https://api.example.test"
+
+
+def test_legacy_plaintext_cli_credentials_are_ignored_without_opt_in(
+    monkeypatch, tmp_path
+) -> None:
+    """Plaintext credentials must not be loaded unless migration is explicit."""
+    _clear_env(monkeypatch)
+    credentials_file = tmp_path / "credentials.json"
+    credentials_file.write_text(
+        json.dumps({"api_key": "plaintext-api-key"}),  # pragma: allowlist secret
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CREDENTIALS_FILE", credentials_file
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.get_secure_credential_store",
+        lambda: _FakeSecureStore(None),
+    )
+
+    assert CredentialManager.get_api_key() is None
+
+    monkeypatch.setenv("TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS", "true")
+
+    assert CredentialManager.get_api_key() == "plaintext-api-key"  # pragma: allowlist secret

@@ -455,66 +455,52 @@ class TestCredentialStorePerformance:
 
 
 class TestMasterPasswordGeneration:
-    """Test secure handling of automatically generated master passwords."""
+    """Test secure handling of credential-store master passwords."""
 
-    def test_generated_master_password_not_logged(
+    def test_missing_master_password_fails_closed_without_creating_file(
         self,
         temp_credentials_path,
         clean_environment,
         caplog,
-        monkeypatch,
     ):
-        """Ensure generated master passwords are not written to logs."""
-        generated_password = "unit-test-generated-password"
-        monkeypatch.setattr(
-            "traigent.security.credentials.secrets.token_urlsafe",
-            lambda _: generated_password,
-        )
-
+        """The SDK must not silently create a master password beside secrets."""
         caplog.set_level(logging.CRITICAL)
 
-        store = EnhancedCredentialStore(
-            storage_path=temp_credentials_path,
-            security_level=SecurityLevel.HIGH,
-            use_env_vars=False,
-        )
-        assert isinstance(store, EnhancedCredentialStore)
+        with pytest.raises(SecurityError) as exc:
+            EnhancedCredentialStore(
+                storage_path=temp_credentials_path,
+                security_level=SecurityLevel.HIGH,
+                use_env_vars=False,
+            )
 
         password_file = temp_credentials_path.parent / ".master_password"
-        assert password_file.exists()
-        assert password_file.read_text(encoding="utf-8").strip() == generated_password
-        if os.name != "nt":
-            assert stat.S_IMODE(password_file.stat().st_mode) == 0o600
+        assert not password_file.exists()
+        assert "TRAIGENT_MASTER_PASSWORD" in str(exc.value)
 
-        assert any(
-            "Generated new master password" in record.getMessage()
-            for record in caplog.records
-        )
         for record in caplog.records:
-            assert generated_password not in record.getMessage()
+            assert "unit-test-generated-password" not in record.getMessage()
 
-    def test_stored_master_password_reused(
+    def test_legacy_stored_master_password_requires_explicit_opt_in(
         self,
         temp_credentials_path,
         clean_environment,
         monkeypatch,
     ):
-        """Reuse stored master password without regenerating."""
-        generated_password = "persisted-password-for-test"
-        monkeypatch.setattr(
-            "traigent.security.credentials.secrets.token_urlsafe",
-            lambda _: generated_password,
-        )
-
-        EnhancedCredentialStore(
-            storage_path=temp_credentials_path,
-            security_level=SecurityLevel.HIGH,
-            use_env_vars=False,
-        )
-
+        """Legacy local master-password files are ignored unless opted in."""
+        stored_password = "persisted-password-for-test"
         password_file = temp_credentials_path.parent / ".master_password"
-        assert password_file.exists()
-        assert password_file.read_text(encoding="utf-8").strip() == generated_password
+        password_file.write_text(stored_password, encoding="utf-8")
+        if os.name != "nt":
+            password_file.chmod(0o600)
+
+        with pytest.raises(SecurityError):
+            EnhancedCredentialStore(
+                storage_path=temp_credentials_path,
+                security_level=SecurityLevel.HIGH,
+                use_env_vars=False,
+            )
+
+        monkeypatch.setenv("TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD", "true")
 
         generation_mock = MagicMock(
             side_effect=AssertionError("master password should not regenerate")
@@ -531,6 +517,7 @@ class TestMasterPasswordGeneration:
         )
 
         assert not generation_mock.called
+        assert password_file.read_text(encoding="utf-8").strip() == stored_password
 
 
 if __name__ == "__main__":

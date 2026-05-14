@@ -38,6 +38,7 @@ from traigent.observability.dtos import (
     TraceRecord,
     utc_now,
 )
+from traigent.security.redaction import redact_sensitive_text
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -881,11 +882,16 @@ class ObservabilityClient:
             if state is None or self._closed:
                 return
             payload = state.to_payload()
-        if not self._transport.submit(trace_id, payload):
+        submitted = self._transport.submit(trace_id, payload)
+        if not submitted:
+            stats = self._transport.get_stats()
+            errors = stats.get("errors") or []
+            reason = errors[-1] if errors else "transport rejected trace snapshot"
+            reason = redact_sensitive_text(str(reason))
             logger.warning(
-                "Observability transport did not accept snapshot for trace %s; "
-                "inspect flush() or get_stats() for delivery errors",
+                "Observability trace snapshot for %s was not queued: %s",
                 trace_id,
+                reason,
             )
 
     def _build_query_string(self, **params: Any) -> str:

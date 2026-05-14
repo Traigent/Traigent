@@ -60,11 +60,12 @@ def sanitize_email(email: str, default_domain: str = "unknown.local") -> str:
     return email
 
 
-def sanitize_roles(roles: Any) -> list[str]:
+def sanitize_roles(roles: Any, *, strict: bool = False) -> list[str]:
     """Sanitize role list.
 
     Args:
         roles: List of roles or single role value
+        strict: Raise ValueError when explicit role claims are malformed
 
     Returns:
         List of sanitized role strings, defaults to ["user"] if empty
@@ -74,9 +75,18 @@ def sanitize_roles(roles: Any) -> list[str]:
     if not isinstance(roles, list):
         roles = [roles]
     sanitized = []
+    invalid_claim = False
     for role in roles:
         if isinstance(role, str):
             clean_role = sanitize_string(role, max_length=50).lower()
             if clean_role and ROLE_PATTERN.match(clean_role):
                 sanitized.append(clean_role)
-    return sanitized if sanitized else ["user"]
+            else:
+                invalid_claim = True
+        else:
+            invalid_claim = True
+    if invalid_claim or not sanitized:
+        if strict:
+            raise ValueError("Invalid role claim from identity provider")
+        return ["user"]
+    return sanitized
