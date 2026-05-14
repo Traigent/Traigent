@@ -155,7 +155,7 @@ def my_func(query: str, config: dict) -> str:
 > If you previously relied on attribute mode for external observation
 > (e.g., reading `my_func.current_config` from a monitoring sidecar), migrate
 > to `context` mode and read the active configuration from inside the optimized
-> function — see [Thread Pool Examples](../api-reference/thread-pool-examples.md).
+> function — see the [Attribute Mode migration guide](../user-guide/injection_modes.md#4-attribute-mode-removed-in-v2x) for a use-case → replacement table covering sidecar monitoring, stateful buffers, type-safe access, and basic config reads.
 
 ## Related Documentation
 
