@@ -2,7 +2,9 @@
 
 ## Overview
 
-Traigent provides four powerful configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
+Traigent provides three configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
+
+> **Removed in v2.x:** A fourth mode previously stored configuration on a function attribute. It was removed because it could not be made thread-safe under parallel trials and silently corrupted data when concurrency was enabled. Passing the removed value as `injection_mode` now raises `ConfigurationError` at decoration time. See [Section 4](#4-attribute-mode-removed-in-v2x) for the migration path.
 
 ## Quick Comparison
 
@@ -11,7 +13,6 @@ Traigent provides four powerful configuration injection modes to seamlessly inte
 | **Context (Default)** | Minimal | No | Most cases; dynamic configs |
 | **Seamless** | None | No | Zero-touch variable overrides |
 | **Parameter** | Function signature | Yes | Type-safe apps, team projects |
-| **Attribute** | None | No | External monitoring, debugging |
 
 ## Parallel & Threading Notes
 
@@ -21,8 +22,6 @@ Traigent provides four powerful configuration injection modes to seamlessly inte
   config explicitly) so worker threads can read `get_config()`.
 - **Parameter**: Safe for parallel trials, but treat the injected config object
   as read-only, especially when `example_concurrency > 1`.
-- **Attribute**: Unsafe for parallel trials; see the warning in the Attribute
-  section below.
 
 ## 1. Context Mode (Default)
 
@@ -339,187 +338,154 @@ def create_application(
 - Using dependency injection
 - Want IDE support and autocomplete
 
-## 4. Attribute Mode
+## 4. Attribute Mode (Removed in v2.x)
 
-Store configuration as a function attribute for external access.
+The function-attribute-based injection mode was removed in v2.x. Passing the removed value as `injection_mode` now raises `ConfigurationError` at decoration time with migration guidance.
 
-### Basic Example
+### Why it was removed
+
+The removed mode stored the active configuration on a shared mutable function attribute (`my_func.current_config`). That worked for sequential trials but could not be made thread-safe under parallel execution:
+
+- Concurrent trials overwrote the same attribute simultaneously.
+- There was no per-trial isolation — every trial saw the same function object.
+- Races caused silent data corruption with no surfaced error.
+
+We chose to remove the mode rather than ship a footgun that silently produced wrong optimization results when concurrency was enabled.
+
+### Migration
+
+| If you used attribute mode for... | Migrate to |
+|---|---|
+| Reading the active config from inside the function | `injection_mode="context"` + `traigent.get_config()` |
+| Type-safe config access | `injection_mode="parameter"` + an explicit config arg |
+| Zero-touch override of local variables | `injection_mode="seamless"` |
+| External monitoring (reading `my_func.current_config` from a sidecar) | Switch to `context` and emit the active config from inside the function via your normal observability pipeline (logs / metrics / spans) |
+| Stateful buffers / mutable state previously hung off the function object | Move state into an explicit container keyed by the active config — see the stateful-buffers example below |
+
+**Example migration — basic case:**
 
 ```python
+# Before (v1.x — no longer works):
+#   @traigent.optimize(injection_mode=<removed-attribute-value>, configuration_space={...})
+#   def classify_image(image: np.ndarray) -> str:
+#       config = classify_image.current_config
+#       ...
+
+# After (v2.x):
 @traigent.optimize(
-    injection_mode="attribute",
+    injection_mode="context",
     configuration_space={
         "threshold": [0.5, 0.7, 0.9],
-        "min_confidence": [0.6, 0.8, 0.95]
-    }
+        "min_confidence": [0.6, 0.8, 0.95],
+    },
 )
 def classify_image(image: np.ndarray) -> str:
-    # Access config via function attribute
-    config = classify_image.current_config
-
+    config = traigent.get_config()  # Thread-safe per trial
     predictions = model.predict(image)
     max_prob = np.max(predictions)
-
     if max_prob < config["min_confidence"]:
         return "uncertain"
-
-    if max_prob > config["threshold"]:
-        return "high_confidence"
-    else:
-        return "low_confidence"
-
-# Access configuration externally
-print(f"Current threshold: {classify_image.current_config['threshold']}")
+    return "high_confidence" if max_prob > config["threshold"] else "low_confidence"
 ```
 
-### Monitoring and Debugging Example
+**Example migration — external monitoring:**
 
 ```python
+# Before (v1.x): an external sidecar read text_generation_api.current_config
+# After (v2.x): emit the active config from inside the function
+
 @traigent.optimize(
-    injection_mode="attribute",
+    injection_mode="context",
     configuration_space={
         "model_name": ["bert-base", "roberta-base", "distilbert"],
         "max_length": [128, 256, 512],
-        "temperature": [0.7, 0.9, 1.0]
-    }
+        "temperature": [0.7, 0.9, 1.0],
+    },
 )
 def text_generation_api(prompt: str) -> str:
-    config = text_generation_api.current_config
-
-    response = generate_text(
-        prompt=prompt,
-        model=config["model_name"],
-        max_length=config["max_length"],
-        temperature=config["temperature"]
-    )
-
-    return response
-
-# Monitoring system
-def log_api_metrics():
-    """Log current configuration for monitoring."""
-    config = text_generation_api.current_config
-
+    config = traigent.get_config()
     metrics.gauge("api.model", config["model_name"])
     metrics.gauge("api.max_length", config["max_length"])
     metrics.gauge("api.temperature", config["temperature"])
-
-    logger.info(f"API Config: {config}")
-
-# A/B testing
-def get_variant():
-    """Get current configuration variant for A/B testing."""
-    return hash(str(text_generation_api.current_config)) % 2
+    return generate_text(
+        prompt=prompt,
+        model=config["model_name"],
+        max_length=config["max_length"],
+        temperature=config["temperature"],
+    )
 ```
 
-### Stateful Configuration Example
+**Example migration — stateful buffers (mutable state that v1.x stored on the function attribute):**
+
+If you previously hung mutable state directly off the optimized function (e.g., `buffered_writer.buffer = []`), move that state into an explicit container keyed by the active config and use a per-key lock so concurrent trials don't race on the buffer or flush. The two locks below have different jobs: the registry lock (`_REGISTRY_LOCK`) only guards inserting the per-key entry; the per-key lock (`state["lock"]`) guards every read/mutation of that entry's buffer and timestamp.
 
 ```python
+# Before (v1.x): mutable state read/written via func.<attr>
+#   buffered_writer.buffer = []
+#   buffered_writer.last_flush = time.time()
+#   ...inside the function: read buffered_writer.current_config
+
+# After (v2.x): keep state in an explicit container keyed by config,
+# with a per-key lock around the full append-and-maybe-flush sequence
+import threading, time
+
+_BUFFERS: dict[tuple, dict] = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_state(key: tuple) -> dict:
+    """Return (creating if needed) the state slot for this config key."""
+    with _REGISTRY_LOCK:
+        state = _BUFFERS.get(key)
+        if state is None:
+            state = {
+                "buffer": [],
+                "last_flush": time.time(),
+                "lock": threading.Lock(),
+            }
+            _BUFFERS[key] = state
+        return state
+
+
 @traigent.optimize(
-    injection_mode="attribute",
+    injection_mode="context",
     configuration_space={
         "buffer_size": [100, 1000, 10000],
         "flush_interval": [1, 5, 10],
-        "compression": ["none", "gzip", "lz4"]
-    }
+        "compression": ["none", "gzip", "lz4"],
+    },
 )
 def buffered_writer(data: bytes) -> None:
-    config = buffered_writer.current_config
+    config = traigent.get_config()
+    key = (config["buffer_size"], config["flush_interval"], config["compression"])
+    state = _get_state(key)
 
-    # Initialize buffer if needed
-    if not hasattr(buffered_writer, 'buffer'):
-        buffered_writer.buffer = []
-        buffered_writer.last_flush = time.time()
-
-    # Add to buffer
-    if config["compression"] != "none":
-        data = compress(data, config["compression"])
-
-    buffered_writer.buffer.append(data)
-
-    # Check if we should flush
-    should_flush = (
-        len(buffered_writer.buffer) >= config["buffer_size"] or
-        time.time() - buffered_writer.last_flush > config["flush_interval"]
+    payload = (
+        compress(data, config["compression"])
+        if config["compression"] != "none"
+        else data
     )
 
-    if should_flush:
-        flush_buffer(buffered_writer.buffer)
-        buffered_writer.buffer = []
-        buffered_writer.last_flush = time.time()
+    with state["lock"]:
+        state["buffer"].append(payload)
+        if (
+            len(state["buffer"]) >= config["buffer_size"]
+            or time.time() - state["last_flush"] > config["flush_interval"]
+        ):
+            to_flush = state["buffer"]
+            state["buffer"] = []
+            state["last_flush"] = time.time()
+        else:
+            to_flush = None
 
-# External buffer management
-def force_flush():
-    """Force flush the buffer."""
-    if hasattr(buffered_writer, 'buffer'):
-        flush_buffer(buffered_writer.buffer)
-        buffered_writer.buffer = []
-
-def get_buffer_stats():
-    """Get current buffer statistics."""
-    return {
-        "size": len(getattr(buffered_writer, 'buffer', [])),
-        "config": buffered_writer.current_config,
-        "compression_enabled": buffered_writer.current_config["compression"] != "none"
-    }
+    # Flush outside the lock so I/O doesn't serialize concurrent appenders.
+    if to_flush is not None:
+        flush_buffer(to_flush)
 ```
 
-### Pros & Cons
+> The pattern decouples three concerns: (1) finding the state slot for the current config, (2) safely mutating that slot, and (3) doing slow I/O without holding the lock. Concurrent trials on the same config now serialize only on the small append-and-decide critical section.
 
-**Pros:**
-- ✅ Configuration accessible externally
-- ✅ Good for monitoring/debugging
-- ✅ Can maintain state
-- ✅ No function signature changes
-
-**Cons:**
-- ❌ Less intuitive than other modes
-- ❌ Config tied to function object
-- ❌ Potential for external mutations
-- ❌ Not ideal for pure functions
-- ❌ **Not safe for parallel trials** (see warning below)
-
-> ⚠️ **Parallel Execution Blocked**: Attribute mode is **not compatible** with
-> parallel trials (`trial_concurrency > 1`). The SDK raises `ValueError` if you
-> attempt this combination - no workarounds exist.
->
-> **Why?** Attribute mode fundamentally relies on a shared mutable function
-> attribute (`my_func.current_config`) that cannot be made thread-safe:
->
-> - Concurrent trials overwrite the same attribute simultaneously
-> - There is no isolation between trials - all share the same function object
-> - Race conditions cause silent data corruption
->
-> **Alternatives for parallel execution:**
-> - Use `injection_mode="context"` (recommended) - fully thread-safe
-> - Use `injection_mode="parameter"` - explicit config passing
-> - Use sequential trials: `parallel_config={"trial_concurrency": 1}`
->
-> ```python
-> # ✅ CORRECT: Use context mode for parallel trials
-> @traigent.optimize(
->     injection_mode="context",  # Thread-safe
->     parallel_config={"trial_concurrency": 4},
->     ...
-> )
-> def my_func(query: str) -> str:
->     config = traigent.get_config()  # Thread-safe access
->     return process(query, config)
->
-> # ❌ BLOCKED: Attribute mode + parallel raises ValueError
-> @traigent.optimize(
->     injection_mode="attribute",
->     parallel_config={"trial_concurrency": 2},  # ValueError!
->     ...
-> )
-> ```
-
-### When to Use
-
-- Need external configuration access
-- Building monitoring/debugging tools
-- Stateful optimizations
-- A/B testing scenarios
+For a cross-link to the runtime enum see the [InjectionMode reference](../api-reference/complete-function-specification.md#injectionmode) — the enum has only `CONTEXT`, `PARAMETER`, and `SEAMLESS`; the previous fourth member is no longer present.
 
 ## Best Practices
 
@@ -568,21 +534,21 @@ def train(data, config: TraigentConfig):
 
 ### 4. Monitor in Production
 
-Use attribute mode for production monitoring and A/B testing:
+Emit the active configuration from inside the optimized function so your monitoring/observability pipeline picks it up — context mode keeps each trial isolated:
 
 ```python
 @traigent.optimize(
-    injection_mode="attribute",
-    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4o"]}
+    injection_mode="context",
+    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4o"]},
 )
 def api_endpoint(query: str) -> str:
-    config = api_endpoint.current_config
+    config = traigent.get_config()
+    metrics.gauge("api.model", config["model"])  # picked up by external monitoring
+    alert_if_config_drift(config)
     return call_llm(model=config["model"], query=query)
-
-# External monitoring can access config without calling the function
-current_config = api_endpoint.current_config
-alert_if_config_drift(current_config)
 ```
+
+> Previous versions exposed `api_endpoint.current_config` for an external sidecar to read. That sidecar pattern was only safe under sequential trials and was removed with attribute mode in v2.x — emit the config from inside the function instead.
 
 ## Common Patterns
 
