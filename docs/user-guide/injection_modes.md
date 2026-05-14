@@ -417,7 +417,7 @@ def text_generation_api(prompt: str) -> str:
 
 **Example migration — stateful buffers (mutable state that v1.x stored on the function attribute):**
 
-If you previously hung mutable state directly off the optimized function (e.g., `buffered_writer.buffer = []`), move that state into an explicit container and look it up by the active config. This is thread-safe under parallel trials: each trial sees its own config and addresses its own state slot.
+If you previously hung mutable state directly off the optimized function (e.g., `buffered_writer.buffer = []`), move that state into an explicit container keyed by the active config and use a per-key lock so concurrent trials don't race on the buffer or flush. The two locks below have different jobs: the registry lock (`_REGISTRY_LOCK`) only guards inserting the per-key entry; the per-key lock (`state["lock"]`) guards every read/mutation of that entry's buffer and timestamp.
 
 ```python
 # Before (v1.x): mutable state read/written via func.<attr>
@@ -425,11 +425,27 @@ If you previously hung mutable state directly off the optimized function (e.g., 
 #   buffered_writer.last_flush = time.time()
 #   ...inside the function: read buffered_writer.current_config
 
-# After (v2.x): keep state in an explicit container keyed by config
+# After (v2.x): keep state in an explicit container keyed by config,
+# with a per-key lock around the full append-and-maybe-flush sequence
 import threading, time
 
-_BUFFERS: dict[tuple, dict] = {}     # key: (buffer_size, flush_interval, compression)
-_BUFFERS_LOCK = threading.Lock()
+_BUFFERS: dict[tuple, dict] = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_state(key: tuple) -> dict:
+    """Return (creating if needed) the state slot for this config key."""
+    with _REGISTRY_LOCK:
+        state = _BUFFERS.get(key)
+        if state is None:
+            state = {
+                "buffer": [],
+                "last_flush": time.time(),
+                "lock": threading.Lock(),
+            }
+            _BUFFERS[key] = state
+        return state
+
 
 @traigent.optimize(
     injection_mode="context",
@@ -442,20 +458,32 @@ _BUFFERS_LOCK = threading.Lock()
 def buffered_writer(data: bytes) -> None:
     config = traigent.get_config()
     key = (config["buffer_size"], config["flush_interval"], config["compression"])
-    with _BUFFERS_LOCK:
-        state = _BUFFERS.setdefault(key, {"buffer": [], "last_flush": time.time()})
+    state = _get_state(key)
 
-    payload = compress(data, config["compression"]) if config["compression"] != "none" else data
-    state["buffer"].append(payload)
+    payload = (
+        compress(data, config["compression"])
+        if config["compression"] != "none"
+        else data
+    )
 
-    if (
-        len(state["buffer"]) >= config["buffer_size"]
-        or time.time() - state["last_flush"] > config["flush_interval"]
-    ):
-        flush_buffer(state["buffer"])
-        state["buffer"] = []
-        state["last_flush"] = time.time()
+    with state["lock"]:
+        state["buffer"].append(payload)
+        if (
+            len(state["buffer"]) >= config["buffer_size"]
+            or time.time() - state["last_flush"] > config["flush_interval"]
+        ):
+            to_flush = state["buffer"]
+            state["buffer"] = []
+            state["last_flush"] = time.time()
+        else:
+            to_flush = None
+
+    # Flush outside the lock so I/O doesn't serialize concurrent appenders.
+    if to_flush is not None:
+        flush_buffer(to_flush)
 ```
+
+> The pattern decouples three concerns: (1) finding the state slot for the current config, (2) safely mutating that slot, and (3) doing slow I/O without holding the lock. Concurrent trials on the same config now serialize only on the small append-and-decide critical section.
 
 For a cross-link to the runtime enum see the [InjectionMode reference](../api-reference/complete-function-specification.md#injectionmode) — the enum has only `CONTEXT`, `PARAMETER`, and `SEAMLESS`; the previous fourth member is no longer present.
 
