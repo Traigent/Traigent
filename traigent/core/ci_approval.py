@@ -89,22 +89,7 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
 
     secret = os.getenv("TRAIGENT_APPROVAL_SECRET", "").encode()
     if not secret:
-        logger.warning(
-            "TRAIGENT_APPROVAL_SECRET not set, cannot validate token signature"
-        )
-        try:
-            expires_at = datetime.fromisoformat(
-                token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
-            )
-            now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
-            if expires_at > now:
-                logger.warning(
-                    "Token approved by %s (signature not verified)",
-                    _sanitize_for_log(token_data.get("approver", "unknown")),
-                )
-                return True
-        except (ValueError, KeyError):
-            pass
+        logger.warning("TRAIGENT_APPROVAL_SECRET not set; refusing unsigned token")
         return False
 
     # Compute expected signature
