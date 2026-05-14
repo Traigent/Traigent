@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +21,24 @@ from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 
 logger = get_logger(__name__)
+
+
+def _to_redactable_payload(value: Any) -> Any:
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            payload = to_dict()
+        except Exception:
+            payload = None
+        if payload is not None:
+            return payload
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)  # type: ignore[arg-type]
+    return value
+
+
+def _to_redactable_payloads(values: list[Any]) -> list[Any]:
+    return [_to_redactable_payload(value) for value in values]
 
 
 def _coerce_non_negative_int(value: Any) -> int:
@@ -226,7 +245,9 @@ def _build_success_trial_metadata(
 
     example_results = getattr(eval_result, "example_results", None)
     if example_results:
-        trial_metadata["example_results"] = redact_sensitive_data(example_results)
+        trial_metadata["example_results"] = redact_sensitive_data(
+            _to_redactable_payloads(list(example_results))
+        )
 
     if examples_attempted is not None:
         trial_metadata["examples_attempted"] = int(examples_attempted)
@@ -411,7 +432,9 @@ def build_pruned_result(
     # Include partial example_results from the pruned trial
     # These are captured by the evaluator before raising TrialPrunedError
     if prune_error.example_results:
-        metadata["example_results"] = redact_sensitive_data(prune_error.example_results)
+        metadata["example_results"] = redact_sensitive_data(
+            _to_redactable_payloads(list(prune_error.example_results))
+        )
         logger.info(
             "📊 Captured %d partial example results for pruned trial %s",
             len(prune_error.example_results),

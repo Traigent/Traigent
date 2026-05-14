@@ -19,6 +19,15 @@ from traigent.core.trial_result_factory import (
 from traigent.utils.exceptions import TrialPrunedError
 
 
+class ExamplePayload:
+    def to_dict(self):
+        return {
+            "input_data": "alice@example.com",
+            "actual_output": "api-secret_123456789012345",
+            "expected_output": "safe",
+        }
+
+
 @pytest.fixture
 def eval_config():
     """Create evaluation configuration."""
@@ -115,6 +124,27 @@ class TestBuildSuccessResult:
 
         assert "example_results" in result.metadata
         assert len(result.metadata["example_results"]) == 2
+
+    def test_example_results_are_serialized_before_redaction(self, eval_config, eval_result):
+        """Dataclass-like example result objects must not bypass metadata redaction."""
+        eval_result.example_results = [ExamplePayload()]
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=None,
+            total_cost=None,
+            optuna_trial_id=None,
+        )
+
+        example_results = result.metadata["example_results"]
+        assert isinstance(example_results[0], dict)
+        assert "alice@example.com" not in str(example_results)
+        assert "api-secret_123456789012345" not in str(example_results)
+        assert "[REDACTED:email]" in str(example_results)
+        assert "[REDACTED:api_key]" in str(example_results)
 
     def test_no_example_results(self, eval_config):
         """Test handling when example_results is None."""
@@ -427,6 +457,28 @@ class TestBuildPrunedResult:
         )
 
         assert result.metadata["optuna_trial_id"] == 99
+
+    def test_pruned_example_results_are_serialized_before_redaction(
+        self, eval_config, prune_error
+    ):
+        """Pruned-trial partial example results must not bypass metadata redaction."""
+        prune_error.example_results = [ExamplePayload()]
+
+        result = build_pruned_result(
+            trial_id="trial_456",
+            evaluation_config=eval_config,
+            duration=0.5,
+            prune_error=prune_error,
+            progress_state=None,
+            optuna_trial_id=None,
+        )
+
+        example_results = result.metadata["example_results"]
+        assert isinstance(example_results[0], dict)
+        assert "alice@example.com" not in str(example_results)
+        assert "api-secret_123456789012345" not in str(example_results)
+        assert "[REDACTED:email]" in str(example_results)
+        assert "[REDACTED:api_key]" in str(example_results)
 
     def test_pruned_clamped_evaluated(self, eval_config, prune_error):
         """Test evaluated is clamped to total_examples."""
