@@ -422,11 +422,15 @@ class APIKeyManager:
                 name="default",
                 created_at=now,
                 expires_at=now + timedelta(days=365),
-                permissions={
-                    "optimize": True,
-                    "analytics": True,
-                    "billing": True,
-                },
+                # SDK#920 fix: do not fabricate `billing: True` (or any
+                # admin-tier permission) locally. The SDK has no way to
+                # know what the backend actually granted this credential.
+                # Falling through to `APIKey.__post_init__` defaults
+                # gives `optimize: True, analytics: True, billing: False`
+                # — the SDK's normal capabilities, with no claimed
+                # billing rights. Authorization for sensitive operations
+                # is the backend's responsibility; the SDK should never
+                # pretend to have rights it cannot prove.
             )
 
     def get_info(self) -> dict[str, Any] | None:
@@ -451,11 +455,18 @@ class APIKeyManager:
         api_key_value = self.get_key_for_internal_use()
 
         if api_key_value and self.validate_format(api_key_value):
+            # SDK#920 fix: report `permissions={}` for the env-key
+            # path. Previously this fabricated `{optimize: True,
+            # analytics: True}` even though the SDK has no way to
+            # know what the backend actually granted this key.
+            # Empty dict is the honest answer — callers checking
+            # specific permissions get a clear "no claimed rights"
+            # response and the backend remains authoritative.
             return {
                 "name": "environment",
                 "created_at": None,
                 "expires_at": None,
-                "permissions": {"optimize": True, "analytics": True},
+                "permissions": {},
                 "is_valid": True,
                 "preview": self.get_preview(),
             }

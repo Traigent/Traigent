@@ -1482,3 +1482,100 @@ class TestPasswordAuthentication:
         assert result.success is False
         assert result.status == AuthStatus.INVALID
         assert "Backend unavailable" in result.error_message
+
+
+# ---------------------------------------------------------------------------
+# SDK#920 anti-regression: APIKey instances created from local credentials
+# (CLI auth response, env vars, secure storage) must NOT fabricate
+# `billing: True` or any admin-tier permission. The SDK has no way to
+# know what the backend actually granted; pretending it does is forgery.
+# ---------------------------------------------------------------------------
+
+
+class TestSDK920_NoFabricatedBillingPermission:
+    """Pin: locally-constructed APIKey objects use the safe default
+    permissions (billing=False) — they do not invent admin claims."""
+
+    def test_apikey_default_post_init_has_billing_false(self):
+        """The dataclass default permissions must explicitly deny
+        billing. Was true on develop already; this test pins it so
+        a future refactor can't quietly flip the default."""
+        from datetime import UTC, datetime
+
+        from traigent.cloud.auth import APIKey
+
+        api_key = APIKey(key="test", name="t", created_at=datetime.now(UTC))
+        assert api_key.permissions is not None
+        assert api_key.permissions.get("billing") is False, (
+            "APIKey default permissions must NOT grant billing locally"
+        )
+
+    def test_api_key_manager_set_credentials_does_not_grant_billing(self):
+        """Pin: APIKeyManager.set_credentials_for_environment (or
+        equivalent local-credential constructor) does NOT explicitly
+        override permissions to grant billing. Pre-fix it set
+        `permissions={"optimize": True, "analytics": True, "billing": True}`
+        — the SDK can't know what the backend granted."""
+        import inspect
+
+        from traigent.cloud import api_key_manager
+
+        source = inspect.getsource(api_key_manager)
+        # Greptile P2 of PR #967: regex-based check tolerates quote
+        # variants (single vs double) and whitespace differences (no
+        # space after colon). The previous string-equality test would
+        # silently miss `'billing': True` (single quotes) or
+        # `"billing":True` (no space).
+        import re
+
+        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
+            "api_key_manager.py must not hard-code `billing: True` in "
+            "any APIKey construction (SDK#920)"
+        )
+
+    def test_authmanager_apply_token_data_does_not_grant_billing(self):
+        """Pin: AuthManager.apply_token_data (or equivalent) does NOT
+        construct an APIKey with `billing: True`. Pre-fix it did."""
+        import inspect
+        import re
+
+        from traigent.cloud import auth
+
+        source = inspect.getsource(auth)
+        # Greptile P2 of PR #967: regex pattern tolerates quote/spacing
+        # variants — see the sister assertion above.
+        assert not re.search(r"""['"]billing['"]\s*:\s*True""", source), (
+            "auth.py must not hard-code `billing: True` in any APIKey "
+            "construction (SDK#920)"
+        )
+
+    def test_get_info_for_env_keyed_path_returns_empty_permissions(self):
+        """SDK#920: when reporting info for an env-keyed source (the
+        SDK never received an APIKey object from the backend), the
+        permissions field must be `{}` not the previously-fabricated
+        `{"optimize": True, "analytics": True}`. Empty dict is the
+        honest answer — caller checking specific permissions gets a
+        clear `False` for whatever they ask."""
+        from unittest.mock import patch
+
+        from traigent.cloud.api_key_manager import APIKeyManager
+        from traigent.cloud.auth import UnifiedAuthConfig
+
+        config = UnifiedAuthConfig(
+            api_key_default_ttl_days=30,
+            api_key_warning_days=14,
+            api_key_critical_days=7,
+        )
+        manager = APIKeyManager(config)
+        # Force the env-keyed path by giving no in-memory APIKey
+        # object and mocking the env-key reader to return a valid key.
+        with patch.object(manager, "get_key_for_internal_use", return_value="tg_envkey"), \
+             patch.object(manager, "validate_format", return_value=True):
+            info = manager.get_info()
+
+        assert info is not None
+        assert info["name"] == "environment"
+        # The honest empty answer:
+        assert info["permissions"] == {}, (
+            f"env-keyed permissions must be {{}}, got {info['permissions']}"
+        )
