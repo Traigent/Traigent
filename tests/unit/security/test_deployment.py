@@ -521,34 +521,49 @@ class TestHealthCheckerCheckServiceHealth:
         """Create test health checker instance."""
         return HealthChecker()
 
-    def test_check_service_health_database(self, checker: HealthChecker) -> None:
-        """Test health check for database service."""
+    def test_check_service_health_database_reports_unknown_when_no_probe_wired(
+        self, checker: HealthChecker
+    ) -> None:
+        """SDK#918 anti-regression: previously this returned
+        `HealthStatus.HEALTHY` with fabricated `connections=45`
+        details. Now it returns `UNKNOWN` with a `reason` field
+        indicating no real probe is wired."""
         health = checker.check_service_health("database")
 
         assert health.service == "database"
-        assert health.status == HealthStatus.HEALTHY
-        assert health.response_time_ms > 0
-        assert health.details["connections"] == 45
-        assert health.details["query_time_avg_ms"] == 12
+        assert health.status == HealthStatus.UNKNOWN
+        assert health.response_time_ms >= 0
+        assert "reason" in health.details
+        assert "No real health probe configured" in health.details["reason"]
+        assert "database" in health.details["reason"]
         assert isinstance(health.timestamp, datetime)
+        # Fabricated metrics MUST be gone.
+        assert "connections" not in health.details
+        assert "query_time_avg_ms" not in health.details
 
-    def test_check_service_health_api(self, checker: HealthChecker) -> None:
-        """Test health check for API service."""
+    def test_check_service_health_api_reports_unknown_when_no_probe_wired(
+        self, checker: HealthChecker
+    ) -> None:
+        """SDK#918 anti-regression for the api service slot."""
         health = checker.check_service_health("api")
 
         assert health.service == "api"
-        assert health.status == HealthStatus.HEALTHY
-        assert health.details["active_requests"] == 23
-        assert health.details["queue_length"] == 2
+        assert health.status == HealthStatus.UNKNOWN
+        assert "reason" in health.details
+        assert "active_requests" not in health.details
+        assert "queue_length" not in health.details
 
-    def test_check_service_health_optimizer(self, checker: HealthChecker) -> None:
-        """Test health check for optimizer service."""
+    def test_check_service_health_optimizer_reports_unknown_when_no_probe_wired(
+        self, checker: HealthChecker
+    ) -> None:
+        """SDK#918 anti-regression for the optimizer service slot."""
         health = checker.check_service_health("optimizer")
 
         assert health.service == "optimizer"
-        assert health.status == HealthStatus.HEALTHY
-        assert health.details["active_optimizations"] == 5
-        assert health.details["cpu_usage"] == 67
+        assert health.status == HealthStatus.UNKNOWN
+        assert "reason" in health.details
+        assert "active_optimizations" not in health.details
+        assert "cpu_usage" not in health.details
 
     def test_check_service_health_unknown_service(self, checker: HealthChecker) -> None:
         """Test health check for unknown service returns UNKNOWN status."""
@@ -556,7 +571,10 @@ class TestHealthCheckerCheckServiceHealth:
 
         assert health.service == "unknown-service"
         assert health.status == HealthStatus.UNKNOWN
-        assert health.details == {}
+        # Unknown service still has a reason field; previously this
+        # returned an empty dict, but the new code surfaces the
+        # "Unrecognized service name" reason for honest reporting.
+        assert "reason" in health.details
 
     def test_check_service_health_stores_in_history(
         self, checker: HealthChecker
@@ -568,16 +586,18 @@ class TestHealthCheckerCheckServiceHealth:
         assert len(checker.health_history) == 2
 
     @patch("traigent.security.deployment.logger")
-    def test_check_service_health_logs_debug(
+    def test_check_service_health_logs_warning(
         self, mock_logger: MagicMock, checker: HealthChecker
     ) -> None:
-        """Test health check logs debug message."""
+        """SDK#918: probes for recognized services that have no real
+        implementation now log a warning instead of debug, so monitoring
+        catches the call. Previously logged debug + fake `healthy` status."""
         checker.check_service_health("database")
 
-        mock_logger.debug.assert_called_once()
-        log_message = mock_logger.debug.call_args[0][0]
-        assert "Health check for database" in log_message
-        assert "healthy" in log_message
+        mock_logger.warning.assert_called_once()
+        log_message = mock_logger.warning.call_args[0][0]
+        assert "no real probe is configured" in log_message
+        assert "SDK#918" in log_message
 
     @patch("traigent.security.deployment.time.time")
     def test_check_service_health_measures_response_time(
@@ -647,14 +667,22 @@ class TestHealthCheckerGetSystemHealth:
         assert "storage" in services
 
     def test_get_system_health_service_details(self, checker: HealthChecker) -> None:
-        """Test system health includes service details."""
+        """Test system health includes service details.
+
+        SDK#918 fix: database used to report `status=healthy` with
+        fabricated `connections=45`. Now it reports `unknown` with a
+        `reason` field. The structural shape (status / response_time
+        / details) is preserved so consumers don't crash.
+        """
         result = checker.get_system_health()
 
         db_health = result["services"]["database"]
-        assert db_health["status"] == "healthy"
+        assert db_health["status"] == "unknown"
         assert "response_time_ms" in db_health
         assert "details" in db_health
-        assert db_health["details"]["connections"] == 45
+        # Honest signal — no fabricated metrics:
+        assert "connections" not in db_health["details"]
+        assert "reason" in db_health["details"]
 
     def test_get_system_health_creates_health_history(
         self, checker: HealthChecker
@@ -746,75 +774,79 @@ class TestBackupManagerCreateBackup:
         """Create test backup manager instance."""
         return BackupManager()
 
-    def test_create_backup_with_default_type(self, manager: BackupManager) -> None:
-        """Test creating backup with default full type."""
+    def test_create_backup_reports_unsupported(self, manager: BackupManager) -> None:
+        """SDK#918 anti-regression: previously this returned
+        `status="completed"` with a fabricated backup_id and
+        size_gb=2.5 despite doing no work. Now it must report
+        `unsupported` with no backup_id and a `reason` mentioning
+        the missing executor."""
         backup = manager.create_backup()
 
         assert backup["type"] == "full"
-        assert backup["status"] == "completed"
-        assert backup["size_gb"] == 2.5
-        assert "backup_id" in backup
-        assert backup["backup_id"].startswith("backup_")
+        assert backup["status"] == "unsupported"
+        assert "reason" in backup
+        assert "BackupExecutor" not in backup["reason"] or "real backup" in backup["reason"]
+        assert "NO DATA WAS PERSISTED" in backup["reason"]
+        # Fabricated fields MUST be gone:
+        assert "backup_id" not in backup
+        assert "size_gb" not in backup
+        assert "retention_until" not in backup
+        # Honest fields:
         assert "created_at" in backup
-        assert "retention_until" in backup
 
     def test_create_backup_with_custom_type(self, manager: BackupManager) -> None:
-        """Test creating backup with custom type."""
+        """Custom type passes through but status is still unsupported."""
         backup = manager.create_backup(backup_type="incremental")
 
         assert backup["type"] == "incremental"
+        assert backup["status"] == "unsupported"
 
-    def test_create_backup_stores_in_backups_list(self, manager: BackupManager) -> None:
-        """Test created backup is stored in backups list."""
+    def test_create_backup_does_not_store_in_backups_list_when_unsupported(
+        self, manager: BackupManager
+    ) -> None:
+        """SDK#918 anti-regression: previously a fabricated backup
+        was appended to `self.backups`, polluting the list with
+        non-existent backups. Now no append happens because no real
+        backup occurred."""
         manager.create_backup()
 
-        assert len(manager.backups) == 1
-        assert manager.backups[0]["type"] == "full"
-
-    def test_create_backup_multiple_backups(self, manager: BackupManager) -> None:
-        """Test creating multiple backups."""
-        manager.create_backup(backup_type="full")
-        manager.create_backup(backup_type="incremental")
-
-        assert len(manager.backups) == 2
-
-    @patch("traigent.security.deployment.time.time")
-    def test_create_backup_unique_ids(
-        self, mock_time: MagicMock, manager: BackupManager
-    ) -> None:
-        """Test each backup gets unique ID."""
-        # Use an unbounded counter so unrelated background calls to time.time
-        # in this module do not exhaust side effects and cause StopIteration.
-        mock_time.side_effect = (float(ts) for ts in count(start=1000, step=1))
-
-        backup1 = manager.create_backup()
-        backup2 = manager.create_backup()
-
-        assert backup1["backup_id"] != backup2["backup_id"]
-        assert backup1["backup_id"].startswith("backup_")
-        assert backup2["backup_id"].startswith("backup_")
-
-    def test_create_backup_retention_period(self, manager: BackupManager) -> None:
-        """Test backup retention period is set correctly."""
-        backup = manager.create_backup()
-
-        created_at = datetime.fromisoformat(backup["created_at"])
-        retention_until = datetime.fromisoformat(backup["retention_until"])
-        expected_retention = created_at + timedelta(days=30)
-
-        # Allow small time difference due to processing
-        assert abs((retention_until - expected_retention).total_seconds()) < 1
+        assert len(manager.backups) == 0
 
     @patch("traigent.security.deployment.logger")
-    def test_create_backup_logs_info(
+    def test_create_backup_logs_error(
         self, mock_logger: MagicMock, manager: BackupManager
     ) -> None:
-        """Test backup creation logs informational message."""
+        """SDK#918: the no-op backup must log an error (not info), so
+        monitoring catches the call."""
         manager.create_backup(backup_type="full")
 
-        mock_logger.info.assert_called_once()
-        log_message = mock_logger.info.call_args[0][0]
-        assert "Created full backup" in log_message
+        mock_logger.error.assert_called_once()
+        log_message = mock_logger.error.call_args[0][0]
+        assert "no backup executor is configured" in log_message
+        assert "no data was persisted" in log_message.lower()
+
+
+def _synthetic_backup_entry(
+    backup_id: str = "backup_synth",
+    *,
+    expired: bool = False,
+    backup_type: str = "full",
+) -> dict[str, Any]:
+    """Insert a hand-built backup record for tests of list/restore/cleanup
+    methods that previously relied on `create_backup()` populating the
+    list. After SDK#918, `create_backup()` no longer fabricates a
+    completed backup — tests of the OTHER backup methods now build
+    their own synthetic records directly."""
+    now = datetime.now(UTC)
+    retention = now - timedelta(days=1) if expired else now + timedelta(days=30)
+    return {
+        "backup_id": backup_id,
+        "type": backup_type,
+        "created_at": (now - timedelta(days=60 if expired else 0)).isoformat(),
+        "size_gb": 2.5,
+        "status": "completed",
+        "retention_until": retention.isoformat(),
+    }
 
 
 class TestBackupManagerListBackups:
@@ -831,32 +863,21 @@ class TestBackupManagerListBackups:
         assert backups == []
 
     def test_list_backups_with_valid_backups(self, manager: BackupManager) -> None:
-        """Test listing valid backups."""
-        manager.create_backup()
-        manager.create_backup()
+        """Test listing valid backups (built directly post-SDK#918)."""
+        manager.backups.append(_synthetic_backup_entry("backup_a"))
+        manager.backups.append(_synthetic_backup_entry("backup_b"))
 
         backups = manager.list_backups()
         assert len(backups) == 2
 
     def test_list_backups_filters_expired(self, manager: BackupManager) -> None:
         """Test list filters out expired backups."""
-        # Create expired backup
-        expired_backup = {
-            "backup_id": "backup_expired",
-            "type": "full",
-            "created_at": (datetime.now(UTC) - timedelta(days=60)).isoformat(),
-            "size_gb": 2.5,
-            "status": "completed",
-            "retention_until": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
-        }
-        manager.backups.append(expired_backup)
-
-        # Create valid backup
-        manager.create_backup()
+        manager.backups.append(_synthetic_backup_entry("backup_expired", expired=True))
+        manager.backups.append(_synthetic_backup_entry("backup_valid"))
 
         backups = manager.list_backups()
         assert len(backups) == 1
-        assert backups[0]["backup_id"] != "backup_expired"
+        assert backups[0]["backup_id"] == "backup_valid"
 
 
 class TestBackupManagerRestoreBackup:
@@ -868,13 +889,12 @@ class TestBackupManagerRestoreBackup:
         return BackupManager()
 
     def test_restore_backup_existing(self, manager: BackupManager) -> None:
-        """Test restoring from existing backup."""
-        backup = manager.create_backup()
-        backup_id = backup["backup_id"]
+        """Test restoring from existing backup (synthetic record post-SDK#918)."""
+        manager.backups.append(_synthetic_backup_entry("backup_synth"))
 
-        restore = manager.restore_backup(backup_id)
+        restore = manager.restore_backup("backup_synth")
 
-        assert restore["backup_id"] == backup_id
+        assert restore["backup_id"] == "backup_synth"
         assert restore["status"] == "in_progress"
         assert restore["estimated_duration_minutes"] == 30
         assert "restore_started_at" in restore
@@ -891,11 +911,11 @@ class TestBackupManagerRestoreBackup:
         self, mock_logger: MagicMock, manager: BackupManager
     ) -> None:
         """Test restore operation logs informational message."""
-        backup = manager.create_backup()
-        manager.restore_backup(backup["backup_id"])
+        manager.backups.append(_synthetic_backup_entry("backup_synth"))
+        manager.restore_backup("backup_synth")
 
         mock_logger.info.assert_called()
-        # Find the restore log message (not the create backup message)
+        # Find the restore log message
         restore_log_found = False
         for call in mock_logger.info.call_args_list:
             log_message = call[0][0]
@@ -914,9 +934,9 @@ class TestBackupManagerCleanupExpiredBackups:
         return BackupManager()
 
     def test_cleanup_expired_backups_none_expired(self, manager: BackupManager) -> None:
-        """Test cleanup when no backups are expired."""
-        manager.create_backup()
-        manager.create_backup()
+        """Test cleanup when no backups are expired (synthetic post-SDK#918)."""
+        manager.backups.append(_synthetic_backup_entry("backup_a"))
+        manager.backups.append(_synthetic_backup_entry("backup_b"))
 
         cleaned = manager.cleanup_expired_backups()
 
@@ -925,25 +945,14 @@ class TestBackupManagerCleanupExpiredBackups:
 
     def test_cleanup_expired_backups_some_expired(self, manager: BackupManager) -> None:
         """Test cleanup removes only expired backups."""
-        # Create expired backup
-        expired_backup = {
-            "backup_id": "backup_expired",
-            "type": "full",
-            "created_at": (datetime.now(UTC) - timedelta(days=60)).isoformat(),
-            "size_gb": 2.5,
-            "status": "completed",
-            "retention_until": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
-        }
-        manager.backups.append(expired_backup)
-
-        # Create valid backup
-        manager.create_backup()
+        manager.backups.append(_synthetic_backup_entry("backup_expired", expired=True))
+        manager.backups.append(_synthetic_backup_entry("backup_valid"))
 
         cleaned = manager.cleanup_expired_backups()
 
         assert cleaned == 1
         assert len(manager.backups) == 1
-        assert manager.backups[0]["backup_id"] != "backup_expired"
+        assert manager.backups[0]["backup_id"] == "backup_valid"
 
     def test_cleanup_expired_backups_all_expired(self, manager: BackupManager) -> None:
         """Test cleanup when all backups are expired."""
@@ -992,10 +1001,16 @@ class TestBackupManagerCleanupExpiredBackups:
     def test_cleanup_expired_backups_no_log_when_none_cleaned(
         self, mock_logger: MagicMock, manager: BackupManager
     ) -> None:
-        """Test cleanup doesn't log when no backups are cleaned."""
-        manager.create_backup()
+        """Test cleanup doesn't log when no backups are cleaned.
+
+        SDK#918 update: previously this counted 1 logger.info call from
+        the (now-removed) fabricated create_backup info log. With the
+        synthetic entry inserted directly there are zero info calls.
+        """
+        manager.backups.append(_synthetic_backup_entry("backup_a"))
 
         manager.cleanup_expired_backups()
 
-        # Should not call logger.info for cleanup (only for create_backup)
-        assert mock_logger.info.call_count == 1  # Only from create_backup
+        # No backups expired → cleanup should not log info.
+        # No call to create_backup → no fabricated info log.
+        assert mock_logger.info.call_count == 0
