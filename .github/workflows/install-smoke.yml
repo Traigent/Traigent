@@ -17,6 +17,13 @@ on:
       - ".github/workflows/install-smoke.yml"
   workflow_dispatch:
 
+# Cancel in-flight runs when a new commit lands on the same ref.
+# Pattern matches existing concurrency blocks in
+# validation-spine-pr.yml, release-review.yml, sonarcloud.yml.
+concurrency:
+  group: install-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

@@ -23,6 +23,14 @@ on:
         default: false
         type: boolean
 
+# Cancel in-flight runs when a new commit lands on the same ref.
+# Mostly defensive: this workflow fires on tag pushes which are rare,
+# but back-to-back retags or workflow_dispatch invocations shouldn't
+# stack.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
