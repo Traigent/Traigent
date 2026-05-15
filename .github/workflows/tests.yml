@@ -121,6 +121,7 @@ jobs:
           safety-report.json
           bandit-report.json
 
+        retention-days: 30
   build-test:
     runs-on: ubuntu-latest
     needs: test
@@ -156,3 +157,4 @@ jobs:
       with:
         name: dist-packages
         path: dist/
+        retention-days: 30

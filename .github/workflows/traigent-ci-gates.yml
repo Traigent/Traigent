@@ -157,6 +157,7 @@ jobs:
             work/results-ci/
             work/examples/integrations/ci-cd/math-qa/saved_config.json
 
+          retention-days: 30
       - name: Comment on PR
         if: failure()
         continue-on-error: true  # Don't fail the workflow if PR comment fails (permissions issue on forks)

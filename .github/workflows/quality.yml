@@ -143,6 +143,7 @@ jobs:
         path: |
           bandit-report.json
           safety-report.json
+        retention-days: 30
 
   documentation-quality:
     runs-on: ubuntu-latest
@@ -267,3 +268,4 @@ jobs:
         name: dependency-reports
         path: |
           pip-audit-report.json
+        retention-days: 30
