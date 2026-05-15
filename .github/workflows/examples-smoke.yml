@@ -111,6 +111,7 @@ jobs:
       with:
         name: diagnostic-report-${{ matrix.python-version }}
         path: traigent_diagnostic_report.json
+        retention-days: 30
 
   quick-validation:
     name: Quick Validation
