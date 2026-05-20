@@ -684,6 +684,89 @@ def test_evaluation_client_handles_backfill_retry_and_annotation_queues():
     assert calls[1] == ("POST", "/api/v1beta/evaluator-runs/evalrun_1/retry", {})
 
 
+def test_evaluation_client_trace_to_dataset_example_helpers():
+    calls: list[tuple[str, str, dict | None]] = []
+    recommended_plan = {
+        "plan_id": "evalplan_012345abcdef",
+        "spec_version": "2026-05-21.v1",
+        "status": "operator_review_required",
+        "evaluation_dataset_id": "eval_dataset_001",
+        "source_trace_id": "trace_001",
+        "evaluators": [
+            {
+                "evaluator_key": "expected_output_alignment",
+                "display_name": "Expected Output Alignment",
+                "measure_key": "expected_output_alignment",
+                "target_type": "evaluation_dataset_example",
+                "target_field": "expected_output",
+                "priority": "required",
+                "rationale": "Judge alignment.",
+            }
+        ],
+        "execution": {
+            "mode": "manual_review_before_run",
+            "can_autorun": False,
+            "suggested_sample_size": 1,
+        },
+        "warnings": ["Review before running evaluators."],
+        "provenance": {
+            "source": "trace_to_evaluation_dataset_example",
+            "signals": ["trace_io", "expected_output_present"],
+        },
+    }
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        data = {
+            "evaluation_dataset_id": "eval_dataset_001",
+            "source_trace_id": "trace_001",
+            "input_text": "What is the release gate?",
+            "expected_output": "operator review",
+            "metadata": {"source_trace_id": "trace_001"},
+            "lineage": {"source_trace_id": "trace_001"},
+            "recommended_evaluator_plan": recommended_plan,
+        }
+        if path.endswith("/examples/from-trace"):
+            data["example_id"] = "example_001"
+        return {"data": data}
+
+    client = EvaluationClient(request_sender=request_sender)
+
+    candidate = client.preview_evaluation_dataset_example_from_trace(
+        "trace_001",
+        evaluation_dataset_id="eval_dataset_001",
+        input_text="What is the release gate?",
+    )
+    created = client.create_evaluation_dataset_example_from_trace(
+        "eval_dataset_001",
+        source_trace_id="trace_001",
+        input_text=candidate.input_text,
+        expected_output=candidate.expected_output,
+    )
+
+    assert calls[0] == (
+        "POST",
+        "/api/v1beta/observability/traces/trace_001/evaluation-dataset-example-candidate",
+        {
+            "evaluation_dataset_id": "eval_dataset_001",
+            "input_text": "What is the release gate?",
+        },
+    )
+    assert calls[1] == (
+        "POST",
+        "/api/v1beta/evaluation-datasets/eval_dataset_001/examples/from-trace",
+        {
+            "source_trace_id": "trace_001",
+            "input_text": "What is the release gate?",
+            "expected_output": "operator review",
+        },
+    )
+    assert candidate.recommended_evaluator_plan.plan_id == "evalplan_012345abcdef"
+    assert candidate.recommended_evaluator_plan.spec_version == "2026-05-21.v1"
+    assert candidate.recommended_evaluator_plan.evaluators[0].priority == "required"
+    assert created.example_id == "example_001"
+
+
 def test_get_next_annotation_queue_item_returns_none_for_empty_queue():
     client = EvaluationClient(
         request_sender=lambda method, path, payload: {"data": None}

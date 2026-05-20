@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Literal, cast, overload
 from urllib import error, request
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
@@ -17,6 +17,8 @@ from traigent.evaluation.dtos import (
     AnnotationQueueListResponse,
     AnnotationQueueStatus,
     BackfillResultDTO,
+    EvaluationDatasetExampleCandidateDTO,
+    EvaluationDatasetExampleFromTraceDTO,
     EvaluationTargetRefDTO,
     EvaluationTargetType,
     EvaluatorDefinitionDTO,
@@ -219,6 +221,58 @@ class EvaluationClient:
         payload = self._request_json("GET", f"/evaluator-runs/{run_id}")
         return EvaluatorRunDTO.from_dict(
             self._unwrap_data(payload, "evaluator run detail")
+        )
+
+    def preview_evaluation_dataset_example_from_trace(
+        self,
+        trace_id: str,
+        *,
+        evaluation_dataset_id: str,
+        input_text: str | None = None,
+        expected_output: Any = None,
+        corrected_expected_output: Any = None,
+    ) -> EvaluationDatasetExampleCandidateDTO:
+        payload: dict[str, Any] = {"evaluation_dataset_id": evaluation_dataset_id}
+        if input_text is not None:
+            payload["input_text"] = input_text
+        if expected_output is not None:
+            payload["expected_output"] = expected_output
+        if corrected_expected_output is not None:
+            payload["corrected_expected_output"] = corrected_expected_output
+        response = self._request_json(
+            "POST",
+            "/observability/traces/"
+            f"{quote(trace_id, safe='')}/evaluation-dataset-example-candidate",
+            payload,
+        )
+        return EvaluationDatasetExampleCandidateDTO.from_dict(
+            self._unwrap_data(response, "evaluation dataset example candidate")
+        )
+
+    def create_evaluation_dataset_example_from_trace(
+        self,
+        evaluation_dataset_id: str,
+        *,
+        source_trace_id: str,
+        input_text: str | None = None,
+        expected_output: Any = None,
+        corrected_expected_output: Any = None,
+    ) -> EvaluationDatasetExampleFromTraceDTO:
+        payload: dict[str, Any] = {"source_trace_id": source_trace_id}
+        if input_text is not None:
+            payload["input_text"] = input_text
+        if expected_output is not None:
+            payload["expected_output"] = expected_output
+        if corrected_expected_output is not None:
+            payload["corrected_expected_output"] = corrected_expected_output
+        response = self._request_json(
+            "POST",
+            "/evaluation-datasets/"
+            f"{quote(evaluation_dataset_id, safe='')}/examples/from-trace",
+            payload,
+        )
+        return EvaluationDatasetExampleFromTraceDTO.from_dict(
+            self._unwrap_data(response, "evaluation dataset example from trace")
         )
 
     def retry_evaluator_run(

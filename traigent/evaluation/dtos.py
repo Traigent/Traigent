@@ -235,6 +235,152 @@ class EvaluationTargetRefDTO:
 
 
 @dataclass(frozen=True)
+class RecommendedEvaluatorSpecDTO:
+    evaluator_key: str
+    display_name: str
+    measure_key: str
+    target_type: str
+    target_field: str
+    priority: str
+    rationale: str
+    config: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> RecommendedEvaluatorSpecDTO:
+        return cls(
+            evaluator_key=str(payload.get("evaluator_key", "")),
+            display_name=str(payload.get("display_name", "")),
+            measure_key=str(payload.get("measure_key", "")),
+            target_type=str(payload.get("target_type", "")),
+            target_field=str(payload.get("target_field", "")),
+            priority=str(payload.get("priority", "")),
+            rationale=str(payload.get("rationale", "")),
+            config=dict(payload.get("config") or {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "evaluator_key": self.evaluator_key,
+            "display_name": self.display_name,
+            "measure_key": self.measure_key,
+            "target_type": self.target_type,
+            "target_field": self.target_field,
+            "priority": self.priority,
+            "rationale": self.rationale,
+        }
+        if self.config:
+            payload["config"] = dict(self.config)
+        return payload
+
+
+@dataclass(frozen=True)
+class RecommendedEvaluatorPlanDTO:
+    plan_id: str
+    spec_version: str
+    status: str
+    evaluation_dataset_id: str
+    source_trace_id: str
+    evaluators: list[RecommendedEvaluatorSpecDTO]
+    execution: dict[str, Any]
+    warnings: list[str]
+    provenance: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> RecommendedEvaluatorPlanDTO:
+        return cls(
+            plan_id=str(payload.get("plan_id", "")),
+            spec_version=str(payload.get("spec_version", "")),
+            status=str(payload.get("status", "")),
+            evaluation_dataset_id=str(payload.get("evaluation_dataset_id", "")),
+            source_trace_id=str(payload.get("source_trace_id", "")),
+            evaluators=[
+                RecommendedEvaluatorSpecDTO.from_dict(item)
+                for item in payload.get("evaluators") or []
+            ],
+            execution=dict(payload.get("execution") or {}),
+            warnings=[str(item) for item in payload.get("warnings") or []],
+            provenance=dict(payload.get("provenance") or {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "spec_version": self.spec_version,
+            "status": self.status,
+            "evaluation_dataset_id": self.evaluation_dataset_id,
+            "source_trace_id": self.source_trace_id,
+            "evaluators": [item.to_dict() for item in self.evaluators],
+            "execution": dict(self.execution),
+            "warnings": list(self.warnings),
+            "provenance": dict(self.provenance),
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationDatasetExampleCandidateDTO:
+    evaluation_dataset_id: str
+    source_trace_id: str
+    input_text: str
+    expected_output: str | None
+    metadata: dict[str, Any]
+    lineage: dict[str, Any]
+    recommended_evaluator_plan: RecommendedEvaluatorPlanDTO
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EvaluationDatasetExampleCandidateDTO:
+        return cls(
+            evaluation_dataset_id=str(payload.get("evaluation_dataset_id", "")),
+            source_trace_id=str(payload.get("source_trace_id", "")),
+            input_text=str(payload.get("input_text", "")),
+            expected_output=(
+                str(payload["expected_output"])
+                if payload.get("expected_output") is not None
+                else None
+            ),
+            metadata=dict(payload.get("metadata") or {}),
+            lineage=dict(payload.get("lineage") or {}),
+            recommended_evaluator_plan=RecommendedEvaluatorPlanDTO.from_dict(
+                payload.get("recommended_evaluator_plan") or {}
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evaluation_dataset_id": self.evaluation_dataset_id,
+            "source_trace_id": self.source_trace_id,
+            "input_text": self.input_text,
+            "expected_output": self.expected_output,
+            "metadata": dict(self.metadata),
+            "lineage": dict(self.lineage),
+            "recommended_evaluator_plan": self.recommended_evaluator_plan.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationDatasetExampleFromTraceDTO(EvaluationDatasetExampleCandidateDTO):
+    example_id: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EvaluationDatasetExampleFromTraceDTO:
+        candidate = EvaluationDatasetExampleCandidateDTO.from_dict(payload)
+        return cls(
+            evaluation_dataset_id=candidate.evaluation_dataset_id,
+            source_trace_id=candidate.source_trace_id,
+            input_text=candidate.input_text,
+            expected_output=candidate.expected_output,
+            metadata=candidate.metadata,
+            lineage=candidate.lineage,
+            recommended_evaluator_plan=candidate.recommended_evaluator_plan,
+            example_id=str(payload.get("example_id", "")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = super().to_dict()
+        payload["example_id"] = self.example_id
+        return payload
+
+
+@dataclass(frozen=True)
 class EvaluatorDefinitionDTO:
     id: str
     name: str
