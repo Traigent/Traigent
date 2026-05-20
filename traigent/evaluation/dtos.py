@@ -267,9 +267,8 @@ class RecommendedEvaluatorSpecDTO:
             "target_field": self.target_field,
             "priority": self.priority,
             "rationale": self.rationale,
+            "config": dict(self.config),
         }
-        if self.config:
-            payload["config"] = dict(self.config)
         return payload
 
 

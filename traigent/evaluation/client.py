@@ -232,6 +232,10 @@ class EvaluationClient:
         expected_output: Any = None,
         corrected_expected_output: Any = None,
     ) -> EvaluationDatasetExampleCandidateDTO:
+        if expected_output is not None and corrected_expected_output is not None:
+            raise ValueError(
+                "expected_output and corrected_expected_output are mutually exclusive"
+            )
         payload: dict[str, Any] = {"evaluation_dataset_id": evaluation_dataset_id}
         if input_text is not None:
             payload["input_text"] = input_text
@@ -258,6 +262,10 @@ class EvaluationClient:
         expected_output: Any = None,
         corrected_expected_output: Any = None,
     ) -> EvaluationDatasetExampleFromTraceDTO:
+        if expected_output is not None and corrected_expected_output is not None:
+            raise ValueError(
+                "expected_output and corrected_expected_output are mutually exclusive"
+            )
         payload: dict[str, Any] = {"source_trace_id": source_trace_id}
         if input_text is not None:
             payload["input_text"] = input_text
