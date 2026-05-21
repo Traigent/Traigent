@@ -170,7 +170,8 @@ def test_cost_calculator_honors_user_opt_out_of_local_cost_map():
     regression that might switch to plain assignment.
     """
     result = _run_subprocess(
-        "import os; "
+        "import os; import sys; import types; "
+        "sys.modules['litellm'] = types.SimpleNamespace(); "
         "from traigent.utils import cost_calculator; "
         "print('LITELLM_LOCAL_MODEL_COST_MAP=' + "
         "str(os.environ.get('LITELLM_LOCAL_MODEL_COST_MAP')))",
