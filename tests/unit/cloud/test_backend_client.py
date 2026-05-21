@@ -696,11 +696,6 @@ class TestCloudSaaSOptimization:
         asyncio.run(run_test())
 
 
-class TestBackendAPIIntegration:
-    """Test backend API integration methods."""
-
-
-
 class TestCloudServiceIntegration:
     """Test cloud service integration remote methods."""
 
