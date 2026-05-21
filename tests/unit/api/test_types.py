@@ -875,8 +875,11 @@ class TestOptimizationJob:
         )
         assert stopped_job.is_complete()
 
-    def test_wait_not_implemented(self):
-        """Test wait method raises NotImplementedError."""
+    def test_wait_raises_feature_gated_error_with_actionable_message(self):
+        """OptimizationJob.wait() is a documented experimental scaffold. The
+        raised NotImplementedError must point users at the supported
+        synchronous alternative — not just say "not implemented".
+        """
         job = OptimizationJob(
             job_id="job_001",
             status=OptimizationStatus.RUNNING,
@@ -884,10 +887,11 @@ class TestOptimizationJob:
             estimated_completion=None,
         )
 
-        with pytest.raises(
-            NotImplementedError, match="Background jobs not yet implemented"
-        ):
+        with pytest.raises(NotImplementedError) as exc_info:
             job.wait()
+        msg = str(exc_info.value)
+        assert "experimental" in msg.lower()
+        assert "OptimizedFunction.optimize()" in msg
 
         with pytest.raises(NotImplementedError):
             job.wait(timeout=10.0)
