@@ -171,13 +171,19 @@ class CloudOptimizer(BaseOptimizer):
             self._using_fallback = True
             self._fallback_reason = f"session_creation: {e}"
 
-            # Return a mock session for fallback mode
+            # Build a fallback session for local execution. The session_id MUST
+            # be unique (no synthetic "fallback_session" constant) and the
+            # is_fallback flag MUST be True so callers cannot mistake this for
+            # a real remote session — see workspace CLAUDE.md SDK rule:
+            # "Cloud failures fail closed by default. ... Never construct a
+            #  synthetic session ID on remote failure."
+            import uuid
             from datetime import datetime
 
             from traigent.optimizers.remote_services import OptimizationSessionStatus
 
             fallback_session = OptimizationSession(
-                session_id="fallback_session",
+                session_id=f"local_fallback_{uuid.uuid4().hex[:12]}",
                 service_name="LocalFallback",
                 config_space=self.config_space,
                 objectives=self.objectives,
@@ -185,6 +191,11 @@ class CloudOptimizer(BaseOptimizer):
                 status=OptimizationSessionStatus.ACTIVE,
                 created_at=datetime.now(UTC),
                 optimization_strategy=self.optimization_strategy,
+                is_fallback=True,
+                metadata={
+                    "fallback_reason": self._fallback_reason,
+                    "remote_service_name": self.remote_service.service_name,
+                },
             )
 
             self.session = fallback_session

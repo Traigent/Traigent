@@ -367,10 +367,55 @@ class TestSessionManagement:
 
         session = await optimizer.initialize_session()
 
-        assert session.session_id == "fallback_session"
+        # Regression for #870: the public session object must be marked as
+        # a fallback so callers cannot mistake it for a real remote session,
+        # AND the session_id must be unique (no hardcoded "fallback_session"
+        # constant). The is_fallback flag is the canonical signal.
+        assert session.is_fallback is True
+        assert session.session_id != "fallback_session"
+        assert session.session_id.startswith("local_fallback_")
         assert session.service_name == "LocalFallback"
+        assert session.metadata.get("fallback_reason", "").startswith(
+            "session_creation:"
+        )
         assert optimizer._using_fallback
         assert optimizer._fallback_reason.startswith("session_creation:")
+
+    @pytest.mark.asyncio
+    async def test_session_initialization_real_remote_session_not_marked_fallback(
+        self,
+        sample_config_space,
+        sample_objectives,
+        mock_remote_service,
+        sample_session,
+    ):
+        """Counterpart to the fallback test: a successfully-created remote
+        session must report is_fallback=False so callers can confidently
+        treat it as a real backend session.
+        """
+        session = OptimizationSession(
+            session_id="real-backend-uuid-1234",
+            service_name=mock_remote_service.service_name,
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            algorithm="grid",
+            status=OptimizationSessionStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+        )
+        mock_remote_service.create_session.return_value = session
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+
+        returned = await optimizer.initialize_session()
+
+        assert returned.is_fallback is False
+        assert returned.session_id == "real-backend-uuid-1234"
+        assert not returned.session_id.startswith("local_fallback_")
+        assert not optimizer._using_fallback
 
     @pytest.mark.asyncio
     async def test_close_session_success(
