@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1768,12 +1769,12 @@ class OptimizationJob:
             ``OptimizedFunction.optimize()`` (returned by ``@traigent.optimize``)
             which returns an ``OptimizationResult`` directly.
         """
-        _ = timeout
-        raise NotImplementedError(
+        timeout_note = f" Requested timeout: {timeout}." if timeout is not None else ""
+        raise PlatformCapabilityError(
             "OptimizationJob.wait() is part of an experimental background-job "
             "API that has not shipped yet. Use OptimizedFunction.optimize() "
             "for synchronous optimization, or query .status / .is_complete() "
-            "on this job handle for non-blocking state. "
+            f"on this job handle for non-blocking state.{timeout_note} "
             "Tracking: https://github.com/Traigent/Traigent/issues/875"
         )
 

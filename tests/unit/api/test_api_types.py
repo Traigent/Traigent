@@ -23,6 +23,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.utils.exceptions import PlatformCapabilityError
 
 
 class TestEnums:
@@ -920,7 +921,7 @@ class TestOptimizationJob:
 
     def test_wait_raises_feature_gated_error_with_actionable_message(self):
         """OptimizationJob.wait() is a documented experimental scaffold. The
-        raised NotImplementedError must point users at the supported
+        raised capability error must point users at the supported
         synchronous alternative, not just say "not implemented".
         """
         job = OptimizationJob(
@@ -930,14 +931,17 @@ class TestOptimizationJob:
             estimated_completion=None,
         )
 
-        with pytest.raises(NotImplementedError) as exc_info:
+        with pytest.raises(PlatformCapabilityError) as exc_info:
             job.wait()
         msg = str(exc_info.value)
         assert "experimental" in msg.lower()
         assert "OptimizedFunction.optimize()" in msg
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(PlatformCapabilityError) as exc_info_timeout:
             job.wait(timeout=10.0)
+        msg_timeout = str(exc_info_timeout.value)
+        assert "experimental" in msg_timeout.lower()
+        assert "OptimizedFunction.optimize()" in msg_timeout
 
 
 class TestTypeAliases:
