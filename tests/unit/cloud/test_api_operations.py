@@ -622,38 +622,6 @@ class TestExecuteCloudAgent:
             await self.ops.execute_cloud_agent(request)
 
 
-class TestDeprecatedMethods:
-    """Test deprecated methods raise NotImplementedError."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        mock_client = Mock()
-        self.ops = ApiOperations(mock_client)
-
-    @pytest.mark.asyncio
-    async def test_create_backend_experiment_tracking_raises(self):
-        """Test create_backend_experiment_tracking raises NotImplementedError."""
-        request = Mock()
-        with pytest.raises(
-            NotImplementedError, match="SDK must use session endpoints only"
-        ):
-            await self.ops.create_backend_experiment_tracking(request)
-
-    @pytest.mark.asyncio
-    async def test_create_backend_agent_experiment_raises(self):
-        """Test create_backend_agent_experiment raises NotImplementedError."""
-        with pytest.raises(
-            NotImplementedError, match="SDK must use session endpoints only"
-        ):
-            await self.ops.create_backend_agent_experiment(
-                agent_spec=Mock(),
-                dataset=Mock(),
-                configuration_space={},
-                objectives=[],
-                max_trials=10,
-            )
-
-
 class TestAiohttpPlaceholder:
     """Test aiohttp placeholder behavior when library is not available."""
 

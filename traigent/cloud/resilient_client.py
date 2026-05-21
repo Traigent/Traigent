@@ -433,10 +433,6 @@ async def resilient_backend_request(
                     payload = {"raw_response": payload_text}
 
                 return cast(dict[str, Any], payload)
-        #         return await response.json()
-
-        # For now, raise not implemented
-        raise NotImplementedError("Backend request not yet implemented") from None
 
     return await client.execute_with_retry(
         make_request, operation_name=f"{method} request"
