@@ -20,10 +20,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# CRITICAL: Set offline mode BEFORE importing litellm to prevent network calls
-# This must happen before any litellm import to use bundled pricing data
-if os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true":
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+# Privacy default: force litellm to use its bundled pricing map instead of
+# fetching the remote one from GitHub on import. This prevents `import traigent`
+# from making an outbound network request before any user-initiated optimization
+# or pricing call. Users who want the remote pricing map can opt back in by
+# setting LITELLM_LOCAL_MODEL_COST_MAP=false in their environment BEFORE
+# importing traigent. Previously this gate fired only when the user explicitly
+# set TRAIGENT_OFFLINE_MODE=true, which meant the default behavior leaked an
+# outbound HTTP request in offline/air-gapped/regulated environments. (See #912.)
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 # Import litellm with graceful fallback
 try:
