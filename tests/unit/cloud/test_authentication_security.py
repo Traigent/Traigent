@@ -286,11 +286,12 @@ class TestCredentialSecurity:
 
         headers2 = asyncio.run(auth_manager.get_auth_headers())
 
-        # Headers should be different (if session tokens are used)
-        # This test may need adjustment based on actual implementation
-        assert (
-            headers1 == headers2 or True
-        )  # Currently always passes due to stateless auth
+        # Contract: stateless API-key auth produces stable headers across
+        # logout/re-authenticate cycles (the bearer is the same API key).
+        # When session-token auth is introduced, this assertion must be
+        # split per credential type — until then, equality is the documented
+        # behavior and should be asserted, not muted.
+        assert headers1 == headers2
 
     def test_credential_injection_attempts(self):
         """Test prevention of credential injection attacks."""
