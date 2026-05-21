@@ -16,6 +16,7 @@ from enum import Enum
 from threading import Lock
 from typing import Any, cast
 
+from traigent.utils.exceptions import NonRetryableError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
@@ -173,7 +174,6 @@ class BackendSynchronizer:
                     self._sync_session_to_backend,
                     session_id,
                     session_payload,
-                    operation_id=f"sync_session_{session_id}",
                 )
 
                 if result.success:
@@ -264,7 +264,6 @@ class BackendSynchronizer:
                         self._sync_trials_to_backend,
                         session_id,
                         batch,
-                        operation_id=f"sync_trials_{session_id}_{i}",
                     )
 
                     if result.success:
@@ -372,49 +371,31 @@ class BackendSynchronizer:
     async def _sync_session_to_backend(
         self, session_id: str, session_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Internal method to sync session to backend.
-
-        This is a placeholder implementation. In production, this would
-        make actual API calls to the backend service.
-        """
-        # Simulate API call delay
-        await asyncio.sleep(0.1)
-
-        # Validate required fields
+        """Fail closed until a real backend session-sync transport exists."""
         required_fields = ["status", "function_name", "objectives"]
         for field in required_fields:
             if field not in session_data:
                 raise ValueError(f"Missing required field: {field}") from None
 
-        # Simulate success/failure based on session data
-        if session_data.get("status") == "invalid":
-            raise RuntimeError("Invalid session status")
-
-        logger.debug(f"Synced session {session_id} to backend")
-        return {"status": "synced", "backend_id": f"backend_{session_id}"}
+        raise NonRetryableError(
+            "BackendSynchronizer session sync is not implemented; "
+            "no backend transport was called."
+        )
 
     async def _sync_trials_to_backend(
         self, session_id: str, trial_batch: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Internal method to sync trials to backend.
-
-        This is a placeholder implementation. In production, this would
-        make actual API calls to the backend service.
-        """
-        # Simulate API call delay
-        await asyncio.sleep(0.05 * len(trial_batch))
-
-        # Validate trial data
+        """Fail closed until a real backend trial-sync transport exists."""
         for trial in trial_batch:
             if "trial_id" not in trial:
                 raise ValueError("Trial missing trial_id")
             if "status" not in trial:
                 raise ValueError("Trial missing status")
 
-        logger.debug(
-            f"Synced {len(trial_batch)} trials for session {session_id} to backend"
+        raise NonRetryableError(
+            "BackendSynchronizer trial sync is not implemented; "
+            "no backend transport was called."
         )
-        return {"status": "synced", "trials_synced": len(trial_batch)}
 
     @staticmethod
     def _clone_payload(data: dict[str, Any]) -> dict[str, Any]:

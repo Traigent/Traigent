@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from traigent.cloud.backend_synchronizer import BackendSynchronizer
+from traigent.utils.exceptions import NonRetryableError
 from traigent.utils.exceptions import ValidationError as ValidationException
 
 
@@ -33,6 +34,69 @@ def test_backend_synchronizer_initializes_with_valid_values():
         enable_auto_sync=False,
     )
     assert sync.max_concurrent_syncs == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_session_state_fails_closed_without_backend_transport():
+    sync = BackendSynchronizer(enable_auto_sync=False, sync_interval=0.1)
+
+    result = await sync.sync_session_state(
+        "session-1",
+        {
+            "status": "completed",
+            "function_name": "test_function",
+            "objectives": ["accuracy"],
+        },
+    )
+
+    assert result.success is False
+    assert result.items_synced == 0
+    assert result.retries == 0
+    assert result.error_message is not None
+    assert "not implemented" in result.error_message
+    assert "unexpected keyword argument" not in result.error_message
+    assert sync._stats["failed_syncs"] == 1
+    assert sync._stats["successful_syncs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_trial_states_fails_closed_without_backend_transport():
+    sync = BackendSynchronizer(enable_auto_sync=False, sync_interval=0.1)
+
+    result = await sync.sync_trial_states(
+        "session-1",
+        [{"trial_id": "trial-1", "status": "completed"}],
+    )
+
+    assert result.success is False
+    assert result.items_synced == 0
+    assert result.retries == 0
+    assert result.error_message is not None
+    assert "not implemented" in result.error_message
+    assert "unexpected keyword argument" not in result.error_message
+    assert sync._stats["failed_syncs"] == 1
+    assert sync._stats["successful_syncs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_private_sync_methods_do_not_fabricate_backend_success():
+    sync = BackendSynchronizer(enable_auto_sync=False, sync_interval=0.1)
+
+    with pytest.raises(NonRetryableError, match="session sync is not implemented"):
+        await sync._sync_session_to_backend(
+            "session-1",
+            {
+                "status": "completed",
+                "function_name": "test_function",
+                "objectives": ["accuracy"],
+            },
+        )
+
+    with pytest.raises(NonRetryableError, match="trial sync is not implemented"):
+        await sync._sync_trials_to_backend(
+            "session-1",
+            [{"trial_id": "trial-1", "status": "completed"}],
+        )
 
 
 @pytest.mark.asyncio
