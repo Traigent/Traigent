@@ -758,7 +758,7 @@ class TestStatisticalSignificanceWiring:
         """Significance metadata propagates to backend submit_result call."""
         # Non-edge config so submit_session_aggregation actually submits
         config = TraigentConfig()
-        config.execution_mode = "standard"
+        config.execution_mode = "hybrid"
 
         manager = BackendSessionManager(
             backend_client=mock_backend_client,
@@ -811,7 +811,7 @@ class TestStatisticalSignificanceWiring:
     ):
         """Aggregation still works when no significance data is present."""
         config = TraigentConfig()
-        config.execution_mode = "standard"
+        config.execution_mode = "hybrid"
 
         manager = BackendSessionManager(
             backend_client=mock_backend_client,
@@ -887,9 +887,9 @@ class TestHandleSessionCreationResult:
 
         assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
-        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
-            f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
-        )
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning: {caplog.messages}"
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warning_records) == 1
 
@@ -961,9 +961,9 @@ class TestHandleSessionCreationResult:
             manager.handle_session_creation_result(result)
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) == 1, (
-            f"Expected exactly 1 warning, got {len(warning_records)}"
-        )
+        assert (
+            len(warning_records) == 1
+        ), f"Expected exactly 1 warning, got {len(warning_records)}"
 
     def test_success_logs_info(
         self, traigent_config, objective_schema, mock_optimizer, caplog

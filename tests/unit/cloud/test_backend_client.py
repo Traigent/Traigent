@@ -934,6 +934,7 @@ class TestUtilityMethods:
 
         session_id = "session_submit"
         created_at = datetime.now(UTC)
+        backend_client.enable_fallback = False
 
         backend_client._active_sessions[session_id] = OptimizationSession(
             session_id=session_id,
@@ -956,6 +957,46 @@ class TestUtilityMethods:
         session = backend_client._active_sessions[session_id]
         assert session.completed_trials == 1
         assert session.updated_at is not None
+
+    def test_submit_result_does_not_increment_when_fallback_persistence_fails(
+        self, backend_client
+    ):
+        """submit_result should not count a trial when fallback persistence fails."""
+
+        from datetime import datetime
+
+        from traigent.cloud.models import OptimizationSession
+
+        session_id = "session_failed_fallback"
+        created_at = datetime.now(UTC)
+        backend_client.enable_fallback = True
+        backend_client.local_storage = MagicMock()
+        backend_client.local_storage.add_trial_result.side_effect = RuntimeError(
+            "disk write failed"
+        )
+
+        backend_client._active_sessions[session_id] = OptimizationSession(
+            session_id=session_id,
+            function_name="test_func",
+            configuration_space={"param": [1, 2]},
+            objectives=["accuracy"],
+            max_trials=5,
+            status=OptimizationSessionStatus.ACTIVE,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+
+        backend_client.submit_result(
+            session_id=session_id,
+            config={"param": 2},
+            score=0.75,
+            metadata={"source": "local"},
+        )
+
+        session = backend_client._active_sessions[session_id]
+        assert session.completed_trials == 0
+        assert session.updated_at == created_at
+        backend_client.local_storage.add_trial_result.assert_called_once()
 
     def test_submit_result_local_storage_fallback(self, backend_client):
         """submit_result should persist results to local storage when enabled."""
