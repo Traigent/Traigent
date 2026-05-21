@@ -10,8 +10,9 @@ hybrid for portal-tracked local execution.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Coroutine
-from datetime import UTC
+from datetime import UTC, datetime
 from random import SystemRandom
 from typing import Any, TypeVar
 
@@ -22,6 +23,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.remote_services import (
     DatasetSubset,
     OptimizationSession,
+    OptimizationSessionStatus,
     OptimizationStrategy,
     RemoteOptimizationService,
     SmartTrialSuggestion,
@@ -177,11 +179,6 @@ class CloudOptimizer(BaseOptimizer):
             # a real remote session — see workspace CLAUDE.md SDK rule:
             # "Cloud failures fail closed by default. ... Never construct a
             #  synthetic session ID on remote failure."
-            import uuid
-            from datetime import datetime
-
-            from traigent.optimizers.remote_services import OptimizationSessionStatus
-
             fallback_session = OptimizationSession(
                 session_id=f"local_fallback_{uuid.uuid4().hex[:12]}",
                 service_name="LocalFallback",
