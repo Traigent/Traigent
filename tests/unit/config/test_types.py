@@ -2,7 +2,12 @@
 
 import pytest
 
-from traigent.config.types import TraigentConfig, validate_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    TraigentConfig,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 
@@ -92,7 +97,6 @@ class TestTraigentConfig:
         expected = {
             "model": "GPT-4o",
             "temperature": 0.7,
-            "execution_mode": "edge_analytics",
             "custom_key": "custom_value",
         }
         assert result == expected
@@ -105,6 +109,11 @@ class TestTraigentConfig:
         assert "model" in result
         assert "temperature" not in result
         assert "max_tokens" not in result
+
+    def test_to_dict_excludes_default_execution_mode(self):
+        """Default edge_analytics must not leak into partial config merges."""
+        assert TraigentConfig().to_dict() == {}
+        assert TraigentConfig(model="GPT-4o").to_dict() == {"model": "GPT-4o"}
 
     def test_from_dict(self):
         """Test creating config from dictionary."""
@@ -142,6 +151,26 @@ class TestTraigentConfig:
         assert merged.temperature == 0.8
         assert merged.max_tokens == 1000
 
+    def test_merge_partial_config_preserves_execution_mode(self):
+        """A default-valued override must not reset a hybrid base config."""
+        base = TraigentConfig(execution_mode="hybrid", privacy_enabled=True)
+        override = TraigentConfig(model="GPT-4o")
+
+        merged = base.merge(override)
+
+        assert merged.model == "GPT-4o"
+        assert merged.execution_mode == "hybrid"
+        assert merged.privacy_enabled is True
+
+    def test_merge_dict_can_explicitly_reset_execution_mode_to_default(self):
+        """Dict overrides preserve explicitly supplied default values."""
+        base = TraigentConfig(execution_mode="hybrid", privacy_enabled=True)
+
+        merged = base.merge({"execution_mode": "edge_analytics"})
+
+        assert merged.execution_mode == "edge_analytics"
+        assert merged.privacy_enabled is True
+
     def test_repr(self):
         """Test string representation."""
         config = TraigentConfig(model="GPT-4o", temperature=0.7)
@@ -166,6 +195,14 @@ class TestTraigentConfig:
 
 class TestValidateExecutionMode:
     """Tests for validate_execution_mode function."""
+
+    def test_resolve_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+        """Omitted execution mode follows the public SDK default."""
+        assert resolve_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
+
+    def test_validate_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+        """Validation should accept the omitted-mode public default."""
+        assert validate_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
 
     def test_invalid_mode_string_raises_configuration_error(self) -> None:
         """Invalid mode string should raise ConfigurationError, not ValueError."""

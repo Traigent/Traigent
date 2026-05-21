@@ -353,9 +353,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
             # Only merge context config when a context has been explicitly set.
             # When no context is set, config_context.get() returns None and
-            # get_config() synthesises a default TraigentConfig whose to_dict()
-            # returns {'execution_mode': 'edge_analytics'} — a truthy dict that
-            # would pollute active_config with irrelevant defaults.
+            # get_config() synthesises a default TraigentConfig. That default
+            # should not pollute active_config with irrelevant values.
             raw_ctx = _config_context.get(None)
             if raw_ctx is not None:
                 current_config = get_config()
