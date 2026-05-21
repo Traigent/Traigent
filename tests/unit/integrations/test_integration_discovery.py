@@ -802,4 +802,8 @@ class TestCTDScenarios:
         if mappings:
             avg_confidence = sum(confidence.values()) / len(confidence)
             accepted = avg_confidence >= confidence_threshold
-            assert accepted == expected_acceptance or True  # Implementation dependent
+            # The parametrize cases below are deterministic: known mappings
+            # with the perfect/good/poor confidence_threshold MUST produce
+            # the expected_acceptance value. `or True` was masking
+            # regressions in generate_mapping_confidence.
+            assert accepted == expected_acceptance

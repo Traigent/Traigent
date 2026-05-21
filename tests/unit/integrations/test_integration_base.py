@@ -592,12 +592,14 @@ class TestErrorHandling:
             framework_key, broken_constructor
         )
 
-        # Wrapper should handle the exception
+        # Documented contract: when the wrapped constructor raises, the wrapper
+        # either swallows and returns None, OR re-raises the original
+        # RuntimeError. Any other return (e.g. a zombie partially-constructed
+        # instance) is a regression.
         try:
             instance = wrapper()
-            assert instance is None or True  # Implementation dependent
+            assert instance is None
         except RuntimeError:
-            # May propagate exception depending on implementation
             pass
 
     def test_method_override_with_broken_method(self, base_manager):
@@ -612,12 +614,14 @@ class TestErrorHandling:
 
         wrapper = base_manager.create_overridden_method(method_key, broken_method)
 
-        # Wrapper should handle the exception
+        # Documented contract: when the wrapped method raises, the wrapper
+        # either swallows and returns None, OR re-raises the original
+        # ValueError. Anything else (e.g. a fabricated default value) is a
+        # regression.
         try:
             result = wrapper("test")
-            assert result is None or True  # Implementation dependent
+            assert result is None
         except ValueError:
-            # May propagate exception depending on implementation
             pass
 
     def test_concurrent_access_safety(self, base_manager):
@@ -657,12 +661,12 @@ class TestErrorHandling:
         for thread in threads:
             thread.join()
 
-        # Check results
+        # Check results: each worker either returned the strict bool promised
+        # by is_constructor_overridden() or stashed an Exception it caught.
+        # Sentinel values like 0/1/None are contract regressions here.
         assert len(results) == 10
         for result in results.values():
-            assert (
-                not isinstance(result, Exception) or True
-            )  # Some exceptions may be expected
+            assert result is True or result is False or isinstance(result, Exception)
 
 
 class TestCTDScenarios:
