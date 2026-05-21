@@ -133,6 +133,39 @@ def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
     return best_trial
 
 
+def _trials_all_failed(trials: list) -> bool:
+    """True iff every completed trial explicitly recorded zero successful examples.
+
+    "All failed" here means the table should suppress the "Overall Best" framing
+    because no winner can be honestly named. When older/external evaluators do
+    not report ``metadata["successful_examples"]``, fall back to the completed
+    trial status so honest 0.0 quality scores and cost-only runs remain rankable.
+    """
+    for trial in trials:
+        if not getattr(trial, "is_successful", False):
+            continue
+
+        metadata = getattr(trial, "metadata", {}) or {}
+        successful = metadata.get("successful_examples")
+        if isinstance(successful, bool):
+            return False
+        if isinstance(successful, (int, float)):
+            if successful > 0:
+                return False
+            continue
+        if successful is not None:
+            try:
+                if float(successful) > 0:
+                    return False
+                continue
+            except (TypeError, ValueError):
+                return False
+
+        return False
+
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -174,6 +207,9 @@ def print_results_table(
         best_config = weighted.get("best_weighted_config", {})
     except Exception:
         best_config = getattr(_find_best_trial(trials, metric_names), "config", {})
+
+    # When every trial produced zero successful examples, refuse to crown a winner.
+    all_failed = _trials_all_failed(trials)
 
     # Column widths
     col_widths: dict[str, int] = {"#": 4}
@@ -225,7 +261,7 @@ def print_results_table(
     for i, trial in enumerate(trials):
         config = getattr(trial, "config", {})
         metrics = getattr(trial, "metrics", {})
-        is_overall_best = config == best_config
+        is_overall_best = config == best_config and not all_failed
 
         prefix = f"{C.GREEN}★{C.RESET}" if is_overall_best else " "
         row_parts = [f"{prefix}{i + 1:>{col_widths['#'] - 1}}"]
@@ -237,7 +273,7 @@ def print_results_table(
         for metric in metric_names:
             metric_val = float(metrics.get(metric, 0))
             formatted = _format_metric_value(metric, metric_val)
-            if best_per_objective.get(metric) == i:
+            if not all_failed and best_per_objective.get(metric) == i:
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:
                 cell = f"{formatted:^{col_widths[metric]}}"
@@ -248,7 +284,14 @@ def print_results_table(
     # Bottom border
     print(f"{BL}" + BT.join(H * (col_widths[c] + 2) for c in all_cols) + f"{BR}")
 
-    # Legend
-    legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
-    legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
-    print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+    # Legend (or "all failed" banner when no trial succeeded)
+    if all_failed:
+        print(
+            f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
+            f"Inspect per-example errors in "
+            f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
+        )
+    else:
+        legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
+        legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
+        print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")

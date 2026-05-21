@@ -77,6 +77,49 @@ def test_returns_default_when_no_successful_trials():
     )
 
 
+def test_trial_completed_with_zero_successful_examples_yields_no_winner():
+    """Regression: a trial that completes but had 0 successful examples
+    (e.g. every provider call inside it 404'd on a deprecated model) is not
+    a valid winner. best_score must be None, best_config must be {}."""
+    trials = [
+        FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-a"}),
+        FakeTrial(metrics={"accuracy": 0.0}, config={"model": "deprecated-b"}),
+    ]
+    # Evaluators that surface per-example success counts set this; our gate uses it.
+    for trial in trials:
+        trial.metadata["successful_examples"] = 0
+        trial.metadata["examples_attempted"] = 20
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_score is None
+    assert result.best_config == {}
+    assert result.reason_code == NO_RANKING_ELIGIBLE_TRIALS
+
+
+def test_trial_with_successful_examples_still_wins_with_zero_accuracy():
+    """Accuracy 0.0 across successful examples is honest (model produced output,
+    answer was wrong) — that's still a rankable trial, NOT an "all failed" one."""
+    trial = FakeTrial(metrics={"accuracy": 0.0}, config={"model": "honest-zero"})
+    trial.metadata["successful_examples"] = 5
+    trial.metadata["examples_attempted"] = 5
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective="accuracy",
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_score == pytest.approx(0.0)
+    assert result.best_config == {"model": "honest-zero"}
+
+
 def test_selects_best_trial_without_aggregation():
     trials = [
         FakeTrial(metrics={"accuracy": 0.75}, config={"model": "A"}),

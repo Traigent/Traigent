@@ -26,7 +26,7 @@ python examples/core/prompt-ab-test/run.py
 ## Expected Output
 
 ```
-Best config: {'prompt_variant': 'b', 'model': 'claude-3-5-sonnet-20241022', 'temperature': 0.0}
+Best config: {'prompt_variant': 'b', 'model': 'claude-sonnet-4-6', 'temperature': 0.0}
 Best score: 0.88
 ```
 

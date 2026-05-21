@@ -299,7 +299,7 @@ def summarize_keyword(text: str) -> str:
     )
     prompt = f"Transcript:\n{text}\n\n{style_hint}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=None,

@@ -235,7 +235,7 @@ def extract_fields(
     hints = f"Use {format_hint}. Schema is {schema_rigidity}."
     prompt = f"Text:\n{text}\n\n{hints}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=temperature,
         timeout=None,
         stop=None,

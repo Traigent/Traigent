@@ -146,7 +146,7 @@ def _mock_generate_sql(question: str) -> str:
     eval_dataset=DATASET,
     objectives=["sql_accuracy"],
     configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.2],
         "include_schema": ["true", "false"],
     },
@@ -174,7 +174,7 @@ def generate_sql(question: str) -> str:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     config = traigent.get_config()
-    model = str(config.get("model", "claude-3-5-sonnet-20241022"))
+    model = str(config.get("model", "claude-sonnet-4-6"))
     temperature = float(config.get("temperature", 0.0))
     include_schema = str(config.get("include_schema", "true")) == "true"
 
