@@ -921,6 +921,7 @@ class TestProductionMCPClientFallback:
         """Test fallback for create_experiment tool."""
         response = await self.client._fallback_operation("create_experiment", {})
         assert response.success is True
+        assert response.is_fallback is True
         assert "experiment_id" in response.data
         assert "fallback_exp_" in response.data["experiment_id"]
 
@@ -929,6 +930,7 @@ class TestProductionMCPClientFallback:
         """Test fallback for start_experiment_run tool."""
         response = await self.client._fallback_operation("start_experiment_run", {})
         assert response.success is True
+        assert response.is_fallback is True
         assert "experiment_run_id" in response.data
 
     @pytest.mark.asyncio
@@ -936,6 +938,7 @@ class TestProductionMCPClientFallback:
         """Test fallback for create_configuration_run tool."""
         response = await self.client._fallback_operation("create_configuration_run", {})
         assert response.success is True
+        assert response.is_fallback is True
         assert "config_run_id" in response.data
 
     @pytest.mark.asyncio
@@ -943,6 +946,7 @@ class TestProductionMCPClientFallback:
         """Test fallback for create_agent tool."""
         response = await self.client._fallback_operation("create_agent", {})
         assert response.success is True
+        assert response.is_fallback is True
         assert "agent_id" in response.data
 
     @pytest.mark.asyncio
@@ -950,6 +954,7 @@ class TestProductionMCPClientFallback:
         """Test fallback for upload_example_set tool."""
         response = await self.client._fallback_operation("upload_example_set", {})
         assert response.success is True
+        assert response.is_fallback is True
         assert "example_set_id" in response.data
 
     @pytest.mark.asyncio
@@ -957,7 +962,23 @@ class TestProductionMCPClientFallback:
         """Test fallback for unknown tool."""
         response = await self.client._fallback_operation("unknown_tool", {})
         assert response.success is False
+        # Even on unknown-tool failure, is_fallback must be True so callers
+        # can distinguish "MCP server returned this error" from "we never
+        # reached the server and locally synthesized this response."
+        assert response.is_fallback is True
         assert "No fallback available" in response.error_message
+
+    def test_mcpresponse_default_is_fallback_is_false(self):
+        """Regression for issue #898: a real MCPResponse (constructed at the
+        MCP-server result boundary) must default to is_fallback=False so
+        the synthetic-vs-real distinction is unambiguous.
+        """
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        real_response = MCPResponse(
+            success=True, data={"experiment_id": "real-backend-uuid-1234"}
+        )
+        assert real_response.is_fallback is False
 
 
 class TestProductionMCPClientHealthCheck:
