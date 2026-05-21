@@ -26,13 +26,13 @@ def my_llm_function(input_text: str) -> str:
 For systematic evaluation across multiple examples.
 
 ```python
-from traigent import Dataset, Example
+from traigent import Dataset, EvaluationExample
 
 # Create dataset
 dataset = Dataset(
     examples=[
-        Example(input="What is 2+2?", expected_output="4"),
-        Example(input="Capital of France?", expected_output="Paris"),
+        EvaluationExample(input_data={"question": "What is 2+2?"}, expected_output="4"),
+        EvaluationExample(input_data={"question": "Capital of France?"}, expected_output="Paris"),
     ]
 )
 

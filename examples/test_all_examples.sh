@@ -17,7 +17,7 @@
 #   ./test_all_examples.sh tvl                     # Run TVL tutorial examples
 #   ./test_all_examples.sh multi-objective         # Run multi-objective examples
 #   ./test_all_examples.sh advanced-walkthrough    # Run advanced walkthrough
-#   ./test_all_examples.sh manifest                # Run SDK manifest (38 examples, strict)
+#   ./test_all_examples.sh manifest                # Run SDK manifest (39 examples, strict)
 #   ./test_all_examples.sh all                     # Run all examples (broad smoke)
 #   ./test_all_examples.sh --real core             # Real mode (needs API keys)
 #
@@ -32,7 +32,7 @@
 #   integrations        - Third-party evaluation framework integrations (1 example)
 #   ragas               - RAGAS evaluation integration examples (3 examples)
 #   docs                - Documentation inline examples (2 examples)
-#   manifest            - SDK publication manifest (38 examples, strict — skips = failure)
+#   manifest            - SDK publication manifest (39 examples, strict — skips = failure)
 #   all                 - Run all categories (broad smoke, skips OK)
 #
 # MODE FLAGS:
@@ -94,7 +94,7 @@ while [[ $# -gt 0 ]]; do
             echo "  integrations        - Third-party evaluation integrations (1 example)"
             echo "  ragas               - RAGAS evaluation integration (3 examples)"
             echo "  docs                - Documentation inline examples (2 examples)"
-            echo "  manifest            - SDK publication manifest (38 examples, strict)"
+            echo "  manifest            - SDK publication manifest (39 examples, strict)"
             echo "  all                 - Run all categories (broad smoke)"
             echo ""
             echo "Mode flags:"
@@ -211,7 +211,7 @@ declare -a ADVANCED_WALKTHROUGH_EXAMPLES=(
     "../walkthrough/mock/advanced/05_langgraph_multiagent_demo.py"
 )
 
-# Walkthrough examples for manifest (01-07 only, excludes 08_privacy_modes)
+# Walkthrough examples for manifest
 declare -a WALKTHROUGH_MANIFEST_EXAMPLES=(
     "../walkthrough/mock/01_tuning_qa.py"
     "../walkthrough/mock/02_zero_code_change.py"
@@ -220,6 +220,7 @@ declare -a WALKTHROUGH_MANIFEST_EXAMPLES=(
     "../walkthrough/mock/05_rag_parallel.py"
     "../walkthrough/mock/06_custom_evaluator.py"
     "../walkthrough/mock/07_multi_provider.py"
+    "../walkthrough/mock/08_privacy_modes.py"
 )
 
 print_header() {
@@ -382,7 +383,7 @@ case "$CATEGORY" in
         run_category "Advanced Walkthrough" "${ADVANCED_WALKTHROUGH_EXAMPLES[@]}"
         ;;
     manifest)
-        print_header "SDK Publication Manifest (38 examples)" "$MODE_NAME"
+        print_header "SDK Publication Manifest (39 examples)" "$MODE_NAME"
         echo -e "${YELLOW}--- Core (12) ---${NC}"
         run_category "Core" "${CORE_EXAMPLES[@]}"
         echo ""
@@ -398,7 +399,7 @@ case "$CATEGORY" in
         echo -e "${YELLOW}--- Integrations (1) ---${NC}"
         run_category "Integrations" "${INTEGRATION_EXAMPLES[@]}"
         echo ""
-        echo -e "${YELLOW}--- Walkthrough (7) ---${NC}"
+        echo -e "${YELLOW}--- Walkthrough (8) ---${NC}"
         run_category "Walkthrough" "${WALKTHROUGH_MANIFEST_EXAMPLES[@]}"
         echo ""
         echo -e "${YELLOW}--- Advanced Walkthrough (5) ---${NC}"
