@@ -234,8 +234,11 @@ class TestOptimizationScenarios(DecoratorTestBase):
         def test_func(text: str) -> str:
             return f"Response: {text}"
 
-        # Should support constrained optimization
-        assert hasattr(test_func, "_constraints") or True  # Depends on implementation
+        # The contract being asserted: @optimize accepts a constraints= kwarg
+        # without raising, and returns a callable wrapper. The internal
+        # storage of the constraint list (attribute name, location) is
+        # implementation detail and intentionally not asserted here.
+        assert callable(test_func)
 
     def test_cloud_execution_mode(self):
         """Test optimization when execution_mode is cloud."""
