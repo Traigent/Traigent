@@ -40,7 +40,7 @@ class ExecutionMode(StrEnum):
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
-    default: ExecutionMode = ExecutionMode.CLOUD,
+    default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
 ) -> ExecutionMode:
     """Normalize user-provided execution mode values into an ExecutionMode enum."""
 
@@ -267,7 +267,7 @@ class TraigentConfig:
 
         # Define default values to exclude
         defaults = {
-            "execution_mode": "cloud",
+            "execution_mode": "edge_analytics",
             "minimal_logging": True,
             "auto_sync": False,
             "privacy_enabled": False,
@@ -345,14 +345,27 @@ class TraigentConfig:
         Returns:
             New TraigentConfig with merged values (other takes precedence)
         """
+        explicit_override_keys: set[str] = set()
         if isinstance(other, dict):
+            explicit_override_keys = set(other)
             other = self.from_dict(other)
 
-        # Start with current values
+        # Start with current values.
         merged_dict = self.to_dict()
 
-        # Override with other values
-        merged_dict.update(other.to_dict())
+        # Override with non-default values from the other config. For dict
+        # inputs, preserve explicitly supplied defaults such as
+        # {"execution_mode": "edge_analytics"} so callers can intentionally
+        # reset a value without default leakage from TraigentConfig().
+        override_dict = other.to_dict()
+        dataclass_fields = getattr(self, "__dataclass_fields__", {})
+        for key in explicit_override_keys:
+            if key in dataclass_fields and key != "custom_params":
+                value = getattr(other, key)
+                if value is not None:
+                    override_dict[key] = value
+
+        merged_dict.update(override_dict)
 
         return self.from_dict(merged_dict)
 
