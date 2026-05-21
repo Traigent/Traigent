@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from traigent.cloud.dataset_converter import (
+    metadata_to_backend_tags,
+    sanitize_backend_metadata,
+)
 from traigent.evaluators.base import Dataset
 from traigent.utils.hashing import generate_benchmark_hash, generate_experiment_hash
 from traigent.utils.logging import get_logger
@@ -159,7 +163,7 @@ class SDKBackendBridge:
             model_parameters_data=model_parameters_data,
             measures=measures,
             experiment_parameters=experiment_parameters,
-            metadata=request.metadata,
+            metadata=sanitize_backend_metadata(request.metadata),
         )
 
     def session_creation_to_backend_run(
@@ -545,9 +549,7 @@ Response:"""
 
                 # Add metadata as tags if available
                 if hasattr(example, "metadata") and example.metadata:
-                    backend_example["tags"] = [
-                        f"{k}:{v}" for k, v in example.metadata.items()
-                    ]
+                    backend_example["tags"] = metadata_to_backend_tags(example.metadata)
 
                 examples.append(backend_example)
 

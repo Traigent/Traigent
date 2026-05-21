@@ -460,6 +460,61 @@ class TestSDKBackendBridge:
         )
         assert "difficulty:easy" in first_example["tags"]
 
+    def test_convert_dataset_to_examples_filters_sensitive_metadata_tags(
+        self, sdk_bridge
+    ):
+        """Bridge example tags should use the shared backend metadata sanitizer."""
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(
+                    input_data={"query": "safe input"},
+                    expected_output="safe output",
+                    metadata={
+                        "difficulty": "easy",
+                        "api_key": "tg_secret_value",  # pragma: allowlist secret
+                        "password": "super-secret",  # pragma: allowlist secret
+                        "auth token": "jwt-secret",  # pragma: allowlist secret
+                        "unsafe key\x00": "hello,\x01world",
+                        "nested": {"skip": "dict"},
+                    },
+                )
+            ],
+            name="sensitive_metadata_dataset",
+        )
+
+        examples = sdk_bridge._convert_dataset_to_examples(dataset)
+        tags = examples[0]["tags"]
+
+        assert "difficulty:easy" in tags
+        assert "unsafe_key:hello  world" in tags
+        assert not any("api_key" in tag for tag in tags)
+        assert not any("password" in tag for tag in tags)
+        assert not any("token" in tag for tag in tags)
+        assert not any("nested" in tag for tag in tags)
+        assert not any("\x00" in tag or "\x01" in tag or "," in tag for tag in tags)
+
+    def test_optimization_request_metadata_is_filtered_before_backend(
+        self, sdk_bridge, optimization_request
+    ):
+        """Bridge experiment metadata should not forward sensitive raw keys."""
+        optimization_request.metadata = {
+            "experiment type": "trial",
+            "api_key": "tg_secret_value",  # pragma: allowlist secret
+            "password": "super-secret",  # pragma: allowlist secret
+            "authorization": "Bearer secret",  # pragma: allowlist secret
+            "unsafe key\x00": "hello,\x01world",
+            "nested": {"skip": "dict"},
+        }
+
+        backend_request = sdk_bridge.optimization_request_to_backend(
+            optimization_request
+        )
+
+        assert backend_request.metadata == {
+            "experiment_type": "trial",
+            "unsafe_key": "hello  world",
+        }
+
     def test_serialize_input_data(self, sdk_bridge):
         """Test input data serialization."""
         # Test string input
