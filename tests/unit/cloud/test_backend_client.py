@@ -619,9 +619,6 @@ class TestCloudSaaSOptimization:
         async def run_test():
             with (
                 patch.object(
-                    backend_client, "_create_backend_agent_experiment"
-                ) as mock_backend,
-                patch.object(
                     backend_client, "_submit_agent_optimization"
                 ) as mock_cloud,
                 patch("traigent.cloud.backend_client.bridge") as mock_bridge,
@@ -636,7 +633,6 @@ class TestCloudSaaSOptimization:
                         user_id="test_user",
                     )
 
-                mock_backend.assert_not_called()
                 mock_cloud.assert_not_called()
                 mock_bridge.create_session_mapping.assert_not_called()
 
@@ -650,18 +646,13 @@ class TestCloudSaaSOptimization:
         """Test cloud not-implemented guidance in agent optimization."""
 
         async def run_test():
-            with patch.object(
-                backend_client,
-                "_create_backend_agent_experiment",
-                side_effect=Exception("Backend error"),
-            ):
-                with pytest.raises(CloudServiceError, match="use hybrid"):
-                    await backend_client.start_agent_optimization(
-                        agent_spec=agent_specification,
-                        dataset=sample_dataset,
-                        configuration_space={"temperature": [0.7]},
-                        objectives=["accuracy"],
-                    )
+            with pytest.raises(CloudServiceError, match="use hybrid"):
+                await backend_client.start_agent_optimization(
+                    agent_spec=agent_specification,
+                    dataset=sample_dataset,
+                    configuration_space={"temperature": [0.7]},
+                    objectives=["accuracy"],
+                )
 
         import asyncio
 
@@ -699,110 +690,6 @@ class TestCloudSaaSOptimization:
                         agent_spec=agent_specification, input_data={"query": "test"}
                     )
                 mock_execute.assert_not_called()
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-
-class TestBackendAPIIntegration:
-    """Test backend API integration methods."""
-
-    def test_create_backend_experiment_tracking(self, backend_client):
-        """Test that backend experiment tracking creation is deprecated."""
-
-        async def run_test():
-            session_request = SessionCreationRequest(
-                function_name="test_func",
-                configuration_space={"param": [1, 2, 3]},
-                objectives=["accuracy"],
-                dataset_metadata={"size": 1000},
-                user_id="test_user",
-            )
-
-            # Should raise NotImplementedError since this method is deprecated
-            with pytest.raises(
-                NotImplementedError, match="SDK must use session endpoints only"
-            ):
-                await backend_client._create_backend_experiment_tracking(
-                    session_request
-                )
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-    def test_create_backend_agent_experiment(
-        self, backend_client, agent_specification, sample_dataset
-    ):
-        """Test that backend agent experiment creation is deprecated."""
-
-        async def run_test():
-            # Should raise NotImplementedError since this method is deprecated
-            with patch("traigent.cloud.backend_client.bridge") as mock_bridge:
-                with pytest.raises(
-                    NotImplementedError, match="SDK must use session endpoints only"
-                ):
-                    await backend_client._create_backend_agent_experiment(
-                        agent_spec=agent_specification,
-                        dataset=sample_dataset,
-                        configuration_space={"temperature": [0.7]},
-                        objectives=["accuracy"],
-                        max_trials=25,
-                    )
-
-                    # Verify agent data override
-                    mock_bridge.agent_specification_to_backend.assert_called_once_with(
-                        agent_specification
-                    )
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-    def test_backend_api_placeholders(self, backend_client):
-        """Test that backend API placeholder methods are deprecated."""
-
-        async def run_test():
-            # All these methods should raise NotImplementedError since they're deprecated
-
-            # Test experiment creation
-            with pytest.raises(
-                NotImplementedError, match="SDK must use session endpoints only"
-            ):
-                await backend_client._create_backend_experiment_via_api(
-                    MagicMock(name="Test Experiment", experiment_id="exp_123")
-                )
-
-            # Test experiment run creation
-            session_request = SessionCreationRequest(
-                function_name="test_func",
-                configuration_space={},
-                objectives=["accuracy"],
-                dataset_metadata={},
-            )
-            with pytest.raises(
-                NotImplementedError, match="SDK must use session endpoints only"
-            ):
-                await backend_client._create_backend_experiment_run_via_api(
-                    "exp_123", session_request
-                )
-
-            # Test config run creation
-            with pytest.raises(
-                NotImplementedError, match="SDK must use session endpoints only"
-            ):
-                await backend_client._create_backend_config_run(
-                    MagicMock(config_run_id="config_123")
-                )
-
-            # Test config run update
-            with pytest.raises(
-                NotImplementedError, match="SDK must use session endpoints only"
-            ):
-                await backend_client._update_backend_config_run_results(
-                    "config_123", {"accuracy": 0.8}, "completed", None
-                )
 
         import asyncio
 
@@ -1117,15 +1004,9 @@ class TestEdgeCases:
         async def run_test():
             empty_dataset = Dataset(examples=[], name="empty")
 
-            with (
-                patch.object(
-                    backend_client, "_create_backend_agent_experiment"
-                ) as mock_backend,
-                patch.object(
-                    backend_client, "_submit_agent_optimization"
-                ) as mock_cloud,
-            ):
-                mock_backend.return_value = ("exp_123", "run_456")
+            with patch.object(
+                backend_client, "_submit_agent_optimization"
+            ) as mock_cloud:
                 mock_cloud.return_value = MagicMock(session_id="session_123")
 
                 with pytest.raises(CloudServiceError, match="use hybrid"):
@@ -1135,8 +1016,6 @@ class TestEdgeCases:
                         configuration_space={"temperature": [0.7]},
                         objectives=["accuracy"],
                     )
-
-                mock_backend.assert_not_called()
                 mock_cloud.assert_not_called()
 
         import asyncio
