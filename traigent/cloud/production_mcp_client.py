@@ -420,8 +420,17 @@ class ProductionMCPClient:
                     fallback_response = await self._fallback_operation(
                         tool_name, arguments
                     )
-                    if fallback_response.success:
-                        return fallback_response
+                    fallback_response.request_id = operation_id
+                    if (
+                        not fallback_response.success
+                        and fallback_response.error_message
+                    ):
+                        fallback_response.error_message = (
+                            f"{response.error_message}; fallback failed: "
+                            f"{fallback_response.error_message}"
+                        )
+                    self._operation_results[operation_id] = fallback_response
+                    return fallback_response
 
                 self._operation_results[operation_id] = response
                 return response  # type: ignore[no-any-return]
