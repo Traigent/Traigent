@@ -62,7 +62,7 @@ class TestLocalAnalytics:
 
     def test_initialization_non_local_mode(self):
         """Test LocalAnalytics in non-Edge Analytics mode."""
-        config = TraigentConfig(execution_mode="cloud", enable_usage_analytics=True)
+        config = TraigentConfig(execution_mode="hybrid", enable_usage_analytics=True)
         analytics = LocalAnalytics(config)
         assert not analytics.enabled
 
@@ -390,7 +390,7 @@ class TestConvenienceFunctions:
 
     def test_collect_and_submit_analytics_non_local(self):
         """Test convenience function in non-Edge Analytics mode."""
-        config = TraigentConfig(execution_mode="cloud", enable_usage_analytics=True)
+        config = TraigentConfig(execution_mode="hybrid", enable_usage_analytics=True)
 
         # Should not raise any errors
         result = collect_and_submit_analytics(config)

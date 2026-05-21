@@ -12,7 +12,12 @@ from typing import Any
 from traigent.api.decorators import get_optimize_default
 from traigent.api.parameter_validator import OptimizeParameters
 from traigent.config.parallel import coerce_parallel_config
-from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    InjectionMode,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.core.objectives import normalize_objectives
 from traigent.utils.exceptions import ConfigurationError
 
@@ -46,6 +51,9 @@ class ConfigurationBuilder:
         actual_execution_mode = self._resolve_execution_mode(
             params.execution_mode, original_execution_mode
         )
+        privacy_alias_requested = self._is_privacy_alias(
+            original_execution_mode
+        ) or self._selected_execution_mode_is_privacy_alias(params.execution_mode)
 
         # Resolve injection mode with validation
         # At this point, injection_mode should be normalized to InjectionMode enum in validation
@@ -70,6 +78,8 @@ class ConfigurationBuilder:
         effective_privacy_enabled = self._resolve_privacy_settings(
             params.privacy_enabled, actual_execution_mode
         )
+        if effective_privacy_enabled is None and privacy_alias_requested:
+            effective_privacy_enabled = True
 
         resolved_schema = normalize_objectives(params.objectives)
 
@@ -103,25 +113,42 @@ class ConfigurationBuilder:
         self, param_execution_mode: str, original_execution_mode: str
     ) -> str:
         """Resolve execution mode with proper precedence."""
+        selected_mode, source = self._select_execution_mode_input(param_execution_mode)
+        actual_mode = validate_execution_mode(selected_mode)
+        logger.debug("Using execution mode from %s: %s", source, actual_mode.value)
+        return actual_mode.value
 
-        default_execution_mode = resolve_execution_mode(
+    def _select_execution_mode_input(
+        self, param_execution_mode: str | ExecutionMode
+    ) -> tuple[str | ExecutionMode, str]:
+        default_execution_mode = validate_execution_mode(
             get_optimize_default("execution_mode")
         )
-
-        param_mode = resolve_execution_mode(param_execution_mode)
+        param_mode = validate_execution_mode(param_execution_mode)
 
         if (
             param_mode == default_execution_mode
             and "execution_mode" in self.global_config
         ):
-            actual_mode = resolve_execution_mode(self.global_config["execution_mode"])
-            logger.debug(
-                f"Using execution mode from global config: {actual_mode.value}"
-            )
-            return actual_mode.value
+            return self.global_config["execution_mode"], "global config"
 
-        logger.debug(f"Using explicitly provided execution mode: {param_mode.value}")
-        return param_mode.value
+        return param_execution_mode, "explicitly provided parameter"
+
+    def _selected_execution_mode_is_privacy_alias(
+        self, param_execution_mode: str | ExecutionMode
+    ) -> bool:
+        try:
+            selected_mode, _ = self._select_execution_mode_input(param_execution_mode)
+        except (TypeError, ValueError, ConfigurationError):
+            return False
+        return self._is_privacy_alias(selected_mode)
+
+    @staticmethod
+    def _is_privacy_alias(execution_mode: str | ExecutionMode) -> bool:
+        try:
+            return resolve_execution_mode(execution_mode) is ExecutionMode.PRIVACY
+        except (TypeError, ValueError):
+            return False
 
     def _resolve_injection_mode(
         self, injection_mode: InjectionMode, config_param: str | None
@@ -170,9 +197,8 @@ class ConfigurationBuilder:
         if privacy_enabled is not None:
             return privacy_enabled
 
-        # Auto-enable privacy for privacy execution mode
-        mode_enum = resolve_execution_mode(execution_mode)
-        if mode_enum is ExecutionMode.PRIVACY:
+        # Auto-enable privacy for the legacy privacy alias.
+        if self._is_privacy_alias(execution_mode):
             logger.debug("Auto-enabling privacy for 'privacy' execution mode")
             return True
 
@@ -193,7 +219,7 @@ class ConfigurationBuilder:
     @staticmethod
     def _normalize_execution_mode(execution_mode: str) -> str:
         """Normalize execution mode labels (deprecated)."""
-        return resolve_execution_mode(execution_mode).value
+        return validate_execution_mode(execution_mode).value
 
 
 # Module-level functions for backward compatibility

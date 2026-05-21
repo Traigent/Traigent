@@ -113,8 +113,6 @@ def create_traigent_config(
                 "edge_analytics",
                 "privacy",
                 "hybrid",
-                "standard",
-                "cloud",
                 "hybrid_api",
             ],
             execution_mode,

@@ -41,7 +41,7 @@ class TestOptimizedFunctionInitialization:
             eval_dataset=sample_dataset,
             max_trials=50,  # renamed from num_trials
             timeout=300,
-            execution_mode="cloud",
+            execution_mode="hybrid",
             injection_mode="context",  # Use context injection instead
             # These are passed via kwargs and stored for later use
             parallel_config={"trial_concurrency": 2},
@@ -51,7 +51,7 @@ class TestOptimizedFunctionInitialization:
 
         assert opt_func.max_trials == 50
         assert opt_func.timeout == 300
-        assert opt_func.execution_mode == "cloud"
+        assert opt_func.execution_mode == "hybrid"
         assert opt_func.injection_mode == "context"
         # Check kwargs for other parameters
         parallel_cfg = opt_func.kwargs.get("parallel_config")

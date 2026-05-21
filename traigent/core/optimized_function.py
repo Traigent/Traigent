@@ -41,7 +41,12 @@ from typing import Any, cast
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
-from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    TraigentConfig,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.objectives import (
@@ -266,7 +271,7 @@ class OptimizedFunction:
             config_param: Parameter name for injection_mode="parameter"
             auto_override_frameworks: Enable automatic framework parameter overrides
             framework_targets: List of framework class names to override (e.g., ["openai.OpenAI"])
-            execution_mode: Execution mode ("edge_analytics", "privacy", "standard", "cloud")
+            execution_mode: Execution mode ("edge_analytics", "hybrid", "hybrid_api"; "privacy" is a legacy alias)
             local_storage_path: Custom path for local storage (Edge Analytics mode only)
             minimal_logging: Use minimal logging in Edge Analytics mode
             custom_evaluator: Custom evaluation function for advanced use cases
@@ -356,28 +361,17 @@ class OptimizedFunction:
         # Execution mode configuration
         requested_mode = getattr(self, "_requested_execution_mode", None)
         try:
-            effective_mode_enum = resolve_execution_mode(execution_mode)
+            requested_mode_enum = resolve_execution_mode(execution_mode)
+            effective_mode_enum = validate_execution_mode(requested_mode_enum)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = False
-        if effective_mode_enum is ExecutionMode.PRIVACY:
-            effective_mode_enum = ExecutionMode.HYBRID
+        privacy_alias_requested = requested_mode_enum is ExecutionMode.PRIVACY
+        if requested_mode and requested_mode.lower() == "privacy":
             privacy_alias_requested = True
 
         self._effective_execution_mode = effective_mode_enum
-        if (
-            requested_mode
-            and requested_mode.lower() == "privacy"
-            and effective_mode_enum is ExecutionMode.HYBRID
-        ):
-            display_mode = "privacy"
-            privacy_alias_requested = True
-        elif requested_mode:
-            display_mode = requested_mode.lower()
-        else:
-            display_mode = effective_mode_enum.value
-        self.execution_mode = display_mode
+        self.execution_mode = effective_mode_enum.value
         self._privacy_alias_requested = privacy_alias_requested
         self.local_storage_path = local_storage_path
         self.minimal_logging = minimal_logging

@@ -73,6 +73,7 @@ from traigent.config.types import (
     InjectionMode,
     is_traigent_disabled,
     resolve_execution_mode,
+    validate_execution_mode,
 )
 from traigent.core.objectives import (
     ObjectiveSchema,
@@ -84,7 +85,11 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
-from traigent.utils.exceptions import TVLValidationError, ValidationError
+from traigent.utils.exceptions import (
+    ConfigurationError,
+    TVLValidationError,
+    ValidationError,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1089,18 +1094,20 @@ def _resolve_execution_mode_enum(
     execution_mode: str | ExecutionMode,
     privacy_enabled: bool | None,
 ) -> tuple[ExecutionMode, bool | None]:
-    """Resolve execution mode enum and handle privacy deprecation."""
+    """Resolve execution mode enum against the public support contract."""
     try:
-        execution_mode_enum = resolve_execution_mode(execution_mode)
+        requested_mode = resolve_execution_mode(execution_mode)
+        execution_mode_enum = validate_execution_mode(requested_mode)
+    except ConfigurationError:
+        raise
     except (TypeError, ValueError) as exc:
-        raise ValueError(str(exc)) from None
+        raise ConfigurationError(str(exc)) from None
 
-    if execution_mode_enum is ExecutionMode.PRIVACY:
+    if requested_mode is ExecutionMode.PRIVACY:
         logger.warning(
             "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
             "with privacy_enabled=True. Mapping automatically."
         )
-        execution_mode_enum = ExecutionMode.HYBRID
         if privacy_enabled is None:
             privacy_enabled = True
 

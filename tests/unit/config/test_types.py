@@ -208,3 +208,32 @@ class TestValidateExecutionMode:
         """Invalid mode string should raise ConfigurationError, not ValueError."""
         with pytest.raises(ConfigurationError, match="No such mode 'nonexistent_mode'"):
             validate_execution_mode("nonexistent_mode")
+
+    def test_privacy_alias_validates_as_hybrid(self) -> None:
+        """Privacy remains a legacy alias for hybrid."""
+        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
+
+    def test_removed_standard_mode_raises_configuration_error(self) -> None:
+        """The removed standard mode is rejected everywhere."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            validate_execution_mode("standard")
+
+    def test_reserved_cloud_mode_raises_configuration_error(self) -> None:
+        """Cloud remote execution is reserved and fails closed."""
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            validate_execution_mode("cloud")
+
+    def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
+        """TraigentConfig normalizes the privacy alias and enables privacy."""
+        config = TraigentConfig(execution_mode="privacy")
+
+        assert config.execution_mode == ExecutionMode.HYBRID.value
+        assert config.privacy_enabled is True
+
+    def test_config_rejects_removed_and_reserved_modes(self) -> None:
+        """TraigentConfig follows the same execution-mode contract."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            TraigentConfig(execution_mode="standard")
+
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            TraigentConfig(execution_mode="cloud")

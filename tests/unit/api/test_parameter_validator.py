@@ -12,7 +12,7 @@ from traigent.api.parameter_validator import (
     validate_optimize_parameters,
 )
 from traigent.api.safety import hallucination_rate
-from traigent.config.types import InjectionMode
+from traigent.config.types import ExecutionMode, InjectionMode
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -43,16 +43,18 @@ class TestParameterValidator:
         """Test validation of valid execution modes.
 
         Edge analytics and hybrid are supported mode strings at decorator
-        validation time; cloud remains a recognized future mode whose remote
-        execution path fails at runtime.
+        validation time. Privacy is a legacy alias for hybrid.
         """
         result = self.validator._validate_execution_mode("edge_analytics")
-        assert result is None, "Expected None for valid mode edge_analytics"
-        assert self.validator._validate_execution_mode("hybrid") is None
+        assert result is ExecutionMode.EDGE_ANALYTICS
+        assert self.validator._validate_execution_mode("hybrid") is ExecutionMode.HYBRID
+        assert (
+            self.validator._validate_execution_mode("privacy") is ExecutionMode.HYBRID
+        )
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""
-        invalid_modes = ["invalid", "remote", "unsupported"]
+        invalid_modes = ["invalid", "remote", "unsupported", "standard", "cloud"]
 
         for mode in invalid_modes:
             with pytest.raises(ValidationError) as exc_info:
@@ -288,7 +290,7 @@ class TestParameterValidator:
             eval_dataset="test.jsonl",
             objectives=["accuracy", "cost"],
             configuration_space={"model": ["gpt-3.5", "gpt-4"]},
-            execution_mode="cloud",
+            execution_mode="hybrid",
             kwargs={"parallel_config": {"example_concurrency": 10}},
         )
 
@@ -375,7 +377,8 @@ class TestParameterValidatorIntegration:
         assert len(params.objectives) == 3
         assert "model" in params.configuration_space
         assert len(params.constraints) == 1
-        assert params.execution_mode == "privacy"
+        assert params.execution_mode == "hybrid"
+        assert params.privacy_enabled is True
         assert params.kwargs["parallel_config"]["example_concurrency"] == 5
         assert params.kwargs["parallel_config"]["trial_concurrency"] == 3
         assert params.kwargs["custom_evaluator"] == "my_evaluator"
