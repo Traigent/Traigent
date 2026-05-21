@@ -116,6 +116,7 @@ def _run_subprocess(
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
 
@@ -175,5 +176,6 @@ def test_cost_calculator_honors_user_opt_out_of_local_cost_map():
         "str(os.environ.get('LITELLM_LOCAL_MODEL_COST_MAP')))",
         env_overrides={"LITELLM_LOCAL_MODEL_COST_MAP": "false"},
     )
-    assert result.returncode == 0, result.stderr
-    assert "LITELLM_LOCAL_MODEL_COST_MAP=false" in result.stdout
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, combined
+    assert "LITELLM_LOCAL_MODEL_COST_MAP=false" in result.stdout, combined
