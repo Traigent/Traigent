@@ -235,10 +235,11 @@ class TestOptimizationScenarios(DecoratorTestBase):
             return f"Response: {text}"
 
         # The contract being asserted: @optimize accepts a constraints= kwarg
-        # without raising, and returns a callable wrapper. The internal
-        # storage of the constraint list (attribute name, location) is
-        # implementation detail and intentionally not asserted here.
+        # without raising, returns a callable wrapper, and the wrapper can run.
+        # The internal storage of the constraint list (attribute name,
+        # location) is implementation detail and intentionally not asserted.
         assert callable(test_func)
+        assert test_func("hello") == "Response: hello"
 
     def test_cloud_execution_mode(self):
         """Test optimization when execution_mode is cloud."""
