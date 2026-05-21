@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1755,9 +1756,27 @@ class OptimizationJob:
         }
 
     def wait(self, timeout: float | None = None) -> OptimizationResult:
-        """Wait for job completion and return results."""
-        # Implementation would handle async waiting
-        raise NotImplementedError("Background jobs not yet implemented")
+        """Wait for job completion and return results.
+
+        .. note::
+            Background-job waiting is part of an experimental scaffold that
+            has not shipped yet. The surrounding ``OptimizationJob`` dataclass
+            is still useful for inspecting job state via ``.status``,
+            ``.progress``, and ``.is_complete()``, but ``wait()`` itself
+            cannot block on a real backend until the feature lands.
+
+            For synchronous optimization today, use
+            ``OptimizedFunction.optimize()`` (returned by ``@traigent.optimize``)
+            which returns an ``OptimizationResult`` directly.
+        """
+        timeout_note = f" Requested timeout: {timeout}." if timeout is not None else ""
+        raise PlatformCapabilityError(
+            "OptimizationJob.wait() is part of an experimental background-job "
+            "API that has not shipped yet. Use OptimizedFunction.optimize() "
+            "for synchronous optimization, or query .status / .is_complete() "
+            f"on this job handle for non-blocking state.{timeout_note} "
+            "Tracking: https://github.com/Traigent/Traigent/issues/875"
+        )
 
 
 # =============================================================================

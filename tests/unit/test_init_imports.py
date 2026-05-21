@@ -103,6 +103,7 @@ class TestTraigentInit:
         assert hasattr(traigent, "TraigentWarning")
         assert hasattr(traigent, "TraigentDeprecationWarning")
         assert hasattr(traigent, "OptimizationStateError")
+        assert hasattr(traigent, "PlatformCapabilityError")
         assert hasattr(traigent, "ConfigAccessWarning")
         assert hasattr(traigent, "DataIntegrityError")
         assert hasattr(traigent, "MetricExtractionError")

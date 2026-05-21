@@ -358,6 +358,10 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.utils.exceptions",
         "OptimizationStateError",
     ),
+    "PlatformCapabilityError": (
+        "traigent.utils.exceptions",
+        "PlatformCapabilityError",
+    ),
     "OptimizationValidator": ("traigent.utils.validation", "OptimizationValidator"),
     "ParameterImportanceAnalyzer": (
         "traigent.utils.importance",
@@ -541,6 +545,7 @@ __all__ = [
     "TraigentWarning",
     "TraigentDeprecationWarning",
     "OptimizationStateError",
+    "PlatformCapabilityError",
     "ConfigAccessWarning",
     "DataIntegrityError",
     "MetricExtractionError",
