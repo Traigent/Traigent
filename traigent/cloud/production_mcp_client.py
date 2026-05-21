@@ -132,12 +132,22 @@ class MCPServerConfig:
 
 @dataclass
 class MCPResponse:
-    """Response from MCP server operations."""
+    """Response from MCP server operations.
+
+    The ``is_fallback`` flag indicates the response was constructed locally
+    by ``_fallback_operation`` because the MCP server was unavailable. Any
+    ``data`` IDs in a fallback response (``fallback_exp_*`` etc.) are
+    synthetic local placeholders, not real backend resources. Callers MUST
+    check ``is_fallback`` before treating IDs as durable backend references
+    (e.g. before quoting them in user-facing UI or backend reconciliation).
+    See issue #898.
+    """
 
     success: bool
     data: dict[str, Any] | None = None
     error_message: str | None = None
     request_id: str | None = None
+    is_fallback: bool = False
 
 
 class ProductionMCPClient:
@@ -794,16 +804,21 @@ class ProductionMCPClient:
     ) -> MCPResponse:
         """Fallback operation when MCP server unavailable.
 
-        Args:
-            tool_name: Tool name
-            arguments: Tool arguments
-
-        Returns:
-            Fallback response
+        Returns a response with ``is_fallback=True`` so callers can disambiguate
+        synthetic local IDs (``fallback_exp_*`` etc.) from real backend IDs.
+        Per workspace ``Traigent/CLAUDE.md`` rule #2, fallback responses MUST
+        be distinguishable from real backend responses on the public surface
+        — see issue #898.
         """
-        logger.info(f"Using fallback for MCP tool: {tool_name}")
+        logger.warning(
+            "MCP server unavailable; using fallback for tool %r. "
+            "Response.is_fallback will be True and IDs are synthetic.",
+            tool_name,
+        )
 
-        # Simple fallback responses for testing
+        # Synthetic IDs prefixed with `fallback_*` are intentional so a log
+        # grep or backend reconciliation job can detect them, but callers
+        # MUST treat `response.is_fallback` as the authoritative signal.
         fallback_responses = {
             "create_experiment": {
                 "experiment_id": f"fallback_exp_{int(time.time())}",
@@ -828,11 +843,16 @@ class ProductionMCPClient:
         }
 
         if tool_name in fallback_responses:
-            return MCPResponse(success=True, data=fallback_responses[tool_name])
+            return MCPResponse(
+                success=True,
+                data=fallback_responses[tool_name],
+                is_fallback=True,
+            )
         else:
             return MCPResponse(
                 success=False,
                 error_message=f"No fallback available for tool: {tool_name}",
+                is_fallback=True,
             )
 
     # Utility Methods
