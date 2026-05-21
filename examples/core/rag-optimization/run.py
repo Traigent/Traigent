@@ -179,8 +179,8 @@ def _generate_mock_telemetry(model: str, use_rag: bool, fast_mode: bool = True) 
     # Model-specific cost ranges (per 1M tokens: input, output)
     model_costs = {
         "claude-sonnet-4-6": (3.0, 15.0),  # $3/$15 per 1M tokens
-        "claude-opus-4-7": (15.0, 75.0),  # $15/$75 per 1M tokens
-        "claude-haiku-4-5-20251001": (0.25, 1.25),  # $0.25/$1.25 per 1M tokens
+        "claude-opus-4-7": (5.0, 25.0),  # $5/$25 per 1M tokens
+        "claude-haiku-4-5-20251001": (1.0, 5.0),  # $1/$5 per 1M tokens
     }
 
     # Model-specific latency ranges (seconds)

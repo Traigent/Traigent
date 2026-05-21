@@ -36,17 +36,40 @@ def _trial(
 
 
 class TestTrialsAllFailed:
-    def test_all_zero_accuracy_no_successful_examples(self) -> None:
+    def test_all_zero_successful_examples(self) -> None:
+        trials = [
+            _trial(
+                {"model": "m1"},
+                {"accuracy": 0.0, "cost": 0.0},
+                metadata={"successful_examples": 0},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"accuracy": 0.0, "cost": 0.0},
+                metadata={"successful_examples": 0},
+            ),
+        ]
+        assert _trials_all_failed(trials) is True
+
+    def test_legacy_zero_accuracy_without_success_count_remains_rankable(self) -> None:
         trials = [
             _trial({"model": "m1"}, {"accuracy": 0.0, "cost": 0.0}),
             _trial({"model": "m2"}, {"accuracy": 0.0, "cost": 0.0}),
         ]
-        assert _trials_all_failed(trials) is True
+        assert _trials_all_failed(trials) is False
 
     def test_one_trial_with_successful_examples(self) -> None:
         trials = [
-            _trial({"model": "m1"}, {"accuracy": 0.0}, metadata={"successful_examples": 0}),
-            _trial({"model": "m2"}, {"accuracy": 0.0}, metadata={"successful_examples": 3}),
+            _trial(
+                {"model": "m1"},
+                {"accuracy": 0.0},
+                metadata={"successful_examples": 0},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"accuracy": 0.0},
+                metadata={"successful_examples": 3},
+            ),
         ]
         assert _trials_all_failed(trials) is False
 
@@ -57,20 +80,33 @@ class TestTrialsAllFailed:
         ]
         assert _trials_all_failed(trials) is False
 
-    def test_cost_only_metric_does_not_imply_success(self) -> None:
-        # A trial whose only positive metric is "cost" or "latency" still failed —
-        # we don't want to treat $0 cost as a success signal either way; the
-        # check ignores cost/latency entirely.
+    def test_cost_only_metric_without_success_count_remains_rankable(self) -> None:
         trials = [
-            _trial({"model": "m1"}, {"accuracy": 0.0, "cost": 1.5}),
-            _trial({"model": "m2"}, {"accuracy": 0.0, "cost": 0.0}),
+            _trial({"model": "m1"}, {"cost": 1.5}),
+            _trial({"model": "m2"}, {"cost": 0.0}),
+        ]
+        assert _trials_all_failed(trials) is False
+
+    def test_explicit_zero_success_overrides_positive_cost(self) -> None:
+        trials = [
+            _trial(
+                {"model": "m1"},
+                {"cost": 1.5},
+                metadata={"successful_examples": 0},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"cost": 0.0},
+                metadata={"successful_examples": 0},
+            ),
         ]
         assert _trials_all_failed(trials) is True
 
     def test_non_numeric_metric_value_is_skipped(self) -> None:
-        # Defensive: shouldn't crash on a stray non-numeric metric.
+        # Defensive: shouldn't crash on a stray non-numeric metric, and missing
+        # success counts should still preserve legacy rankability.
         trials = [_trial({"model": "m1"}, {"accuracy": "n/a"})]  # type: ignore[dict-item]
-        assert _trials_all_failed(trials) is True
+        assert _trials_all_failed(trials) is False
 
 
 class TestPrintResultsTableBanner:
@@ -118,6 +154,23 @@ class TestPrintResultsTableBanner:
         trials = [
             _trial({"model": "m1"}, {"accuracy": 0.0}),
             _trial({"model": "m2"}, {"accuracy": 0.5}),
+        ]
+        print_results_table(
+            self._build_results(trials),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "All trials failed" not in out
+        assert "Overall Best" in out
+
+    def test_legacy_zero_score_run_still_emits_legend(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        trials = [
+            _trial({"model": "m1"}, {"accuracy": 0.0}),
+            _trial({"model": "m2"}, {"accuracy": 0.0}),
         ]
         print_results_table(
             self._build_results(trials),

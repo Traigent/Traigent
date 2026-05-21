@@ -134,27 +134,34 @@ def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
 
 
 def _trials_all_failed(trials: list) -> bool:
-    """True iff no trial recorded any successful examples or any positive quality metric.
+    """True iff every completed trial explicitly recorded zero successful examples.
 
     "All failed" here means the table should suppress the "Overall Best" framing
-    because no winner can be honestly named. Cost/latency are excluded — a trial
-    can have $0 cost and still have produced real successful outputs.
+    because no winner can be honestly named. When older/external evaluators do
+    not report ``metadata["successful_examples"]``, fall back to the completed
+    trial status so honest 0.0 quality scores and cost-only runs remain rankable.
     """
     for trial in trials:
+        if not getattr(trial, "is_successful", False):
+            continue
+
         metadata = getattr(trial, "metadata", {}) or {}
         successful = metadata.get("successful_examples")
-        if isinstance(successful, (int, float)) and successful > 0:
+        if isinstance(successful, bool):
             return False
-
-        metrics = getattr(trial, "metrics", {}) or {}
-        for name, value in metrics.items():
-            if name in ("cost", "latency"):
-                continue
+        if isinstance(successful, (int, float)):
+            if successful > 0:
+                return False
+            continue
+        if successful is not None:
             try:
-                if float(value) > 0:
+                if float(successful) > 0:
                     return False
-            except (TypeError, ValueError):
                 continue
+            except (TypeError, ValueError):
+                return False
+
+        return False
 
     return True
 
@@ -266,7 +273,7 @@ def print_results_table(
         for metric in metric_names:
             metric_val = float(metrics.get(metric, 0))
             formatted = _format_metric_value(metric, metric_val)
-            if best_per_objective.get(metric) == i:
+            if not all_failed and best_per_objective.get(metric) == i:
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:
                 cell = f"{formatted:^{col_widths[metric]}}"
