@@ -50,7 +50,7 @@ All examples follow the same Traigent optimization pattern:
 import traigent
 
 @traigent.optimize(
-    config_space=SEARCH_SPACE,     # Parameter combinations to explore
+    configuration_space=SEARCH_SPACE,     # Parameter combinations to explore
     objectives=["accuracy", "cost"], # Metrics to optimize
     direction="maximize",           # Optimization direction
     max_trials=100                 # Number of configurations to test
@@ -197,19 +197,18 @@ def extract_invoice_data(text: str, **config):
     return extracted_data
 ```
 
-### Option 2: Standalone Optimization
+### Option 2: Decorate an Existing Function
 
 ```python
-from traigent import OptimizationSession
+import traigent
 from your_code import your_function, your_dataset
 
-session = OptimizationSession(
-    function=your_function,
-    config_space=SEARCH_SPACE,
-    dataset=your_dataset
-)
+optimized_function = traigent.optimize(
+    configuration_space=SEARCH_SPACE,
+    eval_dataset=your_dataset,
+)(your_function)
 
-results = session.optimize(max_trials=100)
+results = await optimized_function.optimize(max_trials=100)
 ```
 
 ### Option 3: Configuration Discovery
