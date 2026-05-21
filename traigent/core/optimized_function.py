@@ -1843,6 +1843,8 @@ class OptimizedFunction:
                 effective_config_space=effective_config_space,
                 save_to=save_to,
             )
+        except OptimizationError:
+            raise
         except Exception as e:
             logger.error(f"Optimization failed: {e}")
             raise OptimizationError(f"Optimization failed: {e}") from e

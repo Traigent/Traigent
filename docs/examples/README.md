@@ -37,7 +37,7 @@ examples/
 ## Core examples at a glance
 | Example | Optimizes | Run (mock mode) |
 | --- | --- | --- |
-| simple-prompt | Model, temperature, prompt style | `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py` |
+| simple-prompt | Model, temperature, prompt style | `python examples/core/simple-prompt/run.py` |
 | rag-optimization | RAG toggle, model, top_k | `TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py` |
 | few-shot-classification | Example count/strategy | `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py` |
 | multi-objective-tradeoff | Accuracy, cost, latency | `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py` |
@@ -58,8 +58,7 @@ pip install -e ".[examples]"
 python -m http.server 8000
 # Open http://localhost:8000/examples/
 
-# Mock mode (recommended)
-export TRAIGENT_MOCK_LLM=true
+# Auto-mocks when ANTHROPIC_API_KEY is unset
 python examples/core/simple-prompt/run.py
 
 # Real APIs (set keys you need)
