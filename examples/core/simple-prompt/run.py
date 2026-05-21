@@ -147,7 +147,7 @@ def _print_results_summary(result) -> None:
     objectives=["accuracy"],
     # 3. The parameters to tune
     configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.7],
         "prompt_style": ["concise", "detailed"],
     },
@@ -168,7 +168,7 @@ def summarize_text(text: str) -> str:
     # Get the current configuration chosen by the optimizer
     config = traigent.get_config()
 
-    model = str(config.get("model", "claude-3-haiku-20240307"))
+    model = str(config.get("model", "claude-haiku-4-5-20251001"))
     temperature = float(config.get("temperature", 0.0))
     style = str(config.get("prompt_style", "concise"))
 

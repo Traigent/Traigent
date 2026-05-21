@@ -27,6 +27,7 @@ from traigent.utils.optimization_logger import (
     _looks_like_secret,
     _mask_string,
     _normalize_key_name,
+    _serialize_example_result,
     sanitize_for_logging,
 )
 
@@ -787,3 +788,96 @@ class TestUpdateExperimentIndex:
         data = json.loads((tmp_path / "index.json").read_text())
         runs = data["experiments"]["test_exp"]["runs"]
         assert len(runs) == 2
+
+
+# ---------------------------------------------------------------------------
+# _serialize_example_result — per-example error capture
+# ---------------------------------------------------------------------------
+#
+# Regression: when a provider call fails (e.g. Anthropic 404 from a deprecated
+# model ID), the per-example trial JSON must preserve the error text. The
+# previous implementation read ex.error which existed on HybridExampleResult
+# but not on ExampleResult (whose field is error_message), so the error key
+# always serialized as null for the local-evaluator path.
+
+
+class TestSerializeExampleResult:
+    """Regression for the error_message/error field-name mismatch."""
+
+    def test_dataclass_with_error_message_field(self) -> None:
+        """ExampleResult.error_message must survive into the serialized 'error' key."""
+        from traigent.api.types import ExampleResult
+
+        ex = ExampleResult(
+            example_id="ex-1",
+            input_data={"text": "hello"},
+            expected_output="hi",
+            actual_output=None,
+            metrics={"accuracy": 0.0},
+            execution_time=0.5,
+            success=False,
+            error_message="404 not_found_error: model unavailable",
+        )
+
+        out = _serialize_example_result(ex)
+        assert out["example_id"] == "ex-1"
+        assert out["error"] == "404 not_found_error: model unavailable"
+
+    def test_dataclass_with_error_field(self) -> None:
+        """HybridExampleResult.error continues to work (no regression for the hybrid path)."""
+        from traigent.evaluators.hybrid_api import HybridExampleResult
+
+        ex = HybridExampleResult(
+            example_id="ex-2",
+            actual_output=None,
+            expected_output="x",
+            error="upstream timeout",
+        )
+
+        out = _serialize_example_result(ex)
+        assert out["example_id"] == "ex-2"
+        assert out["error"] == "upstream timeout"
+
+    def test_dict_with_error_message_key(self) -> None:
+        """dict shape passed in via custom evaluators also honors error_message."""
+        out = _serialize_example_result(
+            {
+                "example_id": "ex-3",
+                "actual_output": None,
+                "expected_output": "y",
+                "metrics": {"accuracy": 0.0},
+                "error_message": "rate limit exceeded",
+            }
+        )
+        assert out["error"] == "rate limit exceeded"
+
+    def test_dict_with_error_key_takes_precedence_when_error_message_absent(
+        self,
+    ) -> None:
+        out = _serialize_example_result(
+            {
+                "example_id": "ex-4",
+                "actual_output": None,
+                "expected_output": "z",
+                "error": "legacy error key",
+            }
+        )
+        assert out["error"] == "legacy error key"
+
+    def test_successful_example_has_no_error(self) -> None:
+        """A successful example serializes with error: None."""
+        from traigent.api.types import ExampleResult
+
+        ex = ExampleResult(
+            example_id="ex-5",
+            input_data={"text": "hi"},
+            expected_output="hello",
+            actual_output="hello",
+            metrics={"accuracy": 1.0},
+            execution_time=0.2,
+            success=True,
+        )
+
+        out = _serialize_example_result(ex)
+        assert out["error"] is None
+        assert out["response"] == "hello"

@@ -207,6 +207,7 @@ def _build_success_trial_metadata(
     total_cost: float | None,
 ) -> dict[str, Any]:
     """Build metadata for a successful trial result."""
+    raw_successful_examples = getattr(eval_result, "successful_examples", None)
     trial_metadata: dict[str, Any] = {
         "success_rate": getattr(eval_result, "success_rate", None),
         "has_errors": getattr(eval_result, "has_errors", None),
@@ -217,6 +218,12 @@ def _build_success_trial_metadata(
         ),
         "evaluation_result": eval_result,
     }
+
+    if raw_successful_examples is not None:
+        try:
+            trial_metadata["successful_examples"] = max(int(raw_successful_examples), 0)
+        except (TypeError, ValueError):
+            pass
 
     example_results = getattr(eval_result, "example_results", None)
     if example_results:

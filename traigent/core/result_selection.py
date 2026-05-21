@@ -535,6 +535,26 @@ def _select_best_aggregated(
     )
 
 
+def _trial_produced_outputs(trial: TrialResult) -> bool:
+    """True iff the trial both completed AND produced at least one successful example.
+
+    A trial can complete with 0 successful examples — for instance, every provider
+    call inside it raised (e.g. an Anthropic 404 on a deprecated model ID). Such a
+    trial is "completed" in the trial-status sense but has no rankable output, so
+    naming it the "best" is misleading. When the evaluator reports
+    metadata["successful_examples"] explicitly, we trust it; if the metadata is
+    absent we fall back to trial.is_successful so older or external evaluators
+    that don't surface per-example success counts still work.
+    """
+    if not trial.is_successful:
+        return False
+    metadata = trial.metadata or {}
+    successful_examples = metadata.get("successful_examples")
+    if isinstance(successful_examples, (int, float)) and successful_examples == 0:
+        return False
+    return True
+
+
 def select_best_configuration(
     trials: Iterable[TrialResult],
     primary_objective: str,
@@ -560,7 +580,7 @@ def select_best_configuration(
         SelectionResult with best configuration and score.
     """
     trial_list = list(trials)
-    successful_trials = [t for t in trial_list if t.is_successful]
+    successful_trials = [t for t in trial_list if _trial_produced_outputs(t)]
     non_successful_count = len(trial_list) - len(successful_trials)
     if not successful_trials:
         return SelectionResult(
