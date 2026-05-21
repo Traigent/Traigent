@@ -575,11 +575,13 @@ class TrialOperations:
                 result_data["summary_stats"] = summary_stats
             self._log_summary_stats_debug(trial_id, summary_stats)
 
-            # Validate the submission data
+            # Validate the submission data. Schema validation is authoritative;
+            # invalid payloads must not be posted to the backend.
             try:
                 validate_configuration_run_submission(result_data)
             except ValueError as e:
                 logger.error(f"Invalid configuration run submission: {e}")
+                return False
 
             if error_message:
                 result_data["error"] = self.client._sanitize_error_message(
@@ -718,13 +720,14 @@ class TrialOperations:
                 "summary_stats": summary_stats,
             }
 
-            # Validate the submission data
+            # Validate the submission data. Schema validation is authoritative;
+            # invalid payloads must not be posted to the backend.
             try:
                 validate_configuration_run_submission(submission_data)
                 logger.debug("✅ Summary stats submission validated successfully")
             except ValueError as e:
                 logger.error(f"Invalid summary stats submission: {e}")
-                # Still try to send but log the validation error
+                return False
 
             logger.debug(
                 "Submitting summary_stats with keys: %s",
@@ -866,12 +869,9 @@ class TrialOperations:
                             if "Configuration run not found" in error_msg:
                                 logger.debug(
                                     f"Configuration run not found for trial {trial_id}. "
-                                    "This is expected in standard mode with mock execution. "
-                                    "Skipping weighted score update."
+                                    "Skipping weighted score update without counting it as applied."
                                 )
-                                # Return True to prevent the error from propagating
-                                # The weighted scores won't be updated but the optimization can continue
-                                return True
+                                return False
                             else:
                                 # Auth failures: instance-scoped dedup at DEBUG
                                 if response.status in (401, 403):
