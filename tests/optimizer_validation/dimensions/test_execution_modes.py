@@ -2,7 +2,7 @@
 
 Tests execution modes. edge_analytics and hybrid are supported today.
 cloud raises ConfigurationError because remote cloud execution is reserved.
-privacy and standard raise ConfigurationError in the validation helper.
+privacy is a legacy alias for hybrid; standard raises ConfigurationError.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ SUPPORTED_EXECUTION_MODES = ["edge_analytics", "hybrid"]
 
 # Modes that raise ConfigurationError
 UNSUPPORTED_MODES = ["cloud"]  # Not yet supported
-REMOVED_MODES = ["privacy", "standard"]  # Removed
+REMOVED_MODES = ["standard"]  # Removed
 
 
 class TestExecutionModeMatrix:
@@ -111,7 +111,7 @@ class TestInvalidExecutionMode:
             max_trials=1,
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
-                error_type=ValueError,
+                error_type=ConfigurationError,
             ),
             gist_template="invalid-mode -> {error_type()} | {status()}",
         )
@@ -196,15 +196,14 @@ class TestEdgeAnalyticsMode:
 
 
 class TestPrivacyMode:
-    """Tests for PRIVACY execution mode - now removed."""
+    """Tests for PRIVACY execution mode legacy alias."""
 
     @pytest.mark.unit
-    def test_privacy_mode_raises_configuration_error(self) -> None:
-        """Test privacy mode raises ConfigurationError (removed)."""
-        from traigent.config.types import validate_execution_mode
+    def test_privacy_mode_aliases_to_hybrid(self) -> None:
+        """Privacy is accepted as hybrid with the privacy flag set elsewhere."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            validate_execution_mode("privacy")
+        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
 
 
 class TestHybridMode:

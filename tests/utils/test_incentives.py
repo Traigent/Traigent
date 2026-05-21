@@ -495,7 +495,7 @@ class TestGlobalFunctions:
         with patch(
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
-            mock_config.return_value = TraigentConfig(execution_mode="cloud")
+            mock_config.return_value = TraigentConfig(execution_mode="hybrid")
 
             with patch("traigent.utils.incentives.logger") as mock_logger:
                 show_upgrade_hint("general")
@@ -533,7 +533,7 @@ class TestGlobalFunctions:
         with patch(
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
-            mock_config.return_value = TraigentConfig(execution_mode="cloud")
+            mock_config.return_value = TraigentConfig(execution_mode="hybrid")
 
             with patch("traigent.utils.incentives.logger") as mock_logger:
                 show_achievement("first_optimization")

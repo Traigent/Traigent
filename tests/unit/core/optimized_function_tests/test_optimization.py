@@ -635,12 +635,15 @@ class TestOptimization:
         )
 
         sentinel_result = Mock(spec=OptimizationResult)
-        with patch.object(
-            opt_func,
-            "_execute_optimization",
-            new=AsyncMock(return_value=sentinel_result),
-        ) as mock_execute, patch(
-            "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+        with (
+            patch.object(
+                opt_func,
+                "_execute_optimization",
+                new=AsyncMock(return_value=sentinel_result),
+            ) as mock_execute,
+            patch(
+                "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+            ),
         ):
             result = await opt_func.optimize()
 
@@ -649,9 +652,7 @@ class TestOptimization:
         require(called["timeout"] == pytest.approx(123.0))
         require(called["save_to"] == "defaults.json")
         require(callback in called["callbacks"])
-        require(
-            any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"])
-        )
+        require(any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"]))
 
         runtime_kwargs = called["algorithm_kwargs"]
         require(runtime_kwargs["cache_policy"] == "no_repeats")
@@ -679,12 +680,15 @@ class TestOptimization:
 
         override_callbacks = [Mock(name="override_callback")]
         sentinel_result = Mock(spec=OptimizationResult)
-        with patch.object(
-            opt_func,
-            "_execute_optimization",
-            new=AsyncMock(return_value=sentinel_result),
-        ) as mock_execute, patch(
-            "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+        with (
+            patch.object(
+                opt_func,
+                "_execute_optimization",
+                new=AsyncMock(return_value=sentinel_result),
+            ) as mock_execute,
+            patch(
+                "traigent.core.optimized_function.sys.stdin.isatty", return_value=False
+            ),
         ):
             result = await opt_func.optimize(
                 timeout=5.0,
@@ -699,9 +703,7 @@ class TestOptimization:
         require(called["timeout"] == pytest.approx(5.0))
         require(called["save_to"] == "override.json")
         require(override_callbacks[0] in called["callbacks"])
-        require(
-            any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"])
-        )
+        require(any(isinstance(cb, ResultsTableCallback) for cb in called["callbacks"]))
 
         runtime_kwargs = called["algorithm_kwargs"]
         require(runtime_kwargs["cache_policy"] == "deterministic")
@@ -778,33 +780,20 @@ class TestOptimization:
             opt_func.apply_best_config()
 
     @pytest.mark.asyncio
-    async def test_optimization_with_cloud_execution(
+    async def test_optimization_with_cloud_execution_fails_closed(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Test optimization in cloud execution."""
-        OptimizedFunction(
-            func=simple_function,
-            configuration_space=sample_config_space,
-            objectives=sample_objectives,
-            eval_dataset=sample_dataset,
-            execution_mode="cloud",
-        )
+        """Reserved cloud execution fails before optimization can start."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        # In cloud execution, should use cloud services
-        with patch("traigent.cloud.client.TraigentCloudClient") as mock_cloud_client:
-            mock_client_instance = Mock()
-            mock_cloud_client.return_value = mock_client_instance
-
-            # Mock cloud optimization
-            mock_client_instance.optimize_function = AsyncMock(
-                return_value=Mock(best_config={"temperature": 0.6}, best_score=0.92)
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            OptimizedFunction(
+                func=simple_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                eval_dataset=sample_dataset,
+                execution_mode="cloud",
             )
-
-            # Should attempt to use cloud service
-            # Implementation depends on actual cloud execution logic
-            require(
-                mock_cloud_client.call_count in (0, 1)
-            )  # Cloud may or may not be invoked
 
     def test_get_optimization_results(
         self, simple_function, sample_config_space, sample_objectives

@@ -183,7 +183,7 @@ class TestApplyBestConfigIntegration:
                     "temperature": [0.1, 0.5, 0.9],
                 },
                 objectives=["accuracy", "latency"],
-                execution_mode="cloud",
+                execution_mode="hybrid",
                 use_cloud_service=True,
                 eval_dataset=sample_dataset_file,
             )
@@ -200,10 +200,10 @@ class TestApplyBestConfigIntegration:
             assert "error" not in insights
             assert insights["performance_summary"]["total_trials"] == 3
 
-    def test_cloud_mode_complete_workflow(
+    def test_hybrid_portal_mode_complete_workflow(
         self, sample_dataset_file, sample_optimization_result
     ):
-        """Test complete workflow in SaaS mode with server mocks."""
+        """Test complete workflow in hybrid mode with server mocks."""
 
         def test_function(text: str, model: str = "default") -> str:
             return f"saas:{model}:{text.upper()}"
@@ -228,7 +228,7 @@ class TestApplyBestConfigIntegration:
                     "model": ["gpt-4o-mini", "GPT-4o"],
                 },
                 objectives=["accuracy"],
-                execution_mode="cloud",
+                execution_mode="hybrid",
                 use_cloud_service=False,  # SaaS mode
                 eval_dataset=sample_dataset_file,
             )
@@ -299,8 +299,12 @@ class TestApplyBestConfigIntegration:
                 "use_cloud_service": False,
                 "name": "edge_analytics",
             },
-            {"execution_mode": "cloud", "use_cloud_service": False, "name": "cloud"},
-            {"execution_mode": "cloud", "use_cloud_service": True, "name": "hybrid"},
+            {"execution_mode": "hybrid", "use_cloud_service": False, "name": "hybrid"},
+            {
+                "execution_mode": "hybrid",
+                "use_cloud_service": True,
+                "name": "hybrid_service_flag",
+            },
         ]
 
         results = {}
@@ -518,8 +522,8 @@ class TestModeSpecificBehavior:
         assert isinstance(result, str)
         assert "sensitive data" in result
 
-    def test_cloud_mode_efficiency_features(self, sample_optimization_result):
-        """Test that cloud modes enable efficiency features."""
+    def test_hybrid_mode_efficiency_features(self, sample_optimization_result):
+        """Test that hybrid mode enables efficiency features."""
 
         def cloud_optimized_function(text: str, model: str = "default") -> str:
             return f"cloud:{model}:{text}"
@@ -536,7 +540,7 @@ class TestModeSpecificBehavior:
                 func=cloud_optimized_function,
                 config_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
-                execution_mode="cloud",
+                execution_mode="hybrid",
                 use_cloud_service=True,  # Standard mode
             )
 

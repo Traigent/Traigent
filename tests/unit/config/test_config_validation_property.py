@@ -108,18 +108,16 @@ def test_presence_penalty_rejects_invalid_range(penalty):
             "edge_analytics",
             "privacy",
             "hybrid",
-            "standard",
-            "cloud",
+            "hybrid_api",
             ExecutionMode.EDGE_ANALYTICS,
             ExecutionMode.PRIVACY,
             ExecutionMode.HYBRID,
-            ExecutionMode.STANDARD,
-            ExecutionMode.CLOUD,
+            ExecutionMode.HYBRID_API,
         ]
     )
 )
 def test_execution_mode_accepts_valid_values(mode):
-    """Property: All valid execution modes should be accepted."""
+    """Property: Supported execution modes should be accepted."""
     config = TraigentConfig(execution_mode=mode)
     # Privacy mode should be converted to hybrid with privacy_enabled
     if isinstance(mode, str) and mode == "privacy":
@@ -131,6 +129,17 @@ def test_execution_mode_accepts_valid_values(mode):
     else:
         expected = mode.value if isinstance(mode, ExecutionMode) else mode
         assert config.execution_mode == expected
+
+
+@given(
+    st.sampled_from(["standard", "cloud", ExecutionMode.STANDARD, ExecutionMode.CLOUD])
+)
+def test_execution_mode_rejects_removed_or_reserved_values(mode):
+    """Property: Removed and reserved modes should be rejected."""
+    from traigent.utils.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError):
+        TraigentConfig(execution_mode=mode)
 
 
 @given(
@@ -259,7 +268,17 @@ def test_custom_params_preserved(custom_params):
 
 @given(
     st.sampled_from(
-        ["edge_analytics", "privacy", "hybrid", "standard", "cloud", "", "  ", None]
+        [
+            "edge_analytics",
+            "privacy",
+            "hybrid",
+            "hybrid_api",
+            "standard",
+            "cloud",
+            "",
+            "  ",
+            None,
+        ]
     )
 )
 def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
@@ -269,7 +288,7 @@ def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
 
     # Empty strings and None should use default
     if not mode_str or (isinstance(mode_str, str) and not mode_str.strip()):
-        assert result == ExecutionMode.CLOUD  # default
+        assert result == ExecutionMode.EDGE_ANALYTICS  # default
 
 
 @given(

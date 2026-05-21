@@ -12,7 +12,7 @@ import copy
 from collections.abc import Callable
 from typing import Any, cast
 
-from traigent.config.types import ExecutionMode
+from traigent.config.types import validate_execution_mode
 from traigent.core.constants import (
     DEFAULT_EXECUTION_MODE,
     DEFAULT_MAX_TOKENS,
@@ -29,6 +29,7 @@ from traigent.core.objectives import (
 from traigent.core.types import Parameter, ParameterType
 from traigent.core.types_ext import ValidationResult
 from traigent.core.utils import create_validation_result
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -178,18 +179,11 @@ class OptimizedFunctionConfig:
                 f"Invalid injection_mode: {self.injection_mode}. Must be one of {valid_injection_modes}"
             )
 
-        # Validate execution mode
-        valid_execution_modes = [
-            ExecutionMode.EDGE_ANALYTICS.value,
-            ExecutionMode.HYBRID.value,
-            ExecutionMode.PRIVACY.value,
-            ExecutionMode.STANDARD.value,
-            ExecutionMode.CLOUD.value,
-        ]
-        if self.execution_mode not in valid_execution_modes:
-            errors.append(
-                f"Invalid execution_mode: {self.execution_mode}. Must be one of {valid_execution_modes}"
-            )
+        # Validate execution mode against the public support contract.
+        try:
+            validate_execution_mode(self.execution_mode)
+        except ConfigurationError as exc:
+            errors.append(f"Invalid execution_mode: {self.execution_mode}. {exc}")
 
         # Validate objectives
         if not self.objective_schema.objectives:

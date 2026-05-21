@@ -859,5 +859,5 @@ class TestTraigentClientEdgeAnalyticsMode:
         from traigent.traigent_client import TraigentClient
         from traigent.utils.exceptions import ConfigurationError
 
-        with pytest.raises(ConfigurationError, match="not yet supported"):
+        with pytest.raises(ConfigurationError, match="not available yet"):
             TraigentClient(execution_mode="cloud", agent_builder=None)
