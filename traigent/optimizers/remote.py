@@ -25,10 +25,10 @@ logger = get_logger(__name__)
 
 
 _NO_REMOTE_CLIENT_MSG = (
-    "RemoteOptimizer requires a remote suggestion client. Remote optimization "
-    "is not yet implemented as a first-party service, so constructing this "
-    "optimizer without injecting a remote_client used to silently fall back "
-    "to local random search — making the result mislabeled as 'remote'. "
+    "RemoteOptimizer requires both a remote_client and remote_enabled=True. "
+    "Remote optimization is not yet implemented as a first-party service, so "
+    "constructing this optimizer without both arguments used to silently fall "
+    "back to local random search — making the result mislabeled as 'remote'. "
     "If you want random search, pass algorithm='random'. "
     "If you want portal-tracked local execution, pass execution_mode='hybrid' "
     "with one of the supported algorithms (grid, random, bayesian, optuna_*). "
@@ -92,9 +92,16 @@ class RemoteOptimizer(BaseOptimizer):
         self._remote_client = remote_client
 
     def suggest_next_trial(self, history: list[Any]) -> dict[str, Any]:
-        """Suggest the next configuration (fallback path)."""
-        # For now, just use the local fallback. Remote path will be added later.
-        return self._fallback.suggest_next_trial(history)
+        """Remote suggestions require the async API.
+
+        The old sync implementation delegated to local random search, which
+        recreated the fake "remote" completion bug for sync callers.
+        """
+        raise OptimizationError(
+            "RemoteOptimizer does not support synchronous suggestions. "
+            "Use suggest_next_trial_async(), generate_candidates_async(), or "
+            "choose algorithm='random' for local random search."
+        )
 
     async def suggest_next_trial_async(
         self, history: list[Any], remote_context: dict[str, Any] | None = None
@@ -143,8 +150,10 @@ class RemoteOptimizer(BaseOptimizer):
             except Exception as e:
                 logger.warning(f"Remote batch suggestion failed, falling back: {e}")
 
-        # Fallback to base implementation
-        return await super().generate_candidates_async(
+        # Runtime fallback remains explicit: use the local optimizer object,
+        # not RemoteOptimizer.suggest_next_trial(), which intentionally fails
+        # loud for sync callers.
+        return await self._fallback.generate_candidates_async(
             max_candidates, remote_context=remote_context
         )
 

@@ -661,13 +661,12 @@ class TestErrorHandling:
         for thread in threads:
             thread.join()
 
-        # Check results: every worker_thread either reports the
-        # is_constructor_overridden bool, or stores the captured Exception.
-        # Anything else (None, a partially-constructed object, a string)
-        # would indicate a thread-safety regression in worker_thread itself.
+        # Check results: each worker either returned the strict bool promised
+        # by is_constructor_overridden() or stashed an Exception it caught.
+        # Sentinel values like 0/1/None are contract regressions here.
         assert len(results) == 10
         for result in results.values():
-            assert isinstance(result, (bool, Exception))
+            assert result is True or result is False or isinstance(result, Exception)
 
 
 class TestCTDScenarios:

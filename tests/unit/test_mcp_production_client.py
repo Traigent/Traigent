@@ -968,6 +968,26 @@ class TestProductionMCPClientFallback:
         assert response.is_fallback is True
         assert "No fallback available" in response.error_message
 
+    @pytest.mark.asyncio
+    async def test_call_tool_unknown_tool_returns_failed_fallback_marker(self):
+        """Unknown-tool fallback failures keep the fallback marker at call_tool."""
+
+        async def mock_execute(func):
+            return Mock(
+                success=False, last_exception=RuntimeError("server down"), result=None
+            )
+
+        self.client._retry_handler.execute_async = mock_execute
+
+        response = await self.client.call_tool("unknown_tool", {}, "op-unknown")
+
+        assert response.success is False
+        assert response.is_fallback is True
+        assert response.request_id == "op-unknown"
+        assert "server down" in response.error_message
+        assert "No fallback available" in response.error_message
+        assert self.client._operation_results["op-unknown"] is response
+
     def test_mcpresponse_default_is_fallback_is_false(self):
         """Regression for issue #898: a real MCPResponse (constructed at the
         MCP-server result boundary) must default to is_fallback=False so

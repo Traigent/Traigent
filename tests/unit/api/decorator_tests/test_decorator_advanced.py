@@ -234,10 +234,12 @@ class TestOptimizationScenarios(DecoratorTestBase):
         def test_func(text: str) -> str:
             return f"Response: {text}"
 
-        # Documented contract: @optimize(constraints=[...]) returns a callable
-        # wrapper. Internal storage on `_constraints` is an implementation detail
-        # — assert only the documented surface to avoid coupling to private attrs.
+        # The contract being asserted: @optimize accepts a constraints= kwarg
+        # without raising, returns a callable wrapper, and the wrapper can run.
+        # The internal storage of the constraint list (attribute name,
+        # location) is implementation detail and intentionally not asserted.
         assert callable(test_func)
+        assert test_func("hello") == "Response: hello"
 
     def test_cloud_execution_mode(self):
         """Test optimization when execution_mode is cloud."""
