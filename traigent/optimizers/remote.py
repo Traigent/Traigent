@@ -66,7 +66,7 @@ class RemoteOptimizer(BaseOptimizer):
     ) -> None:
         # Fail closed: without a real remote_client, this optimizer cannot do
         # what its name advertises. See module docstring and issue #872.
-        remote_client = kwargs.get("remote_client")
+        remote_client = kwargs.pop("remote_client", None)
         if remote_client is None or not remote_enabled:
             raise OptimizationError(_NO_REMOTE_CLIENT_MSG)
 
