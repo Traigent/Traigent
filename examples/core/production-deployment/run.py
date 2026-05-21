@@ -123,7 +123,7 @@ def _mock_answer(query: str) -> str:
     eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307"],
+        "model": ["gpt-4o-mini", "gpt-4o", "claude-haiku-4-5-20251001"],
         "temperature": [0.0, 0.3, 0.7],
         "max_tokens": [256, 512, 1024],
     },
@@ -143,8 +143,8 @@ def answer_query(query: str) -> str:
         return _mock_answer(query)
 
     # Real implementation would call the LLM here
-    from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model=model, temperature=temperature, max_tokens=max_tokens)
     response = llm.invoke([HumanMessage(content=f"Answer this support query: {query}")])
@@ -178,8 +178,8 @@ def run_with_config(config: dict, query: str) -> str:
     print(f"  [Production] Using saved config: {config}")
     if MOCK:
         return _mock_answer(query)
-    from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
         model=config.get("model", "gpt-4o-mini"),

@@ -35,7 +35,7 @@
 - Injection: seamless (auto_override_frameworks=True)
 - Algorithm: bayesian
 - Dimensions:
-  - `model`: ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"]
+  - `model`: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"]
   - `temperature`: [0.0, 0.2]
   - `max_tokens`: [64, 128]
 - Files: `evaluation_set.jsonl`, `prompt.txt` (optional `context_documents.jsonl`)
@@ -162,7 +162,7 @@
 - Algorithm: grid
 - Dimensions:
   - `prompt_variant`: ["a", "b"]
-  - `model`: ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
+  - `model`: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"]
   - `temperature`: [0.0, 0.2]
 - Files: `evaluation_set.jsonl`, `prompt_a.txt`, `prompt_b.txt`, optional `example_set.jsonl`
 - Eval: Exact match accuracy

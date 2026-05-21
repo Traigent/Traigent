@@ -202,7 +202,7 @@ def respond_safely(prompt_input: str) -> str:
     )
     prompt = f"Instruction: {prompt_input}\n\n{policy}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=0.0,
         timeout=None,
         stop=None,

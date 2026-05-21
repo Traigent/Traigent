@@ -29,7 +29,7 @@ python examples/core/rag-optimization/run.py
 ## Expected Output
 
 ```
-Best config: {'model': 'claude-3-haiku-20240307', 'use_rag': True, 'top_k': 2}
+Best config: {'model': 'claude-haiku-4-5-20251001', 'use_rag': True, 'top_k': 2}
 Best score: 0.85
 ```
 

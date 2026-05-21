@@ -178,18 +178,18 @@ def _generate_mock_telemetry(model: str, use_rag: bool, fast_mode: bool = True) 
     """
     # Model-specific cost ranges (per 1M tokens: input, output)
     model_costs = {
-        "claude-3-5-sonnet-20241022": (3.0, 15.0),  # $3/$15 per 1M tokens
-        "claude-3-opus-20240229": (15.0, 75.0),  # $15/$75 per 1M tokens
-        "claude-3-haiku-20240307": (0.25, 1.25),  # $0.25/$1.25 per 1M tokens
+        "claude-sonnet-4-6": (3.0, 15.0),  # $3/$15 per 1M tokens
+        "claude-opus-4-7": (15.0, 75.0),  # $15/$75 per 1M tokens
+        "claude-haiku-4-5-20251001": (0.25, 1.25),  # $0.25/$1.25 per 1M tokens
     }
 
     # Model-specific latency ranges (seconds)
     # In fast_mode, latencies are scaled down 10x for faster testing
     latency_scale = 0.1 if fast_mode else 1.0
     model_latency = {
-        "claude-3-5-sonnet-20241022": (0.8 * latency_scale, 2.5 * latency_scale),
-        "claude-3-opus-20240229": (1.2 * latency_scale, 3.5 * latency_scale),
-        "claude-3-haiku-20240307": (0.3 * latency_scale, 1.2 * latency_scale),
+        "claude-sonnet-4-6": (0.8 * latency_scale, 2.5 * latency_scale),
+        "claude-opus-4-7": (1.2 * latency_scale, 3.5 * latency_scale),
+        "claude-haiku-4-5-20251001": (0.3 * latency_scale, 1.2 * latency_scale),
     }
 
     # Get model-specific parameters or use defaults
@@ -273,7 +273,7 @@ def _mock_cost_metric(
 
     # Otherwise, generate mock cost based on configuration
     if MOCK and config:
-        model = config.get("model", "claude-3-5-sonnet-20241022")
+        model = config.get("model", "claude-sonnet-4-6")
         use_rag = bool(config.get("use_rag", True))
         telemetry = _generate_mock_telemetry(model, use_rag, fast_mode=True)
         return telemetry["cost"]
@@ -299,9 +299,9 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
     },  # Custom cost metric for realistic mock data
     configuration_space={
         "model": [
-            "claude-3-5-sonnet-20241022",
-            # "claude-3-opus-20240229",
-            "claude-3-haiku-20240307",
+            "claude-sonnet-4-6",
+            # "claude-opus-4-7",
+            "claude-haiku-4-5-20251001",
         ],
         "temperature": [0.0],
         "use_rag": [True, False],
@@ -313,7 +313,7 @@ def answer_question(question: str) -> str:
     """Answer a question using either mock mode or real LLM API."""
     if MOCK:
         cfg = traigent.get_config()
-        model = cfg.get("model", "claude-3-5-sonnet-20241022")
+        model = cfg.get("model", "claude-sonnet-4-6")
         use_rag = bool(cfg.get("use_rag", True))
 
         # Generate realistic telemetry (fast_mode=True for testing)
@@ -332,7 +332,7 @@ def answer_question(question: str) -> str:
         raise APIKeyError("ANTHROPIC_API_KEY")
 
     cfg = traigent.get_config()
-    model = cfg.get("model", "claude-3-5-sonnet-20241022")
+    model = cfg.get("model", "claude-sonnet-4-6")
     temperature = float(cfg.get("temperature", 0.2))
     context = _build_context(
         question,

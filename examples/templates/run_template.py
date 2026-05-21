@@ -409,7 +409,7 @@ def _define_target(
             try:
                 prompt = _build_prompt(question, retrieve_context(question))
                 response = await client.messages.create(
-                    model="claude-3-haiku-20240307",
+                    model="claude-haiku-4-5-20251001",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=256,
                 )

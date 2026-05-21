@@ -90,14 +90,14 @@ def _build_prompt(question: str, context: str | None) -> str:
     eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.2],
         "use_rag": [True, False],
         "top_k": [1, 2, 3],
     },
     execution_mode="edge_analytics",
 )
-def answer_question(question: str, model: str = "claude-3-5-sonnet-20241022", temperature: float = 0.2, use_rag: bool = True, top_k: int = 2) -> str:
+def answer_question(question: str, model: str = "claude-sonnet-4-6", temperature: float = 0.2, use_rag: bool = True, top_k: int = 2) -> str:
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
     ctx = None
     if use_rag and _RETRIEVER is not None:
