@@ -20,8 +20,7 @@ We want to summarize short text snippets. We are optimizing:
 ## Quick Start
 
 ```bash
-# Run in mock mode (no API key needed)
-export TRAIGENT_MOCK_LLM=true
+# Runs in local mock mode automatically when ANTHROPIC_API_KEY is unset.
 python examples/core/simple-prompt/run.py
 ```
 

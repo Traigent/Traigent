@@ -7,8 +7,7 @@ Everything you need to run and adapt examples quickly.
 # Install from repo root (includes example deps)
 pip install -e ".[examples]"
 
-# Mock mode (no keys)
-export TRAIGENT_MOCK_LLM=true
+# Auto-mocks when ANTHROPIC_API_KEY is unset
 python examples/core/simple-prompt/run.py
 
 # With real LLMs

@@ -137,6 +137,10 @@ jobs:
         python examples/quickstart/01_simple_qa.py || true
         echo "Quick validation passed"
 
+    - name: Run bare simple-prompt tutorial
+      run: |
+        python examples/core/simple-prompt/run.py
+
   lint-check:
     runs-on: ubuntu-latest
 
