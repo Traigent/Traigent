@@ -18,20 +18,41 @@ from typing import Any, cast
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import register_optimizer
+from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class RemoteOptimizer(BaseOptimizer):
-    """Optimizer that can request suggestions from a remote service.
+_NO_REMOTE_CLIENT_MSG = (
+    "RemoteOptimizer requires a remote suggestion client. Remote optimization "
+    "is not yet implemented as a first-party service, so constructing this "
+    "optimizer without injecting a remote_client used to silently fall back "
+    "to local random search — making the result mislabeled as 'remote'. "
+    "If you want random search, pass algorithm='random'. "
+    "If you want portal-tracked local execution, pass execution_mode='hybrid' "
+    "with one of the supported algorithms (grid, random, bayesian, optuna_*). "
+    "If you are wiring a remote suggestion backend, pass it explicitly via "
+    "remote_client=... and remote_enabled=True."
+)
 
-    Note: Remote optimization is not implemented yet. This optimizer currently
-    uses a local RandomSearchOptimizer as a placeholder.
+
+class RemoteOptimizer(BaseOptimizer):
+    """Optimizer that requests suggestions from an injected remote service.
+
+    Note: Remote optimization is not implemented as a first-party service yet.
+    To use this optimizer you MUST inject a ``remote_client`` and set
+    ``remote_enabled=True``; otherwise construction raises ``OptimizationError``.
+    There is no longer a silent local-random-search fallback at construction
+    time — that path masqueraded a local run as a remote one and was the
+    surface flagged by issue #872.
 
     - Async suggestion APIs are provided to align with remote access patterns.
-    - Privacy: call sites can pass `remote_context={"privacy_enabled": True}` to
-      indicate indices-only behavior for any remote integration.
+    - Privacy: call sites can pass ``remote_context={"privacy_enabled": True}``
+      to indicate indices-only behavior for any remote integration.
+    - Runtime fallback: when the injected client raises at suggest-time, the
+      optimizer emits a WARNING and falls back to local random search for
+      that single suggestion. This is logged, not silent.
     """
 
     def __init__(
@@ -43,6 +64,12 @@ class RemoteOptimizer(BaseOptimizer):
         remote_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Fail closed: without a real remote_client, this optimizer cannot do
+        # what its name advertises. See module docstring and issue #872.
+        remote_client = kwargs.get("remote_client")
+        if remote_client is None or not remote_enabled:
+            raise OptimizationError(_NO_REMOTE_CLIENT_MSG)
+
         super().__init__(
             config_space,
             objectives,
@@ -52,7 +79,8 @@ class RemoteOptimizer(BaseOptimizer):
         )
         self.remote_enabled = remote_enabled
 
-        # Fallback local optimizer
+        # Runtime fallback (only used when the remote client raises mid-call;
+        # never as a substitute for a missing client — see __init__ guard).
         self._fallback = RandomSearchOptimizer(
             config_space=config_space,
             objectives=objectives,
@@ -61,8 +89,7 @@ class RemoteOptimizer(BaseOptimizer):
             **kwargs,
         )
 
-        # Lightweight mockable remote client; real client to be injected later
-        self._remote_client = kwargs.get("remote_client")
+        self._remote_client = remote_client
 
     def suggest_next_trial(self, history: list[Any]) -> dict[str, Any]:
         """Suggest the next configuration (fallback path)."""
