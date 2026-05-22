@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from traigent_ui.security_utils import safe_problem_module_path
+
 from .example_generator import GeneratedExample
 
 
@@ -252,10 +254,14 @@ register_problem("{name}", {class_name})
         result_processing = self._generate_result_processing(output_type)
 
         # Generate custom metrics calculation
-        custom_metrics_calc = self._generate_custom_metrics(output_type, custom_metrics or [])
+        custom_metrics_calc = self._generate_custom_metrics(
+            output_type, custom_metrics or []
+        )
 
         # Generate function description
-        function_description = self._generate_function_description(description, output_type)
+        function_description = self._generate_function_description(
+            description, output_type
+        )
 
         # Generate temperature range as proper list
         temp_start, temp_end = temperature_range
@@ -276,7 +282,9 @@ register_problem("{name}", {class_name})
             )
 
         # Generate optimization objectives
-        optimization_objectives = all_metrics[:2] if len(all_metrics) >= 2 else all_metrics
+        optimization_objectives = (
+            all_metrics[:2] if len(all_metrics) >= 2 else all_metrics
+        )
 
         # Format the template
         code = self.base_template.format(
@@ -309,6 +317,12 @@ register_problem("{name}", {class_name})
         """
         Add examples to an existing problem module.
 
+        ``problem_name`` is validated against an allow-list and the resulting
+        module path is constrained to live inside the langchain_problems
+        package directory next to this module. This prevents path-traversal
+        sequences like ``../../etc/passwd`` from resolving outside the
+        plugin's problem catalog.
+
         Args:
             problem_name: Name of existing problem
             new_examples: New examples to add
@@ -316,8 +330,11 @@ register_problem("{name}", {class_name})
         Returns:
             Updated module code
         """
-        # Read existing module
-        module_path = Path(f"traigent_ui/langchain_problems/{problem_name}.py")
+        # Anchor on the langchain_problems sibling package of this module so
+        # the path is independent of CWD and cannot be tricked by relative
+        # segments in ``problem_name``.
+        problems_dir = Path(__file__).resolve().parent.parent / "langchain_problems"
+        module_path = safe_problem_module_path(problem_name, problems_dir)
         if not module_path.exists():
             raise FileNotFoundError(f"Problem module not found: {module_path}")
 
@@ -499,7 +516,9 @@ Extracted information (return as JSON):"""'''
             return """# Extract text result
             result = response.content.strip()"""
 
-    def _generate_custom_metrics(self, output_type: str, custom_metrics: list[str]) -> str:
+    def _generate_custom_metrics(
+        self, output_type: str, custom_metrics: list[str]
+    ) -> str:
         """Generate custom metrics calculation."""
         base_metrics = """# Basic metrics
         total_results = len(results)
@@ -608,7 +627,9 @@ Extracted information (return as JSON):"""'''
         }
 
         # Get metrics for the output type
-        metrics = problem_type_metrics.get(output_type, ["quality", "accuracy", "relevance"])
+        metrics = problem_type_metrics.get(
+            output_type, ["quality", "accuracy", "relevance"]
+        )
 
         # Always include success_rate as base metric
         return ["success_rate"] + metrics[:3]  # Limit to 4 metrics total
@@ -698,7 +719,9 @@ Extracted information (return as JSON):"""'''
             },
         }
 
-    def _replace_examples_in_code(self, code: str, new_examples_data: str, total_count: int) -> str:
+    def _replace_examples_in_code(
+        self, code: str, new_examples_data: str, total_count: int
+    ) -> str:
         """Replace examples data in existing code."""
         import re
 

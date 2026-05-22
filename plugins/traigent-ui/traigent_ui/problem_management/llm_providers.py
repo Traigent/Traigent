@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+from traigent_ui.security_utils import safe_claude_code_options, wrap_untrusted
+
 from .example_generator import ExampleGenerator
 
 # Try to import Claude Code SDK
@@ -202,11 +204,15 @@ class ClaudeCodeSDKProvider(LLMProvider):
             # Build the generation prompt
             generation_prompt = self._build_claude_code_prompt(prompt, count)
 
-            # Use Claude Code SDK to generate examples
+            # Use Claude Code SDK to generate examples. The default Claude
+            # Code SDK sandbox is preserved here — see
+            # ``traigent_ui.security_utils.safe_claude_code_options`` for the
+            # local-only opt-in needed to enable ``bypassPermissions``.
             messages = []
             async for message in query(
                 prompt=generation_prompt,
-                options=ClaudeCodeOptions(
+                options=safe_claude_code_options(
+                    ClaudeCodeOptions,
                     system_prompt="You are an expert at generating diverse, high-quality training examples for LLM optimization problems. Always respond with valid JSON only.",
                     max_turns=1,  # We only need one response
                 ),
@@ -254,9 +260,19 @@ class ClaudeCodeSDKProvider(LLMProvider):
             )
 
     def _build_claude_code_prompt(self, base_prompt: str, count: int) -> str:
-        """Build the prompt for Claude Code SDK."""
+        """Build the prompt for Claude Code SDK.
+
+        ``base_prompt`` already includes structured sections built upstream
+        (and may include untrusted-data blocks from :mod:`prompt_builder`).
+        Wrap the entire base prompt in another untrusted-data sentinel
+        here as defense in depth so this provider's instructions cannot be
+        overridden by a malicious payload that snuck through.
+        """
+        wrapped_base = wrap_untrusted(
+            "provider_base_prompt", base_prompt, max_chars=8000
+        )
         return f"""
-{base_prompt}
+{wrapped_base}
 
 Please generate {count} diverse and unique examples following this exact JSON format:
 
@@ -415,9 +431,17 @@ class OpenAIProvider(LLMProvider):
             )
 
     def _build_openai_prompt(self, base_prompt: str, count: int) -> str:
-        """Build the prompt for OpenAI."""
+        """Build the prompt for OpenAI.
+
+        The ``base_prompt`` is wrapped as untrusted data so prompt-injection
+        attempts in caller-supplied descriptions/instructions cannot escape
+        the surrounding generation contract.
+        """
+        wrapped_base = wrap_untrusted(
+            "provider_base_prompt", base_prompt, max_chars=8000
+        )
         return f"""
-{base_prompt}
+{wrapped_base}
 
 Please generate {count} diverse examples following this exact JSON format:
 
@@ -559,8 +583,11 @@ class AnthropicProvider(LLMProvider):
 
     def _build_anthropic_prompt(self, base_prompt: str, count: int) -> str:
         """Build the prompt for Anthropic."""
+        wrapped_base = wrap_untrusted(
+            "provider_base_prompt", base_prompt, max_chars=8000
+        )
         return f"""
-{base_prompt}
+{wrapped_base}
 
 Please generate {count} diverse examples following this exact JSON format:
 
@@ -679,8 +706,11 @@ class ClaudeAPIProvider(LLMProvider):
 
     def _build_claude_prompt(self, base_prompt: str, count: int) -> str:
         """Build an optimized prompt for Claude to generate diverse examples."""
+        wrapped_base = wrap_untrusted(
+            "provider_base_prompt", base_prompt, max_chars=8000
+        )
         return f"""
-{base_prompt}
+{wrapped_base}
 
 Your task is to generate {count} diverse and unique examples.
 
