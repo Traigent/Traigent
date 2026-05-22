@@ -63,6 +63,10 @@ _DEFAULT_MCP_SERVER_CANDIDATES = (
     "traigent_backend.mcp.server",
     "optigen_backend.mcp.server",
 )
+# Synthetic placeholder used by ``AgentSpecification.__post_init__`` when no
+# id is supplied. Must match ``traigent.cloud.models.AgentSpecification`` —
+# kept in sync via tests that exercise the default-spec path. See issue #900.
+_SYNTHETIC_AGENT_ID = "test-agent"
 
 
 def resolve_default_mcp_server_module() -> str:
@@ -668,8 +672,13 @@ class ProductionMCPClient:
             "custom_tools": backend_agent.get("custom_tools"),
             "metadata": backend_agent.get("metadata") or {},
         }
-        if backend_agent.get("agent_id") is not None:
-            arguments["agent_id"] = backend_agent["agent_id"]
+        # Only forward an explicit user-supplied agent_id. ``AgentSpecification.__post_init__``
+        # fills ``id`` with the synthetic sentinel ``"test-agent"`` when unset, which would
+        # cause backend ID collisions across default-spec callers if we forwarded it
+        # unconditionally. See issue #900 / Codex review on PR #1016.
+        spec_id = backend_agent.get("agent_id")
+        if spec_id is not None and spec_id != _SYNTHETIC_AGENT_ID:
+            arguments["agent_id"] = spec_id
 
         return await self.call_tool("create_agent", arguments)
 

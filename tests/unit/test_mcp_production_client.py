@@ -328,12 +328,12 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert result.success is False, (
-                    "Timeout should result in failed response"
-                )
-                assert "timeout" in result.error_message.lower(), (
-                    "Error message should mention timeout"
-                )
+                assert (
+                    result.success is False
+                ), "Timeout should result in failed response"
+                assert (
+                    "timeout" in result.error_message.lower()
+                ), "Error message should mention timeout"
 
 
 class TestMCPRetryMechanism:
@@ -1880,6 +1880,46 @@ class TestCreateAgent:
         # No spurious legacy keys.
         assert "agent_type" not in arguments
         assert "platform" not in arguments
+        # Issue #900 / Codex review on PR #1016: ``AgentSpecification.__post_init__``
+        # fills ``id`` with the synthetic sentinel ``"test-agent"`` when unset.
+        # We must NOT forward that placeholder as ``agent_id`` — doing so would
+        # cause backend ID collisions across every default-spec caller.
+        assert "agent_id" not in arguments
+
+    @pytest.mark.asyncio
+    async def test_create_agent_payload_omits_synthetic_default_id(self):
+        """Default AgentSpecification() must not forward the synthetic ``test-agent`` id.
+
+        Regression guard for the Codex finding on PR #1016: forwarding the
+        ``__post_init__`` placeholder id would collide on the backend for every
+        caller that did not supply an explicit id.
+        """
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        # Default spec — id resolves to "test-agent" via __post_init__.
+        default_spec = AgentSpecification()
+        assert default_spec.id == "test-agent"
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(success=True, data={})
+            await self.client.create_agent(default_spec)
+
+        _, arguments = mock_call_tool.call_args.args
+        assert "agent_id" not in arguments
+
+        # Now verify that an explicit user-supplied id IS forwarded.
+        explicit_spec = AgentSpecification(id="agent_xyz")
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(success=True, data={})
+            await self.client.create_agent(explicit_spec)
+
+        _, arguments = mock_call_tool.call_args.args
+        assert arguments.get("agent_id") == "agent_xyz"
 
 
 class TestUploadDataset:
