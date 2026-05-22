@@ -485,23 +485,32 @@ from traigent.config.parallel import ParallelConfig
 ```python
 from traigent.api.decorators import MockModeOptions
 
+# DEPRECATED: MockModeOptions and its fields are inert in the current SDK.
+# They round-trip cleanly for backwards compatibility but do not affect
+# runtime behavior. Enable mock mode in local tutorial or test code by
+# calling traigent.testing.enable_mock_mode_for_quickstart(). The legacy
+# TRAIGENT_MOCK_LLM=true env var remains for shell fixtures only and
+# emits DeprecationWarning when users set it directly. See issue #874.
 @traigent.optimize(
-    mock=MockModeOptions(
-        enabled=True,
-        override_evaluator=True,
-        base_accuracy=0.75,
-        variance=0.25,
-    ),
+    mock=MockModeOptions(enabled=True),  # inert; kept for config round-trip
     ...
 )
 ```
 
-**MockModeOptions Fields**:
+**MockModeOptions Fields (DEPRECATED — all inert)**:
 
-- `enabled`: Enable mock mode
-- `override_evaluator`: Use mock evaluator
-- `base_accuracy`: Base accuracy for mock results
-- `variance`: Variance in mock results
+The fields below are kept on the schema for backwards compatibility but
+are ignored at runtime. Mock mode is enabled by calling
+`traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. In mock mode the LLM call
+layer is intercepted with canned responses; evaluator scoring (built-in
+or custom) is unchanged — there is no fabricated random-score path.
+
+- `enabled`: Inert. Use `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code to enable mock mode.
+- `override_evaluator`: Inert. The SDK no longer ships a mock evaluator
+  override; custom and local evaluators always run their real scoring
+  logic.
+- `base_accuracy`: Inert. No baseline-accuracy fabrication path remains.
+- `variance`: Inert. No score-variance fabrication path remains.
 
 ### Runtime Overrides
 

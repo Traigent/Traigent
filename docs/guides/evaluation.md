@@ -76,7 +76,7 @@ What this does:
 
 ### 1) Default semantic similarity
 
-- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless running in `TRAIGENT_MOCK_LLM`.
+- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless local mock mode is enabled.
 - Great for natural language tasks where paraphrasing is fine.
 
 ```python
@@ -175,12 +175,15 @@ def strict_agent(query: str) -> str:
 
 ### 5) Mock mode
 
-`TRAIGENT_MOCK_LLM=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
+Call `traigent.testing.enable_mock_mode_for_quickstart()` near the top of local tutorial or test code to intercept external LLM/API calls and replace them with canned/deterministic responses. Your evaluator (custom or the built-in `LocalEvaluator`) still scores those canned responses with its real scoring logic - the SDK no longer synthesizes metrics. Ideal for CI, demos, and budget-safe smoke tests.
 
-```bash
-export TRAIGENT_MOCK_LLM=true
-python your_optimization_script.py
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
+
+For shell-only fixtures, `TRAIGENT_MOCK_LLM=true` remains available outside production for backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 
 ## Troubleshooting
 
@@ -396,8 +399,10 @@ Best accuracy: 0.00
    ```
 
 3. **Use Mock Mode for Testing**
-   ```bash
-   export TRAIGENT_MOCK_LLM=true
+   ```python
+   from traigent.testing import enable_mock_mode_for_quickstart
+
+   enable_mock_mode_for_quickstart()
    ```
 
 ### Issue: Out of Memory

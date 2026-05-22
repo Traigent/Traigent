@@ -237,14 +237,37 @@ class ExecutionOptions(BaseModel):
 
 
 class MockModeOptions(BaseModel):
-    """Fine-grained configuration for mock mode behaviour."""
+    """Fine-grained configuration for mock mode behaviour.
+
+    .. deprecated::
+        **All MockModeOptions fields are inert in the current SDK.**
+        Mock mode is enabled by calling ``traigent.testing.enable_mock_mode_for_quickstart()``
+        from local tutorial or test code, not via this object. The
+        legacy ``TRAIGENT_MOCK_LLM=true`` env var remains available outside
+        production for shell fixtures and backwards compatibility, but
+        direct user-set env-var activation emits ``DeprecationWarning``. ``enabled``,
+        ``override_evaluator``, ``base_accuracy``, and ``variance`` are
+        retained on the schema for backwards compatibility so existing
+        serialized configs round-trip without breaking, but the
+        optimization pipeline ignores all of them. In mock mode the LLM
+        call layer is intercepted with canned/deterministic responses;
+        the scoring path (built-in metrics, custom evaluators, and the
+        ``LocalEvaluator`` accuracy calculator) is unchanged — there is
+        no random-score fabrication. Walkthrough scripts under
+        ``walkthrough/mock/`` use their own helper ``get_mock_accuracy``
+        for example scoring; that helper is example-only and is not part
+        of the SDK runtime behavior.
+
+        This deprecation is doc-only. The fields will be removed in a
+        future major version. See issue #874.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-    enabled: bool = True
-    override_evaluator: bool = True
-    base_accuracy: float = 0.75
-    variance: float = 0.25
+    enabled: bool = True  # inert; see class docstring
+    override_evaluator: bool = True  # inert; see class docstring
+    base_accuracy: float = 0.75  # inert; see class docstring
+    variance: float = 0.25  # inert; see class docstring
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
@@ -1644,8 +1667,16 @@ def optimize(  # NOSONAR(S107)
 
         Mock mode options:
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
-            mock_mode_config: Dict controlling mock behaviour keys such as
-                ``enabled``, ``override_evaluator``, ``base_accuracy``, ``variance``.
+            mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
+                no longer reads ``enabled``, ``override_evaluator``,
+                ``base_accuracy``, or ``variance`` from this dict. Use
+                ``traigent.testing.enable_mock_mode_for_quickstart()`` in
+                local tutorial or test code to enable mock mode. The legacy
+                ``TRAIGENT_MOCK_LLM`` env var remains supported outside
+                production for shell fixtures but emits ``DeprecationWarning``
+                when users set it directly. The parameter is retained for
+                config round-trip;
+                see issue #874.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
