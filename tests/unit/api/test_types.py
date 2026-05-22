@@ -737,8 +737,13 @@ class TestParetoFront:
         best = pareto.get_best_balanced_config()
         assert best["id"] == "B"  # Highest accuracy
 
-    def test_plot_trade_offs(self):
-        """Test plot_trade_offs method (placeholder test)."""
+    def test_plot_trade_offs_raises_with_actionable_message(self):
+        """Regression for issue #893: the previous placeholder method was a
+        public no-op (just ``pass``). A no-op visualization API is
+        indistinguishable from a render bug. It now raises
+        NotImplementedError with a message that names the public data
+        fields users can pipe into matplotlib/plotly directly.
+        """
         pareto = ParetoFront(
             configurations=[{"model": "A"}],
             objective_values=np.array([[0.8, 0.2]]),
@@ -746,9 +751,17 @@ class TestParetoFront:
             is_maximized=[True, False],
         )
 
-        # Method is not implemented, just check it exists and doesn't raise
-        result = pareto.plot_trade_offs("accuracy", "cost")
-        assert result is None  # Method returns None
+        with pytest.raises(NotImplementedError) as exc_info:
+            pareto.plot_trade_offs("accuracy", "cost")
+        msg = str(exc_info.value)
+        assert "experimental" in msg.lower()
+        for field_name in (
+            "configurations",
+            "objective_values",
+            "objectives",
+            "is_maximized",
+        ):
+            assert field_name in msg
 
 
 class TestStrategyConfig:

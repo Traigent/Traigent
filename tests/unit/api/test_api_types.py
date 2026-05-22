@@ -789,9 +789,17 @@ class TestParetoFront:
             is_maximized=[True, False],
         )
 
-        # Method is not implemented, just check it exists and doesn't raise
-        result = pareto.plot_trade_offs("accuracy", "cost")
-        assert result is None  # Method returns None
+        with pytest.raises(NotImplementedError) as exc_info:
+            pareto.plot_trade_offs("accuracy", "cost")
+        msg = str(exc_info.value)
+        assert "experimental" in msg.lower()
+        for field_name in (
+            "configurations",
+            "objective_values",
+            "objectives",
+            "is_maximized",
+        ):
+            assert field_name in msg
 
 
 class TestStrategyConfig:
