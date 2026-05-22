@@ -317,7 +317,7 @@ class TestAuditLogger:
         event = audit_logger.log_event(
             event_type=AuditEventType.DATA_READ,
             user_id="alice@example.com",
-            session_id="session-4111111111111234",
+            session_id="session-4111111111111111",
             tenant_id="tenant-123-45-6789",
             resource_id=FAKE_AUDIT_API_KEY,
             message="Bearer canary.jwt.header.payload.signature",
@@ -330,7 +330,7 @@ class TestAuditLogger:
 
         event_blob = str(event.to_dict())
         assert "alice@example.com" not in event_blob
-        assert "4111111111111234" not in event_blob
+        assert "4111111111111111" not in event_blob
         assert "123-45-6789" not in event_blob
         assert FAKE_AUDIT_API_KEY not in event_blob
         assert "canary.jwt.header.payload.signature" not in event_blob

@@ -56,8 +56,8 @@ CANARIES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ),
     (
         "credit_card",
-        "4111111111111234",
-        re.compile(r"4111[- ]?1111[- ]?1111[- ]?1234"),
+        "4111111111111111",
+        re.compile(r"4111[- ]?1111[- ]?1111[- ]?1111"),
     ),
     (
         "ssn",

@@ -6,25 +6,38 @@ import re
 from collections.abc import Mapping
 from typing import Any, overload
 
-_SENSITIVE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "email",
-        re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-    ),
-    ("ssn", re.compile(r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b")),
-    (
-        "credit_card",
-        re.compile(r"\b(?:\d[ -]?){13,19}\b"),
-    ),
-    (
-        "api_key",
-        re.compile(r"\b(?:sk|pk|ak|rk|api)[-_][A-Za-z0-9][A-Za-z0-9._-]{10,}\b"),
-    ),
-    (
-        "bearer_token",
-        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.IGNORECASE),
-    ),
+_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_SSN_PATTERN = re.compile(r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b")
+_CREDIT_CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+_API_KEY_PATTERN = re.compile(
+    r"\b(?:sk|pk|ak|rk|api)[-_][A-Za-z0-9][A-Za-z0-9._-]{10,}\b"
 )
+_BEARER_TOKEN_PATTERN = re.compile(
+    r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.IGNORECASE
+)
+
+
+def _passes_luhn(digits: str) -> bool:
+    """Return True iff the digit string is a valid Luhn checksum (PAN check)."""
+    total = 0
+    parity = len(digits) % 2
+    for i, ch in enumerate(digits):
+        n = ord(ch) - 48
+        if i % 2 == parity:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+def _redact_credit_card(match: re.Match[str]) -> str:
+    """Redact only digit runs that pass Luhn — avoid false-positives on timestamps."""
+    raw = match.group(0)
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if 13 <= len(digits) <= 19 and _passes_luhn(digits):
+        return "[REDACTED:credit_card]"
+    return raw
 
 
 @overload
@@ -40,8 +53,11 @@ def redact_sensitive_text(value: str | None) -> str | None:
     if value is None:
         return None
     redacted = value
-    for label, pattern in _SENSITIVE_PATTERNS:
-        redacted = pattern.sub(f"[REDACTED:{label}]", redacted)
+    redacted = _EMAIL_PATTERN.sub("[REDACTED:email]", redacted)
+    redacted = _SSN_PATTERN.sub("[REDACTED:ssn]", redacted)
+    redacted = _CREDIT_CARD_CANDIDATE.sub(_redact_credit_card, redacted)
+    redacted = _API_KEY_PATTERN.sub("[REDACTED:api_key]", redacted)
+    redacted = _BEARER_TOKEN_PATTERN.sub("[REDACTED:bearer_token]", redacted)
     return redacted
 
 
