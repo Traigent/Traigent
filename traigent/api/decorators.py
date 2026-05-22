@@ -426,6 +426,13 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Config persistence (Phase 1 of optimization-persistency feature)
     "auto_load_best": False,  # Auto-load best config on decoration
     "load_from": None,  # Explicit path to load config from
+    "config_id": None,  # Stable best-config identifier
+    "best_config_source": "off",  # off|repo|cloud|repo_then_cloud|cloud_then_repo
+    "best_config_strict": False,  # Fail startup/refresh on invalid active source
+    "best_config_cache_dir": None,  # Local cloud best-config cache
+    "best_config_cache_ttl_seconds": 24 * 60 * 60,  # Fresh cache window
+    "best_config_stale_ok_ttl_seconds": None,  # Offline stale-cache reuse window
+    "enable_auto_load_dev_logs": None,  # Back-compat dev-log auto-load toggle
     # Tuned variable auto-detection
     "auto_detect_tvars": False,  # Log suggestions when no configuration_space is set
     "auto_detect_tvars_mode": None,  # "off" | "suggest" | "apply"
@@ -528,6 +535,13 @@ class LegacyOptimizeArgs:
     # Config persistence
     auto_load_best: bool | None = None
     load_from: str | None = None
+    config_id: str | None = None
+    best_config_source: str | None = None
+    best_config_strict: bool | None = None
+    best_config_cache_dir: str | None = None
+    best_config_cache_ttl_seconds: int | None = None
+    best_config_stale_ok_ttl_seconds: int | None = None
+    enable_auto_load_dev_logs: bool | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -607,6 +621,13 @@ class LegacyOptimizeArgs:
             ("global_measures", self.global_measures),
             ("auto_load_best", self.auto_load_best),
             ("load_from", self.load_from),
+            ("config_id", self.config_id),
+            ("best_config_source", self.best_config_source),
+            ("best_config_strict", self.best_config_strict),
+            ("best_config_cache_dir", self.best_config_cache_dir),
+            ("best_config_cache_ttl_seconds", self.best_config_cache_ttl_seconds),
+            ("best_config_stale_ok_ttl_seconds", self.best_config_stale_ok_ttl_seconds),
+            ("enable_auto_load_dev_logs", self.enable_auto_load_dev_logs),
         ]
 
 
@@ -1572,6 +1593,13 @@ def optimize(  # NOSONAR(S107)
     # Config persistence
     auto_load_best: bool = False,
     load_from: str | None = None,
+    config_id: str | None = None,
+    best_config_source: str = "off",
+    best_config_strict: bool = False,
+    best_config_cache_dir: str | None = None,
+    best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+    best_config_stale_ok_ttl_seconds: int | None = None,
+    enable_auto_load_dev_logs: bool | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -1849,6 +1877,13 @@ def optimize(  # NOSONAR(S107)
         "global_measures": global_measures,
         "auto_load_best": auto_load_best,
         "load_from": load_from,
+        "config_id": config_id,
+        "best_config_source": best_config_source,
+        "best_config_strict": best_config_strict,
+        "best_config_cache_dir": best_config_cache_dir,
+        "best_config_cache_ttl_seconds": best_config_cache_ttl_seconds,
+        "best_config_stale_ok_ttl_seconds": best_config_stale_ok_ttl_seconds,
+        "enable_auto_load_dev_logs": enable_auto_load_dev_logs,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1931,6 +1966,17 @@ def optimize(  # NOSONAR(S107)
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    config_id_value = combined_settings["config_id"]
+    best_config_source_value = combined_settings["best_config_source"]
+    best_config_strict_value = combined_settings["best_config_strict"]
+    best_config_cache_dir_value = combined_settings["best_config_cache_dir"]
+    best_config_cache_ttl_seconds_value = combined_settings[
+        "best_config_cache_ttl_seconds"
+    ]
+    best_config_stale_ok_ttl_seconds_value = combined_settings[
+        "best_config_stale_ok_ttl_seconds"
+    ]
+    enable_auto_load_dev_logs_value = combined_settings["enable_auto_load_dev_logs"]
     algorithm_value = combined_settings["algorithm"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
@@ -2212,6 +2258,13 @@ def optimize(  # NOSONAR(S107)
             # Config persistence
             auto_load_best=auto_load_best_config,
             load_from=load_from_config,
+            config_id=config_id_value,
+            best_config_source=best_config_source_value,
+            best_config_strict=best_config_strict_value,
+            best_config_cache_dir=best_config_cache_dir_value,
+            best_config_cache_ttl_seconds=best_config_cache_ttl_seconds_value,
+            best_config_stale_ok_ttl_seconds=best_config_stale_ok_ttl_seconds_value,
+            enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
             # Optimizer limits (extracted from combined_settings)
