@@ -40,7 +40,7 @@ dependencies = [
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
-    "PyJWT[crypto]>=2.12.0,<3.0.0",  # Required by traigent.security.jwt_validator and traigent.cloud.auth at import time
+    "PyJWT[crypto]>=2.12.0,<3.0.0",  # CVE-2026-32597 floor; required by traigent.security.jwt_validator and traigent.cloud.auth at import time
     "backoff>=2.2.0",
     "litellm>=1.83.7,<2.0",  # GHSA-xqmj-j6mv-4862 (prompt template SSTI) fixed in 1.83.7; prior: GHSA-69x8-hrgq-fjj8 (see #652). NOTE: floor kept at 1.83.7 because litellm==1.83.14 pins openai==2.24.0 which conflicts with langchain-openai>=1.1.14 (needs openai>=2.26.0)
     "rank-bm25",
@@ -101,8 +101,7 @@ pydanticai = [
 
 # Enterprise security features (Sprint 7)
 security = [
-    "pyjwt>=2.12.0",  # CVE-2026-32597 fix
-    # cryptography and psutil are in core dependencies
+    # PyJWT[crypto], cryptography, psutil are core dependencies — not redeclared here.
     "passlib>=1.7.4",
     "python-multipart>=0.0.26",  # CVE-2026-24486, CVE-2026-40347 fix
     "fastapi>=0.95.0",
