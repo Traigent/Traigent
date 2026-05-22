@@ -104,4 +104,87 @@ async def test_get_next_privacy_trial_updates_session_with_lock(monkeypatch):
     suggestion = await ops.get_next_privacy_trial("session-1", None)
     assert suggestion is not None
     assert lock.enter_count == 1  # Lock entered exactly once for trial retrieval
+    # Regression for #889: receiving a suggestion is NOT a completion.
+    # completed_trials must NOT advance here. The counter advances only in
+    # submit_privacy_trial_results when the result is accepted.
+    assert client._active_sessions["session-1"].completed_trials == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_privacy_trial_results_increments_completed_trials():
+    """Regression for #889: completed_trials advances exactly once per
+    accepted result, not at suggestion time.
+    """
+    lock = FakeLock()
+    client = DummyClient(lock)
+    ops = PrivacyOperations(client)
+
+    client._active_sessions["session-1"] = OptimizationSession(
+        session_id="session-1",
+        function_name="test",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=5,
+        status=OptimizationSessionStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    success = await ops.submit_privacy_trial_results(
+        session_id="session-1",
+        trial_id="trial-1",
+        config={"x": 1},
+        metrics={"accuracy": 0.9},
+        duration=1.0,
+    )
+
+    assert success is True
     assert client._active_sessions["session-1"].completed_trials == 1
+
+    # Submit a second result; counter advances to 2 (exactly once per submit).
+    success = await ops.submit_privacy_trial_results(
+        session_id="session-1",
+        trial_id="trial-2",
+        config={"x": 2},
+        metrics={"accuracy": 0.8},
+        duration=1.0,
+    )
+    assert success is True
+    assert client._active_sessions["session-1"].completed_trials == 2
+
+
+@pytest.mark.asyncio
+async def test_submit_privacy_trial_results_does_not_increment_on_backend_failure():
+    """If the backend submission fails, completed_trials must not advance.
+    Closes the symmetric concern to #889 on the submission side.
+    """
+    lock = FakeLock()
+    client = DummyClient(lock)
+
+    # Make backend submission fail.
+    async def failing_submit(*args, **kwargs):
+        return False
+
+    client._submit_trial_result_via_session = failing_submit  # type: ignore[method-assign]
+    ops = PrivacyOperations(client)
+
+    client._active_sessions["session-1"] = OptimizationSession(
+        session_id="session-1",
+        function_name="test",
+        configuration_space={},
+        objectives=["accuracy"],
+        max_trials=5,
+        status=OptimizationSessionStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    success = await ops.submit_privacy_trial_results(
+        session_id="session-1",
+        trial_id="trial-1",
+        config={"x": 1},
+        metrics={"accuracy": 0.9},
+        duration=1.0,
+    )
+    assert success is False
+    assert client._active_sessions["session-1"].completed_trials == 0
