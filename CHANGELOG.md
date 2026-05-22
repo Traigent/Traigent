@@ -39,7 +39,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.11.3] - 2026-04-04
 
 ### Changed
-- Release-prep version bump on top of 0.11.2; no user-visible behavior change. Published to align PyPI metadata with the next-patch release pipeline.
+- Release-prep version bump on top of 0.11.2; no user-visible behavior change. Published to PyPI at 2026-04-03T22:27:47Z (2026-04-04 local release date) to align metadata with the next-patch release pipeline.
 
 ## [0.11.2] - 2026-04-01
 
