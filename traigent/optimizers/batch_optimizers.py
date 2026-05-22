@@ -61,14 +61,29 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        base_optimizer: BaseOptimizer,
-        batch_config: BatchOptimizationConfig,
+        config_space: dict[str, Any] | None = None,
         objectives: list[str] | None = None,
-        context=None,
+        base_optimizer: BaseOptimizer | None = None,
+        batch_config: BatchOptimizationConfig | None = None,
+        context: Any = None,
+        **kwargs: Any,
     ) -> None:
+        if base_optimizer is None:
+            if config_space is None:
+                raise ValueError(
+                    "ParallelBatchOptimizer requires either a base_optimizer "
+                    "or a config_space."
+                )
+            base_optimizer = RandomSearchOptimizer(config_space, objectives or [])
+        if batch_config is None:
+            batch_config = BatchOptimizationConfig()
+
+        resolved_objectives = (
+            objectives if objectives is not None else base_optimizer.objectives
+        )
         super().__init__(
             config_space=base_optimizer.config_space,
-            objectives=objectives or base_optimizer.objectives,
+            objectives=resolved_objectives,
             context=context,
         )
         self.base_optimizer = base_optimizer
@@ -317,17 +332,29 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        configuration_space: dict[str, Any],
-        objectives: list[str],
-        batch_config: BatchOptimizationConfig,
+        configuration_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        batch_config: BatchOptimizationConfig | None = None,
         pareto_frontier_size: int = 50,
         context=None,
         objective_weights: dict[str, float] | None = None,
+        *,
+        config_space: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        # Support both `configuration_space=` (legacy) and `config_space=`
+        # (registry-standard) keyword aliases.
+        if configuration_space is None:
+            configuration_space = config_space
+        if configuration_space is None:
+            raise ValueError(
+                "MultiObjectiveBatchOptimizer requires a configuration_space."
+            )
+        if batch_config is None:
+            batch_config = BatchOptimizationConfig()
         super().__init__(
             config_space=configuration_space,
-            objectives=objectives,
+            objectives=objectives or [],
             context=context,
             objective_weights=objective_weights,
             **kwargs,
@@ -339,8 +366,9 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         # Define objective directions (True = maximize, False = minimize)
         # Cost should be minimized, accuracy should be maximized
+        resolved_objectives = objectives or []
         self.objective_directions: dict[str, Any] = {}
-        for obj in objectives:
+        for obj in resolved_objectives:
             if (
                 "cost" in obj.lower()
                 or "latency" in obj.lower()
@@ -351,7 +379,9 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 self.objective_directions[obj] = True  # maximize
 
         # Use random search for multi-objective exploration
-        self._base_optimizer = RandomSearchOptimizer(configuration_space, objectives)
+        self._base_optimizer = RandomSearchOptimizer(
+            configuration_space, resolved_objectives
+        )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
@@ -602,13 +632,29 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        base_optimizer: BaseOptimizer,
-        batch_config: BatchOptimizationConfig,
-        context=None,
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        base_optimizer: BaseOptimizer | None = None,
+        batch_config: BatchOptimizationConfig | None = None,
+        context: Any = None,
+        **kwargs: Any,
     ) -> None:
+        if base_optimizer is None:
+            if config_space is None:
+                raise ValueError(
+                    "AdaptiveBatchOptimizer requires either a base_optimizer "
+                    "or a config_space."
+                )
+            base_optimizer = RandomSearchOptimizer(config_space, objectives or [])
+        if batch_config is None:
+            batch_config = BatchOptimizationConfig()
+
+        resolved_objectives = (
+            objectives if objectives is not None else base_optimizer.objectives
+        )
         super().__init__(
             config_space=base_optimizer.config_space,
-            objectives=base_optimizer.objectives,
+            objectives=resolved_objectives,
             context=context,
         )
         self.base_optimizer = base_optimizer
