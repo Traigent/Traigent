@@ -471,3 +471,334 @@ class TestHelpers:
         pos = _find_import_insertion_point(tree)
         # Should point after 'import os' (line 1), not after nested 'import json' (line 4)
         assert pos == 1
+
+
+class TestImportInsertionHeaderHandling:
+    """Regression tests for apply_config #873 — header-aware import insertion."""
+
+    def test_inserts_imports_after_module_docstring(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent('''\
+            """Module docstring stays first."""
+
+            def my_func():
+                pass
+        ''')
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        # Docstring remains the first thing in the file
+        assert modified.startswith('"""Module docstring stays first."""\n')
+        # Both imports are inserted directly after the docstring
+        docstring_idx = modified.index('"""Module docstring stays first."""')
+        import_idx = modified.index("import traigent")
+        assert docstring_idx < import_idx
+        # Decorator follows the imports
+        assert "@traigent.optimize(" in modified
+
+    def test_inserts_imports_after_shebang(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent("""\
+            #!/usr/bin/env python3
+
+            def my_func():
+                pass
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        assert modified.startswith("#!/usr/bin/env python3\n")
+        # Imports must not be placed before the shebang
+        assert modified.index("#!/usr/bin/env python3") < modified.index(
+            "import traigent"
+        )
+
+    def test_inserts_imports_after_encoding_comment(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent("""\
+            # -*- coding: utf-8 -*-
+
+            def my_func():
+                pass
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        assert modified.startswith("# -*- coding: utf-8 -*-\n")
+        assert modified.index("# -*- coding: utf-8 -*-") < modified.index(
+            "import traigent"
+        )
+
+    def test_inserts_imports_after_shebang_and_encoding(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent("""\
+            #!/usr/bin/env python3
+            # -*- coding: utf-8 -*-
+
+            def my_func():
+                pass
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        modified_lines = modified.splitlines()
+        assert modified_lines[0] == "#!/usr/bin/env python3"
+        assert modified_lines[1] == "# -*- coding: utf-8 -*-"
+        # The first import lands strictly after the two-line header.
+        first_import = next(
+            i for i, line in enumerate(modified_lines) if line.startswith("import ")
+        )
+        assert first_import >= 2
+
+    def test_inserts_imports_after_future_import(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent("""\
+            from __future__ import annotations
+
+            def my_func():
+                pass
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        # __future__ import remains first; new imports follow it
+        future_idx = modified.index("from __future__ import annotations")
+        traigent_idx = modified.index("import traigent")
+        assert future_idx < traigent_idx
+
+    def test_inserts_imports_after_full_header_combination(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        source = textwrap.dedent('''\
+            #!/usr/bin/env python3
+            # -*- coding: utf-8 -*-
+            """Module docstring."""
+
+            from __future__ import annotations
+
+            def my_func():
+                pass
+        ''')
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified_lines = src.read_text().splitlines()
+        # Verify each header element is preserved in order before the first
+        # generated import.
+        shebang_idx = modified_lines.index("#!/usr/bin/env python3")
+        encoding_idx = modified_lines.index("# -*- coding: utf-8 -*-")
+        docstring_idx = modified_lines.index('"""Module docstring."""')
+        future_idx = modified_lines.index("from __future__ import annotations")
+        first_import_idx = next(
+            i
+            for i, line in enumerate(modified_lines)
+            if line.strip() == "import traigent"
+        )
+        assert (
+            shebang_idx < encoding_idx < docstring_idx < future_idx < first_import_idx
+        )
+
+    def test_docstring_only_module_no_existing_imports(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        """The base regression case described in issue #873."""
+        source = textwrap.dedent('''\
+            """Docstring."""
+
+            def my_func():
+                pass
+        ''')
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "my_func", backup=False)
+
+        modified = src.read_text()
+        # Should NOT start with the import — should still start with the docstring.
+        assert not modified.startswith("import traigent")
+        assert modified.startswith('"""Docstring."""')
+
+
+class TestFunctionLookupScope:
+    """Regression tests for #873 — top-level/class-method-only lookup."""
+
+    def test_nested_function_only_target_not_found(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        """A name that exists only inside another function is not a valid target."""
+        source = textwrap.dedent("""\
+            def outer():
+                def target():
+                    return 1
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        with pytest.raises(ValueError, match="not found"):
+            apply_config(src, result_with_tvars, "target", backup=False)
+
+    def test_top_level_function_preferred_over_nested_collision(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        """If a name shadows a nested name, decorate the top-level definition."""
+        source = textwrap.dedent("""\
+            def outer():
+                def target():
+                    return "nested"
+
+            def target():
+                return "top"
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "target", backup=False)
+
+        modified = src.read_text()
+        modified_lines = modified.splitlines()
+        # No decorator should be placed at indentation deeper than column 0.
+        assert not any(
+            line.startswith(" ") and "@traigent.optimize(" in line
+            for line in modified_lines
+        )
+        # The single decorator sits immediately above the top-level definition.
+        target_idx = modified_lines.index("def target():")
+        decorator_idx = next(
+            i
+            for i, line in enumerate(modified_lines)
+            if line.startswith("@traigent.optimize(")
+        )
+        assert decorator_idx < target_idx
+        # And no other top-level "def target():" appears between them.
+        between = modified_lines[decorator_idx + 1 : target_idx]
+        assert all("def target" not in line for line in between)
+
+    def test_class_methods_still_resolvable(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        """Class-level methods continue to be valid targets."""
+        source = textwrap.dedent("""\
+            class Agent:
+                def predict(self):
+                    pass
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        apply_config(src, result_with_tvars, "predict", backup=False)
+
+        modified_lines = src.read_text().splitlines()
+        decorator_idx = next(
+            i for i, line in enumerate(modified_lines) if "@traigent.optimize(" in line
+        )
+        # Decorator stays indented to match the method body.
+        assert modified_lines[decorator_idx].startswith("    @traigent.optimize(")
+
+    def test_function_inside_class_method_is_not_targeted(
+        self, tmp_path: Path, result_with_tvars: AutoConfigResult
+    ) -> None:
+        """A function nested inside a method must not be selected."""
+        source = textwrap.dedent("""\
+            class Agent:
+                def predict(self):
+                    def helper():
+                        return 1
+                    return helper()
+        """)
+        src = tmp_path / "agent.py"
+        src.write_text(source)
+
+        with pytest.raises(ValueError, match="not found"):
+            apply_config(src, result_with_tvars, "helper", backup=False)
+
+
+class TestImportInsertionHeaderHelpers:
+    """Unit-level coverage for the new helpers in apply.py."""
+
+    def test_find_import_insertion_point_after_module_docstring(self) -> None:
+        import ast
+
+        source = '"""Module docs."""\n\ndef f(): pass\n'
+        pos = _find_import_insertion_point(
+            ast.parse(source), source.splitlines(keepends=True)
+        )
+        assert pos == 1
+
+    def test_find_import_insertion_point_after_shebang_only(self) -> None:
+        import ast
+
+        source = "#!/usr/bin/env python3\n\ndef f(): pass\n"
+        pos = _find_import_insertion_point(
+            ast.parse(source), source.splitlines(keepends=True)
+        )
+        assert pos == 1
+
+    def test_find_import_insertion_point_after_shebang_and_encoding(self) -> None:
+        import ast
+
+        source = "#!/usr/bin/env python3\n# coding: utf-8\ndef f(): pass\n"
+        pos = _find_import_insertion_point(
+            ast.parse(source), source.splitlines(keepends=True)
+        )
+        assert pos == 2
+
+    def test_find_import_insertion_point_after_future_import(self) -> None:
+        import ast
+
+        source = "from __future__ import annotations\n\ndef f(): pass\n"
+        pos = _find_import_insertion_point(
+            ast.parse(source), source.splitlines(keepends=True)
+        )
+        assert pos == 1
+
+    def test_find_import_insertion_point_ignores_later_string_expression(self) -> None:
+        """A bare string after code is not a module docstring."""
+        import ast
+
+        source = 'value = 1\n"not a module docstring"\ndef f(): pass\n'
+        pos = _find_import_insertion_point(
+            ast.parse(source), source.splitlines(keepends=True)
+        )
+        assert pos == 0
+
+    def test_find_import_insertion_point_empty_file(self) -> None:
+        import ast
+
+        pos = _find_import_insertion_point(ast.parse(""), [])
+        assert pos == 0
+
+    def test_find_function_ignores_nested(self) -> None:
+        import ast
+
+        source = "def outer():\n    def target():\n        pass\n"
+        assert _find_function(ast.parse(source), "target") is None
+
+    def test_find_function_finds_method_in_class(self) -> None:
+        import ast
+
+        source = "class C:\n    def m(self):\n        pass\n"
+        node = _find_function(ast.parse(source), "m")
+        assert node is not None
+        assert node.name == "m"

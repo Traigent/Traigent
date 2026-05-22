@@ -10,9 +10,13 @@ import ast
 import os
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 from traigent.config_generator.types import AutoConfigResult
+
+# PEP 263 encoding declaration. May appear on the first or second source line.
+_ENCODING_COMMENT_RE = re.compile(r"^[ \t\f]*#.*coding[:=][ \t]*[-\w.]+")
 
 # Optional base directory override for path containment checks (S2083).
 # If unset, the current working directory is treated as the trusted base.
@@ -131,7 +135,7 @@ def apply_config(
     # Ensure required imports exist
     import_lines = _collect_needed_imports(decorator_code, tree)
     if import_lines:
-        insert_pos = _find_import_insertion_point(tree)
+        insert_pos = _find_import_insertion_point(tree, lines)
         for i, imp_line in enumerate(import_lines):
             lines.insert(insert_pos + i, imp_line + "\n")
 
@@ -147,11 +151,27 @@ def apply_config(
 def _find_function(
     tree: ast.Module, name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Find a top-level or class-level function by name."""
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == name:
-                return node
+    """Find a top-level or class-level function by name.
+
+    Searches only direct children of the module and direct children of
+    top-level classes. Functions nested inside other functions (closures,
+    locally-defined helpers) are intentionally not considered so that an
+    inner ``def target()`` cannot be silently decorated when the user
+    meant a top-level ``target``.
+    """
+    for node in tree.body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            return node
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if (
+                    isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and child.name == name
+                ):
+                    return child
     return None
 
 
@@ -273,17 +293,55 @@ def _get_existing_imports(tree: ast.Module) -> set[str]:
     return names
 
 
-def _find_import_insertion_point(tree: ast.Module) -> int:
+def _find_import_insertion_point(
+    tree: ast.Module, lines: Sequence[str] | None = None
+) -> int:
     """Find the line number (0-indexed) to insert new imports.
 
-    Only considers module-level import statements to avoid inserting
-    imports inside indented blocks. Returns 0 if there are no
-    top-level imports.
+    The returned index is suitable for ``list.insert(index, ...)``. New
+    imports are placed after every leading construct that must stay at
+    the top of the file:
+
+    - Shebang line (``#!...``) on line 1.
+    - PEP 263 encoding declarations on line 1 or 2.
+    - The module docstring (only when it is the very first statement).
+    - All top-level imports, including ``from __future__ import ...``.
+
+    When the module has no imports the function still respects shebang,
+    encoding, and docstring, so generated imports never land before
+    them.
     """
-    last_import_line = 0
-    for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+    insertion_line = _skip_source_header(lines or ())
+
+    for index, node in enumerate(tree.body):
+        if index == 0 and _is_module_docstring(node):
             end = getattr(node, "end_lineno", node.lineno)
-            if end > last_import_line:
-                last_import_line = end
-    return last_import_line
+            insertion_line = max(insertion_line, end)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            end = getattr(node, "end_lineno", node.lineno)
+            insertion_line = max(insertion_line, end)
+
+    return insertion_line
+
+
+def _skip_source_header(lines: Sequence[str]) -> int:
+    """Return the line index after shebang/encoding header comments."""
+    if not lines:
+        return 0
+    position = 0
+    if lines[0].startswith("#!"):
+        position = 1
+    # PEP 263 limits the encoding declaration to the first two lines.
+    for idx in range(min(2, len(lines))):
+        if _ENCODING_COMMENT_RE.match(lines[idx]):
+            position = max(position, idx + 1)
+    return position
+
+
+def _is_module_docstring(node: ast.stmt) -> bool:
+    """True if ``node`` is a string expression that can be a module docstring."""
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )

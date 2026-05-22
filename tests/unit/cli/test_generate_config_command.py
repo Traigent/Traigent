@@ -263,6 +263,38 @@ class TestGenerateConfigCLI:
             bak_file = tmp_path / "agent.py.bak"
             assert not bak_file.exists()
 
+    def test_apply_inserts_imports_after_docstring(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression test for #873 via the public CLI path.
+
+        Ensures the ``--apply`` workflow does not insert imports before a
+        module docstring even when the source has no existing imports.
+        """
+        source_file = tmp_path / "agent.py"
+        source_file.write_text(
+            '"""Module docstring."""\n\ndef my_agent(query: str) -> str:\n    return query\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        with patch(
+            "traigent.config_generator.generate_config",
+            return_value=_make_result(),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                generate_config,
+                [str(source_file), "-f", "my_agent", "--apply", "--no-backup"],
+            )
+            assert result.exit_code == 0, result.output
+
+        modified = source_file.read_text()
+        assert modified.startswith('"""Module docstring."""\n')
+        assert modified.index('"""Module docstring."""') < modified.index(
+            "import traigent"
+        )
+        assert "@traigent.optimize(" in modified
+
     def test_apply_requires_function(self, tmp_path: Path) -> None:
         source_file = tmp_path / "agent.py"
         source_file.write_text(SAMPLE_SOURCE)
