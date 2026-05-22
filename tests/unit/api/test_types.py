@@ -755,7 +755,12 @@ class TestParetoFront:
             pareto.plot_trade_offs("accuracy", "cost")
         msg = str(exc_info.value)
         assert "experimental" in msg.lower()
-        for field_name in ("configurations", "objective_values", "objectives"):
+        for field_name in (
+            "configurations",
+            "objective_values",
+            "objectives",
+            "is_maximized",
+        ):
             assert field_name in msg
 
 

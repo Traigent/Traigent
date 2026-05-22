@@ -1755,7 +1755,6 @@ class ParetoFront:
             itself raises ``NotImplementedError`` until first-party plotting
             ships.
         """
-        _ = (x_objective, y_objective)
         raise NotImplementedError(
             "ParetoFront.plot_trade_offs() is an experimental visualization "
             "scaffold and has not shipped yet. To render a Pareto trade-off "
