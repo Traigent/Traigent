@@ -1,10 +1,11 @@
 """Tests for Traigent Cloud Service."""
 
 import time
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
+from traigent.cloud.client import CloudRemoteExecutionUnavailableError
 from traigent.cloud.service import (
     OptimizationRequest,
     OptimizationResponse,
@@ -364,32 +365,17 @@ class TestTraigentCloudService:
 
         asyncio.run(run_test())
 
-    def test_run_enhanced_optimization_professional_tier(
+    def test_run_enhanced_optimization_fails_closed(
         self, cloud_service, sample_dataset
     ):
-        """Test enhanced optimization for professional tier."""
+        """The cloud service scaffold must not fabricate local optimization."""
 
         async def run_test():
-            with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            with pytest.raises(
+                CloudRemoteExecutionUnavailableError,
+                match="Cloud remote execution is not available yet",
             ):
-
-                # Mock Bayesian optimizer
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(
-                        best_config={"param": "value"},
-                        best_metrics={"accuracy": 0.9},
-                        trials=[MagicMock() for _ in range(30)],  # 30 trials
-                    )
-                )
-                mock_get_optimizer.return_value = mock_optimizer
-
-                # Mock evaluator
-                mock_evaluator_class.return_value = MagicMock()
-
-                result = await cloud_service._run_enhanced_optimization(
+                await cloud_service._run_enhanced_optimization(
                     dataset=sample_dataset,
                     configuration_space={"param": [1, 2, 3]},
                     objectives=["accuracy"],
@@ -397,220 +383,53 @@ class TestTraigentCloudService:
                     billing_tier="professional",
                 )
 
-                # Verify Bayesian optimizer was requested
-                mock_get_optimizer.assert_called_with(
-                    "bayesian",
-                    {"param": [1, 2, 3]},
-                    ["accuracy"],
-                    max_trials=30,
-                )
-
-                # Verify max_trials was adjusted (1.5x for professional)
-                optimize_call = mock_optimizer.optimize.call_args
-                assert optimize_call[1]["max_trials"] == 30  # 20 * 1.5
-
-                # Verify result
-                assert result["best_config"] == {"param": "value"}
-                assert result["best_metrics"] == {"accuracy": 0.9}
-                assert result["trials_count"] == 30
-
         import asyncio
 
         asyncio.run(run_test())
 
-    def test_run_enhanced_optimization_standard_tier(
-        self, cloud_service, sample_dataset
+    def test_process_optimization_request_reports_unavailable_service(
+        self, cloud_service, optimization_request
     ):
-        """Test enhanced optimization for standard tier."""
+        """Real requests get an explicit unavailable response, not AttributeError."""
 
         async def run_test():
             with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+                patch.object(
+                    cloud_service.billing_manager, "check_usage_limits"
+                ) as mock_limits,
+                patch.object(
+                    cloud_service.subset_selector, "select_optimal_subset"
+                ) as mock_subset,
+                patch.object(
+                    cloud_service.usage_tracker, "record_optimization"
+                ) as mock_record,
             ):
+                mock_limits.return_value = {
+                    "allowed": True,
+                    "estimated_cost": 5.0,
+                    "remaining_credits": 95.0,
+                }
+                mock_subset.return_value = optimization_request.dataset
 
-                # Mock random optimizer
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(
-                        best_config={"param": "value"},
-                        best_metrics={"accuracy": 0.8},
-                        trials=[MagicMock() for _ in range(25)],
-                    )
-                )
-                mock_get_optimizer.return_value = mock_optimizer
-                mock_evaluator_class.return_value = MagicMock()
-
-                await cloud_service._run_enhanced_optimization(
-                    dataset=sample_dataset,
-                    configuration_space={"param": [1, 2, 3]},
-                    objectives=["accuracy"],
-                    max_trials=25,
-                    billing_tier="standard",
+                response = await cloud_service.process_optimization_request(
+                    optimization_request
                 )
 
-                # Verify random optimizer was used
-                mock_get_optimizer.assert_called_with(
-                    "random",
-                    {"param": [1, 2, 3]},
-                    ["accuracy"],
-                    max_trials=25,
+                assert response.status == "failed_unavailable"
+                assert response.best_config == {}
+                assert response.best_metrics == {}
+                assert response.trials_count == 0
+                assert (
+                    response.billing_info["error_type"]
+                    == "CloudRemoteExecutionUnavailableError"
                 )
-
-                # Verify max_trials not adjusted (1.0x for standard)
-                optimize_call = mock_optimizer.optimize.call_args
-                assert optimize_call[1]["max_trials"] == 25
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-    def test_run_enhanced_optimization_enterprise_tier(
-        self, cloud_service, sample_dataset
-    ):
-        """Test enhanced optimization for enterprise tier."""
-
-        async def run_test():
-            with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
-            ):
-
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(
-                        best_config={"param": "value"},
-                        best_metrics={"accuracy": 0.95},
-                        trials=[MagicMock() for _ in range(40)],
-                    )
+                assert (
+                    "object has no attribute 'optimize'"
+                    not in response.billing_info["error"]
                 )
-                mock_get_optimizer.return_value = mock_optimizer
-                mock_evaluator_class.return_value = MagicMock()
-
-                await cloud_service._run_enhanced_optimization(
-                    dataset=sample_dataset,
-                    configuration_space={"param": [1, 2, 3]},
-                    objectives=["accuracy"],
-                    max_trials=20,
-                    billing_tier="enterprise",
-                )
-
-                # Verify Bayesian optimizer was requested
-                mock_get_optimizer.assert_called_with(
-                    "bayesian",
-                    {"param": [1, 2, 3]},
-                    ["accuracy"],
-                    max_trials=40,
-                )
-
-                # Verify max_trials was adjusted (2.0x for enterprise)
-                optimize_call = mock_optimizer.optimize.call_args
-                assert optimize_call[1]["max_trials"] == 40  # 20 * 2.0
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-    def test_run_enhanced_optimization_free_tier(self, cloud_service, sample_dataset):
-        """Test enhanced optimization for free tier."""
-
-        async def run_test():
-            with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
-            ):
-
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(
-                        best_config={"param": "value"},
-                        best_metrics={"accuracy": 0.75},
-                        trials=[MagicMock() for _ in range(10)],
-                    )
-                )
-                mock_get_optimizer.return_value = mock_optimizer
-                mock_evaluator_class.return_value = MagicMock()
-
-                await cloud_service._run_enhanced_optimization(
-                    dataset=sample_dataset,
-                    configuration_space={"param": [1, 2, 3]},
-                    objectives=["accuracy"],
-                    max_trials=20,
-                    billing_tier="free",
-                )
-
-                # Verify random optimizer was used
-                mock_get_optimizer.assert_called_with(
-                    "random",
-                    {"param": [1, 2, 3]},
-                    ["accuracy"],
-                    max_trials=10,
-                )
-
-                # Verify max_trials was adjusted (0.5x for free)
-                optimize_call = mock_optimizer.optimize.call_args
-                assert optimize_call[1]["max_trials"] == 10  # 20 * 0.5
-
-        import asyncio
-
-        asyncio.run(run_test())
-
-    def test_run_enhanced_optimization_fallback_optimizer(
-        self, cloud_service, sample_dataset
-    ):
-        """Test fallback to random optimizer when Bayesian fails."""
-
-        async def run_test():
-            with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
-            ):
-
-                # First call (Bayesian) raises exception, second call (random) succeeds
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(
-                        best_config={"param": "fallback"},
-                        best_metrics={"accuracy": 0.8},
-                        trials=[MagicMock() for _ in range(15)],
-                    )
-                )
-
-                mock_get_optimizer.side_effect = [
-                    Exception("Bayesian not available"),
-                    mock_optimizer,
-                ]
-                mock_evaluator_class.return_value = MagicMock()
-
-                result = await cloud_service._run_enhanced_optimization(
-                    dataset=sample_dataset,
-                    configuration_space={"param": [1, 2, 3]},
-                    objectives=["accuracy"],
-                    max_trials=10,
-                    billing_tier="professional",  # Should try Bayesian first
-                )
-
-                # Verify both optimizer calls
-                assert mock_get_optimizer.call_count == 2
-                mock_get_optimizer.assert_has_calls(
-                    [
-                        call(
-                            "bayesian",
-                            {"param": [1, 2, 3]},
-                            ["accuracy"],
-                            max_trials=15,
-                        ),
-                        call(
-                            "random",
-                            {"param": [1, 2, 3]},
-                            ["accuracy"],
-                            max_trials=15,
-                        ),
-                    ]
-                )
-
-                # Verify result from fallback optimizer
-                assert result["best_config"] == {"param": "fallback"}
+                assert cloud_service.total_optimizations == 0
+                assert cloud_service.total_cost_savings == 0.0
+                mock_record.assert_not_called()
 
         import asyncio
 
@@ -626,14 +445,14 @@ class TestTraigentCloudService:
 
             health = await cloud_service.get_service_health()
 
-            assert health["status"] == "healthy"
+            assert health["status"] == "unavailable"
             assert health["total_optimizations"] == 5
             assert health["average_cost_reduction"] == 50.0  # 2.5/5 * 100
             assert health["service_version"] == "1.0.0"
-            assert "random" in health["available_algorithms"]
-            assert "grid" in health["available_algorithms"]
-            assert "bayesian" in health["available_algorithms"]
-            assert "accuracy" in health["supported_objectives"]
+            assert health["remote_execution_available"] is False
+            assert "not available yet" in health["unavailable_reason"]
+            assert health["available_algorithms"] == []
+            assert health["supported_objectives"] == []
             assert health["max_dataset_size"] == 10000
             assert health["max_trials"] == 1000
             assert "uptime_hours" in health
@@ -924,22 +743,13 @@ class TestEdgeCases:
 
         asyncio.run(run_test())
 
-    def test_optimization_unknown_billing_tier(self, cloud_service, sample_dataset):
-        """Test optimization with unknown billing tier."""
+    def test_run_enhanced_optimization_unknown_billing_tier_also_fails_closed(
+        self, cloud_service, sample_dataset
+    ):
+        """Unknown direct billing-tier calls do not reach optimizer selection."""
 
         async def run_test():
-            with (
-                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
-                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
-            ):
-
-                mock_optimizer = MagicMock()
-                mock_optimizer.optimize = AsyncMock(
-                    return_value=MagicMock(best_config={}, best_metrics={}, trials=[])
-                )
-                mock_get_optimizer.return_value = mock_optimizer
-                mock_evaluator_class.return_value = MagicMock()
-
+            with pytest.raises(CloudRemoteExecutionUnavailableError):
                 await cloud_service._run_enhanced_optimization(
                     dataset=sample_dataset,
                     configuration_space={"param": [1, 2, 3]},
@@ -947,10 +757,6 @@ class TestEdgeCases:
                     max_trials=20,
                     billing_tier="unknown_tier",
                 )
-
-                # Should use standard tier multiplier (1.0) for unknown tier
-                optimize_call = mock_optimizer.optimize.call_args
-                assert optimize_call[1]["max_trials"] == 20  # 20 * 1.0
 
         import asyncio
 
