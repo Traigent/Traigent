@@ -741,17 +741,21 @@ class SessionOperations:
                         session_id,
                     )
 
-        # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize)
-        finalized_via_api = False
+        # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize).
+        # backend_payload is dict on 2xx (possibly empty if the backend gave us
+        # no summary), or None when the endpoint was unavailable/failed. See #890.
+        backend_payload: dict[str, Any] | None = None
         if mapping:
             try:
-                finalized_via_api = await self._finalize_session_via_api(
+                backend_payload = await self._finalize_session_via_api(
                     session_id, mapping.experiment_run_id
                 )
             except CloudServiceError:
                 raise
             except Exception as e:
                 logger.debug(f"Backend finalization API not available: {e}")
+
+        finalized_via_api = backend_payload is not None
 
         # If backend finalization not available, the session may already be auto-finalized
         # Just log this - no need to fail
@@ -775,21 +779,121 @@ class SessionOperations:
         # Revoke security session
         self.client._revoke_security_session(session_id)
 
-        # Create finalization response (simplified version)
+        # Build finalization response. When the backend returned a summary
+        # payload, preserve its fields verbatim. Otherwise mark the summary
+        # as unavailable so callers don't treat empty best_config/best_metrics
+        # as an authoritative "empty optimization" result (per issue #890).
+        backend_summary = backend_payload or {}
+
+        backend_best_config = backend_summary.get("best_config")
+        backend_best_metrics = backend_summary.get("best_metrics")
+        backend_total_trials = backend_summary.get("total_trials")
+        backend_successful_trials = backend_summary.get("successful_trials")
+        backend_total_duration = backend_summary.get("total_duration")
+        backend_cost_savings = backend_summary.get("cost_savings")
+        backend_stop_reason = backend_summary.get("stop_reason")
+        backend_convergence_history = backend_summary.get("convergence_history")
+        backend_full_history = backend_summary.get("full_history")
+
+        summary_fields: list[str] = []
+
+        def _is_real_number(value: Any) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+        response_best_config = (
+            backend_best_config if isinstance(backend_best_config, dict) else {}
+        )
+        if isinstance(backend_best_config, dict):
+            summary_fields.append("best_config")
+
+        response_best_metrics = (
+            backend_best_metrics if isinstance(backend_best_metrics, dict) else {}
+        )
+        if isinstance(backend_best_metrics, dict):
+            summary_fields.append("best_metrics")
+
+        response_total_trials = (
+            int(cast(int | float, backend_total_trials))
+            if _is_real_number(backend_total_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_total_trials):
+            summary_fields.append("total_trials")
+
+        response_successful_trials = (
+            int(cast(int | float, backend_successful_trials))
+            if _is_real_number(backend_successful_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_successful_trials):
+            summary_fields.append("successful_trials")
+
+        response_total_duration = (
+            float(cast(int | float, backend_total_duration))
+            if _is_real_number(backend_total_duration)
+            else 0.0
+        )
+        if _is_real_number(backend_total_duration):
+            summary_fields.append("total_duration")
+
+        response_cost_savings = (
+            float(cast(int | float, backend_cost_savings))
+            if _is_real_number(backend_cost_savings)
+            else 0.0
+        )
+        if _is_real_number(backend_cost_savings):
+            summary_fields.append("cost_savings")
+
+        response_stop_reason = (
+            str(backend_stop_reason) if isinstance(backend_stop_reason, str) else None
+        )
+        if isinstance(backend_stop_reason, str):
+            summary_fields.append("stop_reason")
+
+        response_convergence_history = (
+            backend_convergence_history
+            if isinstance(backend_convergence_history, list)
+            else []
+        )
+        if isinstance(backend_convergence_history, list):
+            summary_fields.append("convergence_history")
+
+        response_full_history = (
+            backend_full_history
+            if include_full_history and isinstance(backend_full_history, list)
+            else ([] if include_full_history else None)
+        )
+        if include_full_history and isinstance(backend_full_history, list):
+            summary_fields.append("full_history")
+
+        # summary_available=True only when at least one documented backend
+        # summary field was type-valid and preserved in the SDK response. A
+        # legacy or malformed payload must not mark a synthetic fallback value
+        # as backend-authoritative. Callers that require specific fields should
+        # inspect metadata["summary_fields"].
+        summary_available = bool(summary_fields)
+
         response = OptimizationFinalizationResponse(
             session_id=session_id,
-            best_config={},
-            best_metrics={},
-            total_trials=completed_trials,
-            successful_trials=completed_trials,
-            total_duration=0.0,
-            cost_savings=0.0,
-            convergence_history=[],
-            full_history=[] if include_full_history else None,
+            best_config=response_best_config,
+            best_metrics=response_best_metrics,
+            total_trials=response_total_trials,
+            successful_trials=response_successful_trials,
+            total_duration=response_total_duration,
+            cost_savings=response_cost_savings,
+            stop_reason=response_stop_reason,
+            convergence_history=response_convergence_history,
+            full_history=response_full_history,
             metadata={
                 "finalized_at": time.time(),
                 "experiment_run_id": mapping.experiment_run_id if mapping else None,
                 "finalized_via_api": finalized_via_api,
+                # summary_available=True iff at least one documented backend
+                # summary field was type-valid and preserved. It does not
+                # imply any specific field is present; inspect summary_fields
+                # before treating best_config/best_metrics as authoritative.
+                "summary_available": summary_available,
+                "summary_fields": summary_fields,
             },
         )
 
@@ -797,7 +901,7 @@ class SessionOperations:
 
     async def _finalize_session_via_api(
         self, session_id: str, experiment_run_id: str
-    ) -> bool:
+    ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
         Args:
@@ -805,11 +909,16 @@ class SessionOperations:
             experiment_run_id: Associated experiment run ID
 
         Returns:
-            True if successfully finalized via API, False otherwise
+            Parsed backend response payload (may be ``{}`` if the backend
+            returned 2xx with an empty body) when finalization succeeded;
+            ``None`` when the endpoint was unavailable, returned a non-2xx
+            status, or failed locally. Per issue #890, callers use this
+            return shape to distinguish "backend gave us a summary" from
+            "backend just accepted the finalize call with no payload".
         """
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping API finalization")
-            return False
+            return None
 
         try:
             # Prepare headers with API key
@@ -839,7 +948,20 @@ class SessionOperations:
                         logger.info(
                             f"✅ Finalized session {session_id} via backend API"
                         )
-                        return True
+                        try:
+                            payload = await response.json()
+                            if not isinstance(payload, dict):
+                                logger.debug(
+                                    "Backend finalize returned non-dict body: %r",
+                                    type(payload).__name__,
+                                )
+                                return {}
+                            return payload
+                        except Exception:
+                            # Backend returned 2xx but body wasn't JSON or
+                            # was empty — finalize succeeded but no summary
+                            # payload to preserve.
+                            return {}
                     elif response.status == 403:
                         error_text = await response.text()
                         self._raise_ownership_error(
@@ -856,10 +978,10 @@ class SessionOperations:
                         logger.debug(
                             f"Backend finalization endpoint returned HTTP {response.status}: {error_text}"
                         )
-                        return False
+                        return None
         except Exception as e:
             logger.debug(f"Error calling backend finalization API: {e}")
-            return False
+            return None
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
         """Delete optimization session and optionally related data.
