@@ -10,6 +10,7 @@ import ast
 import os
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 from traigent.config_generator.types import AutoConfigResult
@@ -131,7 +132,7 @@ def apply_config(
     # Ensure required imports exist
     import_lines = _collect_needed_imports(decorator_code, tree)
     if import_lines:
-        insert_pos = _find_import_insertion_point(tree)
+        insert_pos = _find_import_insertion_point(tree, lines)
         for i, imp_line in enumerate(import_lines):
             lines.insert(insert_pos + i, imp_line + "\n")
 
@@ -148,10 +149,16 @@ def _find_function(
     tree: ast.Module, name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find a top-level or class-level function by name."""
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name == name:
                 return node
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if child.name == name:
+                        return child
+
     return None
 
 
@@ -273,17 +280,57 @@ def _get_existing_imports(tree: ast.Module) -> set[str]:
     return names
 
 
-def _find_import_insertion_point(tree: ast.Module) -> int:
+def _find_import_insertion_point(
+    tree: ast.Module, lines: Sequence[str] | None = None
+) -> int:
     """Find the line number (0-indexed) to insert new imports.
 
     Only considers module-level import statements to avoid inserting
-    imports inside indented blocks. Returns 0 if there are no
-    top-level imports.
+    imports inside indented blocks. If there are no imports yet, places
+    new imports after module header constructs that must stay first:
+    shebang, encoding comments, module docstring, and __future__ imports.
     """
-    last_import_line = 0
-    for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+    insert_line = _find_source_header_end(lines)
+
+    for index, node in enumerate(tree.body):
+        if (index == 0 and _is_module_docstring_node(node)) or _is_future_import(node):
             end = getattr(node, "end_lineno", node.lineno)
-            if end > last_import_line:
-                last_import_line = end
-    return last_import_line
+            if end > insert_line:
+                insert_line = end
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            end = getattr(node, "end_lineno", node.lineno)
+            if end > insert_line:
+                insert_line = end
+    return insert_line
+
+
+def _is_module_docstring_node(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+
+
+def _is_future_import(node: ast.stmt) -> bool:
+    return isinstance(node, ast.ImportFrom) and node.module == "__future__"
+
+
+def _find_source_header_end(lines: Sequence[str] | None) -> int:
+    """Return insertion floor after shebang / encoding comments."""
+    if not lines:
+        return 0
+
+    insert_line = 0
+    if lines[0].startswith("#!"):
+        insert_line = 1
+
+    for idx in range(min(2, len(lines))):
+        if _is_encoding_comment(lines[idx]):
+            insert_line = max(insert_line, idx + 1)
+
+    return insert_line
+
+
+def _is_encoding_comment(line: str) -> bool:
+    return bool(re.match(r"^[ \t\f]*#.*coding[:=][ \t]*[-\w.]+", line))
