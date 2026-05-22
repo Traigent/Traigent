@@ -97,6 +97,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
             config_space=base_optimizer.config_space,
             objectives=resolved_objectives,
             context=context,
+            **kwargs,
         )
         self.base_optimizer = base_optimizer
         self.batch_config = batch_config
@@ -680,6 +681,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             config_space=base_optimizer.config_space,
             objectives=resolved_objectives,
             context=context,
+            **kwargs,
         )
         self.base_optimizer = base_optimizer
         self.batch_config = batch_config

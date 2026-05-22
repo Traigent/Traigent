@@ -13,6 +13,7 @@ from traigent.optimizers.batch_optimizers import (
 )
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.optimizers.registry import get_optimizer
 
 
 class MockInvoker:
@@ -558,3 +559,116 @@ class TestLegacyPositionalConstructors:
         )
 
         assert optimizer.base_optimizer is other_base
+
+
+class TestBaseOptimizerKwargForwarding:
+    """Regression tests that BaseOptimizer kwargs flow through to super().__init__.
+
+    The registry-standard constructor path of ParallelBatchOptimizer and
+    AdaptiveBatchOptimizer accepts ``**kwargs`` but historically dropped them
+    on the floor instead of forwarding to ``BaseOptimizer.__init__``. That
+    silently discarded ``objective_weights`` (and any future BaseOptimizer
+    kwargs) when constructed through ``get_optimizer('parallel_batch', ...)``
+    or ``get_optimizer('adaptive_batch', ...)``, leaving ``objective_weights``
+    at the default equal-weight setting.
+    """
+
+    def setup_method(self):
+        self.config_space = {"param1": [1, 2], "param2": [0.1, 0.2]}
+        self.objectives = ["accuracy", "cost"]
+        self.weights = {"accuracy": 0.7, "cost": 0.3}
+
+    def test_parallel_batch_direct_kwargs_set_objective_weights(self):
+        """Direct construction with objective_weights kwarg lands on attribute."""
+        optimizer = ParallelBatchOptimizer(
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert optimizer.objective_weights == self.weights
+
+    def test_adaptive_batch_direct_kwargs_set_objective_weights(self):
+        """Direct construction with objective_weights kwarg lands on attribute."""
+        optimizer = AdaptiveBatchOptimizer(
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert optimizer.objective_weights == self.weights
+
+    def test_parallel_batch_via_get_optimizer_forwards_objective_weights(self):
+        """get_optimizer('parallel_batch', ...) forwards objective_weights."""
+        optimizer = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert isinstance(optimizer, ParallelBatchOptimizer)
+        assert optimizer.objective_weights == self.weights
+
+    def test_adaptive_batch_via_get_optimizer_forwards_objective_weights(self):
+        """get_optimizer('adaptive_batch', ...) forwards objective_weights."""
+        optimizer = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert isinstance(optimizer, AdaptiveBatchOptimizer)
+        assert optimizer.objective_weights == self.weights
+
+    def test_parallel_batch_weights_affect_composite_score(self):
+        """Forwarded objective_weights actually change composite scoring output.
+
+        ParallelBatchOptimizer scores via scalarize_objectives over
+        ``self.objective_weights``. Two optimizers with different weights must
+        produce different composite scores on the same metric inputs, otherwise
+        ``objective_weights`` is being silently ignored.
+        """
+        equal = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.5, "cost": 0.5},
+        )
+        skewed = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.9, "cost": 0.1},
+        )
+
+        metrics = {"accuracy": 1.0, "cost": 0.0}
+        equal_score = equal._calculate_composite_score(metrics)
+        skewed_score = skewed._calculate_composite_score(metrics)
+
+        assert equal_score != skewed_score
+        # Skewed weights toward the higher-value metric must score above equal weights.
+        assert skewed_score > equal_score
+
+    def test_adaptive_batch_weights_affect_composite_score(self):
+        """Forwarded objective_weights actually change composite scoring output."""
+        equal = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.5, "cost": 0.5},
+        )
+        skewed = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.9, "cost": 0.1},
+        )
+
+        metrics = {"accuracy": 1.0, "cost": 0.0}
+        equal_score = equal._calculate_composite_score(metrics)
+        skewed_score = skewed._calculate_composite_score(metrics)
+
+        assert equal_score != skewed_score
+        assert skewed_score > equal_score
