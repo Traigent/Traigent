@@ -574,6 +574,7 @@ def pipeline(data):
 @traigent.optimize(injection_mode="parameter", config_param="config")
 def train(data, config: TraigentConfig):
     # Type-safe training
+    return train_model(data, config)
 ```
 
 ### Configuration Validation
