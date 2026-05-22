@@ -8,7 +8,14 @@ import pytest
 
 import traigent
 from traigent.api.decorators import optimize
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.core.best_config_runtime import (
+    BestConfigSnapshot,
     BestConfigSource,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
@@ -113,6 +120,31 @@ def test_set_config_sticky_until_clear_override(tmp_path, monkeypatch):
     assert opt_func.clear_override() is False
 
 
+def test_auto_load_does_not_overwrite_override_set_during_resolution(monkeypatch):
+    opt_func = OptimizedFunction(
+        func=context_answer,
+        config_space={"temperature": [0.1, 0.3, 0.8]},
+        config_id="answerer",
+        default_config={"temperature": 0.1},
+    )
+    resolved_snapshot = BestConfigSnapshot.from_config(
+        {"temperature": 0.3},
+        config_id="answerer",
+        source=BestConfigSource.REPO.value,
+    )
+
+    def resolve_after_override():
+        opt_func.set_config({"temperature": 0.8})
+        return resolved_snapshot
+
+    monkeypatch.setattr(opt_func._csm, "_resolve_mode_snapshot", resolve_after_override)
+
+    opt_func._csm.maybe_auto_load_config()
+
+    assert opt_func.current_config["temperature"] == 0.8
+    assert opt_func.best_config_snapshot.source == BestConfigSource.OVERRIDE.value
+
+
 def test_off_source_does_not_read_repo_or_cloud(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     write_repo_best_config(
@@ -133,6 +165,27 @@ def test_off_source_does_not_read_repo_or_cloud(tmp_path, monkeypatch):
 
     assert opt_func.current_config["temperature"] == 0.1
     assert opt_func.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+
+
+def test_cloud_fetch_unimplemented_falls_back_with_warning(tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(
+        "traigent.core.config_state_manager.logger.warning",
+        lambda message, *args: warnings.append(message % args if args else message),
+    )
+
+    opt_func = OptimizedFunction(
+        func=plain_answer,
+        config_space={"temperature": [0.1, 0.3]},
+        config_id="answerer",
+        best_config_source="cloud",
+        best_config_cache_dir=str(tmp_path / "missing-cache"),
+        default_config={"temperature": 0.1},
+    )
+
+    assert opt_func.current_config["temperature"] == 0.1
+    assert opt_func.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    assert any("Cloud best-config fetch is not implemented" in item for item in warnings)
 
 
 def test_invocation_does_not_re_resolve_repo(tmp_path, monkeypatch):
@@ -313,3 +366,60 @@ async def test_repo_best_config_source_supports_async_streaming(tmp_path, monkey
         values.append(value)
 
     assert values == ["hello:0.8"]
+
+
+@pytest.mark.asyncio
+async def test_optimization_completion_refreshes_best_config_snapshot():
+    opt_func = OptimizedFunction(
+        func=context_answer,
+        config_space={"temperature": [0.1, 0.9]},
+        default_config={"temperature": 0.1},
+    )
+
+    class RuntimeConfig:
+        @staticmethod
+        def is_edge_analytics_mode():
+            return False
+
+    opt_func.traigent_config = RuntimeConfig()
+    result = OptimizationResult(
+        trials=[
+            TrialResult(
+                trial_id="trial-1",
+                config={"temperature": 0.9},
+                metrics={"accuracy": 1.0},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=None,
+                metadata={},
+            )
+        ],
+        best_config={"temperature": 0.9},
+        best_score=1.0,
+        optimization_id="opt-1",
+        duration=0.1,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="unit",
+        timestamp=None,
+        metadata={},
+    )
+
+    class FakeOrchestrator:
+        async def optimize(self, *, func, dataset):
+            return result
+
+    await opt_func._run_and_finalize_optimization(
+        FakeOrchestrator(),
+        dataset=object(),
+        effective_config_space={"temperature": [0.1, 0.9]},
+        save_to=None,
+    )
+
+    assert opt_func("hello") == "hello:0.9"
+    assert (
+        opt_func.best_config_snapshot.source
+        == BestConfigSource.APPLY_BEST_CONFIG.value
+    )
+    assert dict(opt_func.best_config_snapshot.config) == {"temperature": 0.9}

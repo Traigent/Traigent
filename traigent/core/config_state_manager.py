@@ -13,7 +13,7 @@ import json
 import os
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -281,6 +281,8 @@ class ConfigStateManager:
                 source=source,
                 strict=True,
             )
+            if snapshot is None:
+                raise ConfigurationError(f"Failed to load best config from {path}")
             merged = {**self.default_config, **thaw_config(snapshot.config)}
             return BestConfigSnapshot.from_config(
                 merged,
@@ -339,6 +341,12 @@ class ConfigStateManager:
                     stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
                     strict=self.best_config_strict,
                 )
+            elif source is BestConfigSource.CLOUD_FETCH:
+                logger.warning(
+                    "Cloud best-config fetch is not implemented in this SDK build; "
+                    "falling through to the next configured source."
+                )
+                snapshot = None
             else:
                 snapshot = None
             if snapshot is not None:
@@ -438,8 +446,8 @@ class ConfigStateManager:
 
     def clear_override(self) -> bool:
         """Clear any sticky per-instance config override and re-resolve sources."""
-        had_override = self._override_sticky
         with self._state_lock:
+            had_override = self._override_sticky
             self._override_sticky = False
         self.maybe_auto_load_config()
         return had_override
@@ -541,8 +549,9 @@ class ConfigStateManager:
 
     def maybe_auto_load_config(self) -> None:
         """Resolve startup best config from explicit, repo, cache, or dev sources."""
-        if self._override_sticky:
-            return
+        with self._state_lock:
+            if self._override_sticky:
+                return
 
         resolved: BestConfigSnapshot | None = None
 
@@ -572,6 +581,8 @@ class ConfigStateManager:
                 )
 
         with self._state_lock:
+            if self._override_sticky:
+                return
             if resolved is None:
                 self._reset_to_default_snapshot()
             else:
@@ -721,7 +732,7 @@ class ConfigStateManager:
         if include_metadata:
             provenance = {
                 "source": self._best_config_snapshot.source,
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
             }
             if self._optimization_results:
                 provenance["optimization_id"] = (
@@ -762,7 +773,7 @@ class ConfigStateManager:
 
         if include_metadata:
             export["function_name"] = getattr(self.func, "__name__", "unknown")
-            export["exported_at"] = datetime.now().isoformat()
+            export["exported_at"] = datetime.now(UTC).isoformat()
             export["traigent_version"] = __version__
 
             if self._optimization_results and self._optimization_results.best_metrics:

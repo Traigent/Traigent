@@ -266,7 +266,7 @@ def load_best_config_spec(
     manifest_entry: dict[str, Any] | None = None,
     source: str = BestConfigSource.REPO.value,
     strict: bool = False,
-) -> BestConfigSnapshot:
+) -> BestConfigSnapshot | None:
     """Load, validate, and freeze one canonical best-config JSON spec."""
 
     spec_path = Path(path)
@@ -289,7 +289,7 @@ def load_best_config_spec(
                 f"Failed to load best config {path}: {exc}"
             ) from exc
         logger.warning("Ignoring invalid best config %s: %s", path, exc)
-        raise
+        return None
 
 
 def snapshot_from_spec(
@@ -356,7 +356,6 @@ def snapshot_from_spec(
         configuration_space=configuration_space,
         forward_compat=bool(spec.get("forward_compat", False)),
     )
-    config_hash = sha256_digest(canonical_json(config))
     spec_hash = raw_spec_hash
 
     provenance = spec.get("provenance", {})
@@ -370,7 +369,6 @@ def snapshot_from_spec(
         spec_hash=spec_hash,
         provenance=provenance,
     )
-    object.__setattr__(snapshot, "config_hash", config_hash)
     return snapshot
 
 

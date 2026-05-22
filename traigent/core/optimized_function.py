@@ -1593,9 +1593,7 @@ class OptimizedFunction:
 
             # Update current config to best found
             if result.best_config:
-                self._current_config = result.best_config.copy()
-                self._best_config = result.best_config.copy()
-                self._setup_function_wrapper()
+                self.apply_best_config(result)
 
             # Set state to OPTIMIZED on success
             self._state = OptimizationState.OPTIMIZED
@@ -1920,9 +1918,7 @@ class OptimizedFunction:
 
             # Update current config and best config (consistent with local optimization)
             if result.best_config:
-                self._current_config = result.best_config.copy()
-                self._best_config = result.best_config.copy()
-                self._setup_function_wrapper()
+                self.apply_best_config(result)
 
             logger.info(
                 "Cloud optimization completed: %s trials, %.1f%% cost reduction",

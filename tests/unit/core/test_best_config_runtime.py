@@ -17,6 +17,7 @@ from traigent.core.best_config_runtime import (
     CloudPublishUnavailableReason,
     canonical_json,
     compute_spec_hash,
+    load_best_config_spec,
     resolve_cloud_cache_best_config,
     resolve_repo_best_config,
     sha256_digest,
@@ -90,9 +91,7 @@ def test_forward_compat_ignores_non_sensitive_unknown_keys():
         forward_compat=True,
     )
 
-    snapshot = snapshot_from_spec(
-        spec, configuration_space={"temperature": [0.1, 0.2]}
-    )
+    snapshot = snapshot_from_spec(spec, configuration_space={"temperature": [0.1, 0.2]})
 
     assert thaw_config(snapshot.config) == {"temperature": 0.2}
 
@@ -160,7 +159,9 @@ def test_repo_manifest_round_trip(tmp_path, monkeypatch):
 def test_repo_invalid_hash_warns_or_raises(tmp_path, monkeypatch):
     repo_root = tmp_path
     config_dir = repo_root / ".traigent" / "best-configs"
-    write_repo_best_config(config_dir, config_id="answerer", config={"temperature": 0.2})
+    write_repo_best_config(
+        config_dir, config_id="answerer", config={"temperature": 0.2}
+    )
 
     manifest_path = config_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -169,11 +170,22 @@ def test_repo_invalid_hash_warns_or_raises(tmp_path, monkeypatch):
 
     monkeypatch.chdir(repo_root)
     assert (
-        resolve_repo_best_config(config_id="answerer", repo_root=repo_root, strict=False)
+        resolve_repo_best_config(
+            config_id="answerer", repo_root=repo_root, strict=False
+        )
         is None
     )
     with pytest.raises(ConfigurationError, match="spec_hash mismatch"):
         resolve_repo_best_config(config_id="answerer", repo_root=repo_root, strict=True)
+
+
+def test_load_best_config_spec_non_strict_ignores_file_errors(tmp_path):
+    missing_path = tmp_path / "missing.json"
+
+    assert load_best_config_spec(missing_path, strict=False) is None
+
+    with pytest.raises(ConfigurationError, match="Failed to load best config"):
+        load_best_config_spec(missing_path, strict=True)
 
 
 def test_config_id_rejects_path_traversal(tmp_path):
@@ -203,7 +215,9 @@ def test_manifest_path_traversal_is_rejected(tmp_path):
                     "answerer": {
                         "path": "../outside.json",
                         "spec_hash": compute_spec_hash(outside_spec),
-                        "config_hash": sha256_digest(canonical_json(outside_spec["config"])),
+                        "config_hash": sha256_digest(
+                            canonical_json(outside_spec["config"])
+                        ),
                     }
                 },
             }
