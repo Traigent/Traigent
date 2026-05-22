@@ -1,12 +1,18 @@
-# Walkthrough — 8 Runnable Examples
+# Walkthrough - 8 Runnable Examples
 
-Step through Traigent's features with 8 progressive examples. All run in mock mode — no API keys, no cost.
+Step through Traigent's features with 8 progressive examples. All run in mock mode - no API keys, no cost.
 
 ## Setup
 
-```bash
-export TRAIGENT_MOCK_LLM=true
+The bundled `walkthrough/mock/*` scripts self-select mock behavior for local demos. For your own tutorial code, prefer the in-code helper:
+
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
+
+The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 
 ## Steps
 
@@ -29,8 +35,7 @@ walkthrough scripts themselves use a helper called `get_mock_accuracy`
 to produce illustrative accuracy numbers (the helper is example-only,
 not part of the SDK runtime).
 
-When you switch to real LLMs (remove `TRAIGENT_MOCK_LLM`, set your API
-keys, and run the `walkthrough/real/*` scripts), your custom evaluator
+When you switch to real LLMs (do not call the helper, unset the legacy `TRAIGENT_MOCK_LLM` env var if present, set your API keys, and run the `walkthrough/real/*` scripts), your custom evaluator
 or the built-in `LocalEvaluator` accuracy calculator scores the real
 LLM outputs end-to-end — the SDK does not fabricate evaluator scores
 in either mode.
@@ -38,8 +43,10 @@ in either mode.
 > Note: The legacy `MockModeOptions` knobs (`enabled`,
 > `override_evaluator`, `base_accuracy`, `variance`) are retained on the
 > schema for backwards compatibility but are **all inert** — mock mode
-> is enabled via the `TRAIGENT_MOCK_LLM` environment variable, not via
-> that object. See issue #874.
+> is activated by `traigent.testing.enable_mock_mode_for_quickstart()`
+> in local code, not via that object. The legacy `TRAIGENT_MOCK_LLM=true`
+> env var remains for shell fixtures and backwards compatibility, but emits
+> `DeprecationWarning` when users set it directly. See issue #874.
 
 ## Optional Extras
 

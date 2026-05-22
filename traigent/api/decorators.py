@@ -207,9 +207,11 @@ class MockModeOptions(BaseModel):
 
     .. deprecated::
         **All MockModeOptions fields are inert in the current SDK.**
-        Mock mode is enabled via the ``TRAIGENT_MOCK_LLM=true`` environment
-        variable (or the equivalent runtime detection in bundled example
-        bootstraps), not via this object. ``enabled``,
+        Mock mode is enabled by calling ``traigent.testing.enable_mock_mode_for_quickstart()``
+        from local tutorial or test code, not via this object. The
+        legacy ``TRAIGENT_MOCK_LLM=true`` env var remains available outside
+        production for shell fixtures and backwards compatibility, but
+        direct user-set env-var activation emits ``DeprecationWarning``. ``enabled``,
         ``override_evaluator``, ``base_accuracy``, and ``variance`` are
         retained on the schema for backwards compatibility so existing
         serialized configs round-trip without breaking, but the
@@ -228,7 +230,7 @@ class MockModeOptions(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-    enabled: bool = True
+    enabled: bool = True  # inert; see class docstring
     override_evaluator: bool = True  # inert; see class docstring
     base_accuracy: float = 0.75  # inert; see class docstring
     variance: float = 0.25  # inert; see class docstring
@@ -1642,9 +1644,13 @@ def optimize(  # NOSONAR(S107)
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
             mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
                 no longer reads ``enabled``, ``override_evaluator``,
-                ``base_accuracy``, or ``variance`` from this dict. Use the
-                ``TRAIGENT_MOCK_LLM`` environment variable to enable mock
-                mode. The parameter is retained for config round-trip;
+                ``base_accuracy``, or ``variance`` from this dict. Use
+                ``traigent.testing.enable_mock_mode_for_quickstart()`` in
+                local tutorial or test code to enable mock mode. The legacy
+                ``TRAIGENT_MOCK_LLM`` env var remains supported outside
+                production for shell fixtures but emits ``DeprecationWarning``
+                when users set it directly. The parameter is retained for
+                config round-trip;
                 see issue #874.
 
         Cost safeguards:
