@@ -252,7 +252,10 @@ class PrivacyOperations:
             return response.suggestion
 
         except CloudRemoteExecutionUnavailableError:
-            # Remote suggestion capability is intentionally not implemented yet.
+            # This subclass would also propagate through CloudServiceError below;
+            # keep the explicit arm so the public capability-gap contract is
+            # visible to readers and grep-able in tests. Remote suggestion
+            # capability is intentionally not implemented yet.
             # This is structurally different from "no more trials" or a
             # transient backend failure — callers MUST be able to tell them
             # apart so they can route to a local optimizer instead of
