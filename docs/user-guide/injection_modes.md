@@ -563,11 +563,12 @@ def preprocess(text):
     max_length = config.get("max_length", 512)
     return truncate(text, max_length)
 
-# Seamless — Traigent rewrites supported LangChain client kwargs
+# Seamless - Traigent rewrites simple local variable assignments
 @traigent.optimize(injection_mode="seamless")
 def pipeline(data):
-    llm = ChatOpenAI(model="gpt-4o-mini")  # injection rewrites kwargs
-    return llm.invoke(data)
+    model = "gpt-4o-mini"
+    temperature = 0.2
+    return call_llm(model=model, temperature=temperature, prompt=data)
 
 # Parameter for type-safe components — receives `config` explicitly
 @traigent.optimize(injection_mode="parameter", config_param="config")
@@ -595,7 +596,7 @@ def process(data):
 | Mode | Best For |
 |------|----------|
 | **Context** (default) | Most cases; dynamic config access via `get_config()` inside your function |
-| **Seamless** | Zero-code-change for LangChain code paths with matching variable names |
+| **Seamless** | Zero-code-change for existing functions with simple variable assignments matching configuration keys |
 | **Parameter** | Type safety; explicit dependencies; team projects |
 | **~~Attribute~~** | **Removed in v2.x** — see Section 4 above for migration guidance. |
 

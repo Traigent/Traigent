@@ -343,7 +343,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | Mode | Best for | How |
 |------|----------|-----|
 | **Context** (default) | All cases | Inside the decorated function, call `traigent.get_config()` to read the active configuration (`config["key"]`). |
-| **Seamless** | Existing codebases with LangChain | Traigent intercepts `ChatOpenAI`, `as_retriever`, etc. — zero code changes for the supported frameworks. Pass `injection_mode="seamless"`. |
+| **Seamless** | Existing functions with simple local config defaults | Pass `injection_mode="seamless"`; Traigent rewrites simple local variable assignments that match configuration keys. |
 | **Parameter** | New development | Pass `injection_mode="parameter"`; the decorated function receives a `config` argument with explicit `config.get("key")` access. |
 
 **[Injection modes guide →](docs/user-guide/injection_modes.md)**
