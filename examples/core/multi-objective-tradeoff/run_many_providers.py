@@ -90,6 +90,28 @@ from traigent.utils.langchain_interceptor import (  # noqa: E402
     capture_langchain_response,
 )
 
+
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+safe_arithmetic = _SAFE_HELPERS.safe_arithmetic
+
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
@@ -303,14 +325,9 @@ def _evaluate_expression(question: str) -> str:
     """Evaluate the mathematical expression embedded in the question."""
 
     expr = _extract_expression(question)
-    expr = expr.replace("^", "**")
-
-    safe_globals = {"__builtins__": {}, "pow": pow, "bin": bin, "int": int}
 
     try:
-        value = eval(
-            expr, safe_globals, {}
-        )  # noqa: S307 - controlled input for examples
+        value = safe_arithmetic(expr)
     except Exception as exc:  # pragma: no cover - defensive fallback
         raise ValueError(f"Failed to evaluate expression '{expr}': {exc}") from exc
 
@@ -381,7 +398,11 @@ def _extract_choice_text(choice: Any) -> str:
                     if isinstance(text, str):
                         parts.append(text)
                 elif hasattr(item, "get"):
-                    text = item.get("text") if callable(getattr(item, "get", None)) else None  # type: ignore[arg-type]
+                    text = (
+                        item.get("text")
+                        if callable(getattr(item, "get", None))
+                        else None
+                    )  # type: ignore[arg-type]
                     if isinstance(text, str):
                         parts.append(text)
                 else:

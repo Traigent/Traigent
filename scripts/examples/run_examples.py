@@ -13,20 +13,69 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
+
+
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+resolve_within = _SAFE_HELPERS.resolve_within
+UntrustedPathError = _SAFE_HELPERS.UntrustedPathError
+
+
+def _project_root() -> Path:
+    """Find the repo root by walking up to the project metadata."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").is_file() and (parent / "examples").is_dir():
+            return parent
+    return here.parent
+
+
+_PROJECT_ROOT = _project_root()
 
 
 class ExampleRunner:
-    """Runner for Traigent examples with validation and reporting."""
+    """Runner for Traigent examples with validation and reporting.
+
+    Security model: ``base_dir`` MUST resolve under the project root, and
+    every discovered example MUST resolve under ``base_dir``. This keeps the
+    subprocess from executing arbitrary attacker-controlled Python files
+    that happen to be reachable from disk.
+    """
 
     def __init__(self, base_dir: str = "examples", verbose: bool = False):
         self.verbose = verbose
-        self.base_dir = base_dir
-        self.results: List[Dict[str, Any]] = []
+        # Constrain base_dir under the project root so callers cannot point
+        # the runner at attacker-controlled directories (e.g. /tmp/scripts).
+        try:
+            self.base_path = resolve_within(_PROJECT_ROOT, base_dir, must_exist=True)
+        except UntrustedPathError as exc:
+            raise UntrustedPathError(
+                f"Base directory {base_dir!r} must be under {_PROJECT_ROOT}: {exc}"
+            ) from exc
+        self.base_dir = str(self.base_path)
+        self.results: list[dict[str, Any]] = []
 
-    def discover_examples(self, pattern: str) -> List[Path]:
+    def discover_examples(self, pattern: str) -> list[Path]:
         """Discover example files matching the pattern."""
-        base_path = Path(self.base_dir)
+        base_path = self.base_path
         if not base_path.exists():
             print(f"❌ Examples directory not found: {base_path}")
             return []
@@ -37,12 +86,21 @@ class ExampleRunner:
             if "archive" in file_path.parts or "shared" in file_path.parts:
                 continue
 
-            if fnmatch.fnmatch(file_path.name, pattern):
-                examples.append(file_path)
+            if not fnmatch.fnmatch(file_path.name, pattern):
+                continue
+
+            # Defence in depth: confirm the discovered path still resolves
+            # under base_dir (rejects symlinks pointing outside the tree).
+            try:
+                examples.append(resolve_within(base_path, file_path))
+            except UntrustedPathError:
+                if self.verbose:
+                    print(f"⚠️  Skipping {file_path}: outside {base_path}")
+                continue
 
         return sorted(examples)
 
-    def run_example(self, example_path: Path, timeout: int = 60) -> Dict[str, Any]:
+    def run_example(self, example_path: Path, timeout: int = 60) -> dict[str, Any]:
         """Run a single example and return results."""
         if self.verbose:
             print(f"🏃 Running {example_path}")
@@ -89,7 +147,7 @@ class ExampleRunner:
 
         return result
 
-    def validate_example_structure(self, example_path: Path) -> List[str]:
+    def validate_example_structure(self, example_path: Path) -> list[str]:
         """Validate example follows the expected structure."""
         issues = []
 
@@ -132,10 +190,10 @@ class ExampleRunner:
             print(f"⚠️  Structure issues in {example.name}: {', '.join(issues)}")
 
     @staticmethod
-    def _status_for_result(result: Dict[str, Any]) -> str:
+    def _status_for_result(result: dict[str, Any]) -> str:
         return "✅" if result["success"] else "❌"
 
-    def _print_failure_details(self, result: Dict[str, Any]) -> None:
+    def _print_failure_details(self, result: dict[str, Any]) -> None:
         if result["success"] or not self.verbose:
             return
         print(f"   Return code: {result.get('return_code', 'unknown')}")
@@ -235,12 +293,12 @@ def main():
 
     args = parser.parse_args()
 
-    base_path = Path(args.base)
-    if not base_path.exists():
-        print(f"❌ Base directory not found: {base_path}")
+    try:
+        runner = ExampleRunner(base_dir=args.base, verbose=args.verbose)
+    except UntrustedPathError as exc:
+        print(f"❌ {exc}")
         return 1
-
-    runner = ExampleRunner(base_dir=str(base_path), verbose=args.verbose)
+    base_path = runner.base_path
 
     print("🚀 Traigent Example Runner")
     print(f"Pattern: {args.pattern}")

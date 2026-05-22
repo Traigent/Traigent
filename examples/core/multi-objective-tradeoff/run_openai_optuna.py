@@ -55,6 +55,28 @@ from traigent.api.types import OptimizationResult  # noqa: E402
 from traigent.config.parallel import ParallelConfig  # noqa: E402
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
 
+
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+safe_arithmetic = _SAFE_HELPERS.safe_arithmetic
+
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
@@ -164,20 +186,14 @@ def _extract_expression(question: str) -> str:
 def _evaluate_expression(question: str) -> str:
     """Evaluate the mathematical expression embedded in the question."""
     expr = _extract_expression(question)
-    expr = expr.replace("^", "**")
-
-    safe_globals = {"__builtins__": {}, "pow": pow, "bin": bin, "int": int}
 
     try:
         # Add 0.1 seconds delay to simulate network latency
         time.sleep(0.1)
-        value = eval(
-            expr, safe_globals, {}
-        )  # noqa: S307 - controlled input for examples
+        value = safe_arithmetic(expr)
     except Exception as exc:  # pragma: no cover - defensive fallback
         raise ValueError(f"Failed to evaluate expression '{expr}': {exc}") from exc
 
-    # Convert to integer
     if isinstance(value, bool):
         value = int(value)
     if isinstance(value, float):
@@ -282,7 +298,9 @@ else:
 parallel_mode = (
     "sequential"
     if CONCURRENCY_PROFILE == "sequential"
-    else "parallel" if CONCURRENCY_PROFILE == "parallel" else "auto"
+    else "parallel"
+    if CONCURRENCY_PROFILE == "parallel"
+    else "auto"
 )
 
 PARALLEL_CONFIG = ParallelConfig(
