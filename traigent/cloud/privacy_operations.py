@@ -316,6 +316,12 @@ class PrivacyOperations:
                 if session:
                     session.completed_trials += 1
                     session.updated_at = datetime.now(UTC)
+                else:
+                    logger.warning(
+                        "Session %s accepted by backend but not found locally; "
+                        "completed_trials not incremented",
+                        session_id,
+                    )
 
             return True
 

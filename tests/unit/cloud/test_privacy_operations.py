@@ -140,6 +140,8 @@ async def test_submit_privacy_trial_results_increments_completed_trials():
 
     assert success is True
     assert client._active_sessions["session-1"].completed_trials == 1
+    # Submit checks the session under lock, then increments under lock.
+    assert lock.enter_count == 2
 
     # Submit a second result; counter advances to 2 (exactly once per submit).
     success = await ops.submit_privacy_trial_results(
@@ -151,6 +153,7 @@ async def test_submit_privacy_trial_results_increments_completed_trials():
     )
     assert success is True
     assert client._active_sessions["session-1"].completed_trials == 2
+    assert lock.enter_count == 4
 
 
 @pytest.mark.asyncio
@@ -188,3 +191,4 @@ async def test_submit_privacy_trial_results_does_not_increment_on_backend_failur
     )
     assert success is False
     assert client._active_sessions["session-1"].completed_trials == 0
+    assert lock.enter_count == 1
