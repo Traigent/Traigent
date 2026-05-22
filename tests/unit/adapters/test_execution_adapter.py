@@ -457,6 +457,10 @@ async def test_local_adapter_semantic_eval_fails_loud_without_configured_evaluat
         "semantic" in msg.lower() and "scoring_function" in msg.lower()
         for msg in error_messages
     ), f"expected fail-loud ERROR log, got: {error_messages}"
+    assert any(
+        "trial_id=semantic-fail-loud" in msg and "example_index=0" in msg
+        for msg in error_messages
+    ), f"expected per-example ERROR context, got: {error_messages}"
 
 
 @pytest.mark.asyncio
@@ -501,12 +505,54 @@ async def test_local_adapter_paraphrased_answers_fail_under_exact_match():
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_paraphrased_answers_pass_with_user_semantic_scorer():
-    """Issue #891 (paired with the exact-match test above): when a user
-    provides their own semantic scoring via a custom ``evaluation_type``
-    branch — here simulated by ``contains`` — the paraphrased answers do
-    pass. This documents that semantic scoring is the user's
-    responsibility, not a built-in default."""
+async def test_local_adapter_exact_match_is_case_insensitive_after_stripping():
+    """Issue #891 regression: docs and `LocalEvaluator` both promise that
+    the default scorer treats `"paris"` and `"Paris"` as equal. The
+    adapter's `exact_match` branch must match — otherwise the public
+    contract diverges between the two code paths.
+
+    This test pins the case-insensitive-after-strip contract for
+    `LocalExecutionAdapter._evaluate_output` specifically (the
+    `LocalEvaluator` path is covered by
+    `test_local_evaluator_paraphrases_*` in test_local_evaluator_accuracy)."""
+
+    class LowercaseAgent:
+        async def execute(self, _input):
+            # Returns the answer in lowercase with surrounding whitespace;
+            # the expected_output is the canonical, title-cased form.
+            return "  paris  "
+
+    adapter = LocalExecutionAdapter(_AgentBuilder(LowercaseAgent()))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"question": "What is the capital of France?"},
+                "expected_output": "Paris",
+                "metadata": {"evaluation_type": "exact_match"},
+            },
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="paris-case-insensitive"
+    )
+
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["accuracy_exact_match"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_paraphrased_answers_pass_under_non_exact_match_type():
+    """Issue #891 (paired with the exact-match test above): the same
+    paraphrased answers that fail under the default `exact_match`
+    contract pass under a non-exact-match `evaluation_type`. Here we use
+    the built-in `contains` branch as a stand-in: it is *not* a semantic
+    scorer (Traigent does not ship one), but it makes the same
+    "paraphrase counts as correct" point on the adapter's public
+    surface. The documented path for real semantic scoring is a
+    user-supplied `scoring_function` (see
+    docs/user-guide/evaluation_guide.md Method 2)."""
 
     class ParaphraseAgent:
         async def execute(self, _input):
@@ -519,16 +565,17 @@ async def test_local_adapter_paraphrased_answers_pass_with_user_semantic_scorer(
             {
                 "input": {"question": "What is the capital of France?"},
                 "expected_output": "Paris",
-                # "contains" is the simplest user-supplied surrogate for a
-                # semantic check: the expected token appears inside the
-                # paraphrased answer.
+                # `contains` is a built-in non-exact-match branch — used
+                # here purely as a surrogate to show that paraphrases
+                # pass under a non-exact-match scorer. It is NOT a
+                # semantic scorer.
                 "metadata": {"evaluation_type": "contains"},
             },
         ]
     }
 
     result = await adapter.execute_configuration(
-        agent_spec={}, dataset=dataset, trial_id="paraphrase-semantic"
+        agent_spec={}, dataset=dataset, trial_id="paraphrase-contains"
     )
 
     assert result["metrics"]["accuracy"] == 1.0
