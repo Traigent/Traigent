@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -67,6 +68,94 @@ __all__ = [
     "example_evaluation_span",
     "record_example_result",
 ]
+
+
+# Substrings that mark a config/payload key as secret-bearing.
+# Span attributes that ship to OTLP exporters MUST scrub these.
+_SECRET_KEY_SUBSTRINGS = (
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "passwd",
+    "token",
+    "authorization",
+    "credential",
+    "private_key",
+    "bearer",
+)
+
+# Patterns for PII-bearing values that may appear in user prompts,
+# expected outputs, or actual outputs. These get scrubbed BEFORE
+# being attached to a span — secret-bearing dict keys aren't enough
+# because raw prompt text, expected text, and actual text are
+# privacy-sensitive even when no key name says so.
+_PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
+        "***EMAIL***",
+    ),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "***SSN***"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_ACCESS_KEY***"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+        "***JWT***",
+    ),
+    (re.compile(r"\b(?:\d[ -]?){12,18}\d\b"), "***CC***"),
+    # NANP-format phone numbers (NNN-NNN-NNNN etc.). Narrow on purpose so
+    # decimal floats and ISO dates aren't false-positives.
+    (re.compile(r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b"), "***PHONE***"),
+    # International phone numbers MUST start with an explicit +.
+    (
+        re.compile(r"\+\d{1,3}[\s\-]\d{1,4}[\s\-]\d{2,4}[\s\-]?\d{3,4}\b"),
+        "***PHONE***",
+    ),
+)
+
+
+def _scrub_pii_text(text: Any) -> Any:
+    """Scrub PII patterns from a free-form string.
+
+    Non-string inputs are returned unchanged so callers can fan out
+    through ``_redact_payload`` without repeated type checks.
+    """
+    if not isinstance(text, str):
+        return text
+    result = text
+    for pattern, replacement in _PII_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def _redact_payload(value: Any) -> Any:
+    """Recursively scrub secrets *and* PII from trace payloads.
+
+    Mirrors ``traigent.core.tracing._redact_payload`` so the plugin
+    path is not a privacy-leak bypass for the SDK's fallback. When the
+    plugin is installed ``traigent.core.tracing`` imports from it
+    wholesale, so the privacy fix has to live here too.
+    """
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, sub in value.items():
+            key_str = str(key).lower()
+            if any(needle in key_str for needle in _SECRET_KEY_SUBSTRINGS):
+                redacted[key] = "***REDACTED***"
+            else:
+                redacted[key] = _redact_payload(sub)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_payload(item) for item in value)
+    if isinstance(value, str):
+        return _scrub_pii_text(value)
+    return value
+
+
+def _scrub_for_export(value: Any) -> Any:
+    """Convenience wrapper that mirrors ``_redact_payload``."""
+    return _redact_payload(value)
 
 
 class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc]
@@ -225,7 +314,7 @@ def _set_session_span_attributes(
         span.set_attribute("traigent.objectives", ",".join(objectives))
     if config_space:
         try:
-            config_str = json.dumps(config_space)
+            config_str = json.dumps(_redact_payload(config_space))
             if len(config_str) > 1000:
                 config_str = config_str[:1000] + "..."
             span.set_attribute("traigent.config_space", config_str)
@@ -289,6 +378,17 @@ def _shorten_key(key: str) -> str:
     return "temp" if short_key == "tempe" else short_key
 
 
+def _safe_value_for_summary(key: str, value: Any) -> str:
+    """Return a span-name-safe rendering of a config value.
+
+    Secret-bearing keys are replaced wholesale, all other values are
+    scrubbed for PII so span names don't leak prompts/messages/content.
+    """
+    if any(needle in key.lower() for needle in _SECRET_KEY_SUBSTRINGS):
+        return "***REDACTED***"
+    return _scrub_pii_text(str(value))
+
+
 def _add_priority_keys(
     config: dict[str, Any], priority_keys: list[str]
 ) -> tuple[list[str], set[str]]:
@@ -298,7 +398,7 @@ def _add_priority_keys(
     for key in priority_keys:
         if key in config:
             short_key = _shorten_key(key)
-            parts.append(f"{short_key}={config[key]}")
+            parts.append(f"{short_key}={_safe_value_for_summary(key, config[key])}")
             seen_keys.add(key)
     return parts, seen_keys
 
@@ -306,12 +406,10 @@ def _add_priority_keys(
 def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
     """Format config dict into a readable summary for span names.
 
-    Args:
-        config: Trial configuration dictionary
-        max_length: Maximum length of the summary
-
-    Returns:
-        Formatted string like "model=gpt-4, temp=0.3"
+    Span names ship to OTLP backends in plaintext, so any value that
+    leaks into the summary is leaked off-host. Values are scrubbed
+    through ``_scrub_pii_text`` (and secret-keyed entries replaced
+    wholesale) before the summary is assembled.
     """
     if not config:
         return ""
@@ -324,7 +422,7 @@ def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
     for key, value in config.items():
         if key in seen_keys or key.startswith("_"):
             continue
-        parts.append(f"{_shorten_key(key)}={value}")
+        parts.append(f"{_shorten_key(key)}={_safe_value_for_summary(key, value)}")
         if len(", ".join(parts)) > max_length:
             break
 
@@ -360,12 +458,9 @@ def _truncate_and_quote(preview: str, max_length: int) -> str:
 def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
     """Format input data into a preview for span names.
 
-    Args:
-        input_data: Input data (dict, string, or other)
-        max_length: Maximum length of the preview
-
-    Returns:
-        Formatted string preview of the input
+    Span names ship to OTLP backends, so PII/secrets in raw prompts /
+    messages / content fields must be scrubbed BEFORE the preview
+    becomes part of the span name.
     """
     if input_data is None:
         return ""
@@ -378,6 +473,7 @@ def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
         else:
             preview = str(input_data)
 
+        preview = _scrub_pii_text(preview)
         return _truncate_and_quote(preview, max_length)
     except Exception:
         return ""
@@ -420,10 +516,11 @@ def trial_span(
         span.set_attribute(
             "trial.display_number", display_number
         )  # 1-based for display
+        redacted_config = _redact_payload(config)
         try:
-            span.set_attribute("trial.config", json.dumps(config))
+            span.set_attribute("trial.config", json.dumps(redacted_config))
         except (TypeError, ValueError):
-            span.set_attribute("trial.config", str(config))
+            span.set_attribute("trial.config", str(redacted_config))
         yield span
 
 
@@ -480,7 +577,10 @@ def record_optimization_complete(
         span.set_attribute("optimization.best_score", best_score)
     if best_config:
         try:
-            span.set_attribute("optimization.best_config", json.dumps(best_config))
+            span.set_attribute(
+                "optimization.best_config",
+                json.dumps(_redact_payload(best_config)),
+            )
         except (TypeError, ValueError):
             pass
     if stop_reason:
@@ -521,37 +621,48 @@ def example_evaluation_span(
         span.set_attribute("example.id", example_id)
         span.set_attribute("example.index", example_index)
         if input_data:
+            redacted_input = _redact_payload(input_data)
             try:
-                input_str = json.dumps(input_data)
+                input_str = json.dumps(redacted_input)
                 # Truncate if too large
                 if len(input_str) > 500:
                     input_str = input_str[:500] + "..."
                 span.set_attribute("example.input", input_str)
             except (TypeError, ValueError):
-                span.set_attribute("example.input", str(input_data)[:500])
+                span.set_attribute("example.input", str(redacted_input)[:500])
         if expected_output is not None:
+            scrubbed_expected = _scrub_for_export(expected_output)
             try:
                 expected_str = (
-                    json.dumps(expected_output)
-                    if not isinstance(expected_output, str)
-                    else expected_output
+                    json.dumps(scrubbed_expected)
+                    if not isinstance(scrubbed_expected, str)
+                    else scrubbed_expected
                 )
                 if len(expected_str) > 200:
                     expected_str = expected_str[:200] + "..."
                 span.set_attribute("example.expected_output", expected_str)
             except (TypeError, ValueError):
                 span.set_attribute(
-                    "example.expected_output", str(expected_output)[:200]
+                    "example.expected_output",
+                    _scrub_pii_text(str(scrubbed_expected))[:200],
                 )
         yield span
 
 
 def _serialize_output(output: Any, max_length: int) -> str:
-    """Serialize output to string with truncation."""
+    """Serialize output to string with truncation.
+
+    Output is scrubbed for PII/secrets before being serialised — raw
+    model output otherwise ships unredacted to OTLP exporters (see local
+    validation gap for traigent/core/tracing.py#issues/0).
+    """
+    scrubbed = _scrub_for_export(output)
     try:
-        output_str = json.dumps(output) if not isinstance(output, str) else output
+        output_str = (
+            json.dumps(scrubbed) if not isinstance(scrubbed, str) else scrubbed
+        )
     except (TypeError, ValueError):
-        output_str = str(output)
+        output_str = _scrub_pii_text(str(scrubbed))
     if len(output_str) > max_length:
         output_str = output_str[:max_length] + "..."
     return output_str

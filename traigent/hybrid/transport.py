@@ -8,7 +8,9 @@ supporting both HTTP REST and MCP transports.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
@@ -214,6 +216,70 @@ class TransportServerError(TransportError):
     pass
 
 
+# Cloud-metadata service hosts must never be reachable through user-supplied
+# hybrid base URLs. The hybrid transport is the most likely SSRF amplifier
+# because it issues authenticated HTTP requests on behalf of the SDK to a
+# user-provided URL — exactly the surface that AWS/GCP/Azure exploits target.
+# Loopback and private networks are intentionally NOT rejected here: the
+# hybrid mode's primary developer flow is ``http://localhost:8080`` for a
+# locally hosted agent service. SSRF mitigation focuses on metadata services
+# and link-local addresses.
+_METADATA_SERVICE_IPS = frozenset(
+    {
+        "169.254.169.254",  # AWS / GCP / Azure / DigitalOcean / OpenStack
+        "100.100.100.200",  # Alibaba Cloud
+        "fd00:ec2::254",  # AWS IPv6 IMDS
+    }
+)
+
+
+def _validate_hybrid_base_url(base_url: str) -> str:
+    """Validate a hybrid-transport HTTP base URL before any request is sent.
+
+    Mitigates SSRF by rejecting non-http(s) schemes (``file://``,
+    ``javascript:``, ``data:``), embedded credentials, query/fragment
+    components, and known cloud-metadata service IPs. Localhost and
+    private addresses remain permitted because the hybrid HTTP mode is
+    primarily a developer-facing transport pointing at a local agent
+    process.
+    """
+    candidate = (base_url or "").strip()
+    if not candidate:
+        raise ValueError("Hybrid transport base_url cannot be empty")
+    if any(ord(ch) < 32 or ch in {" ", "\t", "\n", "\r"} for ch in candidate):
+        raise ValueError("Hybrid transport base_url contains unsafe whitespace")
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Hybrid transport base_url must be http(s) with a host")
+    if parsed.username or parsed.password:
+        raise ValueError("Hybrid transport base_url must not embed credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Hybrid transport base_url must not include query or fragment")
+
+    hostname = parsed.hostname or ""
+    normalized = hostname.strip("[]").rstrip(".").lower()
+    if not normalized:
+        raise ValueError("Hybrid transport base_url must include a hostname")
+    if normalized in _METADATA_SERVICE_IPS:
+        raise ValueError("Hybrid transport base_url targets a cloud metadata service")
+
+    try:
+        host_ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        host_ip = None
+
+    if host_ip is not None:
+        if str(host_ip) in _METADATA_SERVICE_IPS:
+            raise ValueError(
+                "Hybrid transport base_url targets a cloud metadata service"
+            )
+        if host_ip.is_link_local:
+            raise ValueError("Hybrid transport base_url targets a link-local address")
+
+    return candidate.rstrip("/")
+
+
 def create_transport(
     transport_type: Literal["http", "mcp", "auto"] = "auto",
     *,
@@ -266,10 +332,16 @@ def create_transport(
         if base_url is None:
             raise ValueError("base_url is required for HTTP transport")
 
+        # Block scheme tricks (file://, data:, javascript:), embedded
+        # credentials, and cloud-metadata service hosts before any HTTP
+        # request goes out. Localhost stays allowed so the existing
+        # dev-mode flow (``http://localhost:8080``) keeps working.
+        validated_base_url = _validate_hybrid_base_url(base_url)
+
         from traigent.hybrid.http_transport import HTTPTransport
 
         return HTTPTransport(
-            base_url=base_url,
+            base_url=validated_base_url,
             auth_header=auth_header,
             timeout=timeout,
             max_connections=max_connections,

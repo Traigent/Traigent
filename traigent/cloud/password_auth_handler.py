@@ -187,7 +187,21 @@ class PasswordAuthHandler:
         return True
 
     def _is_dev_mode_enabled(self) -> bool:
-        """Return True when running in an explicitly non-production mode."""
+        """Return True when running in an explicitly non-production mode.
+
+        Production detection wins: if ENVIRONMENT names the deployment as
+        production, the dev/mock-auth bypass is refused even when callers
+        set TRAIGENT_DEV_MODE=1 or TRAIGENT_ENV=dev. This protects against
+        a stale dev env var leaking into a production deployment.
+        """
+        try:
+            from traigent.utils.env_config import is_production
+
+            if is_production():
+                return False
+        except Exception as e:  # pragma: no cover - defensive guard
+            logger.debug(f"Could not resolve production env: {e}")
+
         env = os.getenv("TRAIGENT_ENV", "").strip().lower()
         if env in {"dev", "development", "local"}:
             return True
