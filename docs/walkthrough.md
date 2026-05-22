@@ -23,9 +23,23 @@ export TRAIGENT_MOCK_LLM=true
 
 ## What to expect
 
-Each script prints trial results to the console. In mock mode, scores are random — the point is to see the full pipeline run without errors.
+Each script prints trial results to the console. In mock mode the SDK
+intercepts the LLM call layer with canned/deterministic responses; the
+walkthrough scripts themselves use a helper called `get_mock_accuracy`
+to produce illustrative accuracy numbers (the helper is example-only,
+not part of the SDK runtime).
 
-When you're ready for real optimization, remove `TRAIGENT_MOCK_LLM` and set your API keys.
+When you switch to real LLMs (remove `TRAIGENT_MOCK_LLM`, set your API
+keys, and run the `walkthrough/real/*` scripts), your custom evaluator
+or the built-in `LocalEvaluator` accuracy calculator scores the real
+LLM outputs end-to-end — the SDK does not fabricate evaluator scores
+in either mode.
+
+> Note: The legacy `MockModeOptions` knobs (`enabled`,
+> `override_evaluator`, `base_accuracy`, `variance`) are retained on the
+> schema for backwards compatibility but are **all inert** — mock mode
+> is enabled via the `TRAIGENT_MOCK_LLM` environment variable, not via
+> that object. See issue #874.
 
 ## Optional Extras
 

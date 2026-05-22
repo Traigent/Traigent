@@ -175,7 +175,7 @@ def strict_agent(query: str) -> str:
 
 ### 5) Mock mode
 
-`TRAIGENT_MOCK_LLM=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
+`TRAIGENT_MOCK_LLM=true` intercepts external LLM/API calls and replaces them with canned/deterministic responses. Your evaluator (custom or the built-in `LocalEvaluator`) still scores those canned responses with its real scoring logic — the SDK no longer synthesizes metrics. Ideal for CI, demos, and budget-safe smoke tests.
 
 ```bash
 export TRAIGENT_MOCK_LLM=true

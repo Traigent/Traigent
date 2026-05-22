@@ -203,14 +203,35 @@ class ExecutionOptions(BaseModel):
 
 
 class MockModeOptions(BaseModel):
-    """Fine-grained configuration for mock mode behaviour."""
+    """Fine-grained configuration for mock mode behaviour.
+
+    .. deprecated::
+        **All MockModeOptions fields are inert in the current SDK.**
+        Mock mode is enabled via the ``TRAIGENT_MOCK_LLM=true`` environment
+        variable (or the equivalent runtime detection in bundled example
+        bootstraps), not via this object. ``enabled``,
+        ``override_evaluator``, ``base_accuracy``, and ``variance`` are
+        retained on the schema for backwards compatibility so existing
+        serialized configs round-trip without breaking, but the
+        optimization pipeline ignores all of them. In mock mode the LLM
+        call layer is intercepted with canned/deterministic responses;
+        the scoring path (built-in metrics, custom evaluators, and the
+        ``LocalEvaluator`` accuracy calculator) is unchanged — there is
+        no random-score fabrication. Walkthrough scripts under
+        ``walkthrough/mock/`` use their own helper ``get_mock_accuracy``
+        for example scoring; that helper is example-only and is not part
+        of the SDK runtime behavior.
+
+        This deprecation is doc-only. The fields will be removed in a
+        future major version. See issue #874.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     enabled: bool = True
-    override_evaluator: bool = True
-    base_accuracy: float = 0.75
-    variance: float = 0.25
+    override_evaluator: bool = True  # inert; see class docstring
+    base_accuracy: float = 0.75  # inert; see class docstring
+    variance: float = 0.25  # inert; see class docstring
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
@@ -1619,8 +1640,12 @@ def optimize(  # NOSONAR(S107)
 
         Mock mode options:
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
-            mock_mode_config: Dict controlling mock behaviour keys such as
-                ``enabled``, ``override_evaluator``, ``base_accuracy``, ``variance``.
+            mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
+                no longer reads ``enabled``, ``override_evaluator``,
+                ``base_accuracy``, or ``variance`` from this dict. Use the
+                ``TRAIGENT_MOCK_LLM`` environment variable to enable mock
+                mode. The parameter is retained for config round-trip;
+                see issue #874.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to

@@ -115,10 +115,19 @@ TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 ```
 
 **Mock Mode Features:**
-- No API keys required
-- Realistic accuracy scores (0.75 +/- 0.25)
-- Fast execution
-- Deterministic results when you set `mock={"random_seed": 123}`
+- No API keys required.
+- Fast execution — LLM calls are intercepted and replaced with canned
+  responses so trials don't hit the network.
+- Evaluator scoring is unchanged — your `metric_functions`, custom
+  evaluator, or the built-in `LocalEvaluator` accuracy calculator runs
+  the same scoring logic in both mock and real modes. There is no
+  fabricated random-score path.
+
+> Note: The legacy `MockModeOptions` fields (`enabled`,
+> `override_evaluator`, `base_accuracy`, `variance`) are kept on the
+> schema for backwards compatibility but are inert — mock mode is
+> controlled by `TRAIGENT_MOCK_LLM`, not by passing `mock=...`. See
+> issue #874.
 
 ## Development Testing Workflow
 

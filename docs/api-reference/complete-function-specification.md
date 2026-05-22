@@ -85,7 +85,7 @@ def my_agent(question: str) -> str:
 | `evaluation` | `EvaluationOptions \| dict \| None` | Bundle for `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. |
 | `injection` | `InjectionOptions \| dict \| None` | Bundle for `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. |
 | `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, and `max_total_examples`. |
-| `mock` | `MockModeOptions \| dict \| None` | Bundle for mock-mode settings: `enabled`, `override_evaluator`, `base_accuracy`, `variance`. |
+| `mock` | `MockModeOptions \| dict \| None` | **Deprecated — all fields inert.** Retained on the schema for backwards compatibility (config round-trip). Mock mode is enabled via the `TRAIGENT_MOCK_LLM` environment variable, not via this object. See issue #874. |
 
 **ExecutionOptions Fields** (open-source builds run in `edge_analytics` only; other modes are roadmap-compatible but not currently provisioned)
 
@@ -109,7 +109,7 @@ def my_agent(question: str) -> str:
 **Usage Notes**
 
 - The default execution mode is `"edge_analytics"`. Use `"hybrid"` for portal-tracked optimization with local trial execution.
-- Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`, `MockModeOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts.
+- Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts. `MockModeOptions` is **deprecated** (all fields inert; see the `mock` row above and issue #874) — do not use it for new code.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
 - `privacy_enabled=True` applies in local and hybrid contexts. `cloud` remote execution is not available yet.
