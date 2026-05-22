@@ -495,12 +495,22 @@ class ProductionMCPClient:
     # Backend Integration Operations
 
     async def create_experiment(
-        self, optimization_request: OptimizationRequest
+        self,
+        optimization_request: OptimizationRequest,
+        agent_id: str | None = None,
+        example_set_id: str | None = None,
     ) -> MCPResponse:
         """Create experiment via MCP backend.
 
         Args:
             optimization_request: SDK optimization request
+            agent_id: Optional backend agent ID returned by ``create_agent``.
+                When provided, this ID is sent to the backend instead of the
+                bridge-generated agent_id, so the experiment is linked to the
+                real backend agent resource (issue #899).
+            example_set_id: Optional backend example-set ID returned by
+                ``upload_dataset``. When provided, this ID is sent to the
+                backend instead of the bridge-generated example_set_id.
 
         Returns:
             MCP response with experiment details
@@ -516,24 +526,41 @@ class ProductionMCPClient:
             self._validate_mapping(
                 optimization_request.metadata, "optimization_request.metadata"
             )
+        if agent_id is not None:
+            self._validate_identifier(agent_id, "agent_id")
+        if example_set_id is not None:
+            self._validate_identifier(example_set_id, "example_set_id")
 
         # Convert to backend format
         backend_request = bridge.optimization_request_to_backend(optimization_request)
 
-        # Prepare tool arguments
-        arguments = {
-            "name": backend_request.name,
-            "description": backend_request.description,
-            "agent_id": (
+        # Prefer the real backend IDs returned by upstream create_agent /
+        # upload_dataset calls. Fall back to bridge-generated IDs only when
+        # the caller did not supply them (e.g. standalone create_experiment).
+        resolved_agent_id = (
+            agent_id
+            if agent_id is not None
+            else (
                 backend_request.agent_data.get("agent_id")
                 if hasattr(backend_request, "agent_data")
                 else None
-            ),
-            "example_set_id": (
+            )
+        )
+        resolved_example_set_id = (
+            example_set_id
+            if example_set_id is not None
+            else (
                 backend_request.example_set_data.get("example_set_id")
                 if hasattr(backend_request, "example_set_data")
                 else None
-            ),
+            )
+        )
+
+        arguments = {
+            "name": backend_request.name,
+            "description": backend_request.description,
+            "agent_id": resolved_agent_id,
+            "example_set_id": resolved_example_set_id,
             "measures": backend_request.measures,
             "metadata": backend_request.metadata,
         }
@@ -785,12 +812,15 @@ class ProductionMCPClient:
             )
             example_set_id = (dataset_data or {}).get("example_set_id")
 
-            # Step 3: Create experiment
-            # Update optimization request with backend IDs
-            optimization_request.agent_id = agent_id  # type: ignore[attr-defined]
-            optimization_request.example_set_id = example_set_id  # type: ignore[attr-defined]
-
-            experiment_response = await self.create_experiment(optimization_request)
+            # Step 3: Create experiment, threading through the real backend
+            # IDs returned by create_agent / upload_dataset (issue #899).
+            # Passing them as explicit parameters ensures the bridge-generated
+            # placeholder IDs do not silently win over the live resources.
+            experiment_response = await self.create_experiment(
+                optimization_request,
+                agent_id=str(agent_id) if agent_id else None,
+                example_set_id=str(example_set_id) if example_set_id else None,
+            )
             if not experiment_response.success:
                 raise RuntimeError(
                     f"Failed to create experiment: {experiment_response.error_message}"
