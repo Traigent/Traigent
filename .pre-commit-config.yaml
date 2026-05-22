@@ -89,6 +89,12 @@ repos:
         entry: scripts/hooks/check-cost-strictness.sh
         pass_filenames: false
         always_run: true
+      - id: check-test-assertion-contracts
+        name: Check public test assertion contracts
+        language: script
+        entry: scripts/hooks/check-test-assertion-contracts.sh
+        pass_filenames: false
+        always_run: true
       - id: check-dep-floor-drift
         name: Check dependency floor drift between pyproject.toml and requirements/
         language: python
