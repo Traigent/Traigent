@@ -1637,9 +1637,10 @@ def optimize(  # NOSONAR(S107)
                 arguments. Values provided here merge with the explicit parameters.
             **runtime_overrides: Stop-condition and budget knobs accepted by
                 the decorator. The currently supported keys are:
-                ``metric_limit`` (deprecated alias: ``budget_limit``),
-                ``metric_name``, ``metric_include_pruned``,
-                ``budget_limit``, ``budget_metric``,
+                ``metric_limit``, ``metric_name``,
+                ``metric_include_pruned``,
+                ``budget_limit`` (deprecated alias for ``metric_limit``),
+                ``budget_metric``,
                 ``budget_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
                 ``tie_breakers``, and ``tvl_parameter_agents``.
