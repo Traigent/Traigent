@@ -63,10 +63,6 @@ _DEFAULT_MCP_SERVER_CANDIDATES = (
     "traigent_backend.mcp.server",
     "optigen_backend.mcp.server",
 )
-# Synthetic placeholder used by ``AgentSpecification.__post_init__`` when no
-# id is supplied. Must match ``traigent.cloud.models.AgentSpecification`` —
-# kept in sync via tests that exercise the default-spec path. See issue #900.
-_SYNTHETIC_AGENT_ID = "test-agent"
 
 
 def resolve_default_mcp_server_module() -> str:
@@ -653,6 +649,17 @@ class ProductionMCPClient:
         # ``agent_platform``, ``prompt_template``, ``model_parameters``,
         # etc.), so we forward it as-is rather than re-mapping to field
         # names that the bridge does not produce. See issue #900.
+        #
+        # ``agent_id`` is intentionally NOT forwarded: the backend MCP
+        # ``create_agent`` tool does not accept it (see
+        # ``TraigentBackend/src/mcp/tools/agent_tools.create_agent`` — its
+        # payload is built from a fixed key set and ``**kwargs`` is dropped),
+        # so the backend always allocates the id. Forwarding the SDK-side id
+        # would also be ambiguous because ``AgentSpecification.__post_init__``
+        # fills an unset ``id`` with the placeholder ``"test-agent"`` which is
+        # indistinguishable from a caller explicitly passing ``id="test-agent"``.
+        # Letting the backend assign the id matches the pre-#900 SDK behavior
+        # and removes the collision risk altogether.
         backend_agent = bridge.agent_specification_to_backend(agent_spec)
 
         arguments: dict[str, Any] = {
@@ -670,15 +677,8 @@ class ProductionMCPClient:
             "guidelines": backend_agent.get("guidelines"),
             "response_validation": backend_agent.get("response_validation", False),
             "custom_tools": backend_agent.get("custom_tools"),
-            "metadata": backend_agent.get("metadata") or {},
+            "metadata": backend_agent.get("metadata", {}),
         }
-        # Only forward an explicit user-supplied agent_id. ``AgentSpecification.__post_init__``
-        # fills ``id`` with the synthetic sentinel ``"test-agent"`` when unset, which would
-        # cause backend ID collisions across default-spec callers if we forwarded it
-        # unconditionally. See issue #900 / Codex review on PR #1016.
-        spec_id = backend_agent.get("agent_id")
-        if spec_id is not None and spec_id != _SYNTHETIC_AGENT_ID:
-            arguments["agent_id"] = spec_id
 
         return await self.call_tool("create_agent", arguments)
 

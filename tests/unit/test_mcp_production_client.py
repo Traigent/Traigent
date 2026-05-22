@@ -1789,6 +1789,14 @@ class TestCreateAgent:
         / ``model_parameters`` from the bridge output, none of which exist
         there, so bridge fields were silently dropped. This test asserts the
         exact ``call_tool("create_agent", arguments)`` payload.
+
+        ``agent_id`` is deliberately absent: the backend MCP ``create_agent``
+        tool does not accept it (see
+        ``TraigentBackend/src/mcp/tools/agent_tools.create_agent`` — its
+        payload is built from a fixed key set and drops ``**kwargs``), and
+        ``AgentSpecification.__post_init__`` cannot distinguish a default
+        ``id`` from a caller explicitly passing ``id="test-agent"``. Letting
+        the backend allocate the id matches the pre-#900 SDK behavior.
         """
         from traigent.cloud.models import AgentSpecification
         from traigent.cloud.production_mcp_client import MCPResponse
@@ -1846,8 +1854,8 @@ class TestCreateAgent:
             "response_validation": True,
             "custom_tools": ["calculator"],
             "metadata": {"version": "1.0"},
-            "agent_id": "agent_xyz",
         }
+        assert "agent_id" not in arguments
 
     @pytest.mark.asyncio
     async def test_create_agent_payload_with_defaults(self):
@@ -1880,46 +1888,52 @@ class TestCreateAgent:
         # No spurious legacy keys.
         assert "agent_type" not in arguments
         assert "platform" not in arguments
-        # Issue #900 / Codex review on PR #1016: ``AgentSpecification.__post_init__``
-        # fills ``id`` with the synthetic sentinel ``"test-agent"`` when unset.
-        # We must NOT forward that placeholder as ``agent_id`` — doing so would
-        # cause backend ID collisions across every default-spec caller.
+        # Issue #900 / Codex review on PR #1016: ``agent_id`` is NEVER
+        # forwarded from the MCP client. The backend tool does not accept it,
+        # and the SDK-side ``id`` cannot be disambiguated from the synthetic
+        # ``__post_init__`` placeholder. The backend allocates the id.
         assert "agent_id" not in arguments
 
     @pytest.mark.asyncio
-    async def test_create_agent_payload_omits_synthetic_default_id(self):
-        """Default AgentSpecification() must not forward the synthetic ``test-agent`` id.
+    async def test_create_agent_never_forwards_agent_id(self):
+        """``agent_id`` is never forwarded from create_agent, regardless of caller intent.
 
-        Regression guard for the Codex finding on PR #1016: forwarding the
-        ``__post_init__`` placeholder id would collide on the backend for every
-        caller that did not supply an explicit id.
+        Codex review on PR #1016: the prior conditional that suppressed only
+        the synthetic ``"test-agent"`` placeholder could not distinguish a
+        default ``AgentSpecification()`` from a caller that explicitly passed
+        ``id="test-agent"``. Combined with the backend MCP tool dropping
+        ``agent_id`` from its ``**kwargs`` anyway, the safe minimal fix is to
+        not forward ``agent_id`` from the SDK at all and let the backend
+        allocate. This regression guard pins that behavior for every spec
+        shape callers can construct.
         """
         from traigent.cloud.models import AgentSpecification
         from traigent.cloud.production_mcp_client import MCPResponse
 
-        # Default spec — id resolves to "test-agent" via __post_init__.
+        # The default __post_init__ placeholder.
         default_spec = AgentSpecification()
         assert default_spec.id == "test-agent"
 
-        with patch.object(
-            self.client, "call_tool", new_callable=AsyncMock
-        ) as mock_call_tool:
-            mock_call_tool.return_value = MCPResponse(success=True, data={})
-            await self.client.create_agent(default_spec)
+        # A user explicitly passing the same string as the placeholder. The
+        # prior suppression logic would have silently dropped this even though
+        # the caller intended it. We now drop the field for both shapes, which
+        # is a no-op on the wire (backend doesn't accept agent_id).
+        explicit_same_as_placeholder = AgentSpecification(id="test-agent")
 
-        _, arguments = mock_call_tool.call_args.args
-        assert "agent_id" not in arguments
+        # A user-supplied unique id.
+        explicit_unique = AgentSpecification(id="agent_xyz")
 
-        # Now verify that an explicit user-supplied id IS forwarded.
-        explicit_spec = AgentSpecification(id="agent_xyz")
-        with patch.object(
-            self.client, "call_tool", new_callable=AsyncMock
-        ) as mock_call_tool:
-            mock_call_tool.return_value = MCPResponse(success=True, data={})
-            await self.client.create_agent(explicit_spec)
+        for spec in (default_spec, explicit_same_as_placeholder, explicit_unique):
+            with patch.object(
+                self.client, "call_tool", new_callable=AsyncMock
+            ) as mock_call_tool:
+                mock_call_tool.return_value = MCPResponse(success=True, data={})
+                await self.client.create_agent(spec)
 
-        _, arguments = mock_call_tool.call_args.args
-        assert arguments.get("agent_id") == "agent_xyz"
+            _, arguments = mock_call_tool.call_args.args
+            assert "agent_id" not in arguments, (
+                f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            )
 
 
 class TestUploadDataset:
