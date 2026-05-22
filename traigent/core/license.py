@@ -214,6 +214,11 @@ class LicenseValidator:
         age = time.time() - self._cached_license.validated_at
         return age < self._grace_period
 
+    # Reject license files larger than this. A signed JWT license is
+    # well under a kilobyte; anything larger is either misconfigured or
+    # an attempt to exhaust memory via the offline-license path.
+    _MAX_LICENSE_FILE_BYTES = 64 * 1024
+
     def _validate_offline_license(self) -> LicenseInfo | None:
         """Validate an offline license file (signed JWT).
 
@@ -223,13 +228,49 @@ class LicenseValidator:
         if not self._license_file:
             return None
 
-        license_path = Path(self._license_file)
-        if not license_path.exists():
-            logger.warning(f"Offline license file not found: {license_path}")
+        try:
+            license_path = Path(self._license_file).expanduser()
+        except (RuntimeError, OSError) as exc:
+            logger.warning("Invalid offline license path: %s", exc)
             return None
 
         try:
-            token = license_path.read_text().strip()
+            # Resolve symlinks once so we report on the real target while
+            # refusing to follow chains that escape the user-named file.
+            resolved_path = license_path.resolve(strict=True)
+        except FileNotFoundError:
+            logger.warning("Offline license file not found: %s", license_path)
+            return None
+        except (RuntimeError, OSError) as exc:
+            logger.warning("Could not resolve offline license file: %s", exc)
+            return None
+
+        try:
+            stat_result = resolved_path.stat()
+        except OSError as exc:
+            logger.warning("Could not stat offline license file: %s", exc)
+            return None
+
+        # Regular files only — refuse device files, FIFOs, sockets that
+        # would otherwise be read until EOF.
+        import stat as _stat
+
+        if not _stat.S_ISREG(stat_result.st_mode):
+            logger.warning(
+                "Offline license path is not a regular file: %s", resolved_path
+            )
+            return None
+
+        if stat_result.st_size > self._MAX_LICENSE_FILE_BYTES:
+            logger.warning(
+                "Offline license file exceeds size cap (%s bytes): %s",
+                self._MAX_LICENSE_FILE_BYTES,
+                resolved_path,
+            )
+            return None
+
+        try:
+            token = resolved_path.read_text(encoding="utf-8").strip()
             return self._decode_license_token(token)
         except Exception as e:
             logger.warning(f"Failed to validate offline license: {e}")

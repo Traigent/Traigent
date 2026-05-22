@@ -81,6 +81,43 @@ except ImportError:
     if TYPE_CHECKING:
         from opentelemetry.trace import Span, Tracer
 
+    # Substrings that mark a config/payload key as secret-bearing.
+    # Span attributes that ship to OTLP exporters MUST scrub these.
+    _SECRET_KEY_SUBSTRINGS = (
+        "api_key",
+        "apikey",
+        "secret",
+        "password",
+        "passwd",
+        "token",
+        "authorization",
+        "credential",
+        "private_key",
+        "bearer",
+    )
+
+    def _redact_payload(value: Any) -> Any:
+        """Recursively redact secret-bearing keys in dicts/lists.
+
+        Trace payloads are exported off-host, so any key whose name suggests a
+        secret (api_key, authorization, password, …) is replaced with
+        ``"***REDACTED***"`` before being attached to a span.
+        """
+        if isinstance(value, dict):
+            redacted: dict[str, Any] = {}
+            for key, sub in value.items():
+                key_str = str(key).lower()
+                if any(needle in key_str for needle in _SECRET_KEY_SUBSTRINGS):
+                    redacted[key] = "***REDACTED***"
+                else:
+                    redacted[key] = _redact_payload(sub)
+            return redacted
+        if isinstance(value, list):
+            return [_redact_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(_redact_payload(item) for item in value)
+        return value
+
     class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc,no-redef]
         """ID generator using os.urandom for cryptographically secure random IDs."""
 
@@ -204,7 +241,7 @@ except ImportError:
             span.set_attribute("traigent.objectives", ",".join(objectives))
         if config_space:
             try:
-                config_str = json.dumps(config_space)
+                config_str = json.dumps(_redact_payload(config_space))
                 if len(config_str) > 1000:
                     config_str = config_str[:1000] + "..."
                 span.set_attribute("traigent.config_space", config_str)
@@ -330,10 +367,11 @@ except ImportError:
             span.set_attribute("trial.id", trial_id)
             span.set_attribute("trial.number", trial_number)
             span.set_attribute("trial.display_number", display_number)
+            redacted_config = _redact_payload(config)
             try:
-                span.set_attribute("trial.config", json.dumps(config))
+                span.set_attribute("trial.config", json.dumps(redacted_config))
             except (TypeError, ValueError):
-                span.set_attribute("trial.config", str(config))
+                span.set_attribute("trial.config", str(redacted_config))
             yield span
 
     def record_trial_result(
@@ -369,7 +407,10 @@ except ImportError:
             span.set_attribute("optimization.best_score", best_score)
         if best_config:
             try:
-                span.set_attribute("optimization.best_config", json.dumps(best_config))
+                span.set_attribute(
+                    "optimization.best_config",
+                    json.dumps(_redact_payload(best_config)),
+                )
             except (TypeError, ValueError):
                 pass
         if stop_reason:
@@ -397,13 +438,14 @@ except ImportError:
             span.set_attribute("example.id", example_id)
             span.set_attribute("example.index", example_index)
             if input_data:
+                redacted_input = _redact_payload(input_data)
                 try:
-                    input_str = json.dumps(input_data)
+                    input_str = json.dumps(redacted_input)
                     if len(input_str) > 500:
                         input_str = input_str[:500] + "..."
                     span.set_attribute("example.input", input_str)
                 except (TypeError, ValueError):
-                    span.set_attribute("example.input", str(input_data)[:500])
+                    span.set_attribute("example.input", str(redacted_input)[:500])
             if expected_output is not None:
                 try:
                     expected_str = (

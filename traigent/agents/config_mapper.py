@@ -22,6 +22,28 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# AgentSpecification fields that may be set as direct attributes by a
+# parameter mapping with `target_section` other than "model_parameters"
+# or "custom_tools". Any other target_key is rejected to prevent a
+# registered mapping (or an imported TVL spec) from clobbering internal
+# bookkeeping fields (e.g. ``id``, ``metadata``, ``_private``) via
+# arbitrary ``setattr``.
+_ALLOWED_DIRECT_ATTR_KEYS = frozenset(
+    {
+        "agent_type",
+        "agent_platform",
+        "name",
+        "prompt_template",
+        "reasoning",
+        "style",
+        "tone",
+        "format",
+        "persona",
+        "guidelines",
+        "response_validation",
+    }
+)
+
 
 @dataclass
 class ParameterMapping:
@@ -290,7 +312,17 @@ class ConfigurationMapper:
                 else:
                     spec.custom_tools.append(str(target_value))
             else:
-                # Set as direct attribute
+                # Direct attribute assignment is restricted to an explicit
+                # allowlist so a registered (or imported) mapping cannot
+                # clobber internal/private fields on AgentSpecification.
+                if param_mapping.target_key not in _ALLOWED_DIRECT_ATTR_KEYS:
+                    logger.warning(
+                        "Refusing to set unknown agent specification attribute %r"
+                        " (target_section=%r)",
+                        param_mapping.target_key,
+                        param_mapping.target_section,
+                    )
+                    continue
                 setattr(spec, param_mapping.target_key, target_value)
 
         return spec
