@@ -464,3 +464,97 @@ class TestAdaptiveBatchOptimizer:
         # Should have the most recent entries
         assert optimizer.performance_history[0]["trial_index"] == 50
         assert optimizer.performance_history[-1]["trial_index"] == 149
+
+
+class TestLegacyPositionalConstructors:
+    """Regression tests for legacy positional constructor calls.
+
+    The registry-standard signature is ``(config_space, objectives, **kwargs)``,
+    but pre-existing call sites use the historical positional form
+    ``XxxBatchOptimizer(base_optimizer, batch_config)``. These tests pin that
+    the legacy positional form still produces a correctly-wired optimizer
+    instead of being misinterpreted as ``(config_space=base_optimizer,
+    objectives=batch_config)``.
+    """
+
+    def setup_method(self):
+        self.config_space = {"param1": [1, 2], "param2": [0.1, 0.2]}
+        self.objectives = ["accuracy"]
+        self.base_optimizer = GridSearchOptimizer(self.config_space, self.objectives)
+        self.batch_config = BatchOptimizationConfig(
+            max_parallel_trials=3, batch_size=7
+        )
+
+    def test_parallel_batch_legacy_positional(self):
+        """ParallelBatchOptimizer(base_optimizer, batch_config) still works."""
+        optimizer = ParallelBatchOptimizer(self.base_optimizer, self.batch_config)
+
+        assert optimizer.base_optimizer is self.base_optimizer
+        assert optimizer.batch_config is self.batch_config
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_parallel_batch_legacy_positional_base_only(self):
+        """Single positional base_optimizer falls back to default batch_config."""
+        optimizer = ParallelBatchOptimizer(self.base_optimizer)
+
+        assert optimizer.base_optimizer is self.base_optimizer
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_adaptive_batch_legacy_positional(self):
+        """AdaptiveBatchOptimizer(base_optimizer, batch_config) still works."""
+        base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(base, self.batch_config)
+
+        assert optimizer.base_optimizer is base
+        assert optimizer.batch_config is self.batch_config
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_adaptive_batch_legacy_positional_base_only(self):
+        """Single positional base_optimizer falls back to default batch_config."""
+        base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(base)
+
+        assert optimizer.base_optimizer is base
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_parallel_batch_registry_path_unchanged(self):
+        """Registry-standard (config_space, objectives, **kwargs) still works."""
+        optimizer = ParallelBatchOptimizer(self.config_space, self.objectives)
+
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+        assert isinstance(optimizer.base_optimizer, RandomSearchOptimizer)
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+
+    def test_adaptive_batch_registry_path_unchanged(self):
+        """Registry-standard (config_space, objectives, **kwargs) still works."""
+        optimizer = AdaptiveBatchOptimizer(self.config_space, self.objectives)
+
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+        assert isinstance(optimizer.base_optimizer, RandomSearchOptimizer)
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+
+    def test_parallel_batch_explicit_keyword_overrides_positional(self):
+        """If both positional base and keyword base_optimizer provided, keyword wins."""
+        other_base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = ParallelBatchOptimizer(
+            self.base_optimizer, base_optimizer=other_base
+        )
+
+        assert optimizer.base_optimizer is other_base
+
+    def test_adaptive_batch_explicit_keyword_overrides_positional(self):
+        """If both positional base and keyword base_optimizer provided, keyword wins."""
+        other_base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(
+            self.base_optimizer, base_optimizer=other_base
+        )
+
+        assert optimizer.base_optimizer is other_base

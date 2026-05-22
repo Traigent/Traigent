@@ -61,13 +61,25 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: dict[str, Any] | None = None,
-        objectives: list[str] | None = None,
+        config_space: dict[str, Any] | BaseOptimizer | None = None,
+        objectives: list[str] | BatchOptimizationConfig | None = None,
         base_optimizer: BaseOptimizer | None = None,
         batch_config: BatchOptimizationConfig | None = None,
         context: Any = None,
         **kwargs: Any,
     ) -> None:
+        # Legacy positional form: ParallelBatchOptimizer(base_optimizer, batch_config).
+        # Detect by type to keep the registry-standard
+        # (config_space, objectives, **kwargs) path working.
+        if isinstance(config_space, BaseOptimizer):
+            if base_optimizer is None:
+                base_optimizer = config_space
+            config_space = None
+        if isinstance(objectives, BatchOptimizationConfig):
+            if batch_config is None:
+                batch_config = objectives
+            objectives = None
+
         if base_optimizer is None:
             if config_space is None:
                 raise ValueError(
@@ -632,13 +644,25 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: dict[str, Any] | None = None,
-        objectives: list[str] | None = None,
+        config_space: dict[str, Any] | BaseOptimizer | None = None,
+        objectives: list[str] | BatchOptimizationConfig | None = None,
         base_optimizer: BaseOptimizer | None = None,
         batch_config: BatchOptimizationConfig | None = None,
         context: Any = None,
         **kwargs: Any,
     ) -> None:
+        # Legacy positional form: AdaptiveBatchOptimizer(base_optimizer, batch_config).
+        # Detect by type to keep the registry-standard
+        # (config_space, objectives, **kwargs) path working.
+        if isinstance(config_space, BaseOptimizer):
+            if base_optimizer is None:
+                base_optimizer = config_space
+            config_space = None
+        if isinstance(objectives, BatchOptimizationConfig):
+            if batch_config is None:
+                batch_config = objectives
+            objectives = None
+
         if base_optimizer is None:
             if config_space is None:
                 raise ValueError(
