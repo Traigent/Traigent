@@ -416,8 +416,14 @@ async def test_local_adapter_numeric_evaluation_with_failure():
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_semantic_evaluation_type():
-    """Test LocalExecutionAdapter handles 'semantic' evaluation type."""
+async def test_local_adapter_semantic_eval_fails_loud_without_configured_evaluator(
+    caplog,
+):
+    """Issue #891: semantic evaluation_type must fail loudly when the
+    LocalExecutionAdapter has no semantic evaluator configured. Previously
+    the adapter silently set ``correct=None`` so paraphrased answers were
+    scored 0/1 with no visible error signal.
+    """
     agent = _SimpleAgent()
     adapter = LocalExecutionAdapter(_AgentBuilder(agent))
 
@@ -431,18 +437,102 @@ async def test_local_adapter_semantic_evaluation_type():
         ]
     }
 
+    caplog.set_level("ERROR")
     result = await adapter.execute_configuration(
-        agent_spec={}, dataset=dataset, trial_id="semantic-1"
+        agent_spec={}, dataset=dataset, trial_id="semantic-fail-loud"
     )
 
-    # Semantic evaluation requires external processing
-    # The result should have the correct field set to None (requires semantic eval)
-    assert (
-        result["metrics"]["examples_with_ground_truth"] == 0.0
-        or result["metrics"]["examples_with_ground_truth"] == 1.0
-    )
-    # The key is that semantic evaluation is marked as requiring semantic eval
+    # The example is counted and visibly marked as failed.
     assert result["metrics"]["total_examples"] == 1.0
+    assert result["metrics"]["success_rate"] == 0.0
+    assert result["metrics"]["accuracy_semantic"] == 0.0
+    assert result["metrics"]["successful_executions"] == 0.0
+
+    # An ERROR-level log was emitted naming the missing capability and the
+    # remediation (configure a scoring_function).
+    error_messages = [
+        rec.getMessage() for rec in caplog.records if rec.levelname == "ERROR"
+    ]
+    assert any(
+        "semantic" in msg.lower() and "scoring_function" in msg.lower()
+        for msg in error_messages
+    ), f"expected fail-loud ERROR log, got: {error_messages}"
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_paraphrased_answers_fail_under_exact_match():
+    """Issue #891: paraphrased answers (e.g. "Paris is the capital" vs
+    "Paris") must score 0.0 under the default exact-match contract. This
+    pins the honest behaviour so docs cannot drift back to claiming
+    semantic similarity is the default."""
+
+    class ParaphraseAgent:
+        async def execute(self, _input):
+            # The agent's answer is semantically equivalent but not a
+            # character-for-character match with the expected output.
+            return "Paris is the capital of France"
+
+    adapter = LocalExecutionAdapter(_AgentBuilder(ParaphraseAgent()))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"question": "What is the capital of France?"},
+                "expected_output": "Paris",
+                "metadata": {"evaluation_type": "exact_match"},
+            },
+            {
+                "input": {"question": "Capital of France?"},
+                "expected_output": "The capital is Paris",
+                "metadata": {"evaluation_type": "exact_match"},
+            },
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="paraphrase-exact"
+    )
+
+    # Both paraphrases must fail under exact_match. If this assertion ever
+    # flips, either the contract was changed or someone silently re-introduced
+    # semantic scoring under the default name.
+    assert result["metrics"]["accuracy"] == 0.0
+    assert result["metrics"]["accuracy_exact_match"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_paraphrased_answers_pass_with_user_semantic_scorer():
+    """Issue #891 (paired with the exact-match test above): when a user
+    provides their own semantic scoring via a custom ``evaluation_type``
+    branch — here simulated by ``contains`` — the paraphrased answers do
+    pass. This documents that semantic scoring is the user's
+    responsibility, not a built-in default."""
+
+    class ParaphraseAgent:
+        async def execute(self, _input):
+            return "Paris is the capital of France"
+
+    adapter = LocalExecutionAdapter(_AgentBuilder(ParaphraseAgent()))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"question": "What is the capital of France?"},
+                "expected_output": "Paris",
+                # "contains" is the simplest user-supplied surrogate for a
+                # semantic check: the expected token appears inside the
+                # paraphrased answer.
+                "metadata": {"evaluation_type": "contains"},
+            },
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="paraphrase-semantic"
+    )
+
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["accuracy_contains"] == 1.0
 
 
 @pytest.mark.asyncio

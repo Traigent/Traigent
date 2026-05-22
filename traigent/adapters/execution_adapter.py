@@ -204,10 +204,31 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 result["error"] = "Failed to parse numeric values"
 
         elif eval_type == "semantic":
-            # Semantic similarity (placeholder)
-            # In production, this would use embeddings or LLM evaluation
-            result["correct"] = None
+            # LocalExecutionAdapter does not implement embedding-based
+            # semantic similarity. Historically this branch silently set
+            # ``correct=None`` and quietly returned a 0% accuracy from the
+            # aggregate metrics, which let paraphrased answers be scored as
+            # wrong without any visible failure signal (issue #891).
+            #
+            # The honest contract is: semantic evaluation in this adapter
+            # fails loudly. Callers who want semantic scoring must supply
+            # a scoring_function/custom_evaluator (e.g. via
+            # ``@traigent.optimize(scoring_function=...)``) that implements
+            # embedding-based comparison themselves.
+            result["correct"] = False
+            result["success"] = False
             result["requires_semantic_eval"] = True
+            result["error"] = (
+                "LocalExecutionAdapter does not implement semantic "
+                "similarity. Configure a scoring_function or "
+                "custom_evaluator that performs embedding-based "
+                "comparison, or use a different evaluation_type."
+            )
+            logger.error(
+                "Semantic evaluation requested but no semantic evaluator "
+                "is configured for LocalExecutionAdapter; marking example "
+                "as failed. Provide a scoring_function for semantic scoring."
+            )
 
         else:
             # Unknown evaluation type

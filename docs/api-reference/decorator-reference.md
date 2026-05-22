@@ -67,9 +67,17 @@ def optimize(
 - **Description**: Target metrics to optimize
 
 > **Understanding Accuracy**: The meaning of "accuracy" depends on your use case:
-> - **Classification**: Exact match percentage (e.g., sentiment classification)
-> - **Semantic Similarity**: Embedding-based comparison (default, requires `OPENAI_API_KEY`)
+> - **Classification (built-in default)**: Exact / case-insensitive
+>   string match between the agent's output and `expected_output`.
+>   No embeddings, no LLM judge, no API key required.
+> - **Semantic Similarity (bring your own scorer)**: Pass a
+>   `scoring_function` or `metric_functions={"accuracy": ...}` that
+>   implements embedding-based comparison or an LLM judge. Traigent
+>   does **not** ship one by default, and `LocalExecutionAdapter` will
+>   fail loudly on dataset examples tagged
+>   `evaluation_type: "semantic"` if no such scorer is configured.
 > - **Custom Metrics**: ROUGE, BLEU, or business-specific calculations
+>   via `scoring_function` / `metric_functions` / `custom_evaluator`.
 >
 > See the [Evaluation Guide](../user-guide/evaluation_guide.md#understanding-accuracy) for detailed explanations and examples.
 
