@@ -79,10 +79,11 @@ The examples below are reference patterns for advanced remote-guidance APIs. For
 ### Model 1: Interactive Optimization
 
 ```python
-from traigent.cloud.client import TraigentCloudClient
+from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-cloud_client = TraigentCloudClient(api_key="your-api-key")  # Roadmap remote guidance client
+cloud_client = TraigentCloudClient(api_key="your-api-key")
+remote_service = TraigentCloudRemoteGuidanceAdapter(cloud_client)
 
 # For a custom local function
 async def my_custom_function(text: str, temperature: float) -> str:
@@ -94,7 +95,7 @@ async def my_custom_function(text: str, temperature: float) -> str:
 optimizer = InteractiveOptimizer(
     config_space={"temperature": (0.0, 1.0)},
     objectives=["quality", "speed"],
-    remote_service=cloud_client
+    remote_service=remote_service,
 )
 
 # Initialize session

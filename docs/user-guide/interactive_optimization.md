@@ -75,14 +75,25 @@ The service provides configurations based on:
 
 ### Step 1: Setup
 
-This example assumes you provide a remote guidance service that implements the `RemoteGuidanceService` protocol. The Traigent Cloud remote-guidance endpoint is roadmap-only until the managed remote execution path is released.
+The `RemoteGuidanceService` protocol that `InteractiveOptimizer` consumes
+uses dataclass requests (`SessionCreationRequest`, `NextTrialRequest`,
+`TrialResultSubmission`, `OptimizationFinalizationRequest`) and matching
+response objects. `TraigentCloudClient` already speaks those endpoints over
+HTTP, but its public methods take separate positional / keyword arguments
+and name the result-submission method `submit_trial_result`. Use
+`TraigentCloudRemoteGuidanceAdapter` to bridge the two without leaking the
+signature differences into your code.
+
+> Backend availability: the Traigent Cloud remote-guidance endpoints back
+> these adapter calls. Use `execution_mode="hybrid"` if you only need
+> portal-tracked SDK runs with local trial execution.
 
 ```python
-from traigent.cloud.client import TraigentCloudClient
+from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-# Initialize a remote guidance client when that service is available.
 client = TraigentCloudClient(api_key="<API_KEY>")
+remote_service = TraigentCloudRemoteGuidanceAdapter(client)
 
 # Create interactive optimizer
 optimizer = InteractiveOptimizer(
@@ -92,7 +103,7 @@ optimizer = InteractiveOptimizer(
         "max_tokens": (50, 500)
     },
     objectives=["accuracy", "latency", "cost"],
-    remote_service=client,
+    remote_service=remote_service,
     dataset_metadata={
         "size": 10000,
         "type": "question_answering",
@@ -100,6 +111,10 @@ optimizer = InteractiveOptimizer(
     }
 )
 ```
+
+`TraigentCloudRemoteGuidanceAdapter` does not own the client lifecycle, so
+keep the client inside its own `async with` block (or call
+`await client.close()`) when you are done.
 
 ### Step 2: Initialize Session
 
@@ -358,12 +373,15 @@ except SessionError as e:
 ### Network Issues
 
 ```python
+from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
+
 # Configure retry behavior
 client = TraigentCloudClient(
     api_key="your-key",  # pragma: allowlist secret
     max_retries=5,
-    timeout=60.0
+    timeout=60.0,
 )
+remote_service = TraigentCloudRemoteGuidanceAdapter(client)
 ```
 
 ### Handling Rate Limits

@@ -11,6 +11,7 @@ from __future__ import annotations
 from .auth import APIKey, AuthManager
 from .billing import BillingManager, UsageTracker
 from .client import TraigentCloudClient
+from .remote_guidance import TraigentCloudRemoteGuidanceAdapter
 from .service import TraigentCloudService
 from .subset_selection import (
     DiverseSampling,
@@ -21,6 +22,7 @@ from .subset_selection import (
 
 __all__ = [
     "TraigentCloudClient",
+    "TraigentCloudRemoteGuidanceAdapter",
     "TraigentCloudService",
     "AuthManager",
     "APIKey",
