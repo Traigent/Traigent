@@ -25,6 +25,7 @@ from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .backend_bridges import SessionExperimentMapping
 from .backend_client import BackendClientConfig, get_backend_client
+from .client import CloudRemoteExecutionUnavailableError, CloudServiceError
 from .dataset_converter import converter
 from .models import (
     OptimizationRequest,
@@ -553,6 +554,10 @@ class IntegrationManager:
             return cast(TrialSuggestion | None, suggestion)
 
         except asyncio.CancelledError:
+            raise
+        except (CloudRemoteExecutionUnavailableError, CloudServiceError):
+            # Typed cloud failures are public signals. Do not collapse them into
+            # None, which means "no suggestion / optimization complete" here.
             raise
         except Exception as e:
             logger.error(f"Failed to get next trial for session {session_id}: {e}")
