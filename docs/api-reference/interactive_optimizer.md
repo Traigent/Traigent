@@ -53,6 +53,19 @@ class RemoteGuidanceService(Protocol):
     ) -> OptimizationFinalizationResponse: ...
 ```
 
+To use Traigent Cloud as the remote service, wrap a `TraigentCloudClient`
+with `TraigentCloudRemoteGuidanceAdapter` — the cloud client's public
+methods take separate keyword arguments and name the result-submission call
+`submit_trial_result`, so passing it directly does not satisfy the protocol
+above:
+
+```python
+from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
+
+client = TraigentCloudClient(api_key="<API_KEY>")
+remote_service = TraigentCloudRemoteGuidanceAdapter(client)
+```
+
 ## Methods
 
 ### `initialize_session`
