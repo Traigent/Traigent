@@ -546,11 +546,17 @@ class TestErrorHandling:
         # Try to override a non-existent framework
         try:
             result = override_manager.activate_overrides(["nonexistent.Framework"])
-            # Should not raise an exception - verify completion
-            assert result is None or result is not None  # Method completed successfully
-        except Exception:
-            # If it does raise, it should be handled gracefully
+        except (ImportError, AttributeError):
+            # Some implementations raise on unknown framework names; that
+            # path is also valid. Skip rather than fail here.
             pytest.skip("Import failure handling varies by implementation")
+        else:
+            # Contract: activate_overrides for an unknown framework name must
+            # complete cleanly and return either None or a dict of activation
+            # results — anything else (e.g. a half-constructed zombie object)
+            # would signal an unhandled failure path. Asserted in the else
+            # branch so AssertionError is NOT swallowed by the except above.
+            assert result is None or isinstance(result, dict)
 
 
 class TestThreadSafety:

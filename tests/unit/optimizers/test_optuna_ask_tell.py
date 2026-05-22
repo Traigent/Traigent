@@ -200,8 +200,11 @@ class TestOptunaAskTellPattern:
         result2 = coordinator.tell_failure(
             999, "Error"
         )  # Should log warning but not crash
-        assert result1 is None or result1 is not None  # Method completed
-        assert result2 is None or result2 is not None  # Method completed
+        # Contract: tell_result / tell_failure for a non-existent trial
+        # return None (warn and no-op). They must not raise or fabricate
+        # a trial handle.
+        assert result1 is None
+        assert result2 is None
 
     def test_ask_without_config_space_raises_error(self):
         """Test that creating coordinator without config_space raises error."""

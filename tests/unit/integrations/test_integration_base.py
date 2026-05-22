@@ -457,8 +457,10 @@ class TestContextManagement:
         # End context
         base_manager.end_override_context(framework_key)
 
-        # Should be cleaned up
-        # Implementation dependent on whether framework_key is removed
+        # Contract: ending the only active context unregisters that framework
+        # and deactivates the manager.
+        assert framework_key not in base_manager._active_overrides
+        assert base_manager.is_override_active() is False
 
     def test_nested_context_management(self, base_manager):
         """Test nested context management."""
@@ -471,8 +473,11 @@ class TestContextManagement:
         # Start nested context
         base_manager.start_override_context(framework2)
 
-        # Both should be active
-        # Implementation dependent
+        # Contract: nested starts register both frameworks and keep the
+        # manager active until both contexts end.
+        assert framework1 in base_manager._active_overrides
+        assert framework2 in base_manager._active_overrides
+        assert base_manager.is_override_active() is True
 
         # End contexts
         base_manager.end_override_context(framework2)
@@ -799,7 +804,7 @@ class TestCTDScenarios:
         [
             ("constructor", "single", "cleaned"),
             ("method", "single", "cleaned"),
-            ("both", "single", "partially_cleaned"),
+            ("both", "single", "cleaned"),
             ("constructor", "all", "cleaned"),
             ("method", "all", "cleaned"),
             ("both", "all", "cleaned"),
@@ -830,5 +835,4 @@ class TestCTDScenarios:
             assert not base_manager.is_constructor_overridden(framework_key)
             assert not base_manager.is_method_overridden(method_key)
         elif expected_result == "partially_cleaned":
-            # Implementation dependent - some overrides may remain
-            pass
+            raise AssertionError("No partial cleanup contract is currently supported")
