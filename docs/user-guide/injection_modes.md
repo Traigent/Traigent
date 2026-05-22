@@ -556,20 +556,21 @@ def api_endpoint(query: str) -> str:
 You can use different modes for different functions:
 
 ```python
-# Seamless for simple functions
+# Context (default) — call traigent.get_config() inside the function
 @traigent.optimize()
 def preprocess(text):
-    max_length = 512
+    config = traigent.get_config()
+    max_length = config.get("max_length", 512)
     return truncate(text, max_length)
 
-# Context for complex pipelines
-@traigent.optimize(injection_mode="context")
+# Seamless — Traigent rewrites supported LangChain client kwargs
+@traigent.optimize(injection_mode="seamless")
 def pipeline(data):
-    config = traigent.get_config()  # Get config for current call
-    # Complex logic with config
+    llm = ChatOpenAI(model="gpt-4o-mini")  # injection rewrites kwargs
+    return llm.invoke(data)
 
-# Parameter for type-safe components
-@traigent.optimize(injection_mode="parameter")
+# Parameter for type-safe components — receives `config` explicitly
+@traigent.optimize(injection_mode="parameter", config_param="config")
 def train(data, config: TraigentConfig):
     # Type-safe training
 ```
@@ -594,9 +595,9 @@ def process(data):
 | Mode | Best For |
 |------|----------|
 | **Context** (default) | Most cases; dynamic config access via `get_config()` inside your function |
-| **Seamless** | Zero-code-change; existing code with matching variable names |
+| **Seamless** | Zero-code-change for LangChain code paths with matching variable names |
 | **Parameter** | Type safety; explicit dependencies; team projects |
-| **Attribute** | External monitoring; A/B testing; debugging |
+| **~~Attribute~~** | **Removed in v2.x** — see Section 4 above for migration guidance. |
 
 Choose based on your specific needs. Context mode is the default and works for most use cases.
 
