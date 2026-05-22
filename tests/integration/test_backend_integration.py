@@ -565,8 +565,13 @@ class TestIntegrationManager:
                 mock_cloud.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_trial_management(self, integration_config):
-        """Test trial management through integration manager."""
+    @pytest.mark.parametrize(
+        "stored_mode",
+        [IntegrationMode.PRIVACY.value, "private"],
+        ids=["privacy", "legacy-private"],
+    )
+    async def test_trial_management(self, integration_config, stored_mode):
+        """Privacy and legacy-private modes call backend trial APIs."""
         with patch("traigent.cloud.integration_manager.get_production_mcp_client"):
             with patch(
                 "traigent.cloud.integration_manager.get_backend_client"
@@ -603,9 +608,10 @@ class TestIntegrationManager:
                     manager = IntegrationManager(integration_config)
                     await manager.initialize()
 
-                    # Add mock integration
+                    # Add mock integration with the production "privacy" mode value
+                    # or the legacy "private" spelling kept for migration reads.
                     manager._active_integrations["test_int"] = {
-                        "mode": "private",
+                        "mode": stored_mode,
                         "result": Mock(session_id="session_456"),
                     }
 
@@ -613,6 +619,9 @@ class TestIntegrationManager:
                     suggestion = await manager.get_next_trial("session_456")
                     assert suggestion is not None
                     assert suggestion.trial_id == "trial_123"
+                    mock_backend.get_next_privacy_trial.assert_awaited_once_with(
+                        "session_456", None
+                    )
 
                     # Test submitting results
                     success = await manager.submit_trial_results(
@@ -623,6 +632,14 @@ class TestIntegrationManager:
                         1.5,  # duration
                     )
                     assert success
+                    mock_backend.submit_privacy_trial_results.assert_awaited_once_with(
+                        "session_456",
+                        "trial_123",
+                        {"temp": 0.7},
+                        {"accuracy": 0.9},
+                        1.5,
+                        None,
+                    )
 
     def test_integration_statistics(self, integration_config):
         """Test integration statistics collection."""
