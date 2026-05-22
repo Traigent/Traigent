@@ -169,14 +169,23 @@ class ExecutionOptions(BaseModel):
         cloud_fallback_policy: Legacy/future cloud fallback behavior. It does
             not enable ``execution_mode="cloud"`` today; cloud remote execution
             is not available yet.
-        reps_per_trial: Number of repetitions per configuration for statistical stability.
-            Running multiple repetitions helps account for LLM non-determinism.
-            Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
-        reps_aggregation: How to aggregate metrics across repetitions.
-            Options: "mean" (default), "median", "min", "max".
+        reps_per_trial: Number of repetitions per configuration for statistical
+            stability. Only the default ``1`` (no repetition) is available in the
+            OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
+            construction time. Per-configuration repetition requires Traigent
+            Enterprise (contact ``sales@traigent.ai``).
+        reps_aggregation: How to aggregate metrics across repetitions. Only the
+            default ``"mean"`` is available in the OSS SDK; passing any other
+            value raises ``pydantic.ValidationError`` at
+            construction time. Per-configuration repetition aggregation
+            requires Traigent Enterprise (contact ``sales@traigent.ai``).
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        validate_assignment=True,
+    )
 
     execution_mode: str = "edge_analytics"
     local_storage_path: str | None = None
@@ -200,6 +209,31 @@ class ExecutionOptions(BaseModel):
     hybrid_api_auth_header: str | None = None
     hybrid_api_auto_discover_tvars: bool = False
     cloud_fallback_policy: str | None = None
+
+    @field_validator("reps_per_trial")
+    @classmethod
+    def _reject_non_default_reps_per_trial(cls, v: int) -> int:
+        # Per-configuration repetition is enterprise-gated; fail at the contract
+        # boundary (construction) instead of late at runtime so callers see the
+        # gate before the @optimize decorator is applied. See issue #931.
+        if v != 1:
+            raise ValueError(
+                "reps_per_trial != 1 is not available in this version. "
+                "Per-configuration repetitions for statistical stability "
+                "require Traigent Enterprise. Contact sales@traigent.ai."
+            )
+        return v
+
+    @field_validator("reps_aggregation")
+    @classmethod
+    def _reject_non_default_reps_aggregation(cls, v: str) -> str:
+        if v != "mean":
+            raise ValueError(
+                "reps_aggregation != 'mean' is not available in this version. "
+                "Per-configuration repetition aggregation requires Traigent "
+                "Enterprise. Contact sales@traigent.ai."
+            )
+        return v
 
 
 class MockModeOptions(BaseModel):
@@ -927,23 +961,14 @@ def _resolve_execution_bundle_options(
     base_options: ResolvedExecutionOptions,
     defaults: dict[str, Any],
 ) -> ResolvedExecutionOptions:
-    """Resolve execution options from bundle and validate enterprise features."""
+    """Resolve execution options from bundle.
+
+    Enterprise-gated fields (``reps_per_trial``, ``reps_aggregation``) are
+    rejected at ``ExecutionOptions`` construction time via field validators
+    (see issue #931), so this resolver only handles option merging.
+    """
     if execution_bundle is None:
         return base_options
-
-    # Validate enterprise-gated features
-    if execution_bundle.reps_per_trial != 1:
-        raise NotImplementedError(
-            "reps_per_trial is not available in this version. "
-            "This feature requires Traigent Enterprise. "
-            "Contact sales@traigent.ai for more information."
-        )
-    if execution_bundle.reps_aggregation != "mean":
-        raise NotImplementedError(
-            "reps_aggregation is not available in this version. "
-            "This feature requires Traigent Enterprise. "
-            "Contact sales@traigent.ai for more information."
-        )
 
     return ResolvedExecutionOptions(
         execution_mode=_resolve_option(
