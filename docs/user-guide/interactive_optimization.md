@@ -373,6 +373,8 @@ except SessionError as e:
 ### Network Issues
 
 ```python
+from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
+
 # Configure retry behavior
 client = TraigentCloudClient(
     api_key="your-key",  # pragma: allowlist secret

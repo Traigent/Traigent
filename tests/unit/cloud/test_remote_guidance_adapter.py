@@ -40,6 +40,7 @@ from traigent.optimizers.interactive_optimizer import (
     InteractiveOptimizer,
     RemoteGuidanceService,
 )
+from traigent.utils.exceptions import OptimizationError
 
 
 def _make_cloud_client_mock(
@@ -359,18 +360,41 @@ class TestDocumentedInteractiveOptimizerSetup:
 
     @pytest.mark.asyncio
     async def test_raw_cloud_client_without_adapter_raises_clear_error(self) -> None:
-        """Documents why the adapter is required: the bare cloud client fails.
+        """Drive the documented-broken bare client setup and assert it fails.
 
         Passing ``TraigentCloudClient`` directly as ``remote_service`` is the
-        documented-but-broken setup from issue #883. The cloud client has no
-        ``submit_result`` method and its ``create_session`` returns a ``str``
-        rather than a ``SessionCreationResponse`` — both of which break the
-        optimizer at runtime. This test pins the failure so a regression that
-        accidentally makes the bare client "work" without the adapter would
-        be caught.
+        documented-but-broken setup from issue #883. The cloud client exposes
+        ``submit_trial_result`` rather than the protocol's ``submit_result``,
+        so the first ``report_results`` call inside ``InteractiveOptimizer``
+        explodes. This test wires the bare client into the optimizer and
+        asserts the runtime failure surfaces — a regression that accidentally
+        lets the bare client "work" without the adapter would be caught.
         """
         client = AsyncMock(spec=TraigentCloudClient)
-        # ``spec=TraigentCloudClient`` means accessing ``submit_result`` on
-        # the mock raises ``AttributeError``, matching the real client's
-        # surface. That's the exact runtime failure users hit today.
-        assert not hasattr(client, "submit_result")
+        # ``spec=TraigentCloudClient`` mirrors the real client's surface, so
+        # accessing ``submit_result`` raises ``AttributeError`` — the exact
+        # failure users hit at runtime today.
+        assert not hasattr(TraigentCloudClient, "submit_result")
+
+        optimizer = InteractiveOptimizer(
+            config_space={"temperature": (0.0, 1.0)},
+            objectives=["accuracy"],
+            remote_service=client,  # type: ignore[arg-type]
+            dataset_metadata={"size": 1},
+        )
+        # Skip initialize_session for this regression pin: the cloud client's
+        # legacy ``create_session`` accepts the call (with the wrong return
+        # shape), so the cleanest, most diagnosable failure to assert is the
+        # missing ``submit_result`` the optimizer hits during reporting.
+        optimizer.session_id = "session-abc"
+
+        with pytest.raises(OptimizationError) as exc_info:
+            await optimizer.report_results(
+                trial_id="trial-1",
+                metrics={"accuracy": 0.8},
+                duration=1.0,
+                status=TrialStatus.COMPLETED,
+            )
+
+        assert "Failed to report results" in str(exc_info.value)
+        assert "submit_result" in str(exc_info.value)
