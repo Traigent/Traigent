@@ -81,6 +81,9 @@ class LangChainAgentExecutor(AgentExecutor):
         if not self._langchain_available:
             raise AgentExecutionError("LangChain not available")
 
+        if agent_spec.custom_tools:
+            return await self._execute_with_tools(agent_spec.custom_tools)
+
         chat_openai_cls, human_message_cls, modern_lc = (
             self._import_langchain_components()
         )
@@ -93,10 +96,6 @@ class LangChainAgentExecutor(AgentExecutor):
                 llm, human_message_cls, model_name, prompt_text
             )
         elif agent_spec.agent_type == "task":
-            if agent_spec.custom_tools:
-                return await self._execute_with_tools(
-                    llm, prompt_text, agent_spec.custom_tools
-                )
             return await self._execute_langchain_task(
                 llm, human_message_cls, prompt_text
             )
@@ -205,37 +204,15 @@ class LangChainAgentExecutor(AgentExecutor):
             ),
         }
 
-    async def _execute_with_tools(
-        self, llm: Any, prompt: str, tools: list[str]
-    ) -> dict[str, Any]:
-        """Execute agent with tools."""
-        # Simplified tool execution - in production, integrate actual tools
-        logger.info(f"Executing with tools: {tools}")
-
-        # For now, just execute without tools
-        try:
-            from langchain_core.messages import HumanMessage
-        except Exception:
-            from langchain.schema import HumanMessage
-
-        if hasattr(llm, "ainvoke"):
-            ai_message = await llm.ainvoke([HumanMessage(content=prompt)])
-            return {
-                "output": getattr(ai_message, "content", None) or str(ai_message),
-                "tokens_used": None,
-                "metadata": {"tools_available": tools},
-            }
-        else:
-            response = await llm.agenerate([[HumanMessage(content=prompt)]])
-            return {
-                "output": response.generations[0][0].text,
-                "tokens_used": (
-                    response.llm_output.get("token_usage", {}).get("total_tokens")
-                    if hasattr(response, "llm_output") and response.llm_output
-                    else None
-                ),
-                "metadata": {"tools_available": tools},
-            }
+    async def _execute_with_tools(self, tools: list[str]) -> dict[str, Any]:
+        """Reject tool-bearing specs until LangChain tool invocation is implemented."""
+        configured_tools = ", ".join(tools)
+        detail = f" Configured custom_tools: {configured_tools}." if tools else ""
+        raise AgentExecutionError(
+            "LangChain custom tool execution is not implemented yet."
+            f"{detail} Remove custom_tools or use a custom AgentExecutor that "
+            "invokes tools explicitly."
+        )
 
     def _validate_platform_spec(self, agent_spec: AgentSpecification) -> None:
         """Validate LangChain-specific requirements."""
@@ -296,7 +273,7 @@ class LangChainAgentExecutor(AgentExecutor):
 
     def _get_platform_capabilities(self) -> list[str]:
         """Get LangChain capabilities."""
-        return ["conversational", "task", "tools", "memory", "streaming", "async"]
+        return ["conversational", "task", "memory", "streaming", "async"]
 
     def _extract_llm_kwargs(self, config: dict[str, Any]) -> dict[str, Any]:
         """Extract additional LLM kwargs from config with validation."""
