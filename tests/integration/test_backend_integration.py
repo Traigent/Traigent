@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_bridges import SessionExperimentMapping, bridge
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.dataset_converter import converter
 from traigent.cloud.integration_manager import (
     IntegrationConfig,
@@ -639,6 +643,51 @@ class TestIntegrationManager:
                         {"accuracy": 0.9},
                         1.5,
                         None,
+                    )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("exc_type", "exc"),
+        [
+            (
+                CloudRemoteExecutionUnavailableError,
+                CloudRemoteExecutionUnavailableError("get_cloud_trial_suggestion"),
+            ),
+            (CloudServiceError, CloudServiceError("backend unavailable")),
+        ],
+        ids=["cloud-unavailable", "cloud-service-error"],
+    )
+    async def test_get_next_trial_propagates_typed_cloud_errors(
+        self, integration_config, exc_type, exc
+    ):
+        """IntegrationManager must not collapse typed cloud errors to None."""
+        with patch("traigent.cloud.integration_manager.get_production_mcp_client"):
+            with patch(
+                "traigent.cloud.integration_manager.get_backend_client"
+            ) as mock_backend_client:
+                with patch(
+                    "traigent.cloud.integration_manager.lifecycle_manager"
+                ) as mock_lifecycle:
+                    mock_session_state = Mock()
+                    mock_session_state.session.session_id = "session_456"
+                    mock_lifecycle.get_session_state.return_value = mock_session_state
+
+                    mock_backend = Mock()
+                    mock_backend.get_next_privacy_trial = AsyncMock(side_effect=exc)
+                    mock_backend_client.return_value = mock_backend
+
+                    manager = IntegrationManager(integration_config)
+                    await manager.initialize()
+                    manager._active_integrations["test_int"] = {
+                        "mode": IntegrationMode.PRIVACY.value,
+                        "result": Mock(session_id="session_456"),
+                    }
+
+                    with pytest.raises(exc_type):
+                        await manager.get_next_trial("session_456")
+
+                    mock_backend.get_next_privacy_trial.assert_awaited_once_with(
+                        "session_456", None
                     )
 
     def test_integration_statistics(self, integration_config):
