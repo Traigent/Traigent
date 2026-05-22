@@ -13,6 +13,7 @@ from traigent.optimizers.batch_optimizers import (
 )
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.optimizers.registry import get_optimizer
 
 
 class MockInvoker:
@@ -464,3 +465,210 @@ class TestAdaptiveBatchOptimizer:
         # Should have the most recent entries
         assert optimizer.performance_history[0]["trial_index"] == 50
         assert optimizer.performance_history[-1]["trial_index"] == 149
+
+
+class TestLegacyPositionalConstructors:
+    """Regression tests for legacy positional constructor calls.
+
+    The registry-standard signature is ``(config_space, objectives, **kwargs)``,
+    but pre-existing call sites use the historical positional form
+    ``XxxBatchOptimizer(base_optimizer, batch_config)``. These tests pin that
+    the legacy positional form still produces a correctly-wired optimizer
+    instead of being misinterpreted as ``(config_space=base_optimizer,
+    objectives=batch_config)``.
+    """
+
+    def setup_method(self):
+        self.config_space = {"param1": [1, 2], "param2": [0.1, 0.2]}
+        self.objectives = ["accuracy"]
+        self.base_optimizer = GridSearchOptimizer(self.config_space, self.objectives)
+        self.batch_config = BatchOptimizationConfig(
+            max_parallel_trials=3, batch_size=7
+        )
+
+    def test_parallel_batch_legacy_positional(self):
+        """ParallelBatchOptimizer(base_optimizer, batch_config) still works."""
+        optimizer = ParallelBatchOptimizer(self.base_optimizer, self.batch_config)
+
+        assert optimizer.base_optimizer is self.base_optimizer
+        assert optimizer.batch_config is self.batch_config
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_parallel_batch_legacy_positional_base_only(self):
+        """Single positional base_optimizer falls back to default batch_config."""
+        optimizer = ParallelBatchOptimizer(self.base_optimizer)
+
+        assert optimizer.base_optimizer is self.base_optimizer
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_adaptive_batch_legacy_positional(self):
+        """AdaptiveBatchOptimizer(base_optimizer, batch_config) still works."""
+        base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(base, self.batch_config)
+
+        assert optimizer.base_optimizer is base
+        assert optimizer.batch_config is self.batch_config
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_adaptive_batch_legacy_positional_base_only(self):
+        """Single positional base_optimizer falls back to default batch_config."""
+        base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(base)
+
+        assert optimizer.base_optimizer is base
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+
+    def test_parallel_batch_registry_path_unchanged(self):
+        """Registry-standard (config_space, objectives, **kwargs) still works."""
+        optimizer = ParallelBatchOptimizer(self.config_space, self.objectives)
+
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+        assert isinstance(optimizer.base_optimizer, RandomSearchOptimizer)
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+
+    def test_adaptive_batch_registry_path_unchanged(self):
+        """Registry-standard (config_space, objectives, **kwargs) still works."""
+        optimizer = AdaptiveBatchOptimizer(self.config_space, self.objectives)
+
+        assert optimizer.config_space == self.config_space
+        assert optimizer.objectives == self.objectives
+        assert isinstance(optimizer.base_optimizer, RandomSearchOptimizer)
+        assert isinstance(optimizer.batch_config, BatchOptimizationConfig)
+
+    def test_parallel_batch_explicit_keyword_overrides_positional(self):
+        """If both positional base and keyword base_optimizer provided, keyword wins."""
+        other_base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = ParallelBatchOptimizer(
+            self.base_optimizer, base_optimizer=other_base
+        )
+
+        assert optimizer.base_optimizer is other_base
+
+    def test_adaptive_batch_explicit_keyword_overrides_positional(self):
+        """If both positional base and keyword base_optimizer provided, keyword wins."""
+        other_base = RandomSearchOptimizer(self.config_space, self.objectives)
+        optimizer = AdaptiveBatchOptimizer(
+            self.base_optimizer, base_optimizer=other_base
+        )
+
+        assert optimizer.base_optimizer is other_base
+
+
+class TestBaseOptimizerKwargForwarding:
+    """Regression tests that BaseOptimizer kwargs flow through to super().__init__.
+
+    The registry-standard constructor path of ParallelBatchOptimizer and
+    AdaptiveBatchOptimizer accepts ``**kwargs`` but historically dropped them
+    on the floor instead of forwarding to ``BaseOptimizer.__init__``. That
+    silently discarded ``objective_weights`` (and any future BaseOptimizer
+    kwargs) when constructed through ``get_optimizer('parallel_batch', ...)``
+    or ``get_optimizer('adaptive_batch', ...)``, leaving ``objective_weights``
+    at the default equal-weight setting.
+    """
+
+    def setup_method(self):
+        self.config_space = {"param1": [1, 2], "param2": [0.1, 0.2]}
+        self.objectives = ["accuracy", "cost"]
+        self.weights = {"accuracy": 0.7, "cost": 0.3}
+
+    def test_parallel_batch_direct_kwargs_set_objective_weights(self):
+        """Direct construction with objective_weights kwarg lands on attribute."""
+        optimizer = ParallelBatchOptimizer(
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert optimizer.objective_weights == self.weights
+
+    def test_adaptive_batch_direct_kwargs_set_objective_weights(self):
+        """Direct construction with objective_weights kwarg lands on attribute."""
+        optimizer = AdaptiveBatchOptimizer(
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert optimizer.objective_weights == self.weights
+
+    def test_parallel_batch_via_get_optimizer_forwards_objective_weights(self):
+        """get_optimizer('parallel_batch', ...) forwards objective_weights."""
+        optimizer = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert isinstance(optimizer, ParallelBatchOptimizer)
+        assert optimizer.objective_weights == self.weights
+
+    def test_adaptive_batch_via_get_optimizer_forwards_objective_weights(self):
+        """get_optimizer('adaptive_batch', ...) forwards objective_weights."""
+        optimizer = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights=self.weights,
+        )
+
+        assert isinstance(optimizer, AdaptiveBatchOptimizer)
+        assert optimizer.objective_weights == self.weights
+
+    def test_parallel_batch_weights_affect_composite_score(self):
+        """Forwarded objective_weights actually change composite scoring output.
+
+        ParallelBatchOptimizer scores via scalarize_objectives over
+        ``self.objective_weights``. Two optimizers with different weights must
+        produce different composite scores on the same metric inputs, otherwise
+        ``objective_weights`` is being silently ignored.
+        """
+        equal = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.5, "cost": 0.5},
+        )
+        skewed = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.9, "cost": 0.1},
+        )
+
+        metrics = {"accuracy": 1.0, "cost": 0.0}
+        equal_score = equal._calculate_composite_score(metrics)
+        skewed_score = skewed._calculate_composite_score(metrics)
+
+        assert equal_score != skewed_score
+        # Skewed weights toward the higher-value metric must score above equal weights.
+        assert skewed_score > equal_score
+
+    def test_adaptive_batch_weights_affect_composite_score(self):
+        """Forwarded objective_weights actually change composite scoring output."""
+        equal = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.5, "cost": 0.5},
+        )
+        skewed = get_optimizer(
+            "adaptive_batch",
+            self.config_space,
+            self.objectives,
+            objective_weights={"accuracy": 0.9, "cost": 0.1},
+        )
+
+        metrics = {"accuracy": 1.0, "cost": 0.0}
+        equal_score = equal._calculate_composite_score(metrics)
+        skewed_score = skewed._calculate_composite_score(metrics)
+
+        assert equal_score != skewed_score
+        assert skewed_score > equal_score

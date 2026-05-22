@@ -200,6 +200,7 @@ capabilities:
         code_unit: traigent/optimizers/batch_optimizers.py
         status: complete
         completion: 1.0
+        selectable_by: "parallel_batch"
         implemented_methods:
           - suggest_next_trial
           - should_stop
@@ -214,6 +215,7 @@ capabilities:
         code_unit: traigent/optimizers/batch_optimizers.py
         status: complete
         completion: 1.0
+        selectable_by: "multi_objective_batch"
         notes: "Supports multiple objectives with Pareto front tracking"
 
   - id: CAP-OPT-ADAPTIVE
@@ -224,6 +226,7 @@ capabilities:
         code_unit: traigent/optimizers/batch_optimizers.py
         status: complete
         completion: 1.0
+        selectable_by: "adaptive_batch"
         notes: "Dynamically adjusts batch size based on progress"
 
   - id: CAP-OPT-INTERACTIVE

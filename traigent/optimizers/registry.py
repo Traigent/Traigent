@@ -141,8 +141,24 @@ def _register_builtin_optimizers() -> None:
     except ImportError:
         logger.debug("Bayesian optimizer not available (requires scikit-learn)")
 
+    _register_batch_optimizers()
+
     # Optuna optimizers will be registered after the function is defined
     logger.debug("Registered built-in optimizers")
+
+
+def _register_batch_optimizers() -> None:
+    """Register batch optimization algorithms under documented public names."""
+    from traigent.optimizers.batch_optimizers import (
+        AdaptiveBatchOptimizer,
+        MultiObjectiveBatchOptimizer,
+        ParallelBatchOptimizer,
+    )
+
+    register_optimizer("parallel_batch", ParallelBatchOptimizer)
+    register_optimizer("multi_objective_batch", MultiObjectiveBatchOptimizer)
+    register_optimizer("adaptive_batch", AdaptiveBatchOptimizer)
+    logger.debug("Registered batch optimizers")
 
 
 def register_optuna_optimizers(force: bool = False) -> None:
