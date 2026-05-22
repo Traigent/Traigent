@@ -1750,7 +1750,32 @@ class ParetoFront:
 
 @dataclass
 class StrategyConfig:
-    """Configuration for optimization strategy."""
+    """Configuration container for optimization strategy parameters.
+
+    .. note::
+        This is a **construction utility** — the fields below are
+        validated and stored, but they are not yet consumed by the
+        SDK's optimization runtime. To configure runtime execution
+        today, use the equivalent supported entry points:
+
+        - ``algorithm``: pass via ``@traigent.optimize(algorithm=...)``
+          or ``OptimizedFunction.optimize(algorithm=...)``.
+        - ``parallel_workers``: pass via
+          ``traigent.configure(parallel_workers=...)`` (which also accepts
+          a ``parallel_config`` for mode / trial_concurrency /
+          example_concurrency / thread_workers).
+        - ``resource_limits``: there is **no supported runtime equivalent
+          yet** for structured resource limits. For coarse cost/time
+          bounds today, use ``cost_limit=...`` /
+          ``TRAIGENT_RUN_COST_LIMIT`` on the decorator and
+          ``OptimizedFunction.optimize(timeout=...)`` at call time.
+          Structured ``resource_limits`` are not wired into the
+          runtime yet.
+
+        Future first-party wiring would need to connect
+        ``StrategyConfig`` to the optimization pipeline. Holding this
+        object does not change optimization behavior.
+    """
 
     algorithm: str
     algorithm_config: dict[str, Any] = field(default_factory=dict)

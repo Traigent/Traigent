@@ -1635,15 +1635,22 @@ def optimize(  # NOSONAR(S107)
             legacy: Adapter for the legacy decorator signature. Accepts either a
                 LegacyOptimizeArgs instance or a dict with the historic keyword
                 arguments. Values provided here merge with the explicit parameters.
-            **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
-                ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``metric_limit`` (deprecated alias: ``budget_limit``), ``plateau_window``,
-                ``cost_limit``, and ``cost_approved``.
-                Tuned-variable detection controls are also available via runtime
-                overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
-                (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
-                (``high|medium|low``), and optional include/exclude filters via
-                ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
+            **runtime_overrides: Stop-condition and budget knobs accepted by
+                the decorator. The currently supported keys are:
+                ``metric_limit``, ``metric_name``,
+                ``metric_include_pruned``,
+                ``budget_limit`` (deprecated alias for ``metric_limit``),
+                ``budget_metric``,
+                ``budget_include_pruned``, ``plateau_window``,
+                ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
+                ``tie_breakers``, and ``tvl_parameter_agents``.
+                Note: ``algorithm`` and ``max_trials`` are first-class
+                parameters of this decorator (not in ``**runtime_overrides``);
+                ``timeout`` is supported on
+                ``OptimizedFunction.optimize(timeout=...)`` at call time,
+                not on the decorator. Tuned-variable detection controls
+                (``auto_detect_tvars`` and friends) are available as
+                first-class parameters.
 
     Warning:
         Optimization runs multiple LLM calls. Use
