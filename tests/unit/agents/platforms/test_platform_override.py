@@ -193,7 +193,7 @@ class TestFrameworkOverride:
         # Verify expected capabilities
         assert "conversational" in capabilities
         assert "task" in capabilities
-        assert "tools" in capabilities
+        assert "tools" not in capabilities
         assert "async" in capabilities
 
         # Test capability checking logic
