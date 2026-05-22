@@ -9,7 +9,10 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from traigent_ui.security_utils import UnsafeValueError, safe_python_value_literal
+
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
+
 from .llm_providers import LLMProviderManager
 from .prompt_builder import build_prompt_for_problem
 
@@ -338,49 +341,31 @@ def add_examples_to_content(content: str, new_examples: List[Dict[str, Any]]) ->
         )
 
 
+_ALLOWED_INPUT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
 def convert_examples_to_code(examples: List[Dict[str, Any]]) -> str:
-    """Convert examples to Python code format."""
+    """Convert examples to Python code format.
+
+    Every LLM-supplied value that lands in the emitted source is first
+    normalized by :func:`safe_python_value_literal`, which restricts the
+    type set to JSON-style primitives, strips control characters from
+    strings, and bounds string length. Inputs that fail validation are
+    skipped (with a warning) rather than embedded — the historical pattern
+    used ``repr()`` directly, which a custom ``__repr__`` could subvert.
+    Input-dict keys are additionally allow-listed to ASCII identifiers.
+    """
     code_parts = []
 
     for i, example in enumerate(examples):
-        # Format the example as a Python dictionary
-        example_code = "            {\n"
-
-        # Add input_data (typically query)
-        if "input_data" in example and isinstance(example["input_data"], dict):
-            for key, value in example["input_data"].items():
-                example_code += f'                "{key}": {repr(value)},\n'
-
-        # Add expected_output (typically category)
-        if "expected_output" in example:
-            example_code += (
-                f'                "category": {repr(example["expected_output"])},\n'
-            )
-
-        # Add difficulty
-        if "difficulty" in example:
-            example_code += (
-                f'                "difficulty": {repr(example["difficulty"])},\n'
-            )
-
-        # Add reasoning from metadata
-        if "metadata" in example and isinstance(example["metadata"], dict):
-            reasoning = example["metadata"].get(
-                "reasoning", f"Generated example {i + 1}"
-            )
-            example_code += f'                "reasoning": {repr(reasoning)},\n'
-        else:
-            example_code += (
-                f'                "reasoning": "Generated example {i + 1}",\n'
-            )
-
-        # Remove trailing comma from last line
-        lines = example_code.rstrip().split("\n")
-        if lines[-1].endswith(","):
-            lines[-1] = lines[-1][:-1]
-        example_code = "\n".join(lines) + "\n"
-
-        example_code += "            }"
+        try:
+            example_code = _format_single_example_code(example, i)
+        except UnsafeValueError as exc:
+            # Skip the example rather than emit unsafe source. A printed
+            # warning matches the existing print-based observability in
+            # this module; tighter logging is out of scope here.
+            print(f"Warning: skipping example {i + 1}: {exc}")
+            continue
         code_parts.append(example_code)
 
     # Join all examples with commas (no leading comma)
@@ -388,6 +373,59 @@ def convert_examples_to_code(examples: List[Dict[str, Any]]) -> str:
         return ",\n".join(code_parts)
     else:
         return ""
+
+
+def _format_single_example_code(example: Dict[str, Any], index: int) -> str:
+    example_code = "            {\n"
+
+    # Add input_data (typically query). Keys must match a strict
+    # identifier pattern so they cannot smuggle Python code into the
+    # surrounding dict literal.
+    if "input_data" in example and isinstance(example["input_data"], dict):
+        for key, value in example["input_data"].items():
+            if not isinstance(key, str) or not _ALLOWED_INPUT_KEY.fullmatch(key):
+                raise UnsafeValueError(
+                    f"input_data key {key!r} is not a safe identifier"
+                )
+            example_code += (
+                f'                "{key}": {safe_python_value_literal(value)},\n'
+            )
+
+    # Add expected_output (typically category)
+    if "expected_output" in example:
+        example_code += (
+            '                "category": '
+            f"{safe_python_value_literal(example['expected_output'])},\n"
+        )
+
+    # Add difficulty
+    if "difficulty" in example:
+        example_code += (
+            '                "difficulty": '
+            f"{safe_python_value_literal(example['difficulty'])},\n"
+        )
+
+    # Add reasoning from metadata
+    if "metadata" in example and isinstance(example["metadata"], dict):
+        reasoning = example["metadata"].get(
+            "reasoning", f"Generated example {index + 1}"
+        )
+        example_code += (
+            f'                "reasoning": {safe_python_value_literal(reasoning)},\n'
+        )
+    else:
+        example_code += (
+            f'                "reasoning": "Generated example {index + 1}",\n'
+        )
+
+    # Remove trailing comma from last line
+    lines = example_code.rstrip().split("\n")
+    if lines[-1].endswith(","):
+        lines[-1] = lines[-1][:-1]
+    example_code = "\n".join(lines) + "\n"
+
+    example_code += "            }"
+    return example_code
 
 
 def get_available_providers() -> List[str]:

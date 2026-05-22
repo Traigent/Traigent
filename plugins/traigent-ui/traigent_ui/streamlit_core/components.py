@@ -9,18 +9,47 @@ different sections of the Traigent control center.
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from traigent_ui.security_utils import escape_html
+
+# Allow-list of CSS color tokens accepted by the metric/card helpers. Any
+# value outside this set is replaced with the default in order to avoid
+# attribute-context XSS via colors that come from caller-supplied state.
+_ALLOWED_CARD_COLORS = frozenset(
+    {
+        "#10b981",
+        "#ef4444",
+        "#f59e0b",
+        "#3b82f6",
+        "#9ca3af",
+        "#e5e7eb",
+        "#ffffff",
+    }
+)
+_DEFAULT_CARD_COLOR = "#10b981"
+
+
+def _safe_color(color: str) -> str:
+    """Return ``color`` only if it is in the project's CSS allow-list."""
+    return color if color in _ALLOWED_CARD_COLORS else _DEFAULT_CARD_COLOR
 
 
 def render_status_indicators(api_status: str = "", live_status: str = "") -> str:
-    """Render status indicators for the header."""
+    """Render status indicators for the header.
+
+    ``api_status`` / ``live_status`` are caller-supplied strings; they are
+    HTML-escaped before being interpolated into the ``<span>`` body to
+    prevent XSS via crafted status text.
+    """
     status_html = ""
     if api_status:
         status_html += (
-            f'<span style="color: #f59e0b; font-size: 0.875rem;">{api_status}</span>'
+            '<span style="color: #f59e0b; font-size: 0.875rem;">'
+            f"{escape_html(api_status)}</span>"
         )
     if live_status:
         status_html += (
-            f'<span style="color: #9ca3af; font-size: 0.75rem;">{live_status}</span>'
+            '<span style="color: #9ca3af; font-size: 0.75rem;">'
+            f"{escape_html(live_status)}</span>"
         )
     return status_html
 
@@ -81,8 +110,15 @@ def render_navigation_tabs(nav_options: List[Dict[str, str]], current_mode: str)
 
 
 def render_section_header(title: str, subtitle: str = "", icon: str = ""):
-    """Render a standardized section header."""
-    header_text = f"{icon} {title}" if icon else title
+    """Render a standardized section header.
+
+    ``title``, ``subtitle``, and ``icon`` are caller-supplied strings and
+    are HTML-escaped before interpolation. The element-level CSS is fixed
+    and contains no caller data.
+    """
+    safe_icon = escape_html(icon)
+    safe_title = escape_html(title)
+    header_text = f"{safe_icon} {safe_title}" if icon else safe_title
 
     st.markdown(
         f'<h2 style="color: #10b981; font-size: 1.5rem; font-weight: 700; margin: 1rem 0 0.5rem 0;">{header_text}</h2>',
@@ -91,17 +127,22 @@ def render_section_header(title: str, subtitle: str = "", icon: str = ""):
 
     if subtitle:
         st.markdown(
-            f'<p style="color: #9ca3af; font-size: 1rem; margin: 0 0 1rem 0;">{subtitle}</p>',
+            f'<p style="color: #9ca3af; font-size: 1rem; margin: 0 0 1rem 0;">{escape_html(subtitle)}</p>',
             unsafe_allow_html=True,
         )
 
 
 def render_metric_card(title: str, value: str, icon: str = "", color: str = "#10b981"):
-    """Render a metric card component."""
+    """Render a metric card component.
+
+    ``color`` is restricted to the project's CSS allow-list to prevent
+    attribute-context injection; the other caller-supplied values are
+    HTML-escaped.
+    """
     return f"""
     <div style="background-color: #1f2937; border-radius: 0.5rem; padding: 1rem; text-align: center;">
-        <div style="color: {color}; font-size: 1.5rem; font-weight: 600;">{icon} {value}</div>
-        <div style="color: #9ca3af; font-size: 0.875rem; margin-top: 0.25rem;">{title}</div>
+        <div style="color: {_safe_color(color)}; font-size: 1.5rem; font-weight: 600;">{escape_html(icon)} {escape_html(value)}</div>
+        <div style="color: #9ca3af; font-size: 0.875rem; margin-top: 0.25rem;">{escape_html(title)}</div>
     </div>
     """
 
@@ -115,17 +156,21 @@ def render_info_card(title: str, content: str, card_type: str = "info"):
         "error": {"bg": "#7f1d1d", "border": "#ef4444", "text": "#fee2e2"},
     }
 
+    # ``card_type`` is keyed against a fixed allow-list, so the resolved
+    # ``color_scheme`` values are always literals from this dict and safe
+    # to embed in style attributes. Only ``title`` and ``content`` come
+    # from callers, and both are HTML-escaped before interpolation.
     color_scheme = colors.get(card_type, colors["info"])
 
     st.markdown(
         f"""
-        <div style="background-color: {color_scheme['bg']};
-                    border: 1px solid {color_scheme['border']};
+        <div style="background-color: {color_scheme["bg"]};
+                    border: 1px solid {color_scheme["border"]};
                     border-radius: 0.5rem;
                     padding: 1rem;
                     margin: 0.5rem 0;">
-            <h4 style="color: {color_scheme['text']}; margin: 0 0 0.5rem 0; font-size: 1rem;">{title}</h4>
-            <p style="color: {color_scheme['text']}; margin: 0; font-size: 0.875rem;">{content}</p>
+            <h4 style="color: {color_scheme["text"]}; margin: 0 0 0.5rem 0; font-size: 1rem;">{escape_html(title)}</h4>
+            <p style="color: {color_scheme["text"]}; margin: 0; font-size: 0.875rem;">{escape_html(content)}</p>
         </div>
         """,
         unsafe_allow_html=True,

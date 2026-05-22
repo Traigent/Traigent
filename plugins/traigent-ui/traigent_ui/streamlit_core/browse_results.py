@@ -10,6 +10,24 @@ from typing import Any, Dict
 
 import pandas as pd
 import streamlit as st
+from traigent_ui.security_utils import (
+    escape_html,
+    format_currency,
+    format_duration_minutes,
+    format_int,
+    format_percent,
+)
+
+# Background colors come from a small fixed allow-list keyed by row state
+# so callers cannot inject attribute-context CSS via dataframe values.
+_ROW_BG_SUCCESS = "#1f2937"
+_ROW_BG_FAILURE = "#312e2e"
+
+
+def _row_bg(success: bool) -> str:
+    """Return a known-safe background color for the row container."""
+    return _ROW_BG_SUCCESS if success else _ROW_BG_FAILURE
+
 
 # Import storage utilities
 try:
@@ -211,33 +229,36 @@ def render_optimization_table(df: pd.DataFrame):
         if "performance" in row and isinstance(row["performance"], dict):
             perf = row["performance"]
             best_model = perf.get("best_model", "Unknown")
-            accuracy = (
-                f"{perf.get('accuracy', 0):.1%}" if perf.get("accuracy") else "N/A"
-            )
-            cost = f"${perf.get('cost', 0):.4f}" if perf.get("cost") else "N/A"
+            accuracy = format_percent(perf.get("accuracy"))
+            cost = format_currency(perf.get("cost"))
 
-        duration = (
-            f"{row.get('duration_minutes', 0):.1f}m"
-            if row.get("duration_minutes")
-            else "N/A"
-        )
+        duration = format_duration_minutes(row.get("duration_minutes"))
         configs = row.get("configurations_tested", "N/A")
 
-        # Row background based on success
-        bg_color = "#1f2937" if row.get("success", False) else "#312e2e"
+        # Row background comes from a fixed allow-list; ``idx`` is the
+        # dataframe index (an integer-ish value) which we coerce to int
+        # for the click handler so caller data cannot inject script.
+        bg_color = _row_bg(bool(row.get("success", False)))
+        try:
+            safe_idx = int(idx)
+        except (TypeError, ValueError):
+            # Skip rows whose index is not an integer; the click handler
+            # would otherwise leak caller-controlled text into the DOM.
+            continue
 
-        # Table row
+        # Table row. Every caller-supplied cell value is HTML-escaped; the
+        # numeric/format-spec values above are inherently safe.
         row_html = f"""
         <div style="background-color: {bg_color}; padding: 0.5rem; border-radius: 0.5rem; margin-bottom: 0.25rem; cursor: pointer;"
-             onclick="document.getElementById('row_{idx}').click()">
+             onclick="document.getElementById('row_{safe_idx}').click()">
             <div style="display: grid; grid-template-columns: 1.5fr 2fr 1.5fr 1fr 1fr 1fr 1fr; gap: 0.5rem; font-size: 0.8rem; align-items: center;">
-                <div style="color: #e5e7eb; font-weight: 500;">{problem}</div>
-                <div style="color: #9ca3af;">{strategy}</div>
-                <div style="color: #9ca3af;">{best_model}</div>
-                <div style="color: #10b981;">{accuracy}</div>
-                <div style="color: #f59e0b;">{cost}</div>
-                <div style="color: #9ca3af;">{duration}</div>
-                <div style="color: #9ca3af;">{configs}</div>
+                <div style="color: #e5e7eb; font-weight: 500;">{escape_html(problem)}</div>
+                <div style="color: #9ca3af;">{escape_html(strategy)}</div>
+                <div style="color: #9ca3af;">{escape_html(best_model)}</div>
+                <div style="color: #10b981;">{escape_html(accuracy)}</div>
+                <div style="color: #f59e0b;">{escape_html(cost)}</div>
+                <div style="color: #9ca3af;">{escape_html(duration)}</div>
+                <div style="color: #9ca3af;">{escape_html(configs)}</div>
             </div>
         </div>
         """
@@ -455,7 +476,20 @@ def render_detailed_result_view(result: Dict[str, Any]):
     performance = result.get("performance", {})
     best_config = performance.get("best_config", {})
 
-    # Recommended Configuration Box
+    # Recommended Configuration Box. ``best_model`` is caller-supplied and
+    # is HTML-escaped before interpolation; the numeric metrics are passed
+    # through formatters that coerce to numbers (with a safe fallback) so
+    # untrusted values cannot break out of the surrounding attribute.
+    best_model_label = escape_html(performance.get("best_model", "Unknown"))
+    accuracy_label = escape_html(format_percent(performance.get("accuracy")))
+    cost_label = escape_html(format_currency(performance.get("cost")))
+    latency_value = performance.get("latency", 1.0)
+    try:
+        latency_label = f"{float(latency_value):.1f}s"
+    except (TypeError, ValueError):
+        latency_label = "N/A"
+    latency_label = escape_html(latency_label)
+
     st.markdown(
         f"""
         <div style="background-color: #1f2937; border: 2px solid #10b981; border-radius: 0.5rem;
@@ -464,17 +498,17 @@ def render_detailed_result_view(result: Dict[str, Any]):
                 Recommended Configuration
             </h3>
             <p style="color: #ffffff; font-size: 1.125rem; font-weight: 600; margin: 0.5rem 0;">
-                Model: {performance.get("best_model", "Unknown")}
+                Model: {best_model_label}
             </p>
             <div style="margin: 1rem 0;">
                 <p style="color: #10b981; font-size: 1rem; margin: 0.25rem 0;">
-                    🎯 {performance.get("accuracy", 0):.1%} accuracy achieved
+                    🎯 {accuracy_label} accuracy achieved
                 </p>
                 <p style="color: #10b981; font-size: 1rem; margin: 0.25rem 0;">
-                    💰 ${performance.get("cost", 0):.4f} cost per call
+                    💰 {cost_label} cost per call
                 </p>
                 <p style="color: #10b981; font-size: 1rem; margin: 0.25rem 0;">
-                    ⚡ {performance.get("latency", 1.0):.1f}s response time
+                    ⚡ {latency_label} response time
                 </p>
             </div>
         </div>
@@ -496,7 +530,13 @@ def render_detailed_result_view(result: Dict[str, Any]):
         unsafe_allow_html=True,
     )
 
-    # Performance insights
+    # Performance insights. Caller-supplied strings/values are escaped or
+    # parsed through numeric formatters before interpolation.
+    insights_accuracy = escape_html(format_percent(performance.get("accuracy")))
+    insights_model = escape_html(performance.get("best_model", "N/A"))
+    insights_temperature = escape_html(best_config.get("temperature", "N/A"))
+    insights_configs = escape_html(format_int(result.get("configurations_tested", 0)))
+
     st.markdown(
         f"""
     <div style="background-color: #1f2937; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
@@ -504,10 +544,10 @@ def render_detailed_result_view(result: Dict[str, Any]):
             ✅ Performance Insights
         </h4>
         <ul style="color: #e5e7eb; font-size: 0.875rem; margin: 0.5rem 0 0 1.25rem;">
-            <li>Best accuracy achieved: {performance.get("accuracy", 0):.1%}</li>
-            <li>Most cost-effective model: {performance.get("best_model", "N/A")}</li>
-            <li>Optimal temperature: {best_config.get("temperature", "N/A")}</li>
-            <li>Configurations tested: {result.get("configurations_tested", 0)}</li>
+            <li>Best accuracy achieved: {insights_accuracy}</li>
+            <li>Most cost-effective model: {insights_model}</li>
+            <li>Optimal temperature: {insights_temperature}</li>
+            <li>Configurations tested: {insights_configs}</li>
         </ul>
     </div>
     """,
@@ -607,21 +647,21 @@ def render_detailed_result_view(result: Dict[str, Any]):
             summary = f"""
 # Optimization Report
 
-**Problem:** {result.get('problem', 'Unknown')}
-**Strategy:** {result.get('strategy', 'Unknown')}
-**Date:** {result.get('timestamp', 'Unknown')}
+**Problem:** {result.get("problem", "Unknown")}
+**Strategy:** {result.get("strategy", "Unknown")}
+**Date:** {result.get("timestamp", "Unknown")}
 
 ## Results
-- **Best Model:** {performance.get('best_model', 'N/A')}
-- **Accuracy:** {performance.get('accuracy', 0):.1%}
-- **Cost per Call:** ${performance.get('cost', 0):.4f}
-- **Response Time:** {performance.get('latency', 1.0):.1f}s
+- **Best Model:** {performance.get("best_model", "N/A")}
+- **Accuracy:** {performance.get("accuracy", 0):.1%}
+- **Cost per Call:** ${performance.get("cost", 0):.4f}
+- **Response Time:** {performance.get("latency", 1.0):.1f}s
 
 ## Configuration Tested
-{result.get('configurations_tested', 0)} different configurations were evaluated.
+{result.get("configurations_tested", 0)} different configurations were evaluated.
 
 ## Recommendations
-Use {performance.get('best_model', 'the recommended model')} with the optimal settings identified in this optimization.
+Use {performance.get("best_model", "the recommended model")} with the optimal settings identified in this optimization.
 """
             from datetime import datetime
 

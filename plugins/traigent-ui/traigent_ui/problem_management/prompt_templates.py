@@ -7,6 +7,32 @@ to ensure consistent, high-quality example generation for LangChain optimization
 
 from typing import List, Optional
 
+from traigent_ui.security_utils import sanitize_inline_text, wrap_untrusted
+
+
+def _safe_description(value: str) -> str:
+    """Wrap a caller-supplied description as an untrusted-data block."""
+    return wrap_untrusted("description", value, max_chars=2000)
+
+
+def _safe_domain(value: str) -> str:
+    """Sanitize the short ``domain`` label used inside prompt structure."""
+    return sanitize_inline_text(value, max_chars=80)
+
+
+def _safe_reasoning_type(value: str) -> str:
+    """Sanitize the short ``reasoning_type`` label used inside prompt structure."""
+    return sanitize_inline_text(value, max_chars=80)
+
+
+def _safe_categories(categories: Optional[List[str]]) -> str:
+    """Sanitize caller-supplied category labels before joining."""
+    if not categories:
+        return "appropriate categories"
+    safe = [sanitize_inline_text(c, max_chars=80) for c in categories]
+    safe = [c for c in safe if c]
+    return ", ".join(safe) if safe else "appropriate categories"
+
 
 class PromptTemplates:
     """Collection of optimized prompt templates for different problem types."""
@@ -19,16 +45,14 @@ class PromptTemplates:
         categories: Optional[List[str]] = None,
     ) -> str:
         """Generate prompt for classification examples."""
-        categories_str = (
-            ", ".join(categories) if categories else "appropriate categories"
-        )
+        categories_str = _safe_categories(categories)
 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} classification examples for: {description}
+        return f"""Generate EXACTLY {actual_count} classification examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 Categories: {categories_str}
 
 STRICT REQUIREMENTS:
@@ -135,10 +159,10 @@ Example 2:
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} reasoning problem examples for: {description}
+        return f"""Generate EXACTLY {actual_count} reasoning problem examples for: {_safe_description(description)}
 
-Domain: {domain}
-Type: {reasoning_type} reasoning
+Domain: {_safe_domain(domain)}
+Type: {_safe_reasoning_type(reasoning_type)} reasoning
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -168,9 +192,9 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} text generation examples for: {description}
+        return f"""Generate EXACTLY {actual_count} text generation examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -199,9 +223,9 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} question-answering examples for: {description}
+        return f"""Generate EXACTLY {actual_count} question-answering examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -237,9 +261,9 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} information extraction examples for: {description}
+        return f"""Generate EXACTLY {actual_count} information extraction examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -277,9 +301,9 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} summarization examples for: {description}
+        return f"""Generate EXACTLY {actual_count} summarization examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -309,9 +333,9 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} code generation examples for: {description}
+        return f"""Generate EXACTLY {actual_count} code generation examples for: {_safe_description(description)}
 
-Domain: {domain}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
@@ -349,10 +373,10 @@ Generate EXACTLY {actual_count} examples. Each on a new line. Output ONLY valid 
         # Ensure we request small batches
         actual_count = min(count, 5)
 
-        return f"""Generate EXACTLY {actual_count} examples for: {description}
+        return f"""Generate EXACTLY {actual_count} examples for: {_safe_description(description)}
 
-Problem Type: {problem_type}
-Domain: {domain}
+Problem Type: {sanitize_inline_text(problem_type, max_chars=80)}
+Domain: {_safe_domain(domain)}
 
 STRICT REQUIREMENTS:
 1. Output MUST be valid JSON
