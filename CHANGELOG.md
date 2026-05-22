@@ -31,6 +31,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Trial tenants now pass quota checks until `trial_ends_at` and are blocked after expiry.
 - Unsupported hybrid keep-alive now marks the session status as `unsupported` instead of treating every tracked session as alive.
 
+## [0.11.4] - 2026-04-04
+
+### Fixed
+- Mock mode reported 0% accuracy when callers passed custom `metric_functions` because the mock evaluator returned a constant value that didn't satisfy the user-provided metric closure. The mock now honors registered `metric_functions` so mock-mode optimizations produce non-trivial scores (#649).
+
+## [0.11.3] - 2026-04-04
+
+### Changed
+- Release-prep version bump on top of 0.11.2; no user-visible behavior change. Published to align PyPI metadata with the next-patch release pipeline.
+
 ## [0.11.2] - 2026-04-01
 
 ### Fixed
