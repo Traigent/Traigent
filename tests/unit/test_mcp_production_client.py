@@ -328,12 +328,12 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert (
-                    result.success is False
-                ), "Timeout should result in failed response"
-                assert (
-                    "timeout" in result.error_message.lower()
-                ), "Error message should mention timeout"
+                assert result.success is False, (
+                    "Timeout should result in failed response"
+                )
+                assert "timeout" in result.error_message.lower(), (
+                    "Error message should mention timeout"
+                )
 
 
 class TestMCPRetryMechanism:
@@ -1781,6 +1781,106 @@ class TestCreateAgent:
             assert result.success is True
             mock_call_tool.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_create_agent_payload_matches_bridge_schema(self):
+        """create_agent must forward the bridge schema verbatim (issue #900).
+
+        Regression: the MCP client previously read ``agent_type`` / ``platform``
+        / ``model_parameters`` from the bridge output, none of which exist
+        there, so bridge fields were silently dropped. This test asserts the
+        exact ``call_tool("create_agent", arguments)`` payload.
+        """
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        agent_spec = AgentSpecification(
+            id="agent_xyz",
+            name="QA Agent",
+            agent_type="conversational",
+            agent_platform="openai",
+            prompt_template="Answer: {input}",
+            model_parameters={"model": "gpt-4o", "temperature": 0.3},
+            reasoning="chain-of-thought",
+            style="professional",
+            tone="helpful",
+            format="structured",
+            persona="expert",
+            guidelines=["be accurate"],
+            response_validation=True,
+            custom_tools=["calculator"],
+            metadata={"version": "1.0"},
+            description="user-supplied description",
+        )
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_xyz"}
+            )
+
+            await self.client.create_agent(agent_spec)
+
+        assert mock_call_tool.call_count == 1
+        (tool_name, arguments), _kwargs = (
+            mock_call_tool.call_args.args,
+            mock_call_tool.call_args.kwargs,
+        )
+        assert tool_name == "create_agent"
+        assert arguments == {
+            "name": "QA Agent",
+            # ``agent_type`` maps via the bridge into ``agent_type_id`` —
+            # the canonical backend field. Issue #900 fixes the drop of this
+            # mapping in the MCP client.
+            "agent_type_id": "agent-type-1",
+            "description": "user-supplied description",
+            "agent_platform": "openai",
+            "prompt_template": "Answer: {input}",
+            "model_parameters": {"model": "gpt-4o", "temperature": 0.3},
+            "reasoning": "chain-of-thought",
+            "style": "professional",
+            "tone": "helpful",
+            "format": "structured",
+            "persona": "expert",
+            "guidelines": ["be accurate"],
+            "response_validation": True,
+            "custom_tools": ["calculator"],
+            "metadata": {"version": "1.0"},
+            "agent_id": "agent_xyz",
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_agent_payload_with_defaults(self):
+        """Defaults from AgentSpecification.__post_init__ flow through cleanly."""
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        # All fields default — exercises the ``or "default"`` fallback in the
+        # bridge and ensures we still emit ``agent_type_id`` (never
+        # ``agent_type``) downstream.
+        agent_spec = AgentSpecification()
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"agent_id": "test-agent"}
+            )
+
+            await self.client.create_agent(agent_spec)
+
+        tool_name, arguments = mock_call_tool.call_args.args
+        assert tool_name == "create_agent"
+        # Unknown ``agent_type='test'`` falls back to the default mapping.
+        assert arguments["agent_type_id"] == "agent-type-1"
+        assert arguments["agent_platform"] == "test"
+        assert arguments["prompt_template"] == "Test prompt"
+        assert arguments["model_parameters"] == {}
+        assert arguments["response_validation"] is False
+        # No spurious legacy keys.
+        assert "agent_type" not in arguments
+        assert "platform" not in arguments
+
 
 class TestUploadDataset:
     """Test upload_dataset method."""
@@ -2033,9 +2133,11 @@ class TestCreateOptimizationWorkflow:
                             success=True, data={"experiment_run_id": "run_123"}
                         )
 
-                        agent_id, exp_id, run_id = (
-                            await self.client.create_optimization_workflow(request)
-                        )
+                        (
+                            agent_id,
+                            exp_id,
+                            run_id,
+                        ) = await self.client.create_optimization_workflow(request)
                         assert agent_id == "agent_123"
                         assert exp_id == "exp_123"
                         assert run_id == "run_123"

@@ -297,21 +297,35 @@ class SDKBackendBridge:
     ) -> dict[str, Any]:
         """Convert SDK AgentSpecification to backend agent data.
 
+        The returned payload matches the Traigent backend's ``create_agent``
+        MCP tool / ``POST /agents`` schema (see ``TraigentBackend`` ``agent_dal.create_agent``
+        and ``src/mcp/tools/agent_tools.create_agent``): ``agent_type_id`` and
+        ``agent_platform`` are the canonical field names (not ``agent_type`` /
+        ``platform``). ``model_parameters`` is preserved so callers that forward
+        the payload through MCP's ``**kwargs`` retain trial configuration intent.
+
         Args:
             agent_spec: SDK agent specification
-            user_id: Optional user identifier
+            user_id: Optional user identifier (included in metadata when set)
 
         Returns:
             Backend agent creation data
         """
+        metadata: dict[str, Any] = dict(agent_spec.metadata or {})
+        if user_id is not None and "user_id" not in metadata:
+            metadata["user_id"] = user_id
+
         return {
             "agent_id": agent_spec.id,
             "name": agent_spec.name,
-            "description": "Agent generated from SDK specification",
+            "description": agent_spec.description
+            or "Agent generated from SDK specification",
             "agent_type_id": self._agent_type_mappings.get(
                 agent_spec.agent_type or "default", self._agent_type_mappings["default"]
             ),
+            "agent_platform": agent_spec.agent_platform,
             "prompt_template": agent_spec.prompt_template,
+            "model_parameters": agent_spec.model_parameters,
             "reasoning": agent_spec.reasoning,
             "style": agent_spec.style,
             "tone": agent_spec.tone,
@@ -320,7 +334,7 @@ class SDKBackendBridge:
             "guidelines": agent_spec.guidelines,
             "response_validation": agent_spec.response_validation,
             "custom_tools": agent_spec.custom_tools,
-            "metadata": agent_spec.metadata,
+            "metadata": metadata,
         }
 
     def create_session_mapping(

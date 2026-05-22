@@ -335,7 +335,13 @@ class TestSDKBackendBridge:
         assert backend_agent["name"] == "Test Agent"
         assert backend_agent["description"] == "Agent generated from SDK specification"
         assert backend_agent["agent_type_id"] == "agent-type-1"  # conversational
+        # Issue #900: agent_platform + model_parameters must reach the backend.
+        assert backend_agent["agent_platform"] == "openai"
         assert backend_agent["prompt_template"] == "Test prompt: {input}"
+        assert backend_agent["model_parameters"] == {
+            "temperature": 0.7,
+            "max_tokens": 150,
+        }
         assert backend_agent["reasoning"] == "chain-of-thought"
         assert backend_agent["style"] == "professional"
         assert backend_agent["tone"] == "helpful"
@@ -344,7 +350,28 @@ class TestSDKBackendBridge:
         assert backend_agent["guidelines"] == ["be accurate", "be helpful"]
         assert backend_agent["response_validation"] is True
         assert backend_agent["custom_tools"] == ["calculator"]
-        assert backend_agent["metadata"] == {"agent_version": "1.0"}
+        # user_id is folded into metadata for downstream auditing.
+        assert backend_agent["metadata"] == {
+            "agent_version": "1.0",
+            "user_id": "test_user",
+        }
+
+    def test_agent_specification_to_backend_uses_spec_description(self, sdk_bridge):
+        """User-provided AgentSpecification.description must not be overwritten."""
+        spec = AgentSpecification(
+            id="agent_desc",
+            name="Custom Agent",
+            agent_type="task",
+            agent_platform="openai",
+            prompt_template="prompt",
+            model_parameters={},
+            description="Bespoke description supplied by user",
+        )
+
+        backend_agent = sdk_bridge.agent_specification_to_backend(spec)
+
+        assert backend_agent["description"] == "Bespoke description supplied by user"
+        assert backend_agent["agent_type_id"] == "agent-type-2"  # task
 
     def test_agent_type_mapping(self, sdk_bridge):
         """Test agent type mapping logic."""

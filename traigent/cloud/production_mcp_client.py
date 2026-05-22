@@ -644,17 +644,32 @@ class ProductionMCPClient:
                 "agent_spec must be an AgentSpecification instance"
             )
 
-        # Convert to backend format
+        # Convert to backend format. The bridge output already matches the
+        # backend MCP ``create_agent`` schema (``agent_type_id``,
+        # ``agent_platform``, ``prompt_template``, ``model_parameters``,
+        # etc.), so we forward it as-is rather than re-mapping to field
+        # names that the bridge does not produce. See issue #900.
         backend_agent = bridge.agent_specification_to_backend(agent_spec)
 
-        arguments = {
-            "name": backend_agent.get("name"),
-            "agent_type": backend_agent.get("agent_type"),
-            "platform": backend_agent.get("platform"),
+        arguments: dict[str, Any] = {
+            "name": backend_agent["name"],
+            "agent_type_id": backend_agent["agent_type_id"],
+            "description": backend_agent.get("description"),
+            "agent_platform": backend_agent.get("agent_platform"),
             "prompt_template": backend_agent.get("prompt_template"),
             "model_parameters": backend_agent.get("model_parameters"),
-            "metadata": backend_agent.get("metadata", {}),
+            "reasoning": backend_agent.get("reasoning"),
+            "style": backend_agent.get("style"),
+            "tone": backend_agent.get("tone"),
+            "format": backend_agent.get("format"),
+            "persona": backend_agent.get("persona"),
+            "guidelines": backend_agent.get("guidelines"),
+            "response_validation": backend_agent.get("response_validation", False),
+            "custom_tools": backend_agent.get("custom_tools"),
+            "metadata": backend_agent.get("metadata") or {},
         }
+        if backend_agent.get("agent_id") is not None:
+            arguments["agent_id"] = backend_agent["agent_id"]
 
         return await self.call_tool("create_agent", arguments)
 
