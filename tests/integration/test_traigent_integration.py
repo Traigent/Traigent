@@ -323,12 +323,9 @@ class TestFrameworkIntegrationSetup:
     def test_langchain_integration_setup(self):
         """Test LangChain integration setup."""
         # Contract: enable_langchain_optimization must complete without
-        # raising on the import-available path. The return value is not
-        # part of the public contract (some impls return None, others a
-        # status object) — but it must never be a swallowed Exception
-        # leaked back as a return value.
+        # raising on the import-available path and returns None.
         result = enable_langchain_optimization()
-        assert not isinstance(result, Exception)
+        assert result is None
 
         # Test convenience functions
         enable_chatgpt_optimization()
@@ -346,11 +343,9 @@ class TestFrameworkIntegrationSetup:
     def test_openai_sdk_integration_setup(self):
         """Test OpenAI SDK integration setup."""
         # Contract: enable_openai_optimization must complete without raising
-        # on the import-available path. As with the langchain variant, the
-        # return shape is not part of the public contract; the assertion
-        # only catches the regression where a swallowed exception leaks back.
+        # on the import-available path and returns None.
         result = enable_openai_optimization()
-        assert not isinstance(result, Exception)
+        assert result is None
 
         # Test convenience functions
         enable_sync_openai()

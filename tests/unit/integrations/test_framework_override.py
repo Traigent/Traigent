@@ -546,7 +546,7 @@ class TestErrorHandling:
         # Try to override a non-existent framework
         try:
             result = override_manager.activate_overrides(["nonexistent.Framework"])
-        except (ImportError, ModuleNotFoundError, AttributeError):
+        except (ImportError, AttributeError):
             # Some implementations raise on unknown framework names; that
             # path is also valid. Skip rather than fail here.
             pytest.skip("Import failure handling varies by implementation")
