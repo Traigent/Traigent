@@ -73,6 +73,7 @@ class TestSessionFinalization:
             # Backend returned no summary → flag must be False so callers
             # don't treat the empty best_config / best_metrics as truth.
             assert response.metadata["summary_available"] is False
+            assert response.metadata["summary_fields"] == []
             assert response.best_config == {}
             assert response.best_metrics == {}
 
@@ -126,6 +127,16 @@ class TestSessionFinalization:
         assert response.session_id == session_id
         assert response.metadata["finalized_via_api"] is True
         assert response.metadata["summary_available"] is True
+        assert set(response.metadata["summary_fields"]) == {
+            "best_config",
+            "best_metrics",
+            "total_trials",
+            "successful_trials",
+            "total_duration",
+            "cost_savings",
+            "stop_reason",
+            "convergence_history",
+        }
 
         # Backend payload fields preserved verbatim
         assert response.best_config == {"model": "gpt-4o", "temperature": 0.2}
@@ -139,6 +150,90 @@ class TestSessionFinalization:
             {"trial": 1, "score": 0.7},
             {"trial": 2, "score": 0.81},
         ]
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_partial_summary_lists_preserved_fields(
+        self, client
+    ):
+        """summary_available can be true for partial summaries without
+        implying best_config or best_metrics were returned.
+        """
+        session_id = "test-session-partial"
+        experiment_run_id = "run-partial"
+
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-partial",
+            experiment_run_id=experiment_run_id,
+            function_name="partial_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"stop_reason": "timeout"})
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert response.metadata["finalized_via_api"] is True
+        assert response.metadata["summary_available"] is True
+        assert response.metadata["summary_fields"] == ["stop_reason"]
+        assert response.stop_reason == "timeout"
+        assert response.best_config == {}
+        assert response.best_metrics == {}
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_malformed_summary_field_is_unavailable(
+        self, client
+    ):
+        """Malformed values that are dropped must not set summary_available."""
+        session_id = "test-session-malformed"
+        experiment_run_id = "run-malformed"
+
+        client.session_bridge.create_session_mapping(
+            session_id=session_id,
+            experiment_id="exp-malformed",
+            experiment_run_id=experiment_run_id,
+            function_name="malformed_func",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={
+                "stop_reason": 408,
+                "total_trials": True,
+                "cost_savings": False,
+            }
+        )
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            response = await client._session_ops.finalize_session(session_id)
+
+        assert response.metadata["finalized_via_api"] is True
+        assert response.metadata["summary_available"] is False
+        assert response.metadata["summary_fields"] == []
+        assert response.stop_reason is None
+        assert response.total_trials == 0
+        assert response.cost_savings == 0.0
 
     @pytest.mark.asyncio
     async def test_finalize_session_legacy_payload_marks_summary_unavailable(
@@ -187,6 +282,7 @@ class TestSessionFinalization:
         # callers don't read the empty best_config / best_metrics as truth.
         assert response.metadata["finalized_via_api"] is True
         assert response.metadata["summary_available"] is False
+        assert response.metadata["summary_fields"] == []
         assert response.best_config == {}
         assert response.best_metrics == {}
 
@@ -226,6 +322,7 @@ class TestSessionFinalization:
 
         assert response.metadata["finalized_via_api"] is False
         assert response.metadata["summary_available"] is False
+        assert response.metadata["summary_fields"] == []
 
     @pytest.mark.asyncio
     async def test_finalize_session_via_api_not_available(self, client):

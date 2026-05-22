@@ -795,80 +795,105 @@ class SessionOperations:
         backend_convergence_history = backend_summary.get("convergence_history")
         backend_full_history = backend_summary.get("full_history")
 
-        # summary_available=True only when the backend actually included at
-        # least one of the documented summary fields. A non-empty payload
-        # that uses a different shape (e.g. legacy {best_trial, all_results}
-        # responses) MUST NOT mark summary_available=True, otherwise callers
-        # would treat the SDK's fallback empty best_config/best_metrics as
-        # authoritative — recreating the original #890 ambiguity.
-        summary_available = any(
-            v is not None
-            for v in (
-                backend_best_config,
-                backend_best_metrics,
-                backend_total_trials,
-                backend_successful_trials,
-                backend_total_duration,
-                backend_cost_savings,
-                backend_stop_reason,
-                backend_convergence_history,
-                backend_full_history,
-            )
+        summary_fields: list[str] = []
+
+        def _is_real_number(value: Any) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+        response_best_config = (
+            backend_best_config if isinstance(backend_best_config, dict) else {}
         )
+        if isinstance(backend_best_config, dict):
+            summary_fields.append("best_config")
+
+        response_best_metrics = (
+            backend_best_metrics if isinstance(backend_best_metrics, dict) else {}
+        )
+        if isinstance(backend_best_metrics, dict):
+            summary_fields.append("best_metrics")
+
+        response_total_trials = (
+            int(cast(int | float, backend_total_trials))
+            if _is_real_number(backend_total_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_total_trials):
+            summary_fields.append("total_trials")
+
+        response_successful_trials = (
+            int(cast(int | float, backend_successful_trials))
+            if _is_real_number(backend_successful_trials)
+            else completed_trials
+        )
+        if _is_real_number(backend_successful_trials):
+            summary_fields.append("successful_trials")
+
+        response_total_duration = (
+            float(cast(int | float, backend_total_duration))
+            if _is_real_number(backend_total_duration)
+            else 0.0
+        )
+        if _is_real_number(backend_total_duration):
+            summary_fields.append("total_duration")
+
+        response_cost_savings = (
+            float(cast(int | float, backend_cost_savings))
+            if _is_real_number(backend_cost_savings)
+            else 0.0
+        )
+        if _is_real_number(backend_cost_savings):
+            summary_fields.append("cost_savings")
+
+        response_stop_reason = (
+            str(backend_stop_reason) if isinstance(backend_stop_reason, str) else None
+        )
+        if isinstance(backend_stop_reason, str):
+            summary_fields.append("stop_reason")
+
+        response_convergence_history = (
+            backend_convergence_history
+            if isinstance(backend_convergence_history, list)
+            else []
+        )
+        if isinstance(backend_convergence_history, list):
+            summary_fields.append("convergence_history")
+
+        response_full_history = (
+            backend_full_history
+            if include_full_history and isinstance(backend_full_history, list)
+            else ([] if include_full_history else None)
+        )
+        if include_full_history and isinstance(backend_full_history, list):
+            summary_fields.append("full_history")
+
+        # summary_available=True only when at least one documented backend
+        # summary field was type-valid and preserved in the SDK response. A
+        # legacy or malformed payload must not mark a synthetic fallback value
+        # as backend-authoritative. Callers that require specific fields should
+        # inspect metadata["summary_fields"].
+        summary_available = bool(summary_fields)
 
         response = OptimizationFinalizationResponse(
             session_id=session_id,
-            best_config=(
-                backend_best_config if isinstance(backend_best_config, dict) else {}
-            ),
-            best_metrics=(
-                backend_best_metrics if isinstance(backend_best_metrics, dict) else {}
-            ),
-            total_trials=(
-                int(backend_total_trials)
-                if isinstance(backend_total_trials, (int, float))
-                else completed_trials
-            ),
-            successful_trials=(
-                int(backend_successful_trials)
-                if isinstance(backend_successful_trials, (int, float))
-                else completed_trials
-            ),
-            total_duration=(
-                float(backend_total_duration)
-                if isinstance(backend_total_duration, (int, float))
-                else 0.0
-            ),
-            cost_savings=(
-                float(backend_cost_savings)
-                if isinstance(backend_cost_savings, (int, float))
-                else 0.0
-            ),
-            stop_reason=(
-                str(backend_stop_reason)
-                if isinstance(backend_stop_reason, str)
-                else None
-            ),
-            convergence_history=(
-                backend_convergence_history
-                if isinstance(backend_convergence_history, list)
-                else []
-            ),
-            full_history=(
-                backend_full_history
-                if include_full_history and isinstance(backend_full_history, list)
-                else ([] if include_full_history else None)
-            ),
+            best_config=response_best_config,
+            best_metrics=response_best_metrics,
+            total_trials=response_total_trials,
+            successful_trials=response_successful_trials,
+            total_duration=response_total_duration,
+            cost_savings=response_cost_savings,
+            stop_reason=response_stop_reason,
+            convergence_history=response_convergence_history,
+            full_history=response_full_history,
             metadata={
                 "finalized_at": time.time(),
                 "experiment_run_id": mapping.experiment_run_id if mapping else None,
                 "finalized_via_api": finalized_via_api,
-                # summary_available=True iff the backend payload included
-                # at least one of the documented summary fields (best_config,
-                # best_metrics, total_trials, …). Callers should treat
-                # best_config / best_metrics as authoritative only when this
-                # flag is True.
+                # summary_available=True iff at least one documented backend
+                # summary field was type-valid and preserved. It does not
+                # imply any specific field is present; inspect summary_fields
+                # before treating best_config/best_metrics as authoritative.
                 "summary_available": summary_available,
+                "summary_fields": summary_fields,
             },
         )
 
