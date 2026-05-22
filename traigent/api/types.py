@@ -1743,9 +1743,27 @@ class ParetoFront:
         return self.configurations[best_idx]  # type: ignore[no-any-return]
 
     def plot_trade_offs(self, x_objective: str, y_objective: str) -> None:
-        """Plot trade-offs between two objectives."""
-        # Implementation would use matplotlib/plotly
-        pass
+        """Plot trade-offs between two objectives.
+
+        .. note::
+            Multi-objective plotting is an experimental scaffold that has
+            not shipped yet. The data backing the plot — ``configurations``,
+            ``objective_values``, ``objectives``, ``is_maximized`` — is real
+            and can be passed to any plotting library directly. To render a
+            Pareto trade-off chart today, use that data with matplotlib,
+            plotly, or your visualization library of choice. ``plot_trade_offs``
+            itself raises ``NotImplementedError`` until first-party plotting
+            ships.
+        """
+        _ = (x_objective, y_objective)
+        raise NotImplementedError(
+            "ParetoFront.plot_trade_offs() is an experimental visualization "
+            "scaffold and has not shipped yet. To render a Pareto trade-off "
+            "chart today, read the public fields (configurations, "
+            "objective_values, objectives, is_maximized) and pass them to "
+            "matplotlib/plotly directly. "
+            "Tracking: https://github.com/Traigent/Traigent/issues/893"
+        )
 
 
 @dataclass
