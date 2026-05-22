@@ -164,7 +164,10 @@ class TestSessionMappingRecovery:
         with client._active_sessions_lock:
             client._active_sessions[session_id] = active_session
 
-        client._session_ops._finalize_session_via_api = AsyncMock(return_value=True)
+        # _finalize_session_via_api now returns dict|None (was bool); empty
+        # dict represents "finalized successfully, backend returned no body"
+        # — the contract documented for issue #890.
+        client._session_ops._finalize_session_via_api = AsyncMock(return_value={})
 
         assert client.session_bridge.get_session_mapping(session_id) is None
 
@@ -195,7 +198,10 @@ class TestSessionMappingRecovery:
         with client._active_sessions_lock:
             client._active_sessions[session_id] = active_session
 
-        client._session_ops._finalize_session_via_api = AsyncMock(return_value=True)
+        # _finalize_session_via_api now returns dict|None (was bool); empty
+        # dict represents "finalized successfully, backend returned no body"
+        # — the contract documented for issue #890.
+        client._session_ops._finalize_session_via_api = AsyncMock(return_value={})
 
         await client._session_ops.finalize_session(session_id)
 
