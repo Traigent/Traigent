@@ -13,12 +13,27 @@ import json
 import os
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
+from traigent.core.best_config_runtime import (
+    BEST_CONFIG_SCHEMA_VERSION,
+    BestConfigSnapshot,
+    BestConfigSource,
+    BestConfigSourceMode,
+    CloudPublishUnavailable,
+    CloudPublishUnavailableReason,
+    function_ref_for,
+    load_best_config_spec,
+    resolve_cloud_cache_best_config,
+    resolve_repo_best_config,
+    source_order_for_mode,
+    thaw_config,
+    write_repo_best_config,
+)
 from traigent.utils.exceptions import ConfigurationError, OptimizationStateError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -66,6 +81,13 @@ class ConfigStateManager:
         auto_load_best: bool,
         load_from: str | None,
         setup_wrapper_callback: Callable[[], None],
+        config_id: str | None = None,
+        best_config_source: str = BestConfigSourceMode.OFF.value,
+        best_config_strict: bool = False,
+        best_config_cache_dir: str | None = None,
+        best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+        best_config_stale_ok_ttl_seconds: int | None = None,
+        enable_auto_load_dev_logs: bool | None = None,
         optimization_history_limit: int = DEFAULT_OPTIMIZATION_HISTORY_LIMIT,
     ) -> None:
         """Initialize config state manager.
@@ -88,6 +110,17 @@ class ConfigStateManager:
         self._auto_load_best = auto_load_best
         self._load_from = load_from
         self._setup_wrapper_callback = setup_wrapper_callback
+        self.config_id = config_id
+        self.best_config_source = best_config_source
+        self.best_config_strict = best_config_strict
+        self.best_config_cache_dir = best_config_cache_dir
+        self.best_config_cache_ttl_seconds = best_config_cache_ttl_seconds
+        self.best_config_stale_ok_ttl_seconds = best_config_stale_ok_ttl_seconds
+        self.enable_auto_load_dev_logs = (
+            auto_load_best
+            if enable_auto_load_dev_logs is None
+            else enable_auto_load_dev_logs
+        )
         if optimization_history_limit < 1:
             raise ValueError("optimization_history_limit must be >= 1")
         self._optimization_history_limit = optimization_history_limit
@@ -99,6 +132,12 @@ class ConfigStateManager:
         self._optimization_history: list[OptimizationResult] = []
         self._current_config: dict[str, Any] = default_config.copy()
         self._best_config: dict[str, Any] | None = None
+        self._best_config_snapshot: BestConfigSnapshot = BestConfigSnapshot.from_config(
+            self._current_config,
+            config_id=self.config_id,
+            source=BestConfigSource.DEFAULT.value,
+        )
+        self._override_sticky = False
 
     # -- Properties --------------------------------------------------------
 
@@ -164,14 +203,19 @@ class ConfigStateManager:
     def best_config(self, value: dict[str, Any] | None) -> None:
         self._best_config = value
 
+    @property
+    def best_config_snapshot(self) -> BestConfigSnapshot:
+        """Return the active immutable best-config snapshot."""
+        return self._best_config_snapshot
+
     # -- Query methods -----------------------------------------------------
 
     def get_best_config(self) -> dict[str, Any] | None:
-        """Get the best configuration found during optimization."""
-        if self._optimization_results:
+        """Get the best configuration found or loaded for runtime use."""
+        if self._optimization_results and self._optimization_results.best_config:
             best: dict[str, Any] = self._optimization_results.best_config
             return best
-        return None
+        return self.best_config
 
     def get_optimization_results(self) -> OptimizationResult | None:
         """Get the latest optimization results."""
@@ -192,22 +236,152 @@ class ConfigStateManager:
         """Check if optimization has been completed."""
         return self._optimization_results is not None
 
+    def _set_snapshot(
+        self,
+        snapshot: BestConfigSnapshot,
+        *,
+        best_config: dict[str, Any] | None,
+    ) -> None:
+        self._best_config_snapshot = snapshot
+        self._current_config = thaw_config(snapshot.config)
+        self._best_config = best_config.copy() if best_config else None
+
+    def _reset_to_default_snapshot(self) -> None:
+        snapshot = BestConfigSnapshot.from_config(
+            self.default_config.copy(),
+            config_id=self.config_id,
+            source=BestConfigSource.DEFAULT.value,
+        )
+        self._set_snapshot(snapshot, best_config=None)
+
+    def _snapshot_from_plain_config(
+        self,
+        config: dict[str, Any],
+        *,
+        source: str,
+    ) -> BestConfigSnapshot:
+        return BestConfigSnapshot.from_config(
+            {**self.default_config, **config},
+            config_id=self.config_id,
+            source=source,
+        )
+
+    def _load_snapshot_from_file(
+        self,
+        path: str,
+        *,
+        source: str,
+    ) -> BestConfigSnapshot | None:
+        try:
+            snapshot = load_best_config_spec(
+                path,
+                configuration_space=self.configuration_space,
+                expected_config_id=self.config_id,
+                expected_function_ref=function_ref_for(self.func),
+                source=source,
+                strict=True,
+            )
+            if snapshot is None:
+                raise ConfigurationError(f"Failed to load best config from {path}")
+            merged = {**self.default_config, **thaw_config(snapshot.config)}
+            return BestConfigSnapshot.from_config(
+                merged,
+                config_id=snapshot.config_id,
+                source=source,
+                spec_hash=snapshot.spec_hash,
+                provenance=thaw_config(snapshot.provenance),
+            )
+        except Exception as spec_exc:
+            if self._path_has_best_config_schema(path):
+                if self.best_config_strict:
+                    if isinstance(spec_exc, ConfigurationError):
+                        raise spec_exc
+                    raise ConfigurationError(
+                        f"Failed to load best config from {path}: {spec_exc}"
+                    ) from spec_exc
+                logger.warning(
+                    "Ignoring invalid canonical best config %s: %s",
+                    path,
+                    spec_exc,
+                )
+                return None
+
+            loaded_config = self._load_config_from_path(path)
+            if loaded_config:
+                return self._snapshot_from_plain_config(loaded_config, source=source)
+            if self.best_config_strict:
+                if isinstance(spec_exc, ConfigurationError):
+                    raise spec_exc
+                raise ConfigurationError(
+                    f"Failed to load best config from {path}: {spec_exc}"
+                ) from spec_exc
+            logger.warning(
+                "Failed to load best config from %s: %s. Function will use fallback.",
+                path,
+                spec_exc,
+            )
+            return None
+
+    def _resolve_mode_snapshot(self) -> BestConfigSnapshot | None:
+        for source in source_order_for_mode(self.best_config_source):
+            if source is BestConfigSource.REPO:
+                snapshot = resolve_repo_best_config(
+                    config_id=self.config_id,
+                    repo_root=Path.cwd(),
+                    configuration_space=self.configuration_space,
+                    expected_function_ref=function_ref_for(self.func),
+                    strict=self.best_config_strict,
+                )
+            elif source is BestConfigSource.CLOUD_CACHE:
+                snapshot = resolve_cloud_cache_best_config(
+                    config_id=self.config_id,
+                    cache_dir=self.best_config_cache_dir,
+                    configuration_space=self.configuration_space,
+                    ttl_seconds=self.best_config_cache_ttl_seconds,
+                    stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
+                    strict=self.best_config_strict,
+                )
+            elif source is BestConfigSource.CLOUD_FETCH:
+                logger.warning(
+                    "Cloud best-config fetch is not implemented in this SDK build; "
+                    "falling through to the next configured source."
+                )
+                snapshot = None
+            else:
+                snapshot = None
+            if snapshot is not None:
+                merged = {**self.default_config, **thaw_config(snapshot.config)}
+                return BestConfigSnapshot.from_config(
+                    merged,
+                    config_id=snapshot.config_id,
+                    source=snapshot.source,
+                    spec_hash=snapshot.spec_hash,
+                    loaded_at=snapshot.loaded_at,
+                    expires_at=snapshot.expires_at,
+                    provenance=thaw_config(snapshot.provenance),
+                )
+        return None
+
     # -- State mutation methods --------------------------------------------
 
     def reset_optimization(self) -> None:
         """Reset optimization state and restore default configuration."""
         self._optimization_results = None
         self._optimization_history = []
-        self._current_config = self.default_config.copy()
-        self._best_config = None
+        self._override_sticky = False
+        self._reset_to_default_snapshot()
         self._state = OptimizationState.UNOPTIMIZED
         self._setup_wrapper_callback()
         logger.info(f"Reset optimization state for {self.func.__name__}")
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually."""
+        """Set current configuration manually as a sticky override."""
         with self._state_lock:
-            self._current_config = config.copy()
+            snapshot = self._snapshot_from_plain_config(
+                config, source=BestConfigSource.OVERRIDE.value
+            )
+            self._set_snapshot(snapshot, best_config=config)
+            self._override_sticky = True
             self._setup_wrapper_callback()
         logger.debug(f"Set configuration for {self.func.__name__}: {config}")
 
@@ -244,13 +418,21 @@ class ConfigStateManager:
             old_config = self._current_config.copy()
             old_best = self._best_config.copy() if self._best_config else None
             old_wrapped_func = get_wrapped_func() if get_wrapped_func else None
+            old_snapshot = self._best_config_snapshot
+            old_override_sticky = self._override_sticky
             try:
-                self._current_config = results.best_config.copy()
-                self._best_config = results.best_config.copy()
+                snapshot = self._snapshot_from_plain_config(
+                    results.best_config,
+                    source=BestConfigSource.APPLY_BEST_CONFIG.value,
+                )
+                self._set_snapshot(snapshot, best_config=results.best_config)
+                self._override_sticky = True
                 self._setup_wrapper_callback()
             except Exception:
                 self._current_config = old_config
                 self._best_config = old_best
+                self._best_config_snapshot = old_snapshot
+                self._override_sticky = old_override_sticky
                 if set_wrapped_func and old_wrapped_func is not None:
                     set_wrapped_func(old_wrapped_func)
                 raise
@@ -261,6 +443,14 @@ class ConfigStateManager:
         )
 
         return True
+
+    def clear_override(self) -> bool:
+        """Clear any sticky per-instance config override and re-resolve sources."""
+        with self._state_lock:
+            had_override = self._override_sticky
+            self._override_sticky = False
+        self.maybe_auto_load_config()
+        return had_override
 
     # -- Persistence methods -----------------------------------------------
 
@@ -333,8 +523,14 @@ class ConfigStateManager:
             self.append_optimization_result(self._optimization_results)
 
             if self._optimization_results.best_config:
-                self._current_config = self._optimization_results.best_config.copy()
-                self._best_config = self._optimization_results.best_config.copy()
+                snapshot = self._snapshot_from_plain_config(
+                    self._optimization_results.best_config,
+                    source=BestConfigSource.APPLY_BEST_CONFIG.value,
+                )
+                self._set_snapshot(
+                    snapshot, best_config=self._optimization_results.best_config
+                )
+                self._override_sticky = True
                 self._setup_wrapper_callback()
 
             if self._optimization_results.status == OptimizationStatus.COMPLETED:
@@ -352,39 +548,51 @@ class ConfigStateManager:
     # -- Auto-load methods -------------------------------------------------
 
     def maybe_auto_load_config(self) -> None:
-        """Auto-load configuration if requested via decorator parameters or env var."""
-        config_path: str | None = None
+        """Resolve startup best config from explicit, repo, cache, or dev sources."""
+        with self._state_lock:
+            if self._override_sticky:
+                return
+
+        resolved: BestConfigSnapshot | None = None
 
         if self._load_from:
-            config_path = self._load_from
-            logger.debug(f"Using explicit load_from path: {config_path}")
+            logger.debug("Using explicit load_from path: %s", self._load_from)
+            resolved = self._load_snapshot_from_file(
+                self._load_from, source=BestConfigSource.LOAD_FROM.value
+            )
 
-        if not config_path:
+        if resolved is None:
             env_path = os.environ.get("TRAIGENT_CONFIG_PATH")
             if env_path:
-                config_path = env_path
-                logger.debug(f"Using TRAIGENT_CONFIG_PATH: {config_path}")
-
-        if not config_path and self._auto_load_best:
-            config_path = self._find_latest_config_path()
-            if config_path:
-                logger.debug(f"Auto-found latest config: {config_path}")
-
-        if config_path:
-            try:
-                loaded_config = self._load_config_from_path(config_path)
-                if loaded_config:
-                    self._current_config = loaded_config.copy()
-                    self._best_config = loaded_config.copy()
-                    self._setup_wrapper_callback()
-                    logger.info(
-                        f"Auto-loaded config for {self.func.__name__} from {config_path}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to auto-load config from {config_path}: {e}. "
-                    "Function will use default configuration."
+                logger.debug("Using TRAIGENT_CONFIG_PATH: %s", env_path)
+                resolved = self._load_snapshot_from_file(
+                    env_path, source=BestConfigSource.ENV.value
                 )
+
+        if resolved is None:
+            resolved = self._resolve_mode_snapshot()
+
+        if resolved is None and self.enable_auto_load_dev_logs:
+            dev_log_path = self._find_latest_config_path()
+            if dev_log_path:
+                logger.debug("Auto-found latest dev log config: %s", dev_log_path)
+                resolved = self._load_snapshot_from_file(
+                    dev_log_path, source=BestConfigSource.DEV_LOG.value
+                )
+
+        with self._state_lock:
+            if self._override_sticky:
+                return
+            if resolved is None:
+                self._reset_to_default_snapshot()
+            else:
+                self._set_snapshot(resolved, best_config=thaw_config(resolved.config))
+            self._setup_wrapper_callback()
+            logger.debug(
+                "Resolved best config for %s from %s",
+                self.func.__name__,
+                self._best_config_snapshot.source,
+            )
 
     def _find_latest_config_path(self) -> str | None:
         """Find the most recent best_config file in optimization logs."""
@@ -419,6 +627,20 @@ class ConfigStateManager:
                         return str(config_file)
 
         return None
+
+    @staticmethod
+    def _path_has_best_config_schema(path: str) -> bool:
+        """Return True when a file declares the canonical best-config schema."""
+        try:
+            config_path = validate_user_path(path, for_write=False)
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return (
+                isinstance(data, dict)
+                and data.get("schema_version") == BEST_CONFIG_SCHEMA_VERSION
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _load_config_from_path(path: str) -> dict[str, Any] | None:
@@ -491,6 +713,56 @@ class ConfigStateManager:
         logger.info(f"Exported config for {self.func.__name__} to {output_path}")
         return output_path
 
+    def export_best_config(
+        self,
+        directory: str | Path = ".traigent/best-configs",
+        *,
+        config_id: str | None = None,
+        include_metadata: bool = True,
+    ) -> Path:
+        """Export the active best config as a canonical repo runtime spec."""
+        if not self._best_config:
+            raise ConfigurationError(
+                "No best configuration available to export. "
+                "Please run optimization first using .optimize() or load a config."
+            )
+
+        effective_config_id = config_id or self.config_id or self.func.__name__
+        provenance = None
+        if include_metadata:
+            provenance = {
+                "source": self._best_config_snapshot.source,
+                "exported_at": datetime.now(UTC).isoformat(),
+            }
+            if self._optimization_results:
+                provenance["optimization_id"] = (
+                    self._optimization_results.optimization_id
+                )
+
+        return write_repo_best_config(
+            directory,
+            config_id=effective_config_id,
+            config=self._best_config,
+            function_ref=function_ref_for(self.func),
+            provenance=provenance,
+        )
+
+    def publish_best_config(self, *, target: str = "cloud") -> None:
+        """Fail closed until durable cloud best-config publishing is implemented."""
+        if self.best_config_source in {
+            BestConfigSourceMode.OFF.value,
+            BestConfigSourceMode.REPO.value,
+        }:
+            raise CloudPublishUnavailable(
+                CloudPublishUnavailableReason.DISABLED_BY_CONFIG,
+                "Cloud best-config publish is disabled by best_config_source.",
+            )
+        raise CloudPublishUnavailable(
+            CloudPublishUnavailableReason.BACKEND_NOT_IMPLEMENTED,
+            "Cloud best-config publish is not implemented in this SDK build; "
+            "use export_best_config() to write a repo spec.",
+        )
+
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""
         from traigent import __version__
@@ -501,7 +773,7 @@ class ConfigStateManager:
 
         if include_metadata:
             export["function_name"] = getattr(self.func, "__name__", "unknown")
-            export["exported_at"] = datetime.now().isoformat()
+            export["exported_at"] = datetime.now(UTC).isoformat()
             export["traigent_version"] = __version__
 
             if self._optimization_results and self._optimization_results.best_metrics:
