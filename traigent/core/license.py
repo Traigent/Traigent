@@ -171,7 +171,15 @@ class LicenseValidator:
             if offline_mode is not None
             else os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true"
         )
-        self._license_file = license_file or os.environ.get("TRAIGENT_LICENSE_FILE")
+        # Track the path's origin: explicit caller paths are trusted and
+        # may live anywhere on disk, while env-sourced paths are
+        # attacker-influenced (anyone who can set TRAIGENT_LICENSE_FILE)
+        # and must be confined to an allow-listed directory in
+        # _validate_offline_license. Both store in the same attribute so
+        # downstream code stays unchanged.
+        env_license_file = os.environ.get("TRAIGENT_LICENSE_FILE")
+        self._license_file = license_file or env_license_file
+        self._license_file_from_env = license_file is None and bool(env_license_file)
         self._cache_ttl = cache_ttl or int(
             os.environ.get("TRAIGENT_LICENSE_CACHE_TTL", str(self.DEFAULT_CACHE_TTL))
         )
@@ -219,6 +227,66 @@ class LicenseValidator:
     # an attempt to exhaust memory via the offline-license path.
     _MAX_LICENSE_FILE_BYTES = 64 * 1024
 
+    # Default directories an env-sourced TRAIGENT_LICENSE_FILE is allowed
+    # to live under. Anyone who can set the env var would otherwise be
+    # able to point it at /etc/passwd, /proc/self/environ, or any
+    # world-readable file the SDK process can stat (see the local
+    # validation gap for traigent/core/license.py#issues/1).
+    #
+    # Explicit caller paths (LicenseValidator(license_file=...)) bypass
+    # this boundary because they come from trusted in-process code, not
+    # from environment variables.
+    _DEFAULT_LICENSE_ALLOWED_ROOTS = (
+        "/etc/traigent",
+        "~/.traigent",
+        "~/.config/traigent",
+    )
+
+    @classmethod
+    def _allowed_env_license_roots(cls) -> list[Path]:
+        """Return the directories an env-sourced license file may live in.
+
+        Operators can extend the list via the
+        ``TRAIGENT_LICENSE_ALLOWED_DIRS`` env var, which is parsed as an
+        OS-pathsep-separated list (``:`` on POSIX, ``;`` on Windows).
+        """
+        roots: list[Path] = []
+        for raw in cls._DEFAULT_LICENSE_ALLOWED_ROOTS:
+            try:
+                roots.append(Path(raw).expanduser())
+            except (RuntimeError, OSError):
+                continue
+        extra = os.environ.get("TRAIGENT_LICENSE_ALLOWED_DIRS", "")
+        for part in extra.split(os.pathsep):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                roots.append(Path(part).expanduser())
+            except (RuntimeError, OSError):
+                continue
+        return roots
+
+    @staticmethod
+    def _path_is_within(child: Path, parent: Path) -> bool:
+        """True iff ``child`` is the same as, or nested inside, ``parent``."""
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def _is_env_path_within_allowed_root(self, resolved_path: Path) -> bool:
+        """Check that an env-sourced license path lives under an allowed root."""
+        for root in self._allowed_env_license_roots():
+            try:
+                resolved_root = root.resolve(strict=False)
+            except (RuntimeError, OSError):
+                continue
+            if self._path_is_within(resolved_path, resolved_root):
+                return True
+        return False
+
     def _validate_offline_license(self) -> LicenseInfo | None:
         """Validate an offline license file (signed JWT).
 
@@ -243,6 +311,22 @@ class LicenseValidator:
             return None
         except (RuntimeError, OSError) as exc:
             logger.warning("Could not resolve offline license file: %s", exc)
+            return None
+
+        # Env-sourced paths are attacker-influenced: anyone who can set
+        # TRAIGENT_LICENSE_FILE could otherwise point us at /etc/passwd
+        # or any world-readable file under the size cap. Confine those
+        # to the allowed roots. Explicit caller paths bypass this check
+        # because they come from in-process trusted code, not from env.
+        if self._license_file_from_env and not self._is_env_path_within_allowed_root(
+            resolved_path
+        ):
+            logger.warning(
+                "Refusing env-sourced TRAIGENT_LICENSE_FILE path outside the "
+                "allowed roots (%s). Move the file under one of those roots "
+                "or set TRAIGENT_LICENSE_ALLOWED_DIRS.",
+                ", ".join(str(r) for r in self._allowed_env_license_roots()),
+            )
             return None
 
         try:
@@ -271,9 +355,18 @@ class LicenseValidator:
 
         try:
             token = resolved_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            # Never embed the file's contents in a log message. ``exc``
+            # is bounded to filesystem error metadata.
+            logger.warning("Could not read offline license file: %s", exc)
+            return None
+        try:
             return self._decode_license_token(token)
-        except Exception as e:
-            logger.warning(f"Failed to validate offline license: {e}")
+        except Exception as exc:
+            # ``exc`` may originate deep in the token decoder; the inner
+            # decoders already log structured warnings, so we only log
+            # an exception type here to avoid surfacing token contents.
+            logger.warning("Failed to validate offline license: %s", type(exc).__name__)
             return None
 
     # Algorithms accepted for offline-license signature verification.

@@ -47,6 +47,7 @@ except ImportError:
 
     import json
     import os
+    import re
     from collections.abc import Generator
     from contextlib import contextmanager
     from typing import TYPE_CHECKING, Any
@@ -96,12 +97,62 @@ except ImportError:
         "bearer",
     )
 
-    def _redact_payload(value: Any) -> Any:
-        """Recursively redact secret-bearing keys in dicts/lists.
+    # Patterns for PII-bearing values that may appear in user prompts,
+    # expected outputs, or actual outputs. These get scrubbed BEFORE
+    # being attached to a span — secret-bearing dict keys aren't enough
+    # because raw prompt text, expected text, and actual text are
+    # privacy-sensitive even when no key name says so.
+    _PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (
+            re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
+            "***EMAIL***",
+        ),
+        (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "***SSN***"),
+        (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_ACCESS_KEY***"),
+        (
+            re.compile(r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+            "***JWT***",
+        ),
+        # 13-19 digit numbers (credit cards), possibly separated by - or space.
+        (re.compile(r"\b(?:\d[ -]?){12,18}\d\b"), "***CC***"),
+        # NANP-format phone numbers (NNN-NNN-NNNN, NNN.NNN.NNNN, NNN NNN NNNN).
+        # Narrower than a generic "digits-with-separators" pattern so decimal
+        # floats and ISO dates aren't false-positives.
+        (re.compile(r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b"), "***PHONE***"),
+        # International phone numbers MUST start with an explicit +.
+        (
+            re.compile(r"\+\d{1,3}[\s\-]\d{1,4}[\s\-]\d{2,4}[\s\-]?\d{3,4}\b"),
+            "***PHONE***",
+        ),
+    )
 
-        Trace payloads are exported off-host, so any key whose name suggests a
-        secret (api_key, authorization, password, …) is replaced with
-        ``"***REDACTED***"`` before being attached to a span.
+    def _scrub_pii_text(text: Any) -> Any:
+        """Scrub PII patterns from a free-form string.
+
+        Non-string inputs are returned unchanged so callers can fan out
+        through ``_redact_payload`` without repeated type checks.
+        """
+        if not isinstance(text, str):
+            return text
+        result = text
+        for pattern, replacement in _PII_PATTERNS:
+            result = pattern.sub(replacement, result)
+        return result
+
+    def _redact_payload(value: Any) -> Any:
+        """Recursively scrub secrets *and* PII from trace payloads.
+
+        Two complementary protections run against every span attribute
+        before it ships to an OTLP exporter:
+
+        - **Secret-bearing keys** (``api_key``, ``authorization`` …) in
+          dict-shaped payloads are replaced with ``"***REDACTED***"``
+          regardless of the value's type.
+        - **PII-bearing values** (emails, SSNs, credit cards, JWTs …)
+          are scrubbed even when the surrounding key name looks
+          innocuous. This is what closes the leak in raw prompt /
+          message / content text that ends up in span attributes or
+          span names.
         """
         if isinstance(value, dict):
             redacted: dict[str, Any] = {}
@@ -116,7 +167,17 @@ except ImportError:
             return [_redact_payload(item) for item in value]
         if isinstance(value, tuple):
             return tuple(_redact_payload(item) for item in value)
+        if isinstance(value, str):
+            return _scrub_pii_text(value)
         return value
+
+    def _scrub_for_export(value: Any) -> Any:
+        """Convenience wrapper that mirrors ``_redact_payload``.
+
+        Provided as an explicit name for call sites that scrub a single
+        scalar (e.g. ``expected_output``) so the intent is obvious.
+        """
+        return _redact_payload(value)
 
     class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc,no-redef]
         """ID generator using os.urandom for cryptographically secure random IDs."""
@@ -293,24 +354,36 @@ except ImportError:
                 otel_context.detach(token)
 
     def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
-        """Format config dict into a readable summary for span names."""
+        """Format config dict into a readable summary for span names.
+
+        Span names ship to OTLP backends in plaintext, so any value that
+        leaks into the summary is leaked off-host. Values are scrubbed
+        through ``_scrub_pii_text`` and secret-keyed entries are
+        replaced wholesale before the summary is assembled.
+        """
         if not config:
             return ""
         priority_keys = ["model", "temperature", "temp", "max_tokens", "provider"]
         parts = []
         seen_keys: set[str] = set()
+
+        def _safe_value(key: str, value: Any) -> str:
+            if any(needle in key.lower() for needle in _SECRET_KEY_SUBSTRINGS):
+                return "***REDACTED***"
+            return str(_scrub_pii_text(str(value)))
+
         for key in priority_keys:
             if key in config:
                 short_key = key[:5] if len(key) > 5 else key
                 if short_key == "tempe":
                     short_key = "temp"
-                parts.append(f"{short_key}={config[key]}")
+                parts.append(f"{short_key}={_safe_value(key, config[key])}")
                 seen_keys.add(key)
         for key, value in config.items():
             if key in seen_keys or key.startswith("_"):
                 continue
             short_key = key[:5] if len(key) > 5 else key
-            parts.append(f"{short_key}={value}")
+            parts.append(f"{short_key}={_safe_value(key, value)}")
             if len(", ".join(parts)) > max_length:
                 break
         result = ", ".join(parts)
@@ -319,7 +392,12 @@ except ImportError:
         return result
 
     def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
-        """Format input data into a preview for span names."""
+        """Format input data into a preview for span names.
+
+        Span names ship to OTLP backends, so PII/secrets in raw prompts
+        / messages / content fields must be scrubbed BEFORE the preview
+        becomes part of the span name.
+        """
         if input_data is None:
             return ""
         try:
@@ -336,6 +414,7 @@ except ImportError:
                     )
             else:
                 preview = str(input_data)
+            preview = _scrub_pii_text(preview)
             preview = preview.replace("\n", " ").strip()
             if len(preview) > max_length:
                 preview = preview[: max_length - 3] + "..."
@@ -447,18 +526,24 @@ except ImportError:
                 except (TypeError, ValueError):
                     span.set_attribute("example.input", str(redacted_input)[:500])
             if expected_output is not None:
+                # Scrub PII/secrets before serialising. Without this, raw
+                # ``example.expected_output`` text ships unredacted to
+                # OTLP exporters (see local validation gap for
+                # traigent/core/tracing.py#issues/0).
+                scrubbed_expected = _scrub_for_export(expected_output)
                 try:
                     expected_str = (
-                        json.dumps(expected_output)
-                        if not isinstance(expected_output, str)
-                        else expected_output
+                        json.dumps(scrubbed_expected)
+                        if not isinstance(scrubbed_expected, str)
+                        else scrubbed_expected
                     )
                     if len(expected_str) > 200:
                         expected_str = expected_str[:200] + "..."
                     span.set_attribute("example.expected_output", expected_str)
                 except (TypeError, ValueError):
                     span.set_attribute(
-                        "example.expected_output", str(expected_output)[:200]
+                        "example.expected_output",
+                        _scrub_pii_text(str(scrubbed_expected))[:200],
                     )
             yield span
 
@@ -475,14 +560,18 @@ except ImportError:
             return
         span.set_attribute("example.success", success)
         if actual_output is not None:
+            # Scrub PII/secrets before exporting. Raw model output ships
+            # unredacted otherwise (see local validation gap for
+            # traigent/core/tracing.py#issues/0).
+            scrubbed_actual = _scrub_for_export(actual_output)
             try:
                 output_str = (
-                    json.dumps(actual_output)
-                    if not isinstance(actual_output, str)
-                    else actual_output
+                    json.dumps(scrubbed_actual)
+                    if not isinstance(scrubbed_actual, str)
+                    else scrubbed_actual
                 )
             except (TypeError, ValueError):
-                output_str = str(actual_output)
+                output_str = _scrub_pii_text(str(scrubbed_actual))
             if len(output_str) > 500:
                 output_str = output_str[:500] + "..."
             span.set_attribute("example.actual_output", output_str)

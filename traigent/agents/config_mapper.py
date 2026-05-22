@@ -22,6 +22,12 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Maximum length (in characters) of a single config value substituted into a
+# prompt template. Values larger than this are truncated before substitution
+# so a hostile config can't exhaust prompt budget or hide an injection past
+# a context-window cliff.
+_TEMPLATE_SUBSTITUTION_MAX_LEN = 4096
+
 # AgentSpecification fields that may be set as direct attributes by a
 # parameter mapping with `target_section` other than "model_parameters"
 # or "custom_tools". Any other target_key is rejected to prevent a
@@ -327,10 +333,53 @@ class ConfigurationMapper:
 
         return spec
 
+    @staticmethod
+    def _sanitize_template_value(template_var: str, value: Any) -> str:
+        """Sanitize a config value for safe substitution into a prompt template.
+
+        Config values come from caller-controlled input. Inserting them raw
+        lets a hostile config inject prompt instructions, smuggle role/system
+        tags, or hide content past a context-window cliff. We:
+
+        - cast to ``str`` and strip control characters (keeping ``\\n`` and
+          ``\\t`` so legitimate multi-line text survives);
+        - truncate to ``_TEMPLATE_SUBSTITUTION_MAX_LEN`` characters;
+        - wrap in clearly-labelled untrusted-data delimiters so the LLM
+          (and any downstream reviewer) can see exactly where the value
+          began and ended.
+        """
+        text = str(value)
+        cleaned = "".join(
+            ch
+            for ch in text
+            if ch in ("\n", "\t") or (ord(ch) >= 0x20 and ch != "\x7f")
+        )
+        # Neutralize delimiter-like tokens inside the value so the
+        # caller-controlled text cannot visually close the wrapper and
+        # resume instruction text outside the untrusted segment.
+        cleaned = cleaned.replace("<<", "[[").replace(">>", "]]")
+        if len(cleaned) > _TEMPLATE_SUBSTITUTION_MAX_LEN:
+            cleaned = (
+                cleaned[:_TEMPLATE_SUBSTITUTION_MAX_LEN]
+                + "...[truncated untrusted data]"
+            )
+        # Use angle-bracket markers so this is structurally distinct from
+        # template variables ({var}) and from any value the attacker could
+        # plausibly forge.
+        return f"<<UNTRUSTED:{template_var}>>{cleaned}<<END_UNTRUSTED:{template_var}>>"
+
     def _apply_template_mappings(
         self, spec: AgentSpecification, config: dict[str, Any], mapping: PlatformMapping
     ) -> AgentSpecification:
-        """Apply template variable mappings."""
+        """Apply template variable mappings.
+
+        Substituted values are treated as untrusted: each value is
+        control-stripped, length-capped, and wrapped in explicit
+        ``<<UNTRUSTED:var>>...<<END_UNTRUSTED:var>>`` delimiters before
+        being substituted into ``prompt_template``. This blocks prompt
+        injection via hostile config values without changing which
+        variables get substituted.
+        """
         if not mapping.template_mappings or not spec.prompt_template:
             return spec
 
@@ -341,7 +390,10 @@ class ConfigurationMapper:
             if config_key in config:
                 placeholder = f"{{{template_var}}}"
                 if placeholder in template:
-                    template = template.replace(placeholder, str(config[config_key]))
+                    sanitized = self._sanitize_template_value(
+                        template_var, config[config_key]
+                    )
+                    template = template.replace(placeholder, sanitized)
 
         spec.prompt_template = template
         return spec
