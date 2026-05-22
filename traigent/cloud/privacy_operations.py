@@ -218,11 +218,16 @@ class PrivacyOperations:
                         response.suggestion.trial_id,  # Trial ID is the config run ID
                     )
 
-                # Update session status
+                # Touch the session's updated_at so progress UIs reflect activity,
+                # but do NOT increment completed_trials — a suggestion is not a
+                # completion. The completion count advances in
+                # submit_privacy_trial_results when the result is accepted.
+                # See issue #889 for the reasoning (overcount on abandoned /
+                # failed-before-result suggestions distorted progress, billing,
+                # and stop conditions).
                 with self.client._active_sessions_lock:
                     session = self.client._active_sessions.get(session_id)
                     if session:
-                        session.completed_trials += 1
                         session.updated_at = datetime.now(UTC)
 
             return response.suggestion
@@ -303,6 +308,20 @@ class PrivacyOperations:
                     f"Failed to submit trial results for session {session_id}, trial {trial_id}"
                 )
                 return False
+
+            # Advance the completion counter exactly once, on result acceptance.
+            # Moved here from get_next_privacy_trial per issue #889.
+            with self.client._active_sessions_lock:
+                session = self.client._active_sessions.get(session_id)
+                if session:
+                    session.completed_trials += 1
+                    session.updated_at = datetime.now(UTC)
+                else:
+                    logger.warning(
+                        "Session %s accepted by backend but not found locally; "
+                        "completed_trials not incremented",
+                        session_id,
+                    )
 
             return True
 
