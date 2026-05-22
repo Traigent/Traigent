@@ -105,6 +105,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                         output,
                         example.get("expected_output"),
                         example.get("metadata", {}),
+                        trial_id=trial_id,
+                        example_index=idx,
                     )
 
                     results.append(evaluation)
@@ -158,7 +160,13 @@ class LocalExecutionAdapter(ExecutionAdapter):
         return ExecutionMode.EDGE_ANALYTICS.value
 
     def _evaluate_output(
-        self, output: Any, expected: Any, metadata: dict[str, Any]
+        self,
+        output: Any,
+        expected: Any,
+        metadata: dict[str, Any],
+        *,
+        trial_id: str | None = None,
+        example_index: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate output against expected result.
 
@@ -181,8 +189,10 @@ class LocalExecutionAdapter(ExecutionAdapter):
         result["evaluation_type"] = eval_type
 
         if eval_type == "exact_match":
-            # Simple exact match
-            is_correct = str(output).strip() == str(expected).strip()
+            # Exact / case-insensitive match — must stay aligned with
+            # LocalEvaluator and the public docs (issue #891). Diverging
+            # here was how "Paris" vs "paris" silently scored 0.0.
+            is_correct = str(output).strip().lower() == str(expected).strip().lower()
             result["correct"] = is_correct
 
         elif eval_type == "contains":
@@ -204,10 +214,34 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 result["error"] = "Failed to parse numeric values"
 
         elif eval_type == "semantic":
-            # Semantic similarity (placeholder)
-            # In production, this would use embeddings or LLM evaluation
-            result["correct"] = None
+            # LocalExecutionAdapter does not implement embedding-based
+            # semantic similarity. Historically this branch silently set
+            # ``correct=None`` and quietly returned a 0% accuracy from the
+            # aggregate metrics, which let paraphrased answers be scored as
+            # wrong without any visible failure signal (issue #891).
+            #
+            # The honest contract is: semantic evaluation in this adapter
+            # fails loudly. Callers who want semantic scoring must supply
+            # a scoring_function/custom_evaluator (e.g. via
+            # ``@traigent.optimize(scoring_function=...)``) that implements
+            # embedding-based comparison themselves.
+            result["correct"] = False
+            result["success"] = False
             result["requires_semantic_eval"] = True
+            result["error"] = (
+                "LocalExecutionAdapter does not implement semantic "
+                "similarity. Configure a scoring_function or "
+                "custom_evaluator that performs embedding-based "
+                "comparison, or use a different evaluation_type."
+            )
+            logger.error(
+                "Semantic evaluation requested but no semantic evaluator "
+                "is configured for LocalExecutionAdapter; marking example "
+                "as failed. Provide a scoring_function for semantic scoring. "
+                "trial_id=%s example_index=%s",
+                trial_id or "<unknown>",
+                example_index if example_index is not None else "<unknown>",
+            )
 
         else:
             # Unknown evaluation type

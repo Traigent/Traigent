@@ -40,15 +40,22 @@ Input: "I love this!"  → Output: "positive" → Expected: "positive" → ✅ 1
 Input: "I hate this!"  → Output: "neutral"  → Expected: "negative" → ❌ 0%
 ```
 
-### 2. Semantic Similarity
+### 2. Semantic Similarity (Bring Your Own Scorer)
 For tasks with varied but equivalent outputs:
 ```python
-# Accuracy = semantic similarity score
+# Accuracy = semantic similarity score (from a user-supplied scoring_function)
 Input: "Capital of France?"
 Output: "Paris is the capital"
 Expected: "Paris"
-→ 95% (semantically equivalent)
+→ 95% (semantically equivalent, with your own embedding-based scorer)
 ```
+
+> **Important**: Traigent does **not** ship an embedding-based scorer.
+> The example above only matches the paraphrase if you pass a
+> `scoring_function` (or `metric_functions={"accuracy": ...}`) that
+> computes semantic similarity yourself (e.g., OpenAI embeddings,
+> sentence-transformers, or an LLM judge). The built-in default is
+> exact / case-insensitive match — see Method 1 below.
 
 ### 3. Custom Metrics
 For domain-specific evaluation:
@@ -62,22 +69,29 @@ Expected: Reference summary
 
 ## Evaluation Methods
 
-### Method 1: Default Evaluation (Semantic Similarity)
+### Method 1: Default Evaluation (Exact / Case-Insensitive Match)
 
-Traigent's default evaluator uses embeddings to compare meaning:
+When you do **not** pass a `scoring_function`, `metric_functions`, or
+`custom_evaluator`, Traigent's `LocalEvaluator` scores `accuracy` by
+comparing the agent's output to `expected_output` using exact match,
+falling back to a case-insensitive string comparison. There is no
+embedding model and no LLM judge in this path.
 
 ```python
 @traigent.optimize(
-    eval_dataset="qa_pairs.jsonl",  # Uses default semantic evaluation
+    eval_dataset="qa_pairs.jsonl",  # Default: exact / case-insensitive accuracy
     objectives=["accuracy"]
 )
 def qa_agent(question):
     return answer
 ```
 
-**Requirements:**
-- `OPENAI_API_KEY` for embedding generation
-- Works well for: Q&A, summarization, translation
+**Works well for:** classification, span extraction, structured outputs,
+and any task where the expected output is a fixed string or label.
+
+**Does *not* work for:** Q&A, summarization, translation, or anything
+where paraphrases must count as correct — those need a user-supplied
+semantic scorer (see Method 2).
 
 **Dataset format (JSONL):**
 ```json
@@ -85,9 +99,50 @@ def qa_agent(question):
 {"input": {"question": "Who invented Python?"}, "output": "Guido van Rossum"}
 ```
 
-### Method 2: Exact Match Evaluation
+### Method 2: Semantic Similarity (User-Supplied Scorer)
 
-For classification tasks requiring exact matches:
+For tasks where paraphrases should count as correct, supply your own
+semantic scorer via `scoring_function` (or `metric_functions={"accuracy": ...}`).
+Traigent does not ship one out of the box.
+
+```python
+from openai import OpenAI
+
+client = OpenAI()  # requires OPENAI_API_KEY in your own environment
+
+def semantic_accuracy(output: str, expected: str) -> float:
+    """Embedding-based cosine similarity, returned as a 0.0-1.0 score."""
+    resp = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[str(output), str(expected)],
+    )
+    a, b = resp.data[0].embedding, resp.data[1].embedding
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+@traigent.optimize(
+    eval_dataset="qa_pairs.jsonl",
+    scoring_function=semantic_accuracy,  # your scorer, your dependency, your API key
+    objectives=["accuracy"],
+)
+def qa_agent(question):
+    return answer
+```
+
+**Fail-loud behaviour:** If your data ships with
+`metadata.evaluation_type = "semantic"` but you do not provide a
+`scoring_function` or `custom_evaluator`, `LocalExecutionAdapter` marks
+each such example as `success=False`, sets `correct=False`, attaches
+an `error` field explaining the missing capability, and emits an
+ERROR-level log. The aggregate metrics will report
+`success_rate < 1.0` and `accuracy_semantic = 0.0`, so the problem
+shows up immediately instead of silently scoring paraphrases as wrong.
+
+### Method 3: Exact Match (Explicit)
+
+For classification tasks where you want to be explicit:
 
 ```python
 def exact_match_score(output, expected, llm_metrics=None):
@@ -103,7 +158,7 @@ def classifier(text):
     return category
 ```
 
-### Method 3: Mock Mode (Development/Demo)
+### Method 4: Mock Mode (Development/Demo)
 
 For testing without real API calls:
 
@@ -241,10 +296,12 @@ def summarizer(text):
 
 **Causes and Solutions:**
 
-1. **Missing API Key for Embeddings**
-   ```bash
-   export OPENAI_API_KEY=your-key-here
-   ```
+1. **Default scorer is exact match, not semantic**
+   The built-in `LocalEvaluator` accuracy is exact / case-insensitive
+   string comparison. Paraphrased answers (e.g. agent returns
+   `"Paris is the capital of France"`, expected is `"Paris"`) score
+   0.0 under the default. If you need semantic equivalence, pass your
+   own `scoring_function` (see Method 2 above).
 
 2. **Wrong Dataset Format**
    ```python
@@ -262,7 +319,17 @@ def summarizer(text):
        return 1.0 if str(output) == str(expected) else 0.0
    ```
 
-4. **Use Mock Mode for Testing**
+4. **`evaluation_type: "semantic"` in dataset metadata without a scorer**
+   `LocalExecutionAdapter` does not implement embedding-based
+   similarity. Examples tagged
+   `metadata: {"evaluation_type": "semantic"}` will be marked
+   `success=False` with an explicit error message until you provide a
+   `scoring_function` or `custom_evaluator`. Check the per-example
+   `error` field or look for the
+   `"Semantic evaluation requested but no semantic evaluator is configured"`
+   ERROR log.
+
+5. **Use Mock Mode for Testing**
    ```bash
    export TRAIGENT_MOCK_LLM=true
    ```
@@ -342,18 +409,32 @@ print(f"Best accuracy: {results.best_score:.2%}")
 
 ### Q&A System with Semantic Evaluation
 
+Q&A is a natural fit for semantic scoring because well-formed answers
+paraphrase the expected output. The example below shows the
+**user-supplied** semantic scorer (`scoring_function`) you need — the
+default scorer would mark these paraphrases as wrong.
+
 ```python
 import litellm
 import traigent
 
+def semantic_accuracy(output: str, expected: str) -> float:
+    """Replace this with embeddings / an LLM judge for your domain."""
+    out_tokens = {tok.lower() for tok in str(output).split()}
+    exp_tokens = {tok.lower() for tok in str(expected).split()}
+    if not exp_tokens:
+        return 0.0
+    return 1.0 if exp_tokens.issubset(out_tokens) else 0.0
+
 @traigent.optimize(
     configuration_space={
         "temperature": [0.0, 0.5, 1.0],
-        "max_tokens": [50, 100, 200]
+        "max_tokens": [50, 100, 200],
     },
-    eval_dataset="data/qa_dataset.jsonl",  # Uses default semantic similarity
+    eval_dataset="data/qa_dataset.jsonl",
+    scoring_function=semantic_accuracy,  # required for paraphrase tolerance
     objectives=["accuracy", "cost"],
-    max_trials=15
+    max_trials=15,
 )
 def qa_system(question, temperature=0.5, max_tokens=100):
     response = litellm.completion(
@@ -365,8 +446,8 @@ def qa_system(question, temperature=0.5, max_tokens=100):
 
     return response.choices[0].message.content
 
-# The default evaluator will use semantic similarity
-# to compare answers, allowing for paraphrasing
+# Without a scoring_function, the same Q&A run would score paraphrased
+# answers as 0.0 under the default exact / case-insensitive contract.
 ```
 
 ## Summary
