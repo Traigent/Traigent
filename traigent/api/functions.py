@@ -731,11 +731,11 @@ def set_strategy(
           structured limits. For coarse cost/time bounds, use
           ``cost_limit=...`` / ``TRAIGENT_RUN_COST_LIMIT`` on the
           decorator and ``OptimizedFunction.optimize(timeout=...)``
-          at call time. Structured ``resource_limits`` ship with the
-          #933 wiring follow-up.
+          at call time. Structured ``resource_limits`` are not wired
+          into the runtime yet.
 
-        First-party wiring of ``StrategyConfig`` into the optimization
-        pipeline is tracked in issue #933.
+        Future first-party wiring would need to connect
+        ``StrategyConfig`` to the optimization pipeline.
 
     Args:
         algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").

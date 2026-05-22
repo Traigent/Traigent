@@ -1769,13 +1769,12 @@ class StrategyConfig:
           bounds today, use ``cost_limit=...`` /
           ``TRAIGENT_RUN_COST_LIMIT`` on the decorator and
           ``OptimizedFunction.optimize(timeout=...)`` at call time.
-          Structured ``resource_limits`` plumbing is part of the #933
-          wiring follow-up.
+          Structured ``resource_limits`` are not wired into the
+          runtime yet.
 
-        First-party wiring of ``StrategyConfig`` into the optimization
-        pipeline is tracked separately. Holding this object does not
-        change optimization behavior. See issue #933 for the wiring
-        plan.
+        Future first-party wiring would need to connect
+        ``StrategyConfig`` to the optimization pipeline. Holding this
+        object does not change optimization behavior.
     """
 
     algorithm: str
