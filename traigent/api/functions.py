@@ -712,31 +712,43 @@ def set_strategy(
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
 ) -> StrategyConfig:
-    """Configure optimization strategy and execution parameters.
+    """Build a validated ``StrategyConfig`` container.
+
+    .. warning::
+        This helper currently only **constructs and validates** a
+        ``StrategyConfig`` object — the returned config is not yet
+        consumed by the optimization runtime. To configure runtime
+        behavior today, use the supported entry points:
+
+        - algorithm: pass directly as
+          ``@traigent.optimize(algorithm=...)`` or
+          ``OptimizedFunction.optimize(algorithm=...)``.
+        - parallel_workers: pass via
+          ``traigent.configure(parallel_workers=...)`` (and use
+          ``parallel_config=`` for mode / trial_concurrency /
+          example_concurrency / thread_workers).
+        - resource_limits: no supported runtime equivalent yet for
+          structured limits. For coarse cost/time bounds, use
+          ``cost_limit=...`` / ``TRAIGENT_RUN_COST_LIMIT`` on the
+          decorator and ``OptimizedFunction.optimize(timeout=...)``
+          at call time. Structured ``resource_limits`` ship with the
+          #933 wiring follow-up.
+
+        First-party wiring of ``StrategyConfig`` into the optimization
+        pipeline is tracked in issue #933.
 
     Args:
         algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
             Default is "tpe" (Tree-structured Parzen Estimator) which is always
             available with Optuna. "bayesian" (Gaussian Process) requires
             the traigent-advanced-algorithms plugin.
-        algorithm_config: Algorithm-specific parameters
-        parallel_workers: Number of parallel evaluation workers
-        resource_limits: Memory, time, and compute constraints
+        algorithm_config: Algorithm-specific parameters.
+        parallel_workers: Number of parallel evaluation workers.
+        resource_limits: Memory, time, and compute constraints.
 
     Returns:
-        StrategyConfig object for use with optimization
-
-    Example::
-
-        strategy = traigent.set_strategy(
-            algorithm="tpe",
-            algorithm_config={
-                "n_startup_trials": 10,
-                "multivariate": True
-            },
-            parallel_workers=4
-        )
-        results = my_agent.optimize(strategy=strategy)
+        Validated ``StrategyConfig``. Holding this object does not change
+        optimization behavior; see the warning above for runtime entry points.
     """
     # Validate algorithm
     available_algorithms = get_available_strategies()
