@@ -704,6 +704,72 @@ class TestComplianceReporter:
 
         assert _Cr is ComplianceReporter
 
+    @pytest.mark.parametrize(
+        "method_name,args",
+        [
+            ("_test_access_control", ([],)),
+            ("_test_change_management", ([],)),
+            ("_test_data_protection", ([],)),
+            ("_test_monitoring", ([],)),
+            ("_analyze_consent_management", ([],)),
+            ("_analyze_data_subject_requests", ([],)),
+            ("get_compliance_dashboard", ()),
+        ],
+    )
+    def test_all_unimplemented_methods_raise_typed_error(self, method_name, args):
+        """Every ComplianceReporter method that is part of the unimplemented
+        compliance-report surface MUST raise ComplianceReportUnavailableError
+        (not bare NotImplementedError). Parametrized so a future refactor that
+        accidentally drops one of these raise sites will fail the suite."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        method = getattr(reporter, method_name)
+
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            method(*args)
+
+    @pytest.mark.parametrize(
+        "internal_method_name",
+        [
+            "_generate_soc2_report",
+            "_generate_iso27001_report",
+            "_generate_gdpr_report",
+        ],
+    )
+    def test_internal_generate_helpers_raise_typed_error(self, internal_method_name):
+        """The three internal _generate_*_report helpers — wrapped by the
+        public generate_report() dispatcher — must also raise the typed
+        exception when called directly."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        start_date = datetime.now(UTC) - timedelta(days=30)
+        end_date = datetime.now(UTC)
+
+        method = getattr(reporter, internal_method_name)
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            method(start_date, end_date)
+
+    def test_generate_report_unknown_framework_raises_value_error(self):
+        """generate_report's fall-through branch for unsupported frameworks
+        must raise ValueError (not ComplianceReportUnavailableError) — those
+        are two distinct error classes for two distinct caller mistakes."""
+        from enum import Enum
+
+        class _UnknownFramework(Enum):
+            FAKE = "fake-framework"
+
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        start_date = datetime.now(UTC) - timedelta(days=30)
+        end_date = datetime.now(UTC)
+
+        with pytest.raises(ValueError, match="Unsupported compliance framework"):
+            reporter.generate_report(_UnknownFramework.FAKE, start_date, end_date)
+
 
 class TestEventProcessorEnrichment:
     """EventProcessor enrichment surfaces must fail-loud without providers."""
