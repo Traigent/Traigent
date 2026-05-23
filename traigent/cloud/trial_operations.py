@@ -206,7 +206,7 @@ class TrialOperations:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Register a trial start with the backend.
 
         This creates a configuration run with "running" status before execution begins.
@@ -217,12 +217,14 @@ class TrialOperations:
             config: Configuration to be tested
 
         Returns:
-            True if successful, False otherwise
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
         """
-        # Skip backend calls in offline mode
+        # Skip backend calls in offline mode — return None so callers
+        # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
         if is_backend_offline():
             logger.debug("Offline mode: skipping trial registration for %s", trial_id)
-            return True
+            return None
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping trial registration")
@@ -285,10 +287,10 @@ class TrialOperations:
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(
-                    "Offline mode: trial registration encountered %s; treating as success",
+                    "Offline mode: trial registration encountered %s; skipping",
                     exc,
                 )
-                return True
+                return None
             logger.exception(
                 "Error registering trial start for session %s trial %s (%s)",
                 session_id,
@@ -302,7 +304,7 @@ class TrialOperations:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Synchronous wrapper for register_trial_start.
 
         Args:
@@ -311,10 +313,11 @@ class TrialOperations:
             config: Configuration to be tested
 
         Returns:
-            True if successful, False otherwise
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
         """
 
-        async def _register_async() -> bool:
+        async def _register_async() -> bool | None:
             return await self.register_trial_start(session_id, trial_id, config)
 
         try:
@@ -328,7 +331,7 @@ class TrialOperations:
                 #
                 # Solution: execute in a separate thread with its own event loop.
 
-                def _run_in_new_loop() -> bool:
+                def _run_in_new_loop() -> bool | None:
                     """Run the async function in a fresh event loop."""
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
@@ -512,7 +515,7 @@ class TrialOperations:
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Submit trial results via the Traigent session endpoint.
 
         Args:
@@ -525,15 +528,17 @@ class TrialOperations:
             execution_mode: Optional execution mode
 
         Returns:
-            True if successful, False otherwise
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
         """
-        # Skip backend calls in offline mode
+        # Skip backend calls in offline mode — return None so callers
+        # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
         if is_backend_offline():
             logger.debug(
                 "Offline mode: skipping trial result submission for %s",
                 trial_id,
             )
-            return True
+            return None
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping result submission")
@@ -646,11 +651,10 @@ class TrialOperations:
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(
-                    "Offline mode: trial result submission encountered %s; "
-                    "treating as success",
+                    "Offline mode: trial result submission encountered %s; skipping",
                     exc,
                 )
-                return True
+                return None
             logger.exception(
                 "Error submitting trial result for session %s trial %s (%s)",
                 session_id,
@@ -666,7 +670,7 @@ class TrialOperations:
         config: dict[str, Any],
         summary_stats: dict[str, Any],
         status: str = "completed",
-    ) -> bool:
+    ) -> bool | None:
         """Submit summary statistics for privacy-preserving mode.
 
         Args:
@@ -677,15 +681,17 @@ class TrialOperations:
             status: Trial status (completed/failed)
 
         Returns:
-            True if submission successful, False otherwise
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
         """
-        # Skip backend calls in offline mode
+        # Skip backend calls in offline mode — return None so callers
+        # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
         if is_backend_offline():
             logger.debug(
                 "Offline mode: skipping summary stats submission for %s",
                 trial_id,
             )
-            return True
+            return None
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping summary stats submission")
@@ -778,11 +784,10 @@ class TrialOperations:
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(
-                    "Offline mode: summary stats submission encountered %s; "
-                    "treating as success",
+                    "Offline mode: summary stats submission encountered %s; skipping",
                     exc,
                 )
-                return True
+                return None
             logger.exception(
                 "Error submitting summary stats for trial %s (%s)",
                 trial_id,
@@ -796,7 +801,7 @@ class TrialOperations:
         weighted_score: float,
         normalization_info: dict[str, Any] | None = None,
         objective_weights: dict[str, float] | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Update configuration run with weighted multi-objective scores.
 
         This method updates the summary_stats of a configuration run with
@@ -809,14 +814,16 @@ class TrialOperations:
             objective_weights: The weights used for each objective
 
         Returns:
-            bool: True if update successful, False otherwise
+            True if update succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
         """
-        # Skip backend calls in offline mode
+        # Skip backend calls in offline mode — return None so callers
+        # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
         if is_backend_offline():
             logger.debug(
-                f"Offline mode: skipping weighted score update for trial {trial_id}"
+                "Offline mode: skipping weighted score update for trial %s", trial_id
             )
-            return True
+            return None
 
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available")

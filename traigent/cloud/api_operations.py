@@ -556,12 +556,14 @@ class ApiOperations:
                 # Omit measures if empty (per schema - use null or omit when no results)
                 measures_data = {"measures": None}
 
-            # Add execution time to workflow_metadata when backend supports it
-            # TODO: Once backend adds workflow_metadata field, send via that endpoint
+            # execution_time is not transmitted via the measures endpoint.
+            # It is already included in the trial result payload submitted by
+            # submit_trial_result_via_session (result_data["execution_time"]).
             if execution_time is not None:
                 logger.debug(
-                    f"execution_time={execution_time} should be sent via workflow_metadata field "
-                    f"(not yet supported by backend). Skipping for now."
+                    "execution_time=%s recorded in trial result payload; "
+                    "not duplicated in measures update.",
+                    execution_time,
                 )
 
             connector = self._build_connector()
