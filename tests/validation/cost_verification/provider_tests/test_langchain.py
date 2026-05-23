@@ -65,9 +65,18 @@ class TestLangChainCost:
             prompt_tokens = token_usage.get("prompt_tokens", 0)
             completion_tokens = token_usage.get("completion_tokens", 0)
 
-        # Skip if we couldn't get token counts
-        if prompt_tokens == 0:
-            pytest.skip("Could not extract token usage from LangChain response")
+        # Zero tokens IS the regression we need to catch: a token-parsing
+        # change that returns 0 would silently zero out billing. Previously
+        # this branch silently skipped; assert non-zero instead.
+        assert prompt_tokens > 0, (
+            "LangChain token-usage parsing returned 0 prompt_tokens. "
+            "This indicates a regression in token extraction from either "
+            "response.usage_metadata or response.response_metadata.token_usage."
+        )
+        assert completion_tokens > 0, (
+            "LangChain token-usage parsing returned 0 completion_tokens — "
+            "regression in completion-token extraction."
+        )
 
         cost_breakdown = calculate_llm_cost(
             model_name="gpt-4o-mini",
@@ -140,8 +149,16 @@ class TestLangChainCost:
             prompt_tokens = token_usage.get("prompt_tokens", 0)
             completion_tokens = token_usage.get("completion_tokens", 0)
 
-        if prompt_tokens == 0:
-            pytest.skip("Could not extract token usage")
+        # Zero tokens IS the regression — see note in
+        # test_langchain_openai_simple_query above.
+        assert prompt_tokens > 0, (
+            "Traigent LangChain callback handler observed 0 prompt_tokens — "
+            "regression in token extraction or handler wiring."
+        )
+        assert completion_tokens > 0, (
+            "Traigent LangChain callback handler observed 0 completion_tokens — "
+            "regression in token extraction or handler wiring."
+        )
 
         cost_breakdown = calculate_llm_cost(
             model_name="gpt-4o-mini",

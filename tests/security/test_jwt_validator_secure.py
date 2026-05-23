@@ -335,10 +335,58 @@ class TestJWTValidationIntegration(unittest.TestCase):
 
     @pytest.mark.integration
     def test_end_to_end_validation_flow(self):
-        """Test complete validation flow."""
-        # This would test against a real JWKS endpoint in integration testing
-        # Skip assertion since this is a placeholder for integration testing
-        pytest.skip("Requires real JWKS endpoint for integration testing")
+        """Test complete validation flow without a real JWKS endpoint.
+
+        Runs the validator in DEVELOPMENT mode (which does not require a JWKS
+        endpoint) end-to-end:
+          1. Accepts a freshly-issued, well-formed token.
+          2. Rejects an algorithm 'none' token (security regression guard).
+          3. Rejects a token already past its DEVELOPMENT_TOKEN_LIFETIME.
+
+        Previously this test unconditionally skipped, which silently masked
+        regressions in any of the three paths.
+        """
+        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        now = int(time.time())
+
+        # 1. Well-formed, fresh token must validate.
+        good_payload = {
+            "sub": "e2e_user",
+            "iat": now,
+            "exp": now + 60,
+            "jti": "e2e-jti-1",
+        }
+        good_token = jwt.encode(good_payload, "any-dev-secret", algorithm="HS256")
+        good_result = validator.validate_token(good_token)
+        self.assertTrue(
+            good_result.valid,
+            f"Fresh dev-mode token rejected: {good_result.error!r}",
+        )
+        self.assertIsNotNone(good_result.payload)
+        self.assertEqual(good_result.payload.get("sub"), "e2e_user")
+
+        # 2. Token using 'alg: none' must be rejected even in DEVELOPMENT mode.
+        none_token = jwt.encode(good_payload, "", algorithm="none")
+        none_result = validator.validate_token(none_token)
+        self.assertFalse(
+            none_result.valid,
+            "alg=none token must NEVER validate (algorithm-confusion attack)",
+        )
+
+        # 3. Token issued past the DEVELOPMENT lifetime window must be rejected.
+        old_iat = now - validator.DEVELOPMENT_TOKEN_LIFETIME - 60
+        stale_payload = {
+            "sub": "e2e_user",
+            "iat": old_iat,
+            "exp": old_iat + validator.DEVELOPMENT_TOKEN_LIFETIME + 30,
+            "jti": "e2e-jti-2",
+        }
+        stale_token = jwt.encode(stale_payload, "any-dev-secret", algorithm="HS256")
+        stale_result = validator.validate_token(stale_token)
+        self.assertFalse(
+            stale_result.valid,
+            "Token older than DEVELOPMENT_TOKEN_LIFETIME must be rejected",
+        )
 
     @pytest.mark.integration
     def test_performance_under_load(self):

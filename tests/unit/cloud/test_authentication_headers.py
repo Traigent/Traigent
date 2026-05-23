@@ -326,54 +326,68 @@ class TestTraigentCloudClientCore:
     @pytest.mark.asyncio
     async def test_all_http_methods_use_ensure_session(self, valid_api_key):
         """Verify all HTTP methods call _ensure_session before making requests."""
-        client = TraigentCloudClient(api_key=valid_api_key)
+        # Bypass backend API-key validation in unit tests; without it,
+        # _get_headers raises InvalidCredentialsError before the per-method
+        # path runs, which defeats the test's premise.
+        with _patch_backend_validate():
+            client = TraigentCloudClient(api_key=valid_api_key)
 
-        # Track _ensure_session calls
-        ensure_session_calls = []
+            # Track _ensure_session calls
+            ensure_session_calls = []
 
-        async def mock_ensure():
-            ensure_session_calls.append(True)
-            client._session = Mock()  # Provide mock session
+            async def mock_ensure():
+                ensure_session_calls.append(True)
+                client._session = Mock()  # Provide mock session
 
-            # Setup mock response
-            mock_response = Mock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={})
-            mock_response.text = AsyncMock(return_value="")
+                # Setup mock response
+                mock_response = Mock()
+                mock_response.status = 200
+                mock_response.json = AsyncMock(return_value={})
+                mock_response.text = AsyncMock(return_value="")
 
-            mock_context = Mock()
-            mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_context.__aexit__ = AsyncMock(return_value=None)
+                mock_context = Mock()
+                mock_context.__aenter__ = AsyncMock(return_value=mock_response)
+                mock_context.__aexit__ = AsyncMock(return_value=None)
 
-            client._session.post = Mock(return_value=mock_context)
-            client._session.get = Mock(return_value=mock_context)
+                client._session.post = Mock(return_value=mock_context)
+                client._session.get = Mock(return_value=mock_context)
 
-            return client._session
+                return client._session
 
-        client._ensure_session = mock_ensure
+            client._ensure_session = mock_ensure
 
-        # Test various methods
-        methods_to_test = [
-            ("check_service_status", []),
-            ("get_next_trial", ["session-123"]),
-            (
-                "submit_trial_result",
-                ["session-123", "trial-456", {"accuracy": 0.9}, 1.0],
-            ),
-            ("finalize_optimization", ["session-123"]),
-        ]
+            # Test various methods
+            methods_to_test = [
+                ("check_service_status", []),
+                ("get_next_trial", ["session-123"]),
+                (
+                    "submit_trial_result",
+                    ["session-123", "trial-456", {"accuracy": 0.9}, 1.0],
+                ),
+                ("finalize_optimization", ["session-123"]),
+            ]
 
-        for method_name, args in methods_to_test:
-            ensure_session_calls.clear()
-            method = getattr(client, method_name)
-            try:
-                await method(*args)
-            except Exception:
-                pass  # We only care about _ensure_session being called
+            # Exceptions raised from inside response parsing are tolerable
+            # (the mocked HTTP response is intentionally empty), but ONLY
+            # after ``_ensure_session`` has been called. Anything else ARE
+            # regressions and must surface, not be silently swallowed.
+            _PARSING_EXC_TYPES = (KeyError, TypeError, AttributeError, ValueError)
 
-            assert (
-                len(ensure_session_calls) > 0
-            ), f"{method_name} did not call _ensure_session"
+            for method_name, args in methods_to_test:
+                ensure_session_calls.clear()
+                method = getattr(client, method_name)
+                method_exc: Exception | None = None
+                try:
+                    await method(*args)
+                except _PARSING_EXC_TYPES as exc:
+                    method_exc = exc
+
+                assert (
+                    len(ensure_session_calls) > 0
+                ), (
+                    f"{method_name} did not call _ensure_session "
+                    f"(method_exc={method_exc!r})"
+                )
 
 
 class TestBackendIntegratedClientCore:
@@ -580,33 +594,47 @@ class TestHTTPMethodCoverage:
             ("cancel_agent_optimization", "post", ["opt-456"]),
         ]
 
+        # Same rule as above: tolerate parsing-shape exceptions from the empty
+        # mocked response, but require any other exception to surface — and
+        # in all cases require the underlying HTTP call to have happened with
+        # the correct authentication headers. CloudServiceError is allowed
+        # because the mocked HTTP response intentionally has empty/invalid
+        # JSON, which the client wraps into CloudServiceError AFTER the HTTP
+        # call (and its headers) have already been issued.
+        _PARSING_EXC_TYPES = (KeyError, TypeError, AttributeError, ValueError, CloudServiceError)
+
         for method_name, http_verb, args in http_methods:
-            # Reset mock
             mock_aiohttp_session.post.reset_mock()
             mock_aiohttp_session.get.reset_mock()
 
-            # Call method
             method = getattr(client, method_name)
+            method_exc: Exception | None = None
             try:
                 await method(*args)
-            except Exception:
-                pass  # Some methods might fail due to response parsing
+            except _PARSING_EXC_TYPES as exc:
+                method_exc = exc
 
-            # Verify correct HTTP method was called with headers
             if http_verb == "get":
-                assert mock_aiohttp_session.get.called, f"{method_name} didn't call GET"
+                assert mock_aiohttp_session.get.called, (
+                    f"{method_name} didn't call GET (method_exc={method_exc!r})"
+                )
                 call_kwargs = mock_aiohttp_session.get.call_args[1]
             else:
-                assert (
-                    mock_aiohttp_session.post.called
-                ), f"{method_name} didn't call POST"
+                assert mock_aiohttp_session.post.called, (
+                    f"{method_name} didn't call POST (method_exc={method_exc!r})"
+                )
                 call_kwargs = mock_aiohttp_session.post.call_args[1]
 
-            assert "headers" in call_kwargs, f"{method_name} missing headers"
+            assert "headers" in call_kwargs, (
+                f"{method_name} missing headers (method_exc={method_exc!r})"
+            )
             headers = call_kwargs["headers"]
             assert (
                 "X-API-Key" in headers or "Authorization" in headers
-            ), f"{method_name} missing authentication header"
+            ), (
+                f"{method_name} missing authentication header "
+                f"(method_exc={method_exc!r})"
+            )
 
     @pytest.mark.asyncio
     async def test_agent_specification_methods(
