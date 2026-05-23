@@ -18,12 +18,15 @@ from traigent.security.audit import (
     AuditStorage,
     ComplianceFramework,
     ComplianceReporter,
+    EnrichmentProviderUnavailableError,
+    EventProcessor,
 )
 
 STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
 COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting subsystem is not yet implemented"
-PERSISTENT_STORAGE_NOT_IMPLEMENTED = "Persistent audit storage is not yet implemented"
 TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
+GEOLOCATION_PROVIDER_UNAVAILABLE = "No geolocation provider configured"
+THREAT_INTEL_PROVIDER_UNAVAILABLE = "No threat intelligence provider configured"
 FAKE_AUDIT_API_KEY = (
     "sk-ant-canary-DO-NOT-USE-123456789abcdef"  # pragma: allowlist secret
 )
@@ -91,22 +94,37 @@ class TestAuditEvent:
 class TestAuditStorage:
     """Test AuditStorage class"""
 
-    def test_default_storage_path_keeps_backward_compatible_value(self):
-        """No-arg construction preserves the historical default path."""
+    def test_storage_has_no_storage_path_attribute(self):
+        """AuditStorage no longer exposes a misleading storage_path attribute.
+
+        The historical ``storage_path`` parameter implied persistence that
+        was never implemented. It has been removed so the in-memory nature
+        of this backend is honest.
+        """
         storage = AuditStorage()
 
-        assert storage.storage_path == "audit_logs"
+        assert not hasattr(storage, "storage_path")
         assert storage.events == []
 
-    def test_explicit_storage_path_is_accepted_for_compatibility(self):
-        """Explicit paths remain constructible while storage stays in-memory."""
-        storage = AuditStorage(storage_path="custom_audit_logs")
-        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+    def test_storage_rejects_storage_path_kwarg(self):
+        """Passing storage_path now fails fast instead of silently being ignored."""
+        with pytest.raises(TypeError):
+            AuditStorage(storage_path="audit_logs")
 
-        storage.store_event(event)
+    def test_events_do_not_survive_reinstantiation(self):
+        """In-memory storage is honest: events vanish on re-instantiation.
 
-        assert storage.storage_path == "custom_audit_logs"
-        assert storage.get_events() == [event]
+        This documents the lack of persistence so future callers don't
+        re-introduce a misleading storage_path parameter.
+        """
+        storage = AuditStorage()
+        storage.store_event(
+            AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+        )
+        assert len(storage.get_events()) == 1
+
+        fresh_storage = AuditStorage()
+        assert fresh_storage.get_events() == []
 
     def test_store_and_retrieve_events(self):
         """Test storing and retrieving events"""
@@ -627,3 +645,100 @@ class TestComplianceReporter:
 
         with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
             reporter._analyze_security_incidents(events)
+
+
+class TestEventProcessorEnrichment:
+    """EventProcessor enrichment surfaces must fail-loud without providers."""
+
+    def test_geolocation_without_provider_raises(self):
+        """Geolocation enrichment must not fabricate hard-coded location data."""
+        processor = EventProcessor()
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="8.8.8.8",
+        )
+
+        with pytest.raises(
+            EnrichmentProviderUnavailableError,
+            match=GEOLOCATION_PROVIDER_UNAVAILABLE,
+        ):
+            processor.enrich_with_geolocation(event)
+
+        assert "geolocation" not in event.details
+
+    def test_threat_intelligence_without_provider_raises(self):
+        """Threat-intel enrichment must not fabricate hard-coded reputation."""
+        processor = EventProcessor()
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="8.8.8.8",
+        )
+
+        with pytest.raises(
+            EnrichmentProviderUnavailableError,
+            match=THREAT_INTEL_PROVIDER_UNAVAILABLE,
+        ):
+            processor.enrich_with_threat_intelligence(event)
+
+        assert "threat_intel" not in event.details
+
+    def test_geolocation_provider_is_called_with_ip(self):
+        """When a provider is injected, geolocation is delegated to it."""
+        captured: dict[str, str] = {}
+
+        def provider(ip: str) -> dict[str, str]:
+            captured["ip"] = ip
+            return {"country": "DE", "city": "Berlin"}
+
+        processor = EventProcessor(geolocation_provider=provider)
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="203.0.113.5",
+        )
+
+        processor.enrich_with_geolocation(event)
+
+        assert captured == {"ip": "203.0.113.5"}
+        assert event.details["geolocation"] == {"country": "DE", "city": "Berlin"}
+
+    def test_threat_intelligence_provider_is_called_with_ip(self):
+        """When a provider is injected, threat-intel is delegated to it."""
+        captured: dict[str, str] = {}
+
+        def provider(ip: str) -> dict[str, object]:
+            captured["ip"] = ip
+            return {"malicious": True, "reputation_score": 12, "categories": ["botnet"]}
+
+        processor = EventProcessor(threat_intelligence_provider=provider)
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="198.51.100.7",
+        )
+
+        processor.enrich_with_threat_intelligence(event)
+
+        assert captured == {"ip": "198.51.100.7"}
+        assert event.details["threat_intel"] == {
+            "malicious": True,
+            "reputation_score": 12,
+            "categories": ["botnet"],
+        }
+
+    def test_enrichment_no_ip_still_requires_provider(self):
+        """Even without an IP, calling enrichment without a provider must fail.
+
+        Previously the code silently no-op'd when ip_address was missing, but
+        that hides the misconfiguration — the public surface still claims
+        enrichment is supported. Require a provider regardless.
+        """
+        processor = EventProcessor()
+        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="u")
+
+        with pytest.raises(EnrichmentProviderUnavailableError):
+            processor.enrich_with_geolocation(event)
+        with pytest.raises(EnrichmentProviderUnavailableError):
+            processor.enrich_with_threat_intelligence(event)
