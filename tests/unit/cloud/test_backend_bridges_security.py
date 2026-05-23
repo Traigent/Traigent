@@ -269,17 +269,17 @@ class TestConfigurationValidation:
                 objectives=["accuracy"],
             )
 
-            # Current implementation may be more permissive during development
+            # Backend bridge must either accept the config (returning a non-None
+            # backend request) or reject it with a typed validation error.
+            # AttributeError (unimplemented method) is NOT acceptable: it would
+            # mean the public conversion API is broken.
             try:
                 result = bridge.optimization_request_to_backend(opt_request)
-                # If it succeeds, verify basic structure
-                assert result is not None
             except (ValueError, TypeError):
-                # Expected behavior for invalid configs
-                pass
-            except AttributeError:
-                # Method may not be implemented yet
-                pytest.skip("Configuration space validation not yet implemented")
+                continue
+            assert result is not None, (
+                f"optimization_request_to_backend returned None for {invalid_config!r}"
+            )
 
     def test_prevents_code_injection_in_objectives(self):
         """Test prevention of code injection through objectives."""
@@ -322,18 +322,23 @@ class TestErrorHandling:
             example = EvaluationExample({"test": "data"}, "output")
             test_dataset = Dataset(examples=[example], name="error_test")
 
-            # Current implementation may handle gracefully with warnings
+            # The converter must EITHER propagate the underlying error (carrying
+            # the original message), OR degrade gracefully by dropping the
+            # failed example (yielding 0 or 1 backend example). Returning
+            # something else, or swallowing the cause entirely, is a regression.
             try:
                 examples, metadata = converter.sdk_dataset_to_backend_examples(
                     test_dataset
                 )
-                # If it handles gracefully, verify it logged the error appropriately
-                assert (
-                    len(examples) == 0 or len(examples) == 1
-                )  # May skip failed example or handle it
             except Exception as e:
-                # Should raise informative exception
-                assert "Conversion failed" in str(e)
+                assert "Conversion failed" in str(e), (
+                    f"Exception lost original cause: {e!r}"
+                )
+            else:
+                assert len(examples) in (0, 1), (
+                    f"Expected 0 or 1 examples after graceful degradation, "
+                    f"got {len(examples)}"
+                )
 
     def test_handles_circular_references(self):
         """Test handling of circular references in data structures."""
@@ -346,19 +351,21 @@ class TestErrorHandling:
         # Should detect and handle circular references
         test_dataset = Dataset(examples=[example], name="circular_test")
 
-        # Current implementation may handle gracefully or raise appropriate exception
+        # The converter must EITHER raise a typed error mentioning the
+        # circular/recursion condition, OR skip the offending example
+        # (yielding 0 or 1 backend examples). Hanging or a generic Exception
+        # without a circular-reference signal is a regression.
         try:
             examples, metadata = converter.sdk_dataset_to_backend_examples(test_dataset)
-            # If it handles gracefully, verify it didn't get stuck in infinite loop
+        except (ValueError, RecursionError) as e:
+            msg = str(e).lower()
             assert (
-                len(examples) == 0 or len(examples) == 1
-            )  # May skip problematic example
-        except (ValueError, RecursionError, Exception) as e:
-            # Should raise appropriate exception for circular references
-            assert (
-                "circular" in str(e).lower()
-                or "recursion" in str(e).lower()
-                or "Circular reference detected" in str(e)
+                "circular" in msg or "recursion" in msg
+            ), f"Exception does not identify circular reference: {e!r}"
+        else:
+            assert len(examples) in (0, 1), (
+                f"Expected 0 or 1 examples after handling circular input, "
+                f"got {len(examples)}"
             )
 
     def test_memory_cleanup_on_errors(self):

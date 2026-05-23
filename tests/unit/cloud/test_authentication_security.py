@@ -675,7 +675,13 @@ class TestEnvironmentSecurity:
     """Test security in different environments."""
 
     def test_development_mode_security_warnings(self):
-        """Test that development mode provides appropriate security warnings."""
+        """Test that development mode provides appropriate security warnings.
+
+        Development-mode auth that runs without a warning IS the regression we
+        need to catch: a silent dev-mode bypass can ship to production if no
+        one is paying attention. Previously this test silently skipped when the
+        warning was missing, masking exactly that regression. Now we assert it.
+        """
         with patch("traigent.cloud.auth.logger") as mock_logger, _dev_env():
             config = UnifiedAuthConfig(default_mode=AuthMode.DEVELOPMENT)
             auth_manager = AuthManager(config)
@@ -685,16 +691,17 @@ class TestEnvironmentSecurity:
             result = asyncio.run(auth_manager.authenticate(credentials))
             assert result.success
 
-            # Should have logged warnings about development mode
             warning_logged = any(
-                call
+                "development" in str(call).lower()
                 for call in mock_logger.warning.call_args_list
-                if "development" in str(call).lower()
             )
 
-            # If no warnings were logged, ensure we're aware this is a security concern
-            if not warning_logged:
-                pytest.skip("Development mode should log security warnings")
+            assert warning_logged, (
+                "Development-mode authentication completed without emitting a "
+                "warning. This is a security regression: dev-mode auth must be "
+                "loud so it cannot ship to production unnoticed. "
+                f"warning calls observed: {mock_logger.warning.call_args_list!r}"
+            )
 
     def test_environment_variable_exposure_prevention(self):
         """Test prevention of environment variable exposure."""
