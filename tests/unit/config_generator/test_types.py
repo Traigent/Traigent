@@ -357,6 +357,67 @@ class TestAutoConfigResult:
         # Ensure faithfulness does NOT get "()"
         assert "faithfulness().above" not in code
 
+    def test_to_python_code_rejects_structural_constraints(self) -> None:
+        """to_python_code() must refuse to silently drop generated constraints."""
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            structural_constraints=(
+                StructuralConstraintSpec(
+                    description="Low temp for factual models",
+                    constraint_code="implies(model.equals('gpt-4o'), temperature.lte(1.0))",
+                    requires_tvars=("model", "temperature"),
+                ),
+            ),
+        )
+        with pytest.raises(ValueError) as excinfo:
+            result.to_python_code()
+        message = str(excinfo.value)
+        # Error must direct user to the TVL export path.
+        assert "tvl" in message.lower()
+        assert "structural constraint" in message.lower()
+        # Must report how many were dropped and include the description.
+        assert "1" in message
+        assert "Low temp for factual models" in message
+
+    def test_to_python_code_rejects_multiple_structural_constraints(self) -> None:
+        """Count and first descriptions appear in the rejection message."""
+        result = AutoConfigResult(
+            structural_constraints=tuple(
+                StructuralConstraintSpec(
+                    description=f"constraint-{i}",
+                    constraint_code=f"code-{i}",
+                )
+                for i in range(5)
+            ),
+        )
+        with pytest.raises(ValueError) as excinfo:
+            result.to_python_code()
+        message = str(excinfo.value)
+        assert "5" in message
+        # Truncates after first 3 with a "+N more" suffix.
+        assert "constraint-0" in message
+        assert "+2 more" in message
+
+    def test_to_python_code_no_constraints_still_works(self) -> None:
+        """Result without structural constraints emits decorator normally."""
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+        )
+        code = result.to_python_code()
+        assert "@traigent.optimize(" in code
+
     def test_to_python_code_with_recommendations(self) -> None:
         result = AutoConfigResult(
             tvars=(
