@@ -676,6 +676,34 @@ class TestComplianceReporter:
         assert isinstance(err, NotImplementedError)
         assert "876" in str(err)
 
+    def test_error_accepts_custom_message(self):
+        """ComplianceReportUnavailableError.__init__ accepts a custom message
+        for callers that want to add context beyond the default link to #876."""
+        custom = "report generation requires the enterprise backend"
+        err = ComplianceReportUnavailableError(custom)
+        assert str(err) == custom
+        assert isinstance(err, NotImplementedError)
+
+    def test_error_caught_by_notimplementederror_handler(self):
+        """Existing `except NotImplementedError:` handlers must keep catching
+        the new typed exception unchanged — proves we didn't break callers."""
+        caught = False
+        try:
+            raise ComplianceReportUnavailableError()
+        except NotImplementedError as exc:
+            caught = True
+            assert "876" in str(exc)
+        assert caught, "NotImplementedError handler did not catch the typed subclass"
+
+    def test_compliance_reporter_still_importable_from_audit_module(self):
+        """Even though ComplianceReporter is no longer in traigent.security.__all__,
+        deep imports from traigent.security.audit must keep working — that's
+        the back-compat contract for callers that already know the class lives
+        in the audit module."""
+        from traigent.security.audit import ComplianceReporter as _Cr
+
+        assert _Cr is ComplianceReporter
+
 
 class TestEventProcessorEnrichment:
     """EventProcessor enrichment surfaces must fail-loud without providers."""
