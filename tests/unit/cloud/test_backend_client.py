@@ -543,8 +543,11 @@ class TestPrivacyFirstOptimization:
                 # Verify trial mapping (no backend config run creation anymore)
                 mock_bridge.add_trial_mapping.assert_called_once()
 
-                # Verify session update
-                assert backend_client._active_sessions[session_id].completed_trials == 1
+                # Verify the suggestion touches the session without counting as a completion.
+                assert backend_client._active_sessions[session_id].completed_trials == 0
+                assert (
+                    backend_client._active_sessions[session_id].updated_at is not None
+                )
 
         import asyncio
 

@@ -762,7 +762,7 @@ class BackendIntegratedClient:
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
             raise CloudServiceError(
-                "auth manager is in an invalid state; cannot construct " "auth headers"
+                "auth manager is in an invalid state; cannot construct auth headers"
             )
 
         async def _get_headers_async() -> dict[str, str]:
@@ -1043,7 +1043,6 @@ class BackendIntegratedClient:
                 )
             except Exception as exc:
                 logger.debug("Local storage trial result fallback failed: %s", exc)
-                return
 
         session = self._active_sessions.get(session_id)
         if session:
