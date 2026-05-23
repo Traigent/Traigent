@@ -507,14 +507,40 @@ class TokenManager:
             "client_secret": credentials.client_secret,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=data) as response:
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"OAuth2 token refresh failed with HTTP {response.status}"
+        # refresh_oauth2 advertises an ``AuthResult`` return contract and is
+        # called via delegation from AuthManager.refresh_oauth2_token (see
+        # traigent/cloud/auth.py). Network errors, JSON parse errors, and
+        # non-200 responses must be reported as AuthResult(success=False) so
+        # callers can handle the failure gracefully — propagating exceptions
+        # would break that contract and skip the documented
+        # _set_credentials_fn(None, INVALID) invalidation path on failure.
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(token_url, data=data) as response:
+                    if response.status != 200:
+                        await response.text()  # drain body; do not propagate upstream content
+                        logger.warning(
+                            "OAuth2 token refresh failed with HTTP %s",
+                            response.status,
+                        )
+                        return AuthResult(
+                            success=False,
+                            status=AuthStatus.INVALID,
+                            error_message=(
+                                f"OAuth2 token refresh failed with HTTP {response.status}"
+                            ),
+                        )
+                    token_data = await response.json()
+                    return await self._apply_oauth2_token_response(
+                        credentials, token_data
                     )
-                token_data = await response.json()
-                return await self._apply_oauth2_token_response(credentials, token_data)
+        except Exception as exc:
+            logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message="OAuth2 token refresh failed",
+            )
 
     def build_credentials_from_token_data(
         self, token_data: dict[str, Any]
