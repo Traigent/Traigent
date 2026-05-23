@@ -2,9 +2,9 @@
 
 <p align="center">
   <a href="https://github.com/Traigent/Traigent/actions/workflows/tests.yml"><img src="https://github.com/Traigent/Traigent/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL-3.0"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
-  <a href="https://docs.traigent.ai"><img src="https://img.shields.io/badge/docs-traigent.ai-brightgreen.svg" alt="Docs"></a>
+  <a href="docs/getting-started/GETTING_STARTED.md"><img src="https://img.shields.io/badge/docs-getting%20started-brightgreen.svg" alt="Docs"></a>
 </p>
 
 **Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
@@ -117,7 +117,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | Goal | Resource | Time |
 |------|----------|------|
 | **Get started quickly** | [Quick Start Guide](docs/getting-started/GETTING_STARTED.md) | 5 min |
-| **Understand the architecture** | [Architecture Overview](#architecture-overview) | 5 min |
+| **Understand the architecture** | [Architecture Overview](docs/architecture/ARCHITECTURE.md) | 5 min |
 | **Track local runs in the portal** | [Hybrid portal tracking](#portal-hybrid-tracking) | 5 min |
 | **Try examples locally, then make runs portal-visible** | [Mock walkthrough](walkthrough/mock/) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](docs/api-reference/decorator-reference.md) | — |
@@ -253,7 +253,7 @@ def multi_provider_agent(question: str) -> str:
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
 | **Privacy-first** | Local execution mode keeps all data on your machine |
 
-**[TraigentDemo →](https://github.com/Traigent/TraigentDemo)** — Streamlit playground, use cases, and research benchmarks
+**TraigentDemo** — Streamlit playground, use cases, and research benchmarks
 
 ---
 
