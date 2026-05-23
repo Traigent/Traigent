@@ -214,7 +214,7 @@ def test_observability_client_redacts_trace_payloads_before_submit():
         trace_id,
         name="llm-call",
         observation_type=ObservationType.GENERATION,
-        input_data={"prompt": "card 4111111111111234"},
+        input_data={"prompt": "card 4111111111111111"},
         output_data={"answer": "Bearer canary.jwt.header.payload.signature"},
         metadata={"email": "alice@example.com"},
     )
@@ -229,7 +229,7 @@ def test_observability_client_redacts_trace_payloads_before_submit():
     payload_blob = str(sent_batches)
     assert "alice@example.com" not in payload_blob
     assert "123-45-6789" not in payload_blob
-    assert "4111111111111234" not in payload_blob
+    assert "4111111111111111" not in payload_blob
     assert FAKE_TRACE_API_KEY not in payload_blob
     assert "canary.jwt.header.payload.signature" not in payload_blob
     assert "[REDACTED:email]" in payload_blob
