@@ -541,18 +541,6 @@ class ComplianceReporter:
         """Initialize compliance reporter."""
         self.audit_logger = audit_logger
 
-    def generate_soc2_report(
-        self, start_date: datetime, end_date: datetime
-    ) -> dict[str, Any]:
-        """Raise until SOC 2 Type II report generation is implemented."""
-        raise ComplianceReportUnavailableError()
-
-    def generate_gdpr_report(
-        self, start_date: datetime, end_date: datetime
-    ) -> dict[str, Any]:
-        """Raise until GDPR report generation is implemented."""
-        raise ComplianceReportUnavailableError()
-
     def _test_access_control(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test access control effectiveness."""
         raise ComplianceReportUnavailableError()
@@ -577,14 +565,14 @@ class ComplianceReporter:
         """Analyze security incidents."""
         raise ComplianceReportUnavailableError()
 
-    def generate_report(
+    def _generate_report(
         self,
         framework: ComplianceFramework,
         start_date: datetime,
         end_date: datetime,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Raise until real compliance report generation is implemented."""
+        """Private fail-loud report hook until real reporting ships."""
         if framework in (
             ComplianceFramework.SOC2,
             ComplianceFramework.ISO27001,
@@ -634,8 +622,8 @@ class ComplianceReporter:
         """Analyze data subject requests for GDPR."""
         raise ComplianceReportUnavailableError()
 
-    def get_compliance_dashboard(self) -> dict[str, Any]:
-        """Generate compliance dashboard with metrics."""
+    def _get_compliance_dashboard(self) -> dict[str, Any]:
+        """Private fail-loud dashboard hook until real reporting ships."""
         raise ComplianceReportUnavailableError()
 
 

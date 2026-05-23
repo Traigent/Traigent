@@ -23,7 +23,7 @@ from traigent.security.audit import (
     EventProcessor,
 )
 
-STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
+STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"  # pragma: allowlist secret
 COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting is not yet implemented"
 TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
 GEOLOCATION_PROVIDER_UNAVAILABLE = "No geolocation provider configured"
@@ -514,7 +514,7 @@ class TestComplianceReporter:
         with pytest.raises(
             ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
         ):
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=ComplianceFramework.SOC2,
                 start_date=start_date,
                 end_date=end_date,
@@ -531,7 +531,7 @@ class TestComplianceReporter:
         with pytest.raises(
             ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
         ):
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=ComplianceFramework.ISO27001,
                 start_date=start_date,
                 end_date=end_date,
@@ -548,7 +548,7 @@ class TestComplianceReporter:
         with pytest.raises(
             ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
         ):
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
                 end_date=end_date,
@@ -568,7 +568,7 @@ class TestComplianceReporter:
             class UnsupportedFramework:
                 pass
 
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=UnsupportedFramework(),
                 start_date=start_date,
                 end_date=end_date,
@@ -582,7 +582,7 @@ class TestComplianceReporter:
         with pytest.raises(
             ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
         ):
-            reporter.get_compliance_dashboard()
+            reporter._get_compliance_dashboard()
 
     def test_tenant_specific_reporting(self):
         """Tenant-specific compliance reporting fails loudly until implemented."""
@@ -595,30 +595,17 @@ class TestComplianceReporter:
         with pytest.raises(
             ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
         ):
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
                 end_date=end_date,
                 tenant_id="tenant1",
             )
 
-    def test_legacy_compliance_methods_fail_loud(self):
-        """Legacy report entry points fail loudly instead of returning fake status."""
-        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
-        reporter = ComplianceReporter(audit_logger)
-
-        start_date = datetime.now(UTC) - timedelta(days=30)
-        end_date = datetime.now(UTC)
-
-        with pytest.raises(
-            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
-        ):
-            reporter.generate_soc2_report(start_date, end_date)
-
-        with pytest.raises(
-            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
-        ):
-            reporter.generate_gdpr_report(start_date, end_date)
+    def test_legacy_compliance_methods_not_public(self):
+        """Legacy report entry points must not remain public fake-completion surfaces."""
+        assert not hasattr(ComplianceReporter, "generate_soc2_report")
+        assert not hasattr(ComplianceReporter, "generate_gdpr_report")
 
     def test_tenant_period_filter_matches_redacted_sensitive_identifier(self):
         """Tenant filters should work when stored tenant IDs are pseudonymized."""
@@ -713,7 +700,7 @@ class TestComplianceReporter:
             ("_test_monitoring", ([],)),
             ("_analyze_consent_management", ([],)),
             ("_analyze_data_subject_requests", ([],)),
-            ("get_compliance_dashboard", ()),
+            ("_get_compliance_dashboard", ()),
         ],
     )
     def test_all_unimplemented_methods_raise_typed_error(self, method_name, args):
@@ -740,7 +727,7 @@ class TestComplianceReporter:
     )
     def test_internal_generate_helpers_raise_typed_error(self, internal_method_name):
         """The three internal _generate_*_report helpers — wrapped by the
-        public generate_report() dispatcher — must also raise the typed
+        private _generate_report() dispatcher — must also raise the typed
         exception when called directly."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
@@ -754,7 +741,7 @@ class TestComplianceReporter:
             method(start_date, end_date)
 
     def test_generate_report_unknown_framework_raises_value_error(self):
-        """generate_report's fall-through branch for unsupported frameworks
+        """_generate_report's fall-through branch for unsupported frameworks
         must raise ValueError (not ComplianceReportUnavailableError) — those
         are two distinct error classes for two distinct caller mistakes."""
         from enum import Enum
@@ -768,7 +755,39 @@ class TestComplianceReporter:
         end_date = datetime.now(UTC)
 
         with pytest.raises(ValueError, match="Unsupported compliance framework"):
-            reporter.generate_report(_UnknownFramework.FAKE, start_date, end_date)
+            reporter._generate_report(_UnknownFramework.FAKE, start_date, end_date)
+
+
+class TestComplianceReporterPublicSurface:
+    """Verify that fake-completion report methods are not public API."""
+
+    @staticmethod
+    def _public_methods() -> list[str]:
+        return [
+            name
+            for name in dir(ComplianceReporter)
+            if not name.startswith("_") and callable(getattr(ComplianceReporter, name))
+        ]
+
+    def test_generate_report_not_public(self):
+        """generate_report must not be a public method on ComplianceReporter."""
+        assert "generate_report" not in self._public_methods()
+
+    def test_get_compliance_dashboard_not_public(self):
+        """get_compliance_dashboard must not be public."""
+        assert "get_compliance_dashboard" not in self._public_methods()
+
+    def test_generate_soc2_report_not_public(self):
+        """generate_soc2_report must not be public."""
+        assert "generate_soc2_report" not in self._public_methods()
+
+    def test_generate_gdpr_report_not_public(self):
+        """generate_gdpr_report must not be public."""
+        assert "generate_gdpr_report" not in self._public_methods()
+
+    def test_no_public_report_methods_on_compliance_reporter(self):
+        """ComplianceReporter should expose no public methods."""
+        assert self._public_methods() == []
 
 
 class TestEventProcessorEnrichment:
