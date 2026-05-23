@@ -762,7 +762,7 @@ class BackendIntegratedClient:
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
             raise CloudServiceError(
-                "auth manager is in an invalid state; cannot construct " "auth headers"
+                "auth manager is in an invalid state; cannot construct auth headers"
             )
 
         async def _get_headers_async() -> dict[str, str]:
@@ -924,9 +924,14 @@ class BackendIntegratedClient:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Register a trial start with the backend.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.register_trial_start(session_id, trial_id, config)
 
     def register_trial_start_sync(
@@ -934,9 +939,14 @@ class BackendIntegratedClient:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Synchronous wrapper for register_trial_start.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return self._trial_ops.register_trial_start_sync(session_id, trial_id, config)
 
     def _generate_trial_id(
@@ -963,9 +973,14 @@ class BackendIntegratedClient:
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Submit trial results via the Traigent session endpoint.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.submit_trial_result_via_session(
             session_id, trial_id, config, metrics, status, error_message, execution_mode
         )
@@ -977,9 +992,14 @@ class BackendIntegratedClient:
         config: dict[str, Any],
         summary_stats: dict[str, Any],
         status: str = "completed",
-    ) -> bool:
+    ) -> bool | None:
         """Submit summary statistics for privacy-preserving mode.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.submit_summary_stats(
             session_id, trial_id, config, summary_stats, status
         )
@@ -990,9 +1010,14 @@ class BackendIntegratedClient:
         weighted_score: float,
         normalization_info: dict[str, Any] | None = None,
         objective_weights: dict[str, float] | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Update configuration run with weighted multi-objective scores.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if update succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.update_trial_weighted_scores(
             trial_id, weighted_score, normalization_info, objective_weights
         )
@@ -1018,7 +1043,6 @@ class BackendIntegratedClient:
                 )
             except Exception as exc:
                 logger.debug("Local storage trial result fallback failed: %s", exc)
-                return
 
         session = self._active_sessions.get(session_id)
         if session:
