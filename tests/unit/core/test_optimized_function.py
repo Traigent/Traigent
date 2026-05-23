@@ -879,11 +879,13 @@ class TestOptimizedFunction:
             mock_orchestrator = Mock()
             mock_orchestrator_class.return_value = mock_orchestrator
             mock_orchestrator.optimize = AsyncMock(
-                side_effect=OptimizationError("Optimization failed")
+                side_effect=OptimizationError("Provider key missing")
             )
 
-            with pytest.raises(OptimizationError, match="Optimization failed"):
+            with pytest.raises(OptimizationError) as exc_info:
                 await opt_func.optimize(algorithm="random")
+
+            assert str(exc_info.value) == "Provider key missing"
 
     @pytest.mark.asyncio
     async def test_optimize_with_configuration_error(

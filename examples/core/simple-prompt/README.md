@@ -20,8 +20,7 @@ We want to summarize short text snippets. We are optimizing:
 ## Quick Start
 
 ```bash
-# Run in mock mode (no API key needed)
-export TRAIGENT_MOCK_LLM=true
+# Runs in local mock mode automatically when ANTHROPIC_API_KEY is unset.
 python examples/core/simple-prompt/run.py
 ```
 
@@ -31,7 +30,7 @@ You should see Traigent trying different combinations of parameters and reportin
 
 ```text
 Starting Simple Prompt Optimization...
-Running with: model=claude-3-haiku-20240307, temp=0.0, style=concise
+Running with: model=claude-haiku-4-5-20251001, temp=0.0, style=concise
 ...
 Optimization Complete!
 Best Score: ...

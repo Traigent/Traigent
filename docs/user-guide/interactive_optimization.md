@@ -88,6 +88,7 @@ signature differences into your code.
 > these adapter calls. Use `execution_mode="hybrid"` if you only need
 > portal-tracked SDK runs with local trial execution.
 
+
 ```python
 from traigent.cloud import TraigentCloudClient, TraigentCloudRemoteGuidanceAdapter
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer

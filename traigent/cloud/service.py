@@ -1,8 +1,8 @@
-"""Cloud optimization service scaffold.
+"""In-process optimization service scaffold.
 
-Remote cloud optimization is not implemented yet. This module retains request,
-response, billing, and history scaffolding, but execution fails closed until a
-real backend optimization transport exists.
+This helper is not the SDK ``execution_mode="cloud"`` remote execution path.
+It runs locally inside the current process and exists for service experiments
+around subset selection, billing, and orchestration shapes.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -55,7 +55,7 @@ class OptimizationResponse:
 
 
 class TraigentCloudService:
-    """Cloud service scaffold that fails closed for execution."""
+    """Local scaffold for service-style optimization experiments."""
 
     def __init__(self) -> None:
         """Initialize the local service scaffold."""

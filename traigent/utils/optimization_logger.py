@@ -190,6 +190,12 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
     if isinstance(ex, dict):
         metrics = ex.get("metrics", {})
         actual = ex.get("actual_output")
+        # ExampleResult uses error_message; HybridExampleResult uses error. Accept either.
+        error = (
+            ex.get("error_message")
+            if ex.get("error_message") is not None
+            else ex.get("error")
+        )
         return {
             "example_id": ex.get("example_id"),
             "query": actual.get("query") if isinstance(actual, dict) else None,
@@ -198,11 +204,14 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
             "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
             "cost_usd": ex.get("cost_usd", 0.0),
             "latency_ms": ex.get("latency_ms", 0.0),
-            "error": ex.get("error"),
+            "error": error,
         }
-    # Dataclass (e.g. HybridExampleResult)
+    # Dataclass: ExampleResult exposes error_message, HybridExampleResult exposes error.
     metrics = getattr(ex, "metrics", {}) or {}
     actual = getattr(ex, "actual_output", None)
+    error = getattr(ex, "error_message", None)
+    if error is None:
+        error = getattr(ex, "error", None)
     return {
         "example_id": getattr(ex, "example_id", None),
         "query": actual.get("query") if isinstance(actual, dict) else None,
@@ -211,7 +220,7 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
         "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
         "cost_usd": getattr(ex, "cost_usd", 0.0),
         "latency_ms": getattr(ex, "latency_ms", 0.0),
-        "error": getattr(ex, "error", None),
+        "error": error,
     }
 
 

@@ -122,6 +122,22 @@ class TestCreateTransport:
                 require_http2=True,
             )
 
+    def test_create_http_transport_rejects_embedded_credentials(self) -> None:
+        """HTTP transport base URLs must not smuggle credentials."""
+        with pytest.raises(ValueError, match="embedded credentials"):
+            create_transport(
+                transport_type="http",
+                base_url="https://user:pass@example.com",  # pragma: allowlist secret
+            )
+
+    def test_create_http_transport_rejects_metadata_endpoint(self) -> None:
+        """HTTP transport base URLs must not target metadata services."""
+        with pytest.raises(ValueError, match="metadata service|non-routable"):
+            create_transport(
+                transport_type="http",
+                base_url="http://169.254.169.254",
+            )
+
     def test_create_mcp_transport(self) -> None:
         """Test creating MCP transport."""
         mock_client = MagicMock()

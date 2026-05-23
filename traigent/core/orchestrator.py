@@ -2266,6 +2266,9 @@ class OptimizationOrchestrator:
             await self._finalize_optimization(result, session_id, session_span)
             return result
 
+        except OptimizationError:
+            self._status = OptimizationStatus.FAILED
+            raise
         except Exception as e:
             self._status = OptimizationStatus.FAILED
             logger.error(f"Optimization {self._optimization_id} failed: {e}")

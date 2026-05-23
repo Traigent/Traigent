@@ -218,7 +218,7 @@ def draft_email(brief: str) -> str:
     )
     prompt = f"Brief: {brief}\n\n{tone_prompt}\n{style_prompt}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=temperature,
         timeout=None,
         stop=None,

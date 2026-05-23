@@ -24,6 +24,7 @@ from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
     OptimizationError,
+    PlatformCapabilityError,
     TraigentError,
 )
 from traigent.utils.exceptions import (
@@ -84,6 +85,7 @@ __all__ = [
     "ConfigurationError",
     "EvaluationError",
     "OptimizationError",
+    "PlatformCapabilityError",
     "ValidationException",
     # Logging
     "get_logger",

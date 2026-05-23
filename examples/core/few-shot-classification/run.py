@@ -100,7 +100,7 @@ def _build_prompt(text: str, fewshots: list[dict]) -> str:
     eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.3],
         "k": [0, 2, 4],
         "selection_strategy": ["top_k", "diverse"],
@@ -163,7 +163,7 @@ def classify_sentiment(text: str, config: dict | None = None) -> str:
     examples = _select_examples(k, strategy)
     prompt = _build_prompt(text, examples)
     llm = ChatAnthropic(
-        model_name=cfg.get("model", "claude-3-5-sonnet-20241022"),
+        model_name=cfg.get("model", "claude-sonnet-4-6"),
         temperature=float(cfg.get("temperature", 0.0)),
         timeout=None,
         stop=None,

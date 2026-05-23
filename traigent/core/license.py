@@ -604,7 +604,12 @@ class LicenseValidator:
             header = self._decode_jwt_json_segment(parts[0], "header")
             if header is None:
                 return None
-            if header.get("alg", "none") != "none":
+            alg_value = header.get("alg")
+            # JSON null and a missing "alg" key are both "signed-looking" — refuse
+            # without signature verification. Only the explicit string "none" (case
+            # insensitive) marks a legacy unsigned token that may be accepted when
+            # TRAIGENT_ALLOW_UNSIGNED_LICENSE is set.
+            if alg_value is None or str(alg_value).lower() != "none":
                 logger.warning(
                     "Refusing to parse a signed-looking license token without "
                     "signature verification."

@@ -12,11 +12,12 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
+from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+_GENERIC_REFRESH_ERROR = "Token refresh failed"
 
 
 class TokenManager:
@@ -303,7 +306,7 @@ class TokenManager:
                 return AuthResult(
                     success=False,
                     status=AuthStatus.INVALID,
-                    error_message="Token refresh failed",
+                    error_message=_GENERIC_REFRESH_ERROR,
                 )
 
     async def refresh_jwt_secure(self, refresh_token_value: str) -> AuthResult:
@@ -359,17 +362,16 @@ class TokenManager:
                     if response.status == 401:
                         raise ValueError("Refresh token invalid or expired")
                     if response.status == 429:
-                        await response.text()
-                        raise RuntimeError("Backend token refresh rate limited")
+                        await response.text()  # drain body; do not propagate upstream content
+                        raise RuntimeError("Token refresh failed with HTTP 429")
                     if response.status != 200:
-                        await response.text()
+                        await response.text()  # drain body; do not propagate upstream content
                         raise RuntimeError(
-                            f"Backend token refresh failed with status {response.status}"
+                            f"Token refresh failed with HTTP {response.status}"
                         )
-
                     data = await response.json()
                     if not data.get("success"):
-                        raise ValueError("Token refresh failed")
+                        raise ValueError(_GENERIC_REFRESH_ERROR)
 
                     payload = data.get("data", {})
                     if "refresh_token" not in payload or not payload["refresh_token"]:
@@ -426,8 +428,41 @@ class TokenManager:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
-                error_message="Token refresh failed",
+                error_message=_GENERIC_REFRESH_ERROR,
             )
+
+    def _build_oauth2_token_url(self) -> str:
+        cloud_base_url = validate_outbound_url(
+            self.config.cloud_base_url,
+            purpose="OAuth2 cloud_base_url",
+            allow_private_hosts=False,
+        )
+        return f"{cloud_base_url}/oauth/token"
+
+    async def _apply_oauth2_token_response(
+        self,
+        credentials: AuthCredentials,
+        token_data: dict[str, Any],
+    ) -> AuthResult:
+        from traigent.cloud.auth import AuthResult, AuthStatus
+
+        credentials.jwt_token = token_data["access_token"]
+        if "refresh_token" in token_data:
+            credentials.refresh_token = token_data["refresh_token"]
+        credentials.expires_at = time.time() + token_data.get("expires_in", 3600)
+
+        if self._set_credentials_fn:
+            self._set_credentials_fn(credentials, AuthStatus.AUTHENTICATED)
+
+        if self.config.cache_credentials and self._cache_credentials_fn:
+            await self._cache_credentials_fn(credentials)
+
+        return AuthResult(
+            success=True,
+            status=AuthStatus.AUTHENTICATED,
+            credentials=credentials,
+            expires_in=token_data.get("expires_in", 3600),
+        )
 
     async def refresh_oauth2(self) -> AuthResult:
         """Refresh OAuth2 access token.
@@ -448,25 +483,21 @@ class TokenManager:
                 error_message="No refresh token available",
             )
 
-        try:
-            cloud_base_url = await validate_cloud_base_url_async(
-                self.config.cloud_base_url, purpose="OAuth2 token refresh"
-            )
-        except ValueError as exc:
-            logger.warning("Rejected OAuth2 token refresh URL: %s", exc)
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message=str(exc),
-            )
-
-        token_url = f"{cloud_base_url}/oauth/token"
-
         if credentials.client_id is None or credentials.client_secret is None:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
                 error_message="OAuth2 client credentials missing",
+            )
+
+        try:
+            token_url = self._build_oauth2_token_url()
+        except UnsafeUrlError as exc:
+            logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=f"OAuth2 cloud_base_url rejected (private or loopback host not allowed): {exc}",
             )
 
         data = {
@@ -476,54 +507,14 @@ class TokenManager:
             "client_secret": credentials.client_secret,
         }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(token_url, data=data) as response:
-                    if response.status == 200:
-                        token_data = await response.json()
-
-                        # Update credentials
-                        credentials.jwt_token = token_data["access_token"]
-                        if "refresh_token" in token_data:
-                            credentials.refresh_token = token_data["refresh_token"]
-                        credentials.expires_at = time.time() + token_data.get(
-                            "expires_in", 3600
-                        )
-
-                        if self._set_credentials_fn:
-                            self._set_credentials_fn(
-                                credentials, AuthStatus.AUTHENTICATED
-                            )
-
-                        # Cache updated credentials
-                        if self.config.cache_credentials and self._cache_credentials_fn:
-                            await self._cache_credentials_fn(credentials)
-
-                        return AuthResult(
-                            success=True,
-                            status=AuthStatus.AUTHENTICATED,
-                            credentials=credentials,
-                            expires_in=token_data.get("expires_in", 3600),
-                        )
-
-                    await response.text()
-                    logger.warning(
-                        "OAuth2 token refresh failed with status %s", response.status
+        async with aiohttp.ClientSession() as session:
+            async with session.post(token_url, data=data) as response:
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"OAuth2 token refresh failed with HTTP {response.status}"
                     )
-                    return AuthResult(
-                        success=False,
-                        status=AuthStatus.INVALID,
-                        error_message=(
-                            f"OAuth2 token refresh failed with status {response.status}"
-                        ),
-                    )
-        except Exception as exc:
-            logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="OAuth2 token refresh failed",
-            )
+                token_data = await response.json()
+                return await self._apply_oauth2_token_response(credentials, token_data)
 
     def build_credentials_from_token_data(
         self, token_data: dict[str, Any]
@@ -581,5 +572,5 @@ class TokenManager:
             TokenExpiredError: If token has expired
         """
         if self._current_token and not self._current_token.is_expired:
-            return self._current_token.get_header()
+            return cast(dict[str, str], self._current_token.get_header())
         return {}

@@ -89,7 +89,10 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
 
     secret = os.getenv("TRAIGENT_APPROVAL_SECRET", "").encode()
     if not secret:
-        logger.warning("TRAIGENT_APPROVAL_SECRET not set; refusing unsigned token")
+        logger.warning(
+            "TRAIGENT_APPROVAL_SECRET not set; rejecting HMAC approval token "
+            "because its signature cannot be verified"
+        )
         return False
 
     # Compute expected signature

@@ -289,7 +289,7 @@ class TestOptimizedFunctionConfig:
         """Test validation passes for edge_analytics execution mode.
 
         Note: This test exercises the local default. Hybrid is covered by
-        execution-mode tests; cloud remote execution is rejected.
+        execution-mode tests; cloud remote execution raises ConfigurationError.
         """
         config = OptimizedFunctionConfig(
             execution_mode=ExecutionMode.EDGE_ANALYTICS.value

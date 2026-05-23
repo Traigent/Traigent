@@ -92,6 +92,13 @@ class OptimizationSession:
     pareto_frontier: list[dict[str, Any]] = field(default_factory=list)
     confidence_in_optimum: float = 0.0  # How confident we are we found the optimum
 
+    # Fallback identification — True when the session was constructed locally
+    # because the remote service was unreachable. Callers MUST check this
+    # before treating the session as a real remote session (e.g. before
+    # quoting session_id back to the backend or to users in a way that
+    # implies remote tracking).
+    is_fallback: bool = False
+
 
 @dataclass
 class ServiceMetrics:
