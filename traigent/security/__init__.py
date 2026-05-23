@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
-from .audit import AuditLogger, ComplianceReporter, EventProcessor, SecurityMonitor
-from .auth import (
-    MultiFactorAuth,
+from .audit import (
+    AuditLogger,
+    ComplianceReporter,
+    EnrichmentProviderUnavailableError,
+    EventProcessor,
+    SecurityMonitor,
 )
+from .auth import MultiFactorAuth
 from .deployment import BackupManager, DeploymentManager, HealthChecker, SLAMonitor
 from .encryption import DataClassifier, EncryptionManager, PIIDetector, SecureStorage
 from .tenant import (
@@ -35,6 +39,7 @@ __all__ = [
     "ComplianceReporter",
     "SecurityMonitor",
     "EventProcessor",
+    "EnrichmentProviderUnavailableError",
     # Multi-Tenancy
     "TenantManager",
     "TenantContext",

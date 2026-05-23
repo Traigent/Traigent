@@ -143,11 +143,22 @@
   title: "Security, compliance, and tenancy safeguards"
   description: >
     Provide secure credential storage, encryption utilities, JWT validation, rate limiting,
-    audit logging, tenant isolation, and security headers suitable for enterprise use.
+    in-memory audit event capture, tenant isolation, and security headers. Persistent
+    audit storage, compliance report generation (SOC 2 / ISO 27001 / GDPR), tamper
+    detection, and audit-event enrichment (geolocation, threat intelligence) are
+    scaffolding only in this release: the SDK exposes the entry points but they raise
+    NotImplementedError or EnrichmentProviderUnavailableError until a real backend or
+    provider is wired in. Do not represent these surfaces as production-ready
+    enterprise compliance features.
   acceptance_criteria:
     - Credentials stored in permission-restricted local files; secure comparison avoids leaks.
     - JWT validator enforces issuer/audience/expiry and derives defaults safely.
-    - Rate limiters and audit loggers can be configured per deployment mode/tenant.
+    - Rate limiters and the in-memory audit logger can be configured per deployment mode/tenant.
+    - AuditStorage is in-memory only and does NOT accept a storage_path parameter that
+      implies persistence; events do not survive process restarts.
+    - ComplianceReporter, AuditLogIntegrity.verify_integrity, and EventProcessor
+      geolocation/threat-intel enrichment raise on the public surface until a real
+      implementation or injected provider is available.
   tags: [security, auth, compliance]
   priority: high
   type: non-functional
