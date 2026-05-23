@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from .audit import (
     AuditLogger,
-    ComplianceReporter,
     EnrichmentProviderUnavailableError,
     EventProcessor,
     SecurityMonitor,
@@ -36,7 +35,6 @@ __all__ = [
     "SecureStorage",
     # Audit & Compliance
     "AuditLogger",
-    "ComplianceReporter",
     "SecurityMonitor",
     "EventProcessor",
     "EnrichmentProviderUnavailableError",

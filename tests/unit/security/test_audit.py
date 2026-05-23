@@ -18,12 +18,13 @@ from traigent.security.audit import (
     AuditStorage,
     ComplianceFramework,
     ComplianceReporter,
+    ComplianceReportUnavailableError,
     EnrichmentProviderUnavailableError,
     EventProcessor,
 )
 
 STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
-COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting subsystem is not yet implemented"
+COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting is not yet implemented"
 TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
 GEOLOCATION_PROVIDER_UNAVAILABLE = "No geolocation provider configured"
 THREAT_INTEL_PROVIDER_UNAVAILABLE = "No threat intelligence provider configured"
@@ -510,7 +511,9 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_report(
                 framework=ComplianceFramework.SOC2,
                 start_date=start_date,
@@ -525,7 +528,9 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_report(
                 framework=ComplianceFramework.ISO27001,
                 start_date=start_date,
@@ -540,7 +545,9 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
@@ -572,7 +579,9 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.get_compliance_dashboard()
 
     def test_tenant_specific_reporting(self):
@@ -583,7 +592,9 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
@@ -599,10 +610,14 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_soc2_report(start_date, end_date)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter.generate_gdpr_report(start_date, end_date)
 
     def test_tenant_period_filter_matches_redacted_sensitive_identifier(self):
@@ -643,8 +658,23 @@ class TestComplianceReporter:
             )
         ]
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter._analyze_security_incidents(events)
+
+    def test_not_in_public_surface(self):
+        """ComplianceReporter must not appear in traigent.security.__all__."""
+        import traigent.security as sec
+
+        assert "ComplianceReporter" not in sec.__all__
+        assert not hasattr(sec, "ComplianceReporter")
+
+    def test_error_is_notimplementederror_subclass(self):
+        """ComplianceReportUnavailableError inherits NotImplementedError for back-compat."""
+        err = ComplianceReportUnavailableError()
+        assert isinstance(err, NotImplementedError)
+        assert "876" in str(err)
 
 
 class TestEventProcessorEnrichment:
