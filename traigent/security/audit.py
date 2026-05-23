@@ -22,8 +22,18 @@ from .redaction import redact_sensitive_data, redact_sensitive_text
 logger = get_logger(__name__)
 
 _COMPLIANCE_NOT_IMPLEMENTED = (
-    "Compliance reporting subsystem is not yet implemented; do not call in production"
+    "Compliance reporting is not yet implemented. "
+    "Track progress at https://github.com/Traigent/Traigent/issues/876"
 )
+
+
+class ComplianceReportUnavailableError(NotImplementedError):
+    """Raised when a compliance report method is called before the subsystem is implemented."""
+
+    def __init__(self, msg: str = _COMPLIANCE_NOT_IMPLEMENTED) -> None:
+        super().__init__(msg)
+
+
 _TAMPER_DETECTION_NOT_IMPLEMENTED = (
     "Tamper-detection is not yet implemented; verify_integrity will be available "
     "in a future release"
@@ -520,11 +530,11 @@ class AuditLogger:
 
 
 class ComplianceReporter:
-    """Compliance report entry points.
+    """Compliance report entry points (not yet implemented).
 
-    Report generation is intentionally fail-loud until the real reporting
-    subsystem ships; callers must handle ``NotImplementedError`` instead of
-    consuming synthetic compliance data.
+    This class is excluded from the public API (``traigent.security.__all__``).
+    All report methods raise :class:`ComplianceReportUnavailableError`.
+    Implementation is tracked in https://github.com/Traigent/Traigent/issues/876.
     """
 
     def __init__(self, audit_logger: AuditLogger) -> None:
@@ -535,37 +545,37 @@ class ComplianceReporter:
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
         """Raise until SOC 2 Type II report generation is implemented."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def generate_gdpr_report(
         self, start_date: datetime, end_date: datetime
     ) -> dict[str, Any]:
         """Raise until GDPR report generation is implemented."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_access_control(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test access control effectiveness."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_change_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test change management controls."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_data_protection(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test data protection controls."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_monitoring(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test monitoring effectiveness."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _analyze_consent_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze consent management for GDPR."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _analyze_security_incidents(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze security incidents."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def generate_report(
         self,
@@ -580,7 +590,7 @@ class ComplianceReporter:
             ComplianceFramework.ISO27001,
             ComplianceFramework.GDPR,
         ):
-            raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+            raise ComplianceReportUnavailableError()
 
         raise ValueError(f"Unsupported compliance framework: {framework}") from None
 
@@ -588,19 +598,19 @@ class ComplianceReporter:
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate SOC 2 Type II compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _generate_iso27001_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate ISO 27001 compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _generate_gdpr_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate GDPR compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _get_events_for_period(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
@@ -622,11 +632,11 @@ class ComplianceReporter:
         self, events: list[AuditEvent]
     ) -> dict[str, Any]:
         """Analyze data subject requests for GDPR."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def get_compliance_dashboard(self) -> dict[str, Any]:
         """Generate compliance dashboard with metrics."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
 
 class SecurityMonitor:

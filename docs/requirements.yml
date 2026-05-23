@@ -156,9 +156,10 @@
     - Rate limiters and the in-memory audit logger can be configured per deployment mode/tenant.
     - AuditStorage is in-memory only and does NOT accept a storage_path parameter that
       implies persistence; events do not survive process restarts.
-    - ComplianceReporter, AuditLogIntegrity.verify_integrity, and EventProcessor
-      geolocation/threat-intel enrichment raise on the public surface until a real
-      implementation or injected provider is available.
+    - ComplianceReporter is excluded from the public API surface (not in __all__)
+      until report generation is implemented (tracked in #876).
+    - AuditLogIntegrity.verify_integrity and EventProcessor geolocation/threat-intel
+      enrichment raise until a real implementation or injected provider is available.
   tags: [security, auth, compliance]
   priority: high
   type: non-functional
