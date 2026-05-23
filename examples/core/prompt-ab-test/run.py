@@ -53,7 +53,7 @@ PROMPT_A = BASE / "prompt_a.txt"
 PROMPT_B = BASE / "prompt_b.txt"
 
 
-MODEL_CHOICES = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
+MODEL_CHOICES = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"]
 PROMPT_VARIANTS = ["a", "b"]
 TEMPERATURE_CHOICES = [0.0, 0.2]
 
@@ -292,7 +292,7 @@ def qa_with_variant(question: str) -> str:
     variant = cfg.get("prompt_variant", "a")
     prompt = f"Question: {question}\n\n{_prompt(variant)}"
     response = ChatAnthropic(
-        model_name=cfg.get("model", "claude-3-5-sonnet-20241022"),
+        model_name=cfg.get("model", "claude-sonnet-4-6"),
         temperature=float(cfg.get("temperature", 0.0)),
         timeout=None,
         stop=None,

@@ -379,6 +379,138 @@ class TestCliAuthPayload:
         # Verify result
         assert result["api_key"] == "tg_created_key"  # pragma: allowlist secret
 
+    @pytest.mark.asyncio
+    async def test_key_creation_failure_does_not_reuse_access_token_as_refresh_token(
+        self,
+    ):
+        """JWT fallback must not persist an access token under refresh_token."""
+        from traigent.cli.auth_commands import TraigentAuthCLI
+
+        login_response = AsyncMock()
+        login_response.status = 200
+        login_response.text = AsyncMock(
+            return_value=json.dumps(
+                {"success": True, "data": {"access_token": "fake_jwt"}}
+            )
+        )
+        login_response.headers = {}
+
+        key_response = AsyncMock()
+        key_response.status = 500
+        key_response.text = AsyncMock(return_value=json.dumps({"error": "down"}))
+        key_response.headers = {}
+
+        class FakeCtxManager:
+            def __init__(self, resp):
+                self.resp = resp
+
+            async def __aenter__(self):
+                return self.resp
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def __init__(self):
+                self._call_idx = 0
+
+            def post(self, _url, **_kwargs):
+                resp = login_response if self._call_idx == 0 else key_response
+                self._call_idx += 1
+                return FakeCtxManager(resp)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_TENANT_ID": "tenant_acme"},
+                clear=True,
+            ),
+            patch("aiohttp.ClientSession", return_value=FakeSession()),
+        ):
+            cli = object.__new__(TraigentAuthCLI)
+            cli.backend_api_url = "http://test/api/v1"
+            cli.backend_url = "http://test"
+            result = await cli._authenticate_with_backend("a@b.com", "pass123")
+
+        assert result["jwt_token"] == "fake_jwt"
+        assert result["api_key"] is None
+        assert "refresh_token" not in result
+
+    @pytest.mark.asyncio
+    async def test_key_creation_preserves_backend_refresh_token(self):
+        """A real backend refresh token should still be persisted."""
+        from traigent.cli.auth_commands import TraigentAuthCLI
+
+        login_response = AsyncMock()
+        login_response.status = 200
+        login_response.text = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "success": True,
+                    "data": {
+                        "access_token": "fake_jwt",
+                        "refresh_token": "real_refresh_token",
+                    },
+                }
+            )
+        )
+        login_response.headers = {}
+
+        key_response = AsyncMock()
+        key_response.status = 201
+        key_response.text = AsyncMock(
+            return_value=json.dumps({"data": {"key": "tg_created_key"}})
+        )
+        key_response.headers = {}
+
+        class FakeCtxManager:
+            def __init__(self, resp):
+                self.resp = resp
+
+            async def __aenter__(self):
+                return self.resp
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def __init__(self):
+                self._call_idx = 0
+
+            def post(self, _url, **_kwargs):
+                resp = login_response if self._call_idx == 0 else key_response
+                self._call_idx += 1
+                return FakeCtxManager(resp)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"TRAIGENT_TENANT_ID": "tenant_acme"},
+                clear=True,
+            ),
+            patch("aiohttp.ClientSession", return_value=FakeSession()),
+        ):
+            cli = object.__new__(TraigentAuthCLI)
+            cli.backend_api_url = "http://test/api/v1"
+            cli.backend_url = "http://test"
+            result = await cli._authenticate_with_backend("a@b.com", "pass123")
+
+        assert result["jwt_token"] == "fake_jwt"
+        assert result["refresh_token"] == "real_refresh_token"
+        assert result["api_key"] == "tg_created_key"  # pragma: allowlist secret
+
 
 class TestCliAuthEnvFileGuard:
     """CLI should only write API keys to a local .env file."""
@@ -430,6 +562,6 @@ class TestCentralizedCredentialHints:
         ):
             BackendConfig.get_api_key()
 
-        assert any(SIGNUP_URL in msg for msg in caplog.messages), (
-            f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"
-        )
+        assert any(
+            SIGNUP_URL in msg for msg in caplog.messages
+        ), f"Expected {SIGNUP_URL!r} in warning messages: {caplog.messages}"

@@ -27,7 +27,7 @@ python examples/core/few-shot-classification/run.py
 ## Expected Output
 
 ```
-Best config: {'model': 'claude-3-5-sonnet-20241022', 'k': 4, 'selection_strategy': 'diverse'}
+Best config: {'model': 'claude-sonnet-4-6', 'k': 4, 'selection_strategy': 'diverse'}
 Best score: 0.92
 ```
 

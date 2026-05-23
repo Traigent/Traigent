@@ -9,7 +9,7 @@ supporting both HTTP REST and MCP transports.
 from __future__ import annotations
 
 import ipaddress
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 from urllib.parse import urlparse
 
 from traigent.hybrid.protocol import (
@@ -22,6 +22,7 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
+from traigent.utils.url_security import validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.production_mcp_client import (
@@ -331,29 +332,43 @@ def create_transport(
     if transport_type == "http":
         if base_url is None:
             raise ValueError("base_url is required for HTTP transport")
+        # First layer: shared outbound-URL safety check (private hosts allowed
+        # because hybrid mode legitimately targets dev-mode localhost). Called
+        # for its side effect — raises UnsafeUrlError on unsafe URLs.
+        validate_outbound_url(
+            base_url,
+            purpose="hybrid HTTP base_url",
+            allow_private_hosts=True,
+        )
 
-        # Block scheme tricks (file://, data:, javascript:), embedded
-        # credentials, and cloud-metadata service hosts before any HTTP
-        # request goes out. Localhost stays allowed so the existing
+        # Second layer: block scheme tricks (file://, data:, javascript:),
+        # embedded credentials, and cloud-metadata service hosts before any
+        # HTTP request goes out. Localhost stays allowed so the existing
         # dev-mode flow (``http://localhost:8080``) keeps working.
         validated_base_url = _validate_hybrid_base_url(base_url)
 
         from traigent.hybrid.http_transport import HTTPTransport
 
-        return HTTPTransport(
-            base_url=validated_base_url,
-            auth_header=auth_header,
-            timeout=timeout,
-            max_connections=max_connections,
-            require_http2=require_http2,
+        return cast(
+            HybridTransport,
+            HTTPTransport(
+                base_url=validated_base_url,
+                auth_header=auth_header,
+                timeout=timeout,
+                max_connections=max_connections,
+                require_http2=require_http2,
+            ),
         )
 
     elif transport_type == "mcp":
         from traigent.hybrid.mcp_transport import MCPTransport
 
-        return MCPTransport(
-            mcp_client=mcp_client,
-            mcp_config=mcp_config,
+        return cast(
+            HybridTransport,
+            MCPTransport(
+                mcp_client=mcp_client,
+                mcp_config=mcp_config,
+            ),
         )
 
     else:

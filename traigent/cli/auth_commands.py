@@ -336,6 +336,7 @@ class TraigentAuthCLI:
 
                 token_data = login_data.get("data", {})
                 jwt_token = token_data.get("access_token")
+                refresh_token = token_data.get("refresh_token")
 
                 if not jwt_token:
                     console.print(BACKEND_RESPONSE_HEADER)
@@ -424,13 +425,17 @@ class TraigentAuthCLI:
         # try to use the JWT as a refresh token at the auth server,
         # which fails. The honest behavior: omit the field entirely.
         # Refresh-needing flows already gracefully degrade to "please
-        # re-login" when no refresh_token is present (see line 772).
-        return {
+        # re-login" when no refresh_token is present.
+        credentials = {
             "jwt_token": jwt_token,
             "api_key": api_key,
             "user": user_info,
             "backend_url": self.backend_url,
         }
+        if refresh_token:
+            credentials["refresh_token"] = refresh_token
+
+        return credentials
 
     async def _check_stored_api_key(self) -> bool:
         """Check if stored API key is valid.
@@ -706,7 +711,14 @@ class TraigentAuthCLI:
         # Check if token needs refresh
         if creds.get("jwt_token") and not creds.get("api_key"):
             console.print("[yellow]ℹ️  Using JWT token authentication[/yellow]")
-            console.print("JWT tokens expire and need periodic refresh.\n")
+            if creds.get("refresh_token"):
+                console.print("JWT tokens expire and need periodic refresh.\n")
+            else:
+                console.print(
+                    "No refresh token is available. Run "
+                    "[cyan]traigent auth login[/cyan] again before the JWT expires, "
+                    "or create an API key for long-lived authentication.\n"
+                )
 
         return True
 
@@ -778,7 +790,11 @@ class TraigentAuthCLI:
         # Check for refresh token
         if not creds.get("refresh_token"):
             console.print("[red]❌ No refresh token available[/red]")
-            console.print(MSG_RUN_LOGIN_AGAIN)
+            console.print(
+                "This login only stored a short-lived JWT access token. "
+                "Run [cyan]traigent auth login[/cyan] again or create an API key "
+                "for long-lived authentication.\n"
+            )
             return False
 
         try:

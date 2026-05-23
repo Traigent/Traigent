@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import ipaddress
 import json
 import logging
 import os
@@ -19,10 +18,10 @@ import secrets
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.core.constants import MAX_RETRIES
+from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -236,40 +235,6 @@ class PasswordAuthHandler:
             "on",
         }
 
-    def _validated_backend_api_url(self, backend_api_url: str) -> str:
-        """Validate the backend login target before sending credentials."""
-        candidate = (backend_api_url or "").strip().rstrip("/")
-        parsed = urlparse(candidate)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Backend API URL is invalid") from None
-        if parsed.username or parsed.password:
-            raise ValueError("Backend API URL must not include credentials") from None
-        if parsed.query or parsed.fragment:
-            raise ValueError(
-                "Backend API URL must not include query or fragment data"
-            ) from None
-
-        hostname = parsed.hostname
-        if not hostname:
-            raise ValueError("Backend API URL is invalid") from None
-
-        normalized_host = hostname.strip("[]").rstrip(".").lower()
-        allow_local = self._is_dev_mode_enabled()
-        if not allow_local and (
-            normalized_host in {"localhost", "localhost.localdomain"}
-            or normalized_host.endswith(".localhost")
-        ):
-            raise ValueError("Backend API URL host is not allowed") from None
-
-        try:
-            host_ip = ipaddress.ip_address(normalized_host)
-        except ValueError:
-            return candidate
-
-        if not allow_local and not host_ip.is_global:
-            raise ValueError("Backend API URL host is not allowed") from None
-        return candidate
-
     async def _perform_authentication(
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
@@ -282,9 +247,18 @@ class PasswordAuthHandler:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = self._validated_backend_api_url(
-            BackendConfig.get_cloud_api_url()
-        )
+        try:
+            backend_api_url = validate_outbound_url(
+                BackendConfig.get_cloud_api_url(),
+                purpose="password authentication backend_url",
+                allow_private_hosts=self._is_dev_mode_enabled(),
+            )
+        except UnsafeUrlError as exc:
+            logger.warning(
+                "Rejected unsafe password authentication backend_url: %s", exc
+            )
+            return None
+
         login_url = f"{backend_api_url}/auth/login"
 
         client = ResilientClient(
@@ -313,7 +287,7 @@ class PasswordAuthHandler:
                     if response.status != 200:
                         await response.text()
                         raise RuntimeError(
-                            f"Backend authentication failed with status {response.status}"
+                            f"Backend authentication failed with HTTP {response.status}"
                         )
 
                     data = await response.json()
@@ -350,11 +324,11 @@ class PasswordAuthHandler:
             if self._is_mock_auth_fallback_enabled():
                 logger.warning(
                     "Explicit mock password auth enabled - using mock tokens because backend login failed: %s",
-                    exc,
+                    type(exc).__name__,
                 )
                 return self._build_dev_token_payload(credentials)
 
-            logger.error(f"Authentication error: {exc}")
+            logger.error("Authentication error: %s", type(exc).__name__)
             return None
 
     def _build_dev_token_payload(

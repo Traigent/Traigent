@@ -30,8 +30,7 @@
                     </div>
                     <aside class="hero-panel">
                         <div class="hero-panel-label">Quick Start</div>
-                        <pre class="hero-code"><code># Run in mock mode (no API key needed)
-export TRAIGENT_MOCK_LLM=true
+                        <pre class="hero-code"><code># Auto-mocks when ANTHROPIC_API_KEY is unset
 python examples/core/simple-prompt/run.py</code></pre>
                     </aside>
                 </section>
@@ -59,8 +58,7 @@ python examples/core/simple-prompt/run.py</code></pre>
                         <h2>Quick Start</h2>
                     </header>
                     <div class="detail-section-body">
-                        <pre class="detail-code"><code class="language-bash"># Run in mock mode (no API key needed)
-export TRAIGENT_MOCK_LLM=true
+                        <pre class="detail-code"><code class="language-bash"># Auto-mocks when ANTHROPIC_API_KEY is unset
 python examples/core/simple-prompt/run.py</code></pre>
                     </div>
                 </section><section class="detail-section" id="simple-prompt-expected-output">
@@ -70,7 +68,7 @@ python examples/core/simple-prompt/run.py</code></pre>
                     <div class="detail-section-body">
                         <p>You should see Traigent trying different combinations of parameters and reporting the results.</p>
 <pre class="detail-code"><code class="language-text">Starting Simple Prompt Optimization...
-Running with: model=claude-3-haiku-20240307, temp=0.0, style=concise
+Running with: model=claude-haiku-4-5-20251001, temp=0.0, style=concise
 ...
 Optimization Complete!
 Best Score: ...

@@ -1014,6 +1014,22 @@ def _resolve_execution_bundle_options(
     if execution_bundle is None:
         return base_options
 
+    # Defense in depth: pydantic field_validator on ExecutionOptions already
+    # rejects non-default values at construction time. This runtime check
+    # catches any path that constructs the bundle through a different route.
+    if execution_bundle.reps_per_trial != 1:
+        raise NotImplementedError(
+            "reps_per_trial is not available in this version. "
+            "This feature requires Traigent Enterprise. "
+            "Contact sales@traigent.ai for more information."
+        )
+    if execution_bundle.reps_aggregation != "mean":
+        raise NotImplementedError(
+            "reps_aggregation is not available in this version. "
+            "This feature requires Traigent Enterprise. "
+            "Contact sales@traigent.ai for more information."
+        )
+
     return ResolvedExecutionOptions(
         execution_mode=_resolve_option(
             "execution_mode",

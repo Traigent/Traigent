@@ -46,6 +46,7 @@ def eval_result():
     result.has_errors = False
     result.outputs = ["output1", "output2", "output3"]
     result.example_results = [Mock(), Mock()]
+    result.successful_examples = 2
     result.summary_stats = {"mean": 0.85, "std": 0.1}
     return result
 
@@ -139,6 +140,23 @@ class TestBuildSuccessResult:
         assert metadata["success_rate"] == 0.9
         assert metadata["has_errors"] is False
         assert metadata["output_count"] == 3
+        assert metadata["successful_examples"] == 2
+
+    def test_zero_successful_examples_preserved(self, eval_config, eval_result):
+        """Zero successes must be explicit so ranking can suppress fake winners."""
+        eval_result.successful_examples = 0
+
+        result = build_success_result(
+            trial_id="trial_123",
+            evaluation_config=eval_config,
+            eval_result=eval_result,
+            duration=1.5,
+            examples_attempted=10,
+            total_cost=None,
+            optuna_trial_id=None,
+        )
+
+        assert result.metadata["successful_examples"] == 0
 
     def test_example_results_included(self, eval_config, eval_result):
         """Test example_results are included in metadata."""

@@ -335,7 +335,7 @@ def rag_qa(question: str) -> str:
     )
     prompt = f"Context:\n{ctx}\n\nQuestion: {question}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=0.0,
         timeout=None,
         stop=None,

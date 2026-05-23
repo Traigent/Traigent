@@ -635,6 +635,135 @@ class TestBuildCredentialsFromTokenData:
         set_key_fn.assert_called_once()
 
 
+class TestOAuth2RefreshHardening:
+    """Security regressions for OAuth2 token refresh."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_rejects_local_cloud_base_url(self, config):
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        result = await tm.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "OAuth2 cloud_base_url" in result.error_message
+        assert "not allowed" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_error_message_does_not_return_raw_body(
+        self, token_manager_with_callbacks
+    ):
+        token_manager, _credentials = token_manager_with_callbacks
+
+        async def fail_refresh(*_args, **_kwargs):
+            raise RuntimeError(
+                "500: {'access_token':'secret-token-value','password':'secret'}"  # pragma: allowlist secret
+            )
+
+        with patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            side_effect=fail_refresh,
+        ):
+            result = await token_manager.refresh_jwt_secure("refresh_token")
+
+        assert result.success is False
+        assert result.error_message == "Token refresh failed"
+        assert "secret-token-value" not in result.error_message
+        assert "password" not in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_returns_authresult_on_non_200(self, config):
+        """refresh_oauth2 must report HTTP failures as AuthResult, not raise.
+
+        AuthManager.refresh_oauth2_token delegates directly to this method
+        and its callers expect AuthResult(success=False). A raised exception
+        would skip the documented invalidation path and break the
+        return-contract that auth.py:_refresh_oauth2_token relies on.
+        """
+        config.cloud_base_url = "https://api.example.test"
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        # Build a 503 response via aiohttp mock context-managers
+        response = AsyncMock()
+        response.status = 503
+        response.text = AsyncMock(return_value="upstream noise; do not propagate")
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+
+        session = AsyncMock()
+        session.post = MagicMock(return_value=response)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "traigent.cloud.token_manager.aiohttp.ClientSession",
+            return_value=session,
+        ):
+            result = await tm.refresh_oauth2()
+
+        assert isinstance(result, AuthResult)
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "503" in result.error_message
+        # Response body must never propagate upstream content into the
+        # error message — that's how internal errors leak to callers.
+        assert "upstream noise" not in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_returns_authresult_on_network_error(self, config):
+        """refresh_oauth2 must report network exceptions as AuthResult, not raise."""
+        config.cloud_base_url = "https://api.example.test"
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        with patch(
+            "traigent.cloud.token_manager.aiohttp.ClientSession",
+            side_effect=RuntimeError("connection refused: do not propagate"),
+        ):
+            result = await tm.refresh_oauth2()
+
+        assert isinstance(result, AuthResult)
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        # Internal exception message must not leak verbatim to callers.
+        assert "connection refused: do not propagate" not in result.error_message
+
+
 class TestGetAuthorizationHeader:
     """Test authorization header generation."""
 

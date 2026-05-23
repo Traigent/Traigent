@@ -9,7 +9,6 @@ secure token management, and resilient HTTP client integration.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import inspect
@@ -32,8 +31,8 @@ from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
-from traigent.core.constants import MAX_RETRIES
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
+from traigent.utils.url_security import UnsafeUrlError
 
 logger = logging.getLogger(__name__)
 
@@ -1090,8 +1089,8 @@ class AuthManager:
                 error_message="Invalid API key format",
             )
 
-        # Structured diagnostic: never log the key value or any value derived from it.
-        logger.debug(
+        # Structured warning: never log the key value or any value derived from it.
+        logger.warning(
             "auth.api_key.validate_start",
             extra={
                 "auth_mode": AuthMode.API_KEY.value,
@@ -1297,7 +1296,7 @@ class AuthManager:
         var is not set, development auth is rejected with a migration-friendly
         error message rather than silently passing.
         """
-        logger.debug(
+        logger.warning(
             "auth.development.attempt",
             extra={
                 "auth_mode": AuthMode.DEVELOPMENT.value,
@@ -1474,8 +1473,6 @@ class AuthManager:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return "backend validation URL is invalid"
-        if parsed.scheme != "https":
-            return "backend validation URL must use HTTPS"
         if parsed.username or parsed.password:
             return "backend validation URL must not include credentials"
         hostname = parsed.hostname
@@ -1489,9 +1486,15 @@ class AuthManager:
         try:
             host_ip = ipaddress.ip_address(normalized_host)
         except ValueError:
+            # Hostname resolves to a DNS name (not an IP). HTTPS still required.
+            if parsed.scheme != "https":
+                return "backend validation URL must use HTTPS"
             return None
         if not host_ip.is_global:
             return "backend validation URL host is not allowed"
+        # IP-literal global host: HTTPS still required.
+        if parsed.scheme != "https":
+            return "backend validation URL must use HTTPS"
         return None
 
     def _validate_api_key_with_backend_sync(
@@ -1581,9 +1584,13 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
-        cloud_base_url = await validate_cloud_base_url_async(
-            self.config.cloud_base_url, purpose="OAuth2 client credentials"
-        )
+        try:
+            cloud_base_url = await validate_cloud_base_url_async(
+                self.config.cloud_base_url, purpose="OAuth2 client credentials"
+            )
+        except (ValueError, UnsafeUrlError) as exc:
+            logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
+            raise RuntimeError("OAuth2 cloud_base_url is not allowed") from None
         token_url = f"{cloud_base_url}/oauth/token"
 
         data = {
@@ -1601,11 +1608,8 @@ class AuthManager:
             async with session.post(token_url, data=data) as response:
                 if response.status == 200:
                     return cast(dict[str, Any], await response.json())
-                else:
-                    await response.text()
-                    raise RuntimeError(
-                        f"OAuth2 flow failed with status {response.status}"
-                    )
+                await response.text()  # drain body; do not propagate upstream content
+                raise RuntimeError(f"OAuth2 flow failed with HTTP {response.status}")
 
     async def _refresh_token(self) -> AuthResult:
         """Refresh authentication token.
@@ -1695,96 +1699,8 @@ class AuthManager:
     async def _perform_password_authentication(
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
-        """Perform backend authentication using resilient HTTP client."""
-        if not AIOHTTP_AVAILABLE:
-            raise RuntimeError("aiohttp not available for authentication") from None
-
-        from traigent.cloud.resilient_client import ResilientClient
-        from traigent.config.backend_config import BackendConfig
-
-        backend_api_url = await validate_cloud_base_url_async(
-            BackendConfig.build_api_base(
-                self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-            ),
-            purpose="password authentication",
-        )
-        login_url = f"{backend_api_url}/auth/login"
-
-        client = ResilientClient(
-            max_retries=MAX_RETRIES,
-            base_delay=1.0,
-            max_delay=10.0,
-            jitter_factor=0.1,
-        )
-
-        async def perform_login():
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.post(
-                    login_url,
-                    json={
-                        "email": credentials["email"],
-                        "password": credentials["password"],
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status == 401:
-                        raise InvalidCredentialsError("Invalid credentials")
-                    if response.status == 429:
-                        await response.text()
-                        raise RuntimeError("Backend authentication rate limited")
-                    if response.status != 200:
-                        await response.text()
-                        raise RuntimeError(
-                            f"Backend authentication failed with status {response.status}"
-                        )
-
-                    data = await response.json()
-                    if not data.get("success"):
-                        raise ValueError("Authentication failed")
-
-                    token_data = data.get("data", {})
-                    access_token = token_data.get("access_token", "")
-                    expires_in = token_data.get("expires_in", 3600)
-
-                    if access_token and "." in access_token:
-                        try:
-                            parts = access_token.split(".")
-                            if len(parts) >= 2:
-                                payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                                decoded = base64.urlsafe_b64decode(payload)
-                                jwt_data = json.loads(decoded)
-                                if "exp" in jwt_data:
-                                    expires_in = max(0, jwt_data["exp"] - time.time())
-                        except Exception as exc:
-                            logger.debug(f"Failed to parse JWT expiry: {exc}")
-
-                    token_data["expires_in"] = expires_in
-                    return token_data
-
-        try:
-            return await client.execute_with_retry(
-                perform_login, operation_name="backend_authentication"
-            )
-        except InvalidCredentialsError:
-            if self._password_auth_handler._is_mock_auth_fallback_enabled():
-                logger.warning(
-                    "Explicit mock password auth enabled - returning mock tokens despite invalid credentials"
-                )
-                return self._build_dev_token_payload(credentials)
-            raise
-        except Exception as exc:
-            if self._password_auth_handler._is_mock_auth_fallback_enabled():
-                logger.warning(
-                    "Explicit mock password auth enabled - using mock tokens because backend login failed: %s",
-                    type(exc).__name__,
-                )
-                return self._build_dev_token_payload(credentials)
-
-            logger.error("Authentication error: %s", type(exc).__name__)
-            return None
+        """Perform backend authentication via the hardened password handler."""
+        return await self._password_auth_handler._perform_authentication(credentials)
 
     async def _refresh_jwt_token_secure(self, refresh_token_value: str) -> AuthResult:
         """Refresh JWT access token using secure stored refresh token.

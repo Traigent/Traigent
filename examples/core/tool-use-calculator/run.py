@@ -221,7 +221,7 @@ def solve_math(expr: str, config: dict | None = None) -> str:
         f"{tool_hint}{_PROMPT}"
     )
     response = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20241022",
+        model_name="claude-sonnet-4-6",
         temperature=float(cfg.get("temperature", 0.0)),
         timeout=None,
         stop=None,

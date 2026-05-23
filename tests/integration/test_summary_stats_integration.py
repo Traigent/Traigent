@@ -294,7 +294,7 @@ class TestExecutionModeHandling:
 
         from traigent.config.types import validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="not available yet"):
+        with pytest.raises(ConfigurationError, match="Cloud remote execution"):
             validate_execution_mode("cloud")
 
         assert validate_execution_mode("hybrid").value == "hybrid"

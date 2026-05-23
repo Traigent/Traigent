@@ -233,6 +233,7 @@ def _build_success_trial_metadata(
         if hasattr(eval_result, "to_dict") and callable(eval_result.to_dict)
         else eval_result
     )
+    raw_successful_examples = getattr(eval_result, "successful_examples", None)
     trial_metadata: dict[str, Any] = {
         "success_rate": getattr(eval_result, "success_rate", None),
         "has_errors": getattr(eval_result, "has_errors", None),
@@ -243,6 +244,12 @@ def _build_success_trial_metadata(
         ),
         "evaluation_result": redact_sensitive_data(evaluation_result_payload),
     }
+
+    if raw_successful_examples is not None:
+        try:
+            trial_metadata["successful_examples"] = max(int(raw_successful_examples), 0)
+        except (TypeError, ValueError):
+            pass
 
     example_results = getattr(eval_result, "example_results", None)
     if isinstance(example_results, list) and example_results:

@@ -254,8 +254,7 @@ cd Traigent
 # Install Traigent
 pip install -e .
 
-# Run any example in mock mode (no API keys)
-export TRAIGENT_MOCK_LLM=true
+# Run the first example. It auto-mocks when ANTHROPIC_API_KEY is unset.
 python examples/core/simple-prompt/run.py
 ```
 
@@ -409,7 +408,6 @@ See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 **Ready to get started?** Run your first example:
 
 ```bash
-export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 

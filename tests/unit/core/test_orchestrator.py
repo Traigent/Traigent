@@ -754,8 +754,10 @@ class TestOptimizationOrchestrator:
 
         orchestrator.optimizer.suggest_next_trial = failing_suggest
 
-        with pytest.raises(OptimizationError):
+        with pytest.raises(OptimizationError) as exc_info:
             await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert str(exc_info.value) == "Optimizer failure"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)

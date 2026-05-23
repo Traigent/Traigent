@@ -14,23 +14,34 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
-
-
-def _prepare_mock_paths(base: Path) -> None:
-    """
-    Use a writable local directory for mock runs to avoid permission issues.
-    """
-    results_dir = base / ".traigent_local"
-    os.environ.setdefault("HOME", str(base))
-    results_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", str(results_dir))
-
-
-# --- Setup for local development/testing ---
-MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
-if MOCK:
-    _prepare_mock_paths(BASE)
+MODULE_PATH = Path(__file__).resolve()
+
+
+def _env_flag(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+_mock_env_flag = _env_flag(os.environ.get("TRAIGENT_MOCK_LLM"))
+if _mock_env_flag is True or (
+    _mock_env_flag is not False and not os.environ.get("ANTHROPIC_API_KEY", "").strip()
+):
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+_sdk_path = os.environ.get("TRAIGENT_SDK_PATH")
+if _sdk_path:
+    sys.path.insert(0, _sdk_path)
+else:
+    repo_root = MODULE_PATH.parents[3]
+    if (repo_root / "traigent" / "__init__.py").exists():
+        sys.path.insert(0, str(repo_root))
 
 # --- Import Traigent ---
 try:
@@ -38,17 +49,16 @@ try:
 except ImportError:
     import importlib
 
-    _sdk = os.environ.get("TRAIGENT_SDK_PATH")
-    if _sdk:
-        sys.path.insert(0, _sdk)
-    else:
-        module_path = Path(__file__).resolve()
-        for depth in (2, 3):
-            try:
-                sys.path.append(str(module_path.parents[depth]))
-            except IndexError:
-                continue
     traigent = importlib.import_module("traigent")
+
+from traigent.examples.tutorial_bootstrap import configure_tutorial_mock_mode
+
+# --- Setup for local development/testing ---
+MOCK = configure_tutorial_mock_mode(
+    provider_env_keys=("ANTHROPIC_API_KEY",),
+    tutorial_name="Simple Prompt Optimization",
+    results_base=BASE,
+)
 
 # --- Configuration ---
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "simple-prompt"
@@ -104,6 +114,32 @@ def _mock_summarize_text(text: str) -> str:
     return "Summary of input text."
 
 
+def _print_results_summary(result) -> None:
+    rows = []
+    for trial in result.trials:
+        metrics = trial.metrics or {}
+        rows.append(
+            [
+                str(trial.config.get("model", "")),
+                str(trial.config.get("temperature", "")),
+                str(trial.config.get("prompt_style", "")),
+                f"{float(metrics.get('accuracy', 0.0)):.3f}",
+                f"{float(metrics.get('cost', 0.0)):.6f}",
+            ]
+        )
+
+    headers = ["model", "temperature", "prompt_style", "accuracy", "cost"]
+    widths = []
+    for index, header in enumerate(headers):
+        widths.append(max([len(header), *(len(row[index]) for row in rows)]))
+
+    print("\nResults Summary:")
+    print(" | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("-+-".join("-" * width for width in widths))
+    for row in rows:
+        print(" | ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
+
 @traigent.optimize(
     # 1. The dataset to evaluate against
     eval_dataset=DATASET,
@@ -111,7 +147,7 @@ def _mock_summarize_text(text: str) -> str:
     objectives=["accuracy"],
     # 3. The parameters to tune
     configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.7],
         "prompt_style": ["concise", "detailed"],
     },
@@ -132,7 +168,7 @@ def summarize_text(text: str) -> str:
     # Get the current configuration chosen by the optimizer
     config = traigent.get_config()
 
-    model = str(config.get("model", "claude-3-haiku-20240307"))
+    model = str(config.get("model", "claude-haiku-4-5-20251001"))
     temperature = float(config.get("temperature", 0.0))
     style = str(config.get("prompt_style", "concise"))
 
@@ -150,7 +186,10 @@ def summarize_text(text: str) -> str:
     from langchain_core.messages import HumanMessage
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise ValueError("Please set ANTHROPIC_API_KEY or use TRAIGENT_MOCK_LLM=true")
+        raise ValueError(
+            "Please set ANTHROPIC_API_KEY or use TRAIGENT_MOCK_LLM=true. "
+            "For the no-key tutorial path, leave TRAIGENT_MOCK_LLM unset."
+        )
 
     prompt = f"Please summarize the following text. Style: {style}.\n\nText: {text}"
 
@@ -173,14 +212,7 @@ if __name__ == "__main__":
                 print(f"Best Score: {result.best_score}")
                 print(f"Best Configuration: {result.best_config}")
 
-                # Show a summary table
-                df = result.to_aggregated_dataframe()
-                print("\nResults Summary:")
-                print(
-                    df[
-                        ["model", "temperature", "prompt_style", "accuracy", "cost"]
-                    ].to_string(index=False)
-                )
+                _print_results_summary(result)
             except Exception as e:
                 import traceback
 
