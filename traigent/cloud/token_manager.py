@@ -510,10 +510,14 @@ class TokenManager:
         # refresh_oauth2 advertises an ``AuthResult`` return contract and is
         # called via delegation from AuthManager.refresh_oauth2_token (see
         # traigent/cloud/auth.py). Network errors, JSON parse errors, and
-        # non-200 responses must be reported as AuthResult(success=False) so
-        # callers can handle the failure gracefully — propagating exceptions
-        # would break that contract and skip the documented
-        # _set_credentials_fn(None, INVALID) invalidation path on failure.
+        # non-200 responses must be reported as AuthResult(success=False,
+        # status=INVALID) so callers can inspect the result and decide how
+        # to react (e.g. surface to the user, retry, or clear stored
+        # credentials). Propagating exceptions would break that contract.
+        # NOTE: this branch returns the INVALID AuthResult without actively
+        # clearing self credentials; if specific failure modes (e.g. 401
+        # invalid_grant) should also invalidate stored credentials, that
+        # behavior should be added explicitly here.
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(token_url, data=data) as response:
