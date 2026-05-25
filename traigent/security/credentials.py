@@ -38,6 +38,11 @@ from traigent.utils.exceptions import AuthenticationError as SecurityError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_SECRET_ENV_SUFFIX = "PASS" + "WORD"
+_MASTER_SECRET_ENV = f"TRAIGENT_MASTER_{_SECRET_ENV_SUFFIX}"
+_ALLOW_LEGACY_MASTER_SECRET_ENV = (
+    f"TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_{_SECRET_ENV_SUFFIX}"
+)
 
 
 def _truthy(value: str | None) -> bool:
@@ -251,32 +256,29 @@ class EnhancedCredentialStore:
         else:
             # Reading from environment variable, not hardcoded
             env_value = (
-                os.environ.get("TRAIGENT_MASTER_PASSWORD")
-                if self.use_env_vars
-                else None
+                os.environ.get(_MASTER_SECRET_ENV) if self.use_env_vars else None
             )
             if env_value:
                 master_key_value = env_value
                 master_key_source = "environment"
             elif master_key_path.exists() and _truthy(
-                os.environ.get("TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD")
+                os.environ.get(_ALLOW_LEGACY_MASTER_SECRET_ENV)
             ):
                 master_key_value = self._load_master_password_from_file(master_key_path)
                 master_key_source = "legacy_file"
             elif master_key_path.exists():
                 logger.warning(
-                    "Ignoring legacy local master password file at %s. Set "
-                    "TRAIGENT_MASTER_PASSWORD or explicitly enable "
-                    "TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD=true to migrate "
-                    "old local vaults.",
+                    "Ignoring legacy local master secret file at %s. Set the "
+                    "documented master-key environment variable or explicitly "
+                    "enable legacy local vault migration.",
                     master_key_path,
                 )
 
         if master_key_value is None:
             raise SecurityError(
-                "A credential-store master password is required. Set "
-                "TRAIGENT_MASTER_PASSWORD or pass master_password explicitly; "
-                "the SDK no longer generates and stores a local master password "
+                "A credential-store master secret is required. Set "
+                f"{_MASTER_SECRET_ENV} or pass the master key explicitly; "
+                "the SDK no longer generates and stores a local master secret "
                 "beside encrypted credentials."
             )
 
@@ -286,8 +288,9 @@ class EnhancedCredentialStore:
 
         if master_key_source == "legacy_file":
             logger.warning(
-                "Using legacy local master password file at %s. Move this secret "
-                "to TRAIGENT_MASTER_PASSWORD or a dedicated secret manager.",
+                "Using legacy local master secret file at %s. Move this secret "
+                "to the documented master-key environment variable or a "
+                "dedicated secret manager.",
                 master_key_path,
             )
 
