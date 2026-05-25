@@ -15,14 +15,21 @@ A response of ``{"valid": "false"}`` would silently authenticate because the
 non-empty string ``"false"`` is truthy in Python. The fix tightens this to
 ``data.get("valid") is True``.
 """
+
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.cloud.auth import AuthManager
+
+
+@pytest.fixture(autouse=True)
+def _enable_backend_validation(monkeypatch):
+    """These tests mock backend validation and must override CI offline mode."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
 
 
 class _FakeResponse:
@@ -92,9 +99,9 @@ async def test_validate_rejects_string_false_payload():
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason is not None, (
-        "String 'false' was treated as truthy — strict ``is True`` check missing"
-    )
+    assert (
+        reason is not None
+    ), "String 'false' was treated as truthy — strict ``is True`` check missing"
     assert "invalid" in reason.lower() or "reported" in reason.lower()
 
 

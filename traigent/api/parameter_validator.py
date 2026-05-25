@@ -104,8 +104,10 @@ class ParameterValidator:
         try:
             return validate_execution_mode(execution_mode)
         except (TypeError, ValueError, ConfigurationError) as exc:
+            valid_modes = ", ".join(sorted(self.VALID_EXECUTION_MODES))
             raise ValidationError(
-                f"Invalid execution_mode '{execution_mode}'. {exc}"
+                f"Invalid execution_mode '{execution_mode}'. {exc}. "
+                f"Valid modes: {valid_modes}"
             ) from exc
 
     def _validate_injection_mode(self, injection_mode: str | InjectionMode) -> None:

@@ -10,6 +10,12 @@ from traigent.cloud.auth import InvalidCredentialsError
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 
 
+@pytest.fixture(autouse=True)
+def _enable_backend_auth(monkeypatch):
+    """Most password-auth tests mock backend calls and must bypass CI offline mode."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_default_backend_no_longer_implies_dev_mode():
     """Cloud auth should not infer dev mode from the generic backend fallback."""
     handler = PasswordAuthHandler()
@@ -45,6 +51,27 @@ def test_mock_auth_fallback_still_requires_dev_mode():
         patch.object(handler, "_is_dev_mode_enabled", return_value=False),
     ):
         assert handler._is_mock_auth_fallback_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_offline_mode_skips_backend_password_auth(monkeypatch):
+    """Offline mode should fail closed without attempting backend login."""
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+    execute = AsyncMock(return_value={"access_token": "should-not-be-used"})
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    with patch(
+        "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+        new=execute,
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is None
+    execute.assert_not_called()
 
 
 @pytest.mark.asyncio

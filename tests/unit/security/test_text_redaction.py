@@ -27,7 +27,9 @@ class TestCreditCardRedaction:
         "timestamp",
         [
             "20260523-010956",  # YYYYMMDD-HHMMSS — was the false positive
+            "20260524-210743",  # valid Luhn if separators are stripped
             "walkthrough-mock-tiny-20260523-010956-abc123",
+            "walkthrough-mock-tiny-20260524-210743-abc123",
             "logs-2026-05-23-01-09-56",
         ],
     )
@@ -49,10 +51,14 @@ class TestOtherPatternsStillWork:
         assert "[REDACTED:ssn]" in redact_sensitive_text("ssn 123-45-6789")
 
     def test_bearer_token_redacted(self) -> None:
-        assert "[REDACTED:bearer_token]" in redact_sensitive_text("Bearer eyJhbGciOiJIUzI1NiIs")
+        assert "[REDACTED:bearer_token]" in redact_sensitive_text(
+            "Bearer eyJhbGciOiJIUzI1NiIs"
+        )
 
     def test_api_key_redacted(self) -> None:
-        assert "[REDACTED:api_key]" in redact_sensitive_text("X-Api-Key: sk-abcd1234abcd1234")
+        assert "[REDACTED:api_key]" in redact_sensitive_text(
+            "X-Api-Key: sk-abcd1234abcd1234"
+        )
 
 
 class TestNestedRedaction:

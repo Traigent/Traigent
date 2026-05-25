@@ -19,6 +19,7 @@ streaming feature that the patch also introduced.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import time
 from datetime import UTC, datetime
@@ -229,12 +230,18 @@ class TestBlockingEvaluatorOffloading:
             time.sleep(0.2)
             return "done"
 
-        async def offloaded_call() -> str:
-            return await asyncio.to_thread(blocking_work)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-        start = time.monotonic()
-        _, result = await asyncio.gather(heartbeat(), offloaded_call())
-        elapsed = time.monotonic() - start
+        async def offloaded_call() -> str:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(executor, blocking_work)
+
+        try:
+            start = time.monotonic()
+            _, result = await asyncio.gather(heartbeat(), offloaded_call())
+            elapsed = time.monotonic() - start
+        finally:
+            executor.shutdown(wait=True)
 
         assert result == "done"
         assert len(heartbeats) == 5

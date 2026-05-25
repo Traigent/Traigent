@@ -319,6 +319,14 @@ class TokenManager:
             AuthResult with new credentials on success
         """
         from traigent.cloud.auth import AuthResult, AuthStatus
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=_GENERIC_REFRESH_ERROR,
+            )
 
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh")

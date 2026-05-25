@@ -481,8 +481,7 @@ class LocalEvaluator(BaseEvaluator):
             example_input, config=config
         )
         if input_length is None:
-            # Preserve historical behavior for non-template fallback.
-            input_length = len(str(example_input))
+            input_length = self._calculate_input_length(example_input, config=config)
         example_metric.tokens.input_tokens = max(1, input_length // 4)
 
         # Update total

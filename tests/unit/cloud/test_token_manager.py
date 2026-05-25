@@ -472,6 +472,18 @@ class TestRefreshSecurity:
         assert "private or loopback" in result.error_message
 
     @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_offline_mode_fails_closed(
+        self, token_manager, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+
+        result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+    @pytest.mark.asyncio
     async def test_refresh_jwt_secure_redacts_unexpected_server_errors(
         self, token_manager, monkeypatch
     ):

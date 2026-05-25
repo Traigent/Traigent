@@ -76,9 +76,9 @@ class TestLocalAnalyticsInitialization:
         assert analytics.enabled is False
 
     def test_initialization_with_cloud_mode(self, temp_storage_path: str) -> None:
-        """Test initialization in cloud mode disables local analytics."""
+        """Test initialization in non-edge mode disables local analytics."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.CLOUD.value,
+            execution_mode=ExecutionMode.HYBRID.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )
@@ -1063,7 +1063,7 @@ class TestConvenienceFunctions:
     ) -> None:
         """Test collect_and_submit_analytics in wrong execution mode."""
         config = TraigentConfig(
-            execution_mode=ExecutionMode.CLOUD.value,
+            execution_mode=ExecutionMode.HYBRID.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
         )

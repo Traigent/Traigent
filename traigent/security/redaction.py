@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any, overload
 
 _EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
@@ -15,6 +16,7 @@ _API_KEY_PATTERN = re.compile(
 _BEARER_TOKEN_PATTERN = re.compile(
     r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.IGNORECASE
 )
+_COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 
 
 def _passes_luhn(digits: str) -> bool:
@@ -34,6 +36,14 @@ def _passes_luhn(digits: str) -> bool:
 def _redact_credit_card(match: re.Match[str]) -> str:
     """Redact only digit runs that pass Luhn — avoid false-positives on timestamps."""
     raw = match.group(0)
+    normalized = raw.strip(" -")
+    if _COMPACT_TIMESTAMP_PATTERN.fullmatch(normalized):
+        digits = "".join(ch for ch in normalized if ch.isdigit())
+        try:
+            datetime.strptime(digits, "%Y%m%d%H%M%S")
+            return raw
+        except ValueError:
+            pass
     digits = "".join(ch for ch in raw if ch.isdigit())
     if 13 <= len(digits) <= 19 and _passes_luhn(digits):
         return "[REDACTED:credit_card]"

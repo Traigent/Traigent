@@ -12,7 +12,7 @@ import math
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -93,7 +93,7 @@ _SAFETY_PREFIXES = (
 )
 
 
-class BestConfigSourceMode(str, Enum):
+class BestConfigSourceMode(StrEnum):
     """Durable best-config source selection mode."""
 
     OFF = "off"
@@ -103,7 +103,7 @@ class BestConfigSourceMode(str, Enum):
     CLOUD_THEN_REPO = "cloud_then_repo"
 
 
-class BestConfigSource(str, Enum):
+class BestConfigSource(StrEnum):
     """Concrete source chosen during runtime resolution."""
 
     DEFAULT = "default"
@@ -117,7 +117,7 @@ class BestConfigSource(str, Enum):
     DEV_LOG = "dev_log"
 
 
-class CloudPublishUnavailableReason(str, Enum):
+class CloudPublishUnavailableReason(StrEnum):
     """Reason cloud best-config publish is unavailable."""
 
     DISABLED_BY_CONFIG = "disabled_by_config"

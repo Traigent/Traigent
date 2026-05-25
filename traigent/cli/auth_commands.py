@@ -179,6 +179,21 @@ class TraigentAuthCLI:
             )
             return None
 
+    @staticmethod
+    def _resolve_env_file_path(path: str | Path = ".env") -> Path:
+        """Resolve a local .env path without allowing writes outside cwd."""
+        candidate = Path(path).expanduser()
+        if candidate.name != ".env":
+            raise ValueError("Credentials export path must point to a .env file")
+
+        cwd = Path.cwd().resolve()
+        resolved = candidate.resolve(strict=False)
+        if not resolved.is_relative_to(cwd):
+            raise ValueError(
+                "Credentials export path must remain within the current directory"
+            )
+        return resolved
+
     async def _validate_api_key(
         self, api_key: str, verbose: bool = False
     ) -> dict[str, Any] | None:

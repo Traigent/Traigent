@@ -296,10 +296,14 @@ class SecureRateLimiter:
             components.append(f"user:{username}")
 
         if api_key:
-            key_fingerprint = self._keyed_identifier(
-                identifier_secret,
-                f"api_key:{api_key}",
-            )[:16]
+            key_material = f"api_key:{api_key}"
+            if self.config.use_cryptographic_ids:
+                key_fingerprint = self._keyed_identifier(
+                    identifier_secret,
+                    key_material,
+                )[:16]
+            else:
+                key_fingerprint = self._plain_identifier(key_material)[:16]
             components.append(f"key:{key_fingerprint}")
 
         if additional_context:

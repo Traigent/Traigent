@@ -919,11 +919,12 @@ class TestBayesianOptimizerNotInstalled:
             from ``traigent.optimizers.bayesian`` MUST raise a typed import
             failure rather than silently expose a broken class.
         """
-        # If sklearn is available, this test cannot meaningfully run; skip.
-        pytest.importorskip(
-            "sklearn",
-            reason="test_import_error only meaningful when sklearn is missing",
-        )
+        try:
+            __import__("sklearn")
+        except ImportError:
+            pass
+        else:
+            pytest.skip("test_import_error only meaningful when sklearn is missing")
 
         # We get here only when sklearn is genuinely missing. Importing the
         # Bayesian optimizer module must surface that fact (either via an

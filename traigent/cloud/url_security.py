@@ -121,10 +121,34 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
     )
 
 
+def _validation_needs_dns_resolution(base_url: str) -> bool:
+    """Return True when URL validation may perform blocking DNS lookup."""
+    candidate = (base_url or "").strip().rstrip("/")
+    parsed = urlparse(candidate)
+    hostname = parsed.hostname
+    if hostname is None:
+        return False
+
+    normalized = hostname.strip("[]").rstrip(".").lower()
+    if normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(
+        (".localhost", ".local")
+    ):
+        return False
+
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        return True
+    return False
+
+
 async def validate_cloud_base_url_async(
     base_url: str, *, purpose: str = "cloud request"
 ) -> str:
     """Validate a cloud URL without blocking the event loop on DNS resolution."""
+    if not _validation_needs_dns_resolution(base_url):
+        return validate_cloud_base_url(base_url, purpose=purpose)
+
     return await asyncio.to_thread(
         validate_cloud_base_url,
         base_url,

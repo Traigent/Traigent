@@ -1314,7 +1314,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.CLOUD.value,
+                execution_mode=ExecutionMode.HYBRID.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config
@@ -1348,7 +1348,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.CLOUD.value,
+                execution_mode=ExecutionMode.HYBRID.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config

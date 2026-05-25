@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from itertools import count
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -599,9 +600,10 @@ class TestHealthCheckerCheckServiceHealth:
         assert "no real probe is configured" in log_message
         assert "SDK#918" in log_message
 
+    @patch("traigent.security.deployment.logger")
     @patch("traigent.security.deployment.time.time")
     def test_check_service_health_measures_response_time(
-        self, mock_time: MagicMock, checker: HealthChecker
+        self, mock_time: MagicMock, _mock_logger: MagicMock, checker: HealthChecker
     ) -> None:
         """Test health check measures response time correctly."""
         # Use an unbounded sequence so logging and any incidental timestamp
@@ -785,7 +787,10 @@ class TestBackupManagerCreateBackup:
         assert backup["type"] == "full"
         assert backup["status"] == "unsupported"
         assert "reason" in backup
-        assert "BackupExecutor" not in backup["reason"] or "real backup" in backup["reason"]
+        assert (
+            "BackupExecutor" not in backup["reason"]
+            or "real backup" in backup["reason"]
+        )
         assert "NO DATA WAS PERSISTED" in backup["reason"]
         # Fabricated fields MUST be gone:
         assert "backup_id" not in backup

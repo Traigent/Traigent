@@ -169,8 +169,10 @@ class TestDiverseSampling:
                 "TF-IDF failed"
             )
 
-            # Should fallback to random sampling
-            with patch("random.sample") as mock_random:
+            # Should fallback to secure random sampling
+            with patch(
+                "traigent.cloud.subset_selection._SECURE_RANDOM.sample"
+            ) as mock_random:
                 mock_random.return_value = [0, 1, 2]
                 indices = await sampler._cluster_based_selection(
                     ["text1", "text2", "text3", "text4"], target_size=3

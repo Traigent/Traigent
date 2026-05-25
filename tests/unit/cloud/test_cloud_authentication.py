@@ -187,6 +187,17 @@ class TestAuthManager:
         assert manager._authenticated is False
 
     @pytest.mark.asyncio
+    async def test_authenticate_offline_mode_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        manager = AuthManager(api_key="tg_" + "x" * 61)
+
+        result = await manager.authenticate()
+
+        assert result.success is False
+        assert manager._authenticated is False
+        assert "backend offline mode enabled" in (result.error_message or "")
+
+    @pytest.mark.asyncio
     async def test_is_authenticated(self):
         manager = AuthManager(api_key="tg_" + "x" * 61)
         with _mock_backend_validate():
@@ -1581,13 +1592,15 @@ class TestSDK937_NoFabricatedPermissionGrants:
         manager = APIKeyManager(config)
         # Force the env-keyed path by giving no in-memory APIKey
         # object and mocking the env-key reader to return a valid key.
-        with patch.object(manager, "get_key_for_internal_use", return_value="tg_envkey"), \
-             patch.object(manager, "validate_format", return_value=True):
+        with (
+            patch.object(manager, "get_key_for_internal_use", return_value="tg_envkey"),
+            patch.object(manager, "validate_format", return_value=True),
+        ):
             info = manager.get_info()
 
         assert info is not None
         assert info["name"] == "environment"
         # The honest empty answer:
-        assert info["permissions"] == {}, (
-            f"env-keyed permissions must be {{}}, got {info['permissions']}"
-        )
+        assert (
+            info["permissions"] == {}
+        ), f"env-keyed permissions must be {{}}, got {info['permissions']}"

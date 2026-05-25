@@ -53,9 +53,7 @@ def _unsigned_token(payload: dict) -> str:
         .decode()
         .rstrip("=")
     )
-    body = (
-        base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    )
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = base64.urlsafe_b64encode(b"forged").decode().rstrip("=")
     return f"{header}.{body}.{sig}"
 
@@ -108,9 +106,7 @@ class TestSignedVerificationWhenKeyConfigured:
 
         assert validator._decode_license_token(token) is None
 
-    def test_token_signed_by_wrong_key_is_rejected(
-        self, validator, monkeypatch
-    ):
+    def test_token_signed_by_wrong_key_is_rejected(self, validator, monkeypatch):
         attacker_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         legit_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         legit_pub = legit_key.public_key().public_bytes(
@@ -125,9 +121,7 @@ class TestSignedVerificationWhenKeyConfigured:
         )
         assert validator._decode_license_token(token) is None
 
-    def test_alg_none_downgrade_is_rejected(
-        self, validator, rsa_keypair, monkeypatch
-    ):
+    def test_alg_none_downgrade_is_rejected(self, validator, rsa_keypair, monkeypatch):
         """Defense against the classic JWT alg=none confusion attack:
         even with a public key configured, a token whose header advertises
         alg=none must be rejected because PyJWT is told only RS256/ES256
@@ -138,12 +132,16 @@ class TestSignedVerificationWhenKeyConfigured:
 
         # alg=none token -- PyJWT will refuse it because we restrict
         # algorithms to RS256/ES256.
-        header = base64.urlsafe_b64encode(
-            json.dumps({"alg": "none", "typ": "JWT"}).encode()
-        ).decode().rstrip("=")
-        payload = base64.urlsafe_b64encode(
-            json.dumps({"tier": "enterprise"}).encode()
-        ).decode().rstrip("=")
+        header = (
+            base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode())
+            .decode()
+            .rstrip("=")
+        )
+        payload = (
+            base64.urlsafe_b64encode(json.dumps({"tier": "enterprise"}).encode())
+            .decode()
+            .rstrip("=")
+        )
         token = f"{header}.{payload}."
 
         assert validator._decode_license_token(token) is None
@@ -208,9 +206,7 @@ class TestPublicKeyFromFile:
         joined = " ".join(r.getMessage() for r in caplog.records)
         assert "TRAIGENT_LICENSE_PUBLIC_KEY" in joined
 
-    def test_invalid_inline_pem_fails_closed(
-        self, validator, monkeypatch, caplog
-    ):
+    def test_invalid_inline_pem_fails_closed(self, validator, monkeypatch, caplog):
         monkeypatch.setenv(
             "TRAIGENT_LICENSE_PUBLIC_KEY",
             "-----BEGIN PUBLIC KEY-----\nnot-a-real-pem-body\n-----END PUBLIC KEY-----\n",
@@ -227,9 +223,7 @@ class TestPublicKeyFromFile:
             for r in caplog.records
         )
 
-    def test_empty_inline_pem_fails_closed(
-        self, validator, monkeypatch
-    ):
+    def test_empty_inline_pem_fails_closed(self, validator, monkeypatch):
         # An empty/whitespace value is a misconfiguration, not absence.
         # Treat it the same as a broken key.
         monkeypatch.setenv("TRAIGENT_LICENSE_PUBLIC_KEY", "   \n   ")
@@ -239,9 +233,7 @@ class TestPublicKeyFromFile:
         # either way the result must be None.
         assert validator._decode_license_token(token) is None
 
-    def test_truly_empty_inline_env_fails_closed(
-        self, validator, monkeypatch, caplog
-    ):
+    def test_truly_empty_inline_env_fails_closed(self, validator, monkeypatch, caplog):
         """``os.environ.get("X")`` returns ``""`` for an env var set to the
         empty string and ``None`` when the var is absent. A truthy check
         cannot distinguish those, which would let an attacker who could
@@ -264,9 +256,7 @@ class TestPublicKeyFromFile:
             for r in caplog.records
         )
 
-    def test_truly_empty_file_env_fails_closed(
-        self, validator, monkeypatch
-    ):
+    def test_truly_empty_file_env_fails_closed(self, validator, monkeypatch):
         """Same threat model as the inline case: an empty
         TRAIGENT_LICENSE_PUBLIC_KEY_FILE must not collapse to "no key
         configured". Path("").read_bytes() raises, which the loader
@@ -279,9 +269,7 @@ class TestPublicKeyFromFile:
 
 
 class TestStrictModeWithoutKey:
-    def test_require_signed_rejects_unsigned(
-        self, validator, monkeypatch, caplog
-    ):
+    def test_require_signed_rejects_unsigned(self, validator, monkeypatch, caplog):
         monkeypatch.setenv("TRAIGENT_REQUIRE_SIGNED_LICENSE", "true")
 
         token = _unsigned_token({"tier": "enterprise", "features": []})
@@ -290,14 +278,11 @@ class TestStrictModeWithoutKey:
 
         assert info is None
         assert any(
-            "TRAIGENT_REQUIRE_SIGNED_LICENSE" in r.getMessage()
-            for r in caplog.records
+            "TRAIGENT_REQUIRE_SIGNED_LICENSE" in r.getMessage() for r in caplog.records
         )
 
     @pytest.mark.parametrize("flag", ["1", "true", "TRUE", "yes", "on"])
-    def test_truthy_strict_mode_values(
-        self, validator, monkeypatch, flag
-    ):
+    def test_truthy_strict_mode_values(self, validator, monkeypatch, flag):
         monkeypatch.setenv("TRAIGENT_REQUIRE_SIGNED_LICENSE", flag)
         token = _unsigned_token({"tier": "enterprise", "features": []})
         assert validator._decode_license_token(token) is None
@@ -305,8 +290,9 @@ class TestStrictModeWithoutKey:
 
 class TestLegacyUnsignedFallback:
     def test_unsigned_token_accepted_with_loud_warning(
-        self, validator, caplog
+        self, validator, monkeypatch, caplog
     ):
+        monkeypatch.setenv("TRAIGENT_ALLOW_UNSIGNED_LICENSE", "true")
         token = _unsigned_token({"tier": "pro", "features": []})
 
         with caplog.at_level(logging.WARNING):

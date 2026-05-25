@@ -529,8 +529,8 @@ class TestCIApproval:
             result = func._check_ci_approval()  # Should not raise
             assert result is None  # Successful approval returns None
 
-    def test_mock_mode_skips_ci_approval(self, tmp_path: Path):
-        """Mock mode should bypass CI approval gate."""
+    def test_mock_mode_requires_explicit_ci_approval(self, tmp_path: Path):
+        """Mock mode must not bypass the CI approval gate."""
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
@@ -545,8 +545,8 @@ class TestCIApproval:
         with patch.dict(
             os.environ, {"CI": "true", "TRAIGENT_MOCK_LLM": "true"}, clear=True
         ):
-            result = func._check_ci_approval()  # Should not raise
-            assert result is None  # Mock mode bypass returns None
+            with pytest.raises(OptimizationError, match="CI/CD Approval Required"):
+                func._check_ci_approval()
 
     def test_token_file_approval(self):
         """Test approval via token file."""

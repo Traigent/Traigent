@@ -239,6 +239,14 @@ class PasswordAuthHandler:
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
         """Perform backend authentication using resilient HTTP client."""
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            logger.debug(
+                "Skipping password authentication: backend offline mode enabled"
+            )
+            return None
+
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for authentication") from None
 

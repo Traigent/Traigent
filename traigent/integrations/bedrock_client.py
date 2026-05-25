@@ -15,6 +15,7 @@ Notes
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
@@ -293,7 +294,7 @@ class BedrockChatClient:
     ) -> BedrockChatResponse:
         """Perform an async non-streaming chat invocation.
 
-        Uses aioboto3 for true async or falls back to thread-pool executor.
+        Uses aioboto3 for true async or falls back to an isolated sync worker.
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
         # Try aioboto3 for true async
@@ -309,19 +310,19 @@ class BedrockChatClient:
                 extra_params=extra_params,
             )
         except ImportError:
-            # Fallback to running sync invoke in executor
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                None,
-                lambda: self.invoke(
-                    model_id=model_id,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    extra_params=extra_params,
-                ),
-            )
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return await loop.run_in_executor(
+                    executor,
+                    lambda: self.invoke(
+                        model_id=model_id,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        extra_params=extra_params,
+                    ),
+                )
 
     async def _ainvoke_aioboto3(
         self,
@@ -401,28 +402,22 @@ class BedrockChatClient:
             ):
                 yield chunk
         except ImportError:
-            # Fallback: run sync streaming in executor and yield chunks
-            loop = asyncio.get_event_loop()
-            sync_gen = self.invoke_stream(
-                model_id=model_id,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                extra_params=extra_params,
-            )
+            loop = asyncio.get_running_loop()
 
-            # Collect chunks from sync generator in executor
-            def _collect_chunks():
-                chunks = []
-                try:
-                    for chunk in sync_gen:
-                        chunks.append(chunk)
-                except StopIteration:
-                    pass
-                return chunks
+            def _collect_chunks() -> list[str]:
+                return list(
+                    self.invoke_stream(
+                        model_id=model_id,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        extra_params=extra_params,
+                    )
+                )
 
-            chunks = await loop.run_in_executor(None, _collect_chunks)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                chunks = await loop.run_in_executor(executor, _collect_chunks)
             for chunk in chunks:
                 yield chunk
 

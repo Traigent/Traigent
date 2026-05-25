@@ -9,6 +9,7 @@ secure token management, and resilient HTTP client integration.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import hmac
 import inspect
@@ -1386,6 +1387,10 @@ class AuthManager:
         to bypass authentication.
         """
         from traigent.config.backend_config import BackendConfig
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return "backend offline mode enabled"
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1406,11 +1411,14 @@ class AuthManager:
 
         if not AIOHTTP_AVAILABLE:
             try:
-                return await asyncio.to_thread(
-                    self._validate_api_key_with_backend_sync,
-                    url,
-                    headers,
-                )
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    return await loop.run_in_executor(
+                        executor,
+                        self._validate_api_key_with_backend_sync,
+                        url,
+                        headers,
+                    )
             except ImportError:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary

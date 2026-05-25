@@ -37,6 +37,7 @@ class TestAPIKey:
             name="Test Key",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(days=30),
+            permissions={"optimize": True},
         )
 
         assert api_key.key == "key-test-123"
