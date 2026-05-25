@@ -26,6 +26,10 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "WalletInsufficientBalanceErrorDTO",
     ),
     "WalletTopUpPackDTO": ("traigent.cloud.dtos", "WalletTopUpPackDTO"),
+    "WalletTopUpPacksResponseDTO": (
+        "traigent.cloud.dtos",
+        "WalletTopUpPacksResponseDTO",
+    ),
     "UsageTracker": ("traigent.cloud.billing", "UsageTracker"),
     "SmartSubsetSelector": ("traigent.cloud.subset_selection", "SmartSubsetSelector"),
     "DiverseSampling": ("traigent.cloud.subset_selection", "DiverseSampling"),
@@ -49,6 +53,7 @@ __all__ = [
     "QuotaExceededErrorDTO",
     "WalletInsufficientBalanceErrorDTO",
     "WalletTopUpPackDTO",
+    "WalletTopUpPacksResponseDTO",
     "UsageTracker",
     "SmartSubsetSelector",
     "DiverseSampling",

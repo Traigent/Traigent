@@ -102,6 +102,22 @@ class WalletTopUpPackDTO:
         return {"pack_id": self.pack_id, "credit_usd": self.credit_usd}
 
 
+@dataclass(frozen=True)
+class WalletTopUpPacksResponseDTO:
+    """Standard backend response wrapper for public wallet credit packs."""
+
+    packs: list[WalletTopUpPackDTO]
+    message: str = "Success"
+    success: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "message": self.message,
+            "data": {"packs": [pack.to_dict() for pack in self.packs]},
+        }
+
+
 def _get_schema_validator_class() -> Any:
     """Load the optional TraigentSchema validator lazily."""
     from traigent_schema.validator import SchemaValidator

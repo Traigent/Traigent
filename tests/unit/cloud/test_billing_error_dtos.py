@@ -2,6 +2,7 @@ from traigent.cloud.dtos import (
     QuotaExceededErrorDTO,
     WalletInsufficientBalanceErrorDTO,
     WalletTopUpPackDTO,
+    WalletTopUpPacksResponseDTO,
 )
 
 
@@ -43,3 +44,15 @@ def test_wallet_top_up_pack_dto_exposes_no_price_id():
     dto = WalletTopUpPackDTO(pack_id="starter", credit_usd="5.00")
 
     assert dto.to_dict() == {"pack_id": "starter", "credit_usd": "5.00"}
+
+
+def test_wallet_top_up_packs_response_dto_matches_wrapped_backend_shape():
+    dto = WalletTopUpPacksResponseDTO(
+        packs=[WalletTopUpPackDTO(pack_id="starter", credit_usd="5.00")]
+    )
+
+    assert dto.to_dict() == {
+        "success": True,
+        "message": "Success",
+        "data": {"packs": [{"pack_id": "starter", "credit_usd": "5.00"}]},
+    }
