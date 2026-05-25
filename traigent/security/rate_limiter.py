@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives import hashes, hmac
 from traigent.security.config import get_security_flags
 
 logger = logging.getLogger(__name__)
+_FALLBACK_IDENTIFIER_KEY = b"traigent-rate-limit-identifier-v1"
 
 
 class RateLimitStrategy(Enum):
@@ -265,7 +266,9 @@ class SecureRateLimiter:
 
     @staticmethod
     def _plain_identifier(value: str) -> str:
-        return hashlib.blake2b(value.encode("utf-8"), digest_size=32).hexdigest()
+        mac = hmac.HMAC(_FALLBACK_IDENTIFIER_KEY, hashes.SHA256())
+        mac.update(value.encode("utf-8"))
+        return cast(bytes, mac.finalize()).hex()
 
     def _generate_secure_identifier(
         self,
