@@ -44,8 +44,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.lint_type_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.LINT_PYTHON_VERSION }}
       - name: Install lint and type tooling
@@ -79,8 +79,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.tests_unit_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -111,8 +111,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.tests_integration_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -143,8 +143,8 @@ jobs:
     outputs:
       gate_status: ${{ steps.security_status.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install security tooling
@@ -176,12 +176,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - name: PR dependency review
         id: dependency_review_pr
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v4
-      - uses: actions/setup-python@v5
+        uses: actions/dependency-review-action@v5.0.0
+      - uses: actions/setup-python@v6.2.0
         if: github.event_name != 'pull_request'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -232,20 +232,20 @@ jobs:
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         if: steps.codeql_capability.outputs.enabled == 'true'
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
         if: steps.codeql_capability.outputs.enabled == 'true'
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4.36.0
         with:
           languages: python
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
         if: steps.codeql_capability.outputs.enabled == 'true'
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4.36.0
       - name: Skip unavailable CodeQL upload
         if: steps.codeql_capability.outputs.enabled != 'true'
         run: echo "CodeQL upload is disabled for this repository until GitHub code scanning is enabled."
@@ -276,8 +276,8 @@ jobs:
       - dependency_review
       - codeql
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Detect release-review automation
@@ -392,7 +392,7 @@ jobs:
 
       - name: Upload release-review artifacts
         if: always() && steps.release_review_tools.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-review-${{ steps.release_id.outputs.release_id }}
           path: .release_review/runs/${{ steps.release_id.outputs.release_id }}
@@ -407,8 +407,8 @@ jobs:
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Validate required emergency fields
@@ -465,7 +465,7 @@ jobs:
           INCIDENT_ID: ${{ inputs.incident_id }}
           REASON: ${{ inputs.reason }}
           EXPIRES_AT: ${{ inputs.expires_at }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9.0.0
         with:
           script: |
             const title = `Emergency override remediation: ${context.runId}`;
