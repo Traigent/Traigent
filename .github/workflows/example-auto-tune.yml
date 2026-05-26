@@ -20,15 +20,24 @@ on:
         description: 'Maximum number of trials'
         required: false
         default: '10'
+        type: number
       budget:
         description: 'Maximum budget in USD'
         required: false
         default: '5.0'
+        type: number
       apply_changes:
         description: 'Allow DVC push and PR creation'
         required: true
         default: false
         type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: example-auto-tune-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   auto-tune:
@@ -73,7 +82,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials via OIDC (for DVC storage)
-        if: github.event.inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
+        if: inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
@@ -88,7 +97,7 @@ jobs:
       - name: Determine environment
         id: env
         env:
-          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           echo "environment=$INPUT_ENVIRONMENT" >> "$GITHUB_OUTPUT"
 
@@ -96,8 +105,8 @@ jobs:
         id: params
         env:
           STEP_ENV_OUTPUT: ${{ steps.env.outputs.environment }}
-          INPUT_MAX_TRIALS: ${{ github.event.inputs.max_trials }}
-          INPUT_BUDGET: ${{ github.event.inputs.budget }}
+          INPUT_MAX_TRIALS: ${{ inputs.max_trials }}
+          INPUT_BUDGET: ${{ inputs.budget }}
         run: |
           # Set defaults based on environment
           if [[ "$STEP_ENV_OUTPUT" == "production" ]]; then
@@ -191,7 +200,7 @@ jobs:
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push to DVC
-        if: success() && github.event.inputs.apply_changes == 'true'
+        if: success() && inputs.apply_changes
         run: |
           # Add optimization results to DVC
           dvc add optimization_results/latest.json
@@ -204,7 +213,7 @@ jobs:
           git diff --staged --quiet || git commit -m "Update optimization results [skip ci]"
 
       - name: Create PR with improvements
-        if: success() && github.event.inputs.apply_changes == 'true' && steps.env.outputs.environment == 'staging'
+        if: success() && inputs.apply_changes && steps.env.outputs.environment == 'staging'
         uses: peter-evans/create-pull-request@4e1beaa7521e8b457b572c090b25bd3db56bf1c5  # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
