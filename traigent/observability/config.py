@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
+from traigent.utils.env_config import is_backend_offline
 
 MAX_BATCH_SIZE = 10_000
 MAX_QUEUE_SIZE = 1_000_000
@@ -37,6 +38,7 @@ class ObservabilityConfig:
     flush_timeout: float = 30.0
     request_timeout: float = 10.0
     enable_atexit_flush: bool = True
+    offline_mode: bool = field(default_factory=is_backend_offline)
     default_environment: str | None = field(
         default_factory=lambda: (
             os.getenv("TRAIGENT_ENVIRONMENT") or os.getenv("ENVIRONMENT")

@@ -84,7 +84,7 @@ class _TraceState:
                 roots.append(observation)
 
         payload_trace = replace(self.trace, observations=roots)
-        return payload_trace.to_dict()
+        return cast(dict[str, Any], payload_trace.to_dict())
 
 
 class _SyncBatchTransport:
@@ -334,6 +334,7 @@ class ObservabilityClient:
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
         self._closed = False
+        self._offline_notice_logged = False
         self._transport = self._create_transport()
 
         if self.config.enable_atexit_flush:
@@ -531,6 +532,9 @@ class ObservabilityClient:
 
     def flush(self, timeout: float | None = None) -> FlushResult:
         timeout = timeout or self.config.flush_timeout
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            return self._offline_flush_result()
         with self._lock:
             trace_ids = list(self._trace_states.keys())
         for trace_id in trace_ids:
@@ -567,6 +571,10 @@ class ObservabilityClient:
                 warnings=[],
             )
 
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            self._closed = True
+            return self._offline_flush_result()
         with self._lock:
             trace_ids = list(self._trace_states.keys())
         for trace_id in trace_ids:
@@ -747,6 +755,10 @@ class ObservabilityClient:
         return self._post_batch_sync(traces)
 
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            return None
+
         payload = json.dumps({"traces": traces}).encode("utf-8")
         http_request = request.Request(
             self.config.ingest_url,
@@ -820,6 +832,11 @@ class ObservabilityClient:
     ) -> dict[str, Any]:
         if self._closed:
             raise ClientError("Observability client is closed")
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            raise ClientError(
+                "Observability backend request skipped because TRAIGENT_OFFLINE_MODE=true"
+            )
         if self._request_sender_override is not None:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
@@ -879,6 +896,8 @@ class ObservabilityClient:
         return data
 
     def _queue_trace_snapshot(self, trace_id: str) -> None:
+        if self.config.offline_mode:
+            return
         with self._lock:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed:
@@ -895,6 +914,25 @@ class ObservabilityClient:
                 trace_id,
                 reason,
             )
+
+    def _log_offline_mode_once(self) -> None:
+        if self._offline_notice_logged:
+            return
+        self._offline_notice_logged = True
+        logger.info("Observability transport in offline mode; traces will not be sent")
+
+    @staticmethod
+    def _offline_flush_result() -> FlushResult:
+        return FlushResult(
+            success=True,
+            items_sent=0,
+            items_pending=0,
+            items_dropped=0,
+            successful_batches=0,
+            failed_batches=0,
+            errors=[],
+            warnings=[],
+        )
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str] = {}
