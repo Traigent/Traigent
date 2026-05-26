@@ -33,6 +33,12 @@ FAKE_TRACE_API_KEY = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_observability_offline_mode(monkeypatch, jwt_development_mode):
+    del jwt_development_mode
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_observability_client_flushes_trace_payloads():
     sent_batches: list[list[dict]] = []
 
@@ -109,6 +115,80 @@ def test_observability_client_flushes_trace_payloads():
     assert (
         sent_trace["observations"][0]["children"][0]["prompt_reference"]["version"] == 1
     )
+
+
+def test_observability_client_offline_mode_does_not_attempt_ingest(monkeypatch, caplog):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    urlopen_calls = {"count": 0}
+
+    def fake_urlopen(*args, **kwargs):
+        urlopen_calls["count"] += 1
+        raise AssertionError("network attempted")
+
+    monkeypatch.setattr(
+        "traigent.observability.client.request.urlopen",
+        fake_urlopen,
+    )
+
+    caplog.set_level(logging.INFO, logger="traigent.observability.client")
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=1,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        )
+    )
+
+    trace_id = client.start_trace("offline-probe", trace_id="trace_offline")
+    client.record_observation(trace_id, name="offline-observation")
+    client.end_trace(trace_id)
+
+    result = client.flush()
+    assert client._post_batch_sync([{"id": "trace_manual"}]) is None
+    close_result = client.close()
+
+    assert client.config.offline_mode is True
+    assert result.success is True
+    assert result.items_sent == 0
+    assert result.items_pending == 0
+    assert result.items_dropped == 0
+    assert result.successful_batches == 0
+    assert result.failed_batches == 0
+    assert close_result.success is True
+    assert close_result.items_sent == 0
+    assert urlopen_calls["count"] == 0
+    assert caplog.text.count("Observability transport in offline mode") == 1
+
+
+def test_observability_client_offline_mode_blocks_request_api():
+    request_calls: list[tuple[str, str, dict | None]] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        request_calls.append((method, path, payload))
+        raise AssertionError("request sender should not be called in offline mode")
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+            offline_mode=True,
+        ),
+        request_sender=request_sender,
+    )
+
+    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+        client.list_sessions()
+
+    client.close()
+
+    assert request_calls == []
 
 
 def test_observability_client_tracks_dropped_payloads_when_buffer_is_full():
@@ -791,16 +871,20 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
             return {
                 "data": {
                     "is_bookmarked": bool(payload.get("is_bookmarked")),
-                    "bookmarked_at": "2026-03-10T14:13:00+00:00"
-                    if payload.get("is_bookmarked")
-                    else None,
-                    "bookmarked_by": "sdk-user"
-                    if payload.get("is_bookmarked")
-                    else None,
+                    "bookmarked_at": (
+                        "2026-03-10T14:13:00+00:00"
+                        if payload.get("is_bookmarked")
+                        else None
+                    ),
+                    "bookmarked_by": (
+                        "sdk-user" if payload.get("is_bookmarked") else None
+                    ),
                     "is_published": bool(payload.get("is_published")),
-                    "published_at": "2026-03-10T14:14:00+00:00"
-                    if payload.get("is_published")
-                    else None,
+                    "published_at": (
+                        "2026-03-10T14:14:00+00:00"
+                        if payload.get("is_published")
+                        else None
+                    ),
                     "published_by": "sdk-user" if payload.get("is_published") else None,
                     "comment_count": 2,
                     "feedback_summary": {"up_count": 1, "down_count": 0},
