@@ -1729,14 +1729,21 @@ class AuthManager:
         # AuthManager-specific: update _api_key if present
         api_key = token_data.get("api_key") or token_data.get("apiKey")
         if api_key and self._validate_key_format(api_key):
-            # SDK#937 fix: do not fabricate any permission grants from
-            # locally available credentials. If the backend does not
-            # return authoritative claims, APIKey.__post_init__ keeps
-            # permissions empty and has_permission() fails closed.
+            raw_permissions = token_data.get("permissions")
+            permissions = (
+                {
+                    str(permission): enabled
+                    for permission, enabled in raw_permissions.items()
+                    if isinstance(enabled, bool)
+                }
+                if isinstance(raw_permissions, dict)
+                else {}
+            )
             self._api_key = APIKey(
                 key=api_key,
                 name="cli",
                 created_at=datetime.now(UTC),
+                permissions=permissions,
             )
 
         return credentials
