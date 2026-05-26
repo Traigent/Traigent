@@ -1572,6 +1572,23 @@ class TestSDK937_NoFabricatedPermissionGrants:
 
         self._assert_no_hardcoded_api_key_permission_grants(auth)
 
+    def test_authmanager_token_data_preserves_explicit_backend_permissions(self):
+        """Backend permission claims may be recorded when explicit and boolean."""
+        manager = AuthManager()
+
+        credentials = manager._build_credentials_from_token_data(
+            {
+                "access_token": "new_access_token_12345",
+                "expires_in": 3600,
+                "api_key": "tg_" + "p" * 61,
+                "permissions": {"optimize": True, "billing": "yes"},
+            }
+        )
+
+        assert credentials.api_key == "tg_" + "p" * 61
+        assert manager._api_key is not None
+        assert manager._api_key.permissions == {"optimize": True}
+
     def test_get_info_for_env_keyed_path_returns_empty_permissions(self):
         """SDK#937: when reporting info for an env-keyed source (the
         SDK never received an APIKey object from the backend), the
