@@ -122,6 +122,16 @@ if env_file.exists() and not _is_truthy_env_value(
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
+_NON_PRODUCTION_ENV_NAMES = {
+    "dev",
+    "development",
+    "local",
+    "test",
+    "testing",
+    "stage",
+    "staging",
+}
+_ENVIRONMENT_KEYS = ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
 
 logger = get_logger(__name__)
 
@@ -140,8 +150,22 @@ def _normalize_str(value: str | None) -> str | None:
     return normalized or None
 
 
+def resolve_environment_name(default: str | None = None) -> str | None:
+    """Return the normalized deployment environment using the canonical key order."""
+    for key in _ENVIRONMENT_KEYS:
+        value = _normalize_str(os.getenv(key))
+        if value is not None:
+            return value.lower()
+    return default.strip().lower() if default else None
+
+
 def _get_environment_name() -> str:
-    """Return normalized environment name with development as default."""
+    """Return normalized ENVIRONMENT value with development as default.
+
+    This intentionally preserves the fail-open semantics of ``is_production``:
+    only the primary ENVIRONMENT key enables production-only behavior.
+    Policy surfaces that must fail closed should use ``treat_as_production``.
+    """
     value = os.getenv("ENVIRONMENT", "development")
     return value.strip().lower()
 
@@ -149,6 +173,17 @@ def _get_environment_name() -> str:
 def is_production() -> bool:
     """Check if running in production mode."""
     return _get_environment_name() in _PRODUCTION_ENV_NAMES
+
+
+def treat_as_production() -> bool:
+    """Return True unless the environment is explicitly non-production.
+
+    Use this for policy surfaces: auth, billing, privacy, rate limiting,
+    feature gates, and dev/test fixtures. Unknown or unset environments are
+    treated as production so misconfiguration denies rather than permits.
+    """
+    env_name = resolve_environment_name(default=None)
+    return env_name not in _NON_PRODUCTION_ENV_NAMES
 
 
 @overload

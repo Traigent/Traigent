@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import NoReturn
 
+from traigent.utils.env_config import resolve_environment_name
+
 
 class SecurityProfile(Enum):
     """High-level security posture for the SDK runtime."""
@@ -46,7 +48,7 @@ def get_security_profile() -> SecurityProfile:
         except ValueError:
             pass
 
-    env = (os.getenv("TRAIGENT_ENV") or "production").strip().lower()
+    env = resolve_environment_name(default="production") or "production"
     if os.getenv("PYTEST_CURRENT_TEST") and explicit is None:
         return SecurityProfile.DEVELOPMENT
     if env in {"dev", "development", "local"}:

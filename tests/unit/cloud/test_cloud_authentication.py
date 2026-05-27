@@ -16,6 +16,7 @@ from traigent.cloud.auth import (
     AuthStatus,
     UnifiedAuthConfig,
 )
+from traigent.security.jwt_validator import ValidationMode
 
 
 def _mock_backend_validate(success: bool = True):
@@ -477,9 +478,12 @@ class TestAuthenticationModes:
         )
 
         # Mock the JWT validator to return success (patched at import location)
-        with patch(
-            "traigent.security.jwt_validator.get_secure_jwt_validator"
-        ) as mock_validator:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.security.jwt_validator.get_secure_jwt_validator"
+            ) as mock_validator,
+        ):
             mock_result = type(
                 "ValidationResult",
                 (),
@@ -498,6 +502,42 @@ class TestAuthenticationModes:
             assert result.success is True
             assert result.status == AuthStatus.AUTHENTICATED
             assert "Authorization" in result.headers
+            mock_validator.assert_called_once_with(ValidationMode.PRODUCTION)
+
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_uses_development_validation_only_for_non_prod_env(
+        self,
+    ):
+        """JWT validation mode should use the fail-closed environment resolver."""
+        manager = AuthManager()
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="header.payload.signature",
+        )
+
+        with (
+            patch.dict("os.environ", {"ENVIRONMENT": "development"}, clear=True),
+            patch(
+                "traigent.security.jwt_validator.get_secure_jwt_validator"
+            ) as mock_validator,
+        ):
+            mock_result = type(
+                "ValidationResult",
+                (),
+                {
+                    "valid": True,
+                    "claims": {"sub": "test"},
+                    "warnings": [],
+                    "expires_at": None,
+                    "error": None,
+                },
+            )()
+            mock_validator.return_value.validate_token.return_value = mock_result
+
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is True
+        mock_validator.assert_called_once_with(ValidationMode.DEVELOPMENT)
 
     @pytest.mark.asyncio
     async def test_authenticate_jwt_missing_token(self):
@@ -1618,6 +1658,6 @@ class TestSDK937_NoFabricatedPermissionGrants:
         assert info is not None
         assert info["name"] == "environment"
         # The honest empty answer:
-        assert (
-            info["permissions"] == {}
-        ), f"env-keyed permissions must be {{}}, got {info['permissions']}"
+        assert info["permissions"] == {}, (
+            f"env-keyed permissions must be {{}}, got {info['permissions']}"
+        )

@@ -194,14 +194,18 @@ class PasswordAuthHandler:
         a stale dev env var leaking into a production deployment.
         """
         try:
-            from traigent.utils.env_config import is_production
+            from traigent.utils.env_config import (
+                resolve_environment_name,
+                treat_as_production,
+            )
 
-            if is_production():
+            if treat_as_production():
                 return False
         except Exception as e:  # pragma: no cover - defensive guard
             logger.debug(f"Could not resolve production env: {e}")
+            return False
 
-        env = os.getenv("TRAIGENT_ENV", "").strip().lower()
+        env = resolve_environment_name(default="") or ""
         if env in {"dev", "development", "local"}:
             return True
 

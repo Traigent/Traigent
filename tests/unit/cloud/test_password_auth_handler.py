@@ -31,12 +31,47 @@ def test_default_backend_no_longer_implies_dev_mode():
 
 
 def test_explicit_local_backend_still_enables_dev_mode():
-    """Explicit localhost backend configuration should still enable dev mode."""
+    """Explicit localhost backend config should enable dev mode only in non-production."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict(
+        "os.environ",
+        {
+            "ENVIRONMENT": "development",
+            "TRAIGENT_BACKEND_URL": "http://localhost:5000",
+        },
+        clear=True,
+    ):
+        assert handler._is_dev_mode_enabled() is True
+
+
+def test_local_backend_without_non_prod_env_does_not_enable_dev_mode():
+    """A localhost backend URL alone must not opt policy code out of production."""
     handler = PasswordAuthHandler()
 
     with patch.dict(
         "os.environ",
         {"TRAIGENT_BACKEND_URL": "http://localhost:5000"},
+        clear=True,
+    ):
+        assert handler._is_dev_mode_enabled() is False
+
+
+def test_dev_mode_flag_without_non_prod_env_does_not_enable_dev_mode():
+    """TRAIGENT_DEV_MODE alone should fail closed in unknown deployments."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict("os.environ", {"TRAIGENT_DEV_MODE": "1"}, clear=True):
+        assert handler._is_dev_mode_enabled() is False
+
+
+def test_dev_mode_flag_with_non_prod_env_enables_dev_mode():
+    """TRAIGENT_DEV_MODE can opt in only after an explicit non-production env."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict(
+        "os.environ",
+        {"ENVIRONMENT": "development", "TRAIGENT_DEV_MODE": "1"},
         clear=True,
     ):
         assert handler._is_dev_mode_enabled() is True

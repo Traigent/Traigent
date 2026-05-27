@@ -1160,18 +1160,16 @@ class AuthManager:
         # Validate JWT token
         try:
             # Use secure JWT validation
-            # Determine validation mode based on environment
-            import os
-
             from traigent.security.jwt_validator import (
                 ValidationMode,
                 get_secure_jwt_validator,
             )
+            from traigent.utils.env_config import treat_as_production
 
             validation_mode = (
-                ValidationMode.DEVELOPMENT
-                if os.getenv("TRAIGENT_ENV") == "development"
-                else ValidationMode.PRODUCTION
+                ValidationMode.PRODUCTION
+                if treat_as_production()
+                else ValidationMode.DEVELOPMENT
             )
 
             validator = get_secure_jwt_validator(validation_mode)
