@@ -1405,7 +1405,12 @@ class AuthManager:
         if unsafe_url_reason:
             return unsafe_url_reason
 
-        headers = {"X-API-Key": api_key}
+        validation_payload = {"api_key": api_key}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+        }
 
         if not AIOHTTP_AVAILABLE:
             try:
@@ -1416,6 +1421,7 @@ class AuthManager:
                         self._validate_api_key_with_backend_sync,
                         url,
                         headers,
+                        validation_payload,
                     )
             except ImportError:
                 return "requests library not available for backend validation"
@@ -1433,6 +1439,7 @@ class AuthManager:
                 async with session.post(
                     url,
                     headers=headers,
+                    json=validation_payload,
                     allow_redirects=False,
                 ) as response:
                     if response.status == 200:
@@ -1507,6 +1514,7 @@ class AuthManager:
         self,
         url: str,
         headers: dict[str, str],
+        validation_payload: dict[str, str],
     ) -> str | None:
         """Requests fallback for backend key validation when aiohttp is unavailable."""
         import requests
@@ -1515,6 +1523,7 @@ class AuthManager:
             response = requests.post(
                 url,
                 headers=headers,
+                json=validation_payload,
                 timeout=15,
                 allow_redirects=False,
             )

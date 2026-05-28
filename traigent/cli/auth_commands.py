@@ -1104,13 +1104,21 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
         return False
 
     url = f"{backend_api_url}/keys/validate"
-    headers = {"X-API-Key": key}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-API-Key": key,
+    }
 
     try:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=15)
         ) as session:
-            async with session.post(url, headers=headers) as response:
+            async with session.post(
+                url,
+                headers=headers,
+                json={"api_key": key},
+            ) as response:
                 if response.status == 200:
                     return _handle_200_response(await _safe_parse_json(response))
 
