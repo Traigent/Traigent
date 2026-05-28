@@ -227,7 +227,18 @@ jobs:
         env:
           INPUT_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          echo "environment=$INPUT_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import os
+          import pathlib
+
+          environment = os.environ["INPUT_ENVIRONMENT"].strip().lower()
+          allowed = {"development", "staging", "production"}
+          if environment not in allowed:
+              raise SystemExit(f"Unsupported environment: {environment!r}")
+
+          with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"environment={environment}\n")
+          PY
 
       - name: Set tuning parameters
         id: params

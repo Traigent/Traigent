@@ -161,12 +161,32 @@ jobs:
         REF: ${{ github.ref }}
         JOB_STATUS: ${{ job.status }}
       run: |
-        echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Version**: $(python -c "import traigent; print(traigent.__version__)")" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Environment**: $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Trigger**: $TRIGGER" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Ref**: $REF" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Status**: $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
+        python - <<'PY'
+        import os
+        import pathlib
+        import re
+
+        import traigent
+
+
+        def markdown_value(value: str, *, default: str = "unknown") -> str:
+            normalized = re.sub(r"[^A-Za-z0-9 ._:/+\-]", " ", value or default).strip()
+            return normalized[:160] or default
+
+
+        summary = pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"])
+        lines = [
+            "## Deployment Summary",
+            f"- **Version**: {markdown_value(traigent.__version__)}",
+            f"- **Environment**: {markdown_value(os.environ.get('ENVIRONMENT', 'unknown'))}",
+            f"- **Trigger**: {markdown_value(os.environ.get('TRIGGER', 'unknown'))}",
+            f"- **Ref**: {markdown_value(os.environ.get('REF', 'unknown'))}",
+            f"- **Status**: {markdown_value(os.environ.get('JOB_STATUS', 'unknown'))}",
+            "",
+        ]
+        with summary.open("a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+        PY
 
   verify-publication:
     needs: publish
