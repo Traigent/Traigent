@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_backend_offline, resolve_environment_name
+from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
 
 # HTTP Content-Type header constant
@@ -55,7 +55,7 @@ class TrialOperations:
             self.client.backend_config.backend_base_url
             or BackendConfig.get_backend_url()
         )
-        env = resolve_environment_name(default="production")
+        env = resolve_environment_label(default="production")
         return f"backend_url={backend_url}, env={env}"
 
     @staticmethod

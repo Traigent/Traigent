@@ -1164,11 +1164,11 @@ class AuthManager:
                 ValidationMode,
                 get_secure_jwt_validator,
             )
-            from traigent.utils.env_config import treat_as_production
+            from traigent.utils.env_config import treat_as_production_policy
 
             validation_mode = (
                 ValidationMode.PRODUCTION
-                if treat_as_production()
+                if treat_as_production_policy()
                 else ValidationMode.DEVELOPMENT
             )
 

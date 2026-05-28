@@ -81,7 +81,7 @@ def enable_mock_mode_for_quickstart() -> None:
         # close the TOCTOU window where another thread could mutate
         # ENVIRONMENT to "production" between an unlocked check and
         # ``_enabled = True``). A correctness re-check elsewhere
-        # (``is_mock_llm()`` recomputes ``is_production()`` live) makes
+        # (``is_mock_llm()`` recomputes ``is_production_strict_env()`` live) makes
         # exploitability low, but tightening the invariant here is
         # cheap.
         env_name = os.environ.get("ENVIRONMENT", "development").strip().lower()

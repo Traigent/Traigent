@@ -196,15 +196,17 @@ class PasswordAuthHandler:
         try:
             from traigent.utils.env_config import (
                 resolve_environment_name,
-                treat_as_production,
+                treat_as_production_policy,
             )
 
-            if treat_as_production():
+            if treat_as_production_policy():
                 return False
         except Exception as e:  # pragma: no cover - defensive guard
             logger.debug(f"Could not resolve production env: {e}")
             return False
 
+        # The resolver import succeeded above; otherwise this method already
+        # failed closed before any dev/mock-auth checks.
         env = resolve_environment_name(default="") or ""
         if env in {"dev", "development", "local"}:
             return True

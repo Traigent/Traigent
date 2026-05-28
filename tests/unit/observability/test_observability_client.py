@@ -50,6 +50,19 @@ def test_observability_config_uses_canonical_environment_resolution(monkeypatch)
     assert config.default_environment == "staging"
 
 
+def test_observability_config_does_not_emit_unknown_environment_content(monkeypatch):
+    """Unknown environment aliases should not become trace metadata."""
+    sentinel = "alice@example.com"
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("TRAIGENT_ENV", sentinel)
+
+    config = ObservabilityConfig(backend_origin="http://localhost:5000")
+
+    assert config.default_environment is None
+    assert sentinel not in json.dumps(config.__dict__)
+
+
 def test_observability_client_flushes_trace_payloads():
     sent_batches: list[list[dict]] = []
 

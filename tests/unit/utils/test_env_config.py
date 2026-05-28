@@ -82,22 +82,39 @@ def test_resolve_environment_name_uses_canonical_key_order(monkeypatch):
     assert env_config.resolve_environment_name(default=None) == "production"
 
 
-def test_treat_as_production_fails_closed_for_unknown_or_unset(monkeypatch):
+def test_resolve_environment_label_drops_unknown_values(monkeypatch):
+    """Telemetry labels should not copy arbitrary env var content."""
+    _reset_env(monkeypatch)
+    monkeypatch.setenv("TRAIGENT_ENV", "alice@example.com")
+
+    assert env_config.resolve_environment_label(default=None) is None
+    assert env_config.resolve_environment_label(default="production") == "production"
+
+
+def test_treat_as_production_policy_fails_closed_for_unknown_or_unset(monkeypatch):
     """Policy surfaces deny unless the deployment is explicitly non-production."""
     _reset_env(monkeypatch)
-    assert env_config.treat_as_production() is True
+    assert env_config.treat_as_production_policy() is True
 
     monkeypatch.setenv("ENVIRONMENT", "qa")
-    assert env_config.treat_as_production() is True
+    assert env_config.treat_as_production_policy() is True
 
 
 @pytest.mark.parametrize("key", ["ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"])
-def test_treat_as_production_accepts_explicit_non_prod_aliases(monkeypatch, key):
+def test_treat_as_production_policy_accepts_explicit_non_prod_aliases(monkeypatch, key):
     """Legacy environment keys should opt policy checks into non-production only explicitly."""
     _reset_env(monkeypatch)
     monkeypatch.setenv(key, "development")
 
-    assert env_config.treat_as_production() is False
+    assert env_config.treat_as_production_policy() is False
+
+
+def test_legacy_policy_alias_warns(monkeypatch):
+    """The old helper name remains compatible but points callers to the explicit policy name."""
+    _reset_env(monkeypatch)
+
+    with pytest.deprecated_call(match="treat_as_production_policy"):
+        assert env_config.treat_as_production() is True
 
 
 def test_get_jwt_secret_warns_on_short_secret(monkeypatch):

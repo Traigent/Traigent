@@ -131,6 +131,7 @@ _NON_PRODUCTION_ENV_NAMES = {
     "stage",
     "staging",
 }
+_KNOWN_ENVIRONMENT_NAMES = _PRODUCTION_ENV_NAMES | _NON_PRODUCTION_ENV_NAMES | {"ci"}
 _ENVIRONMENT_KEYS = ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
 
 logger = get_logger(__name__)
@@ -159,23 +160,59 @@ def resolve_environment_name(default: str | None = None) -> str | None:
     return default.strip().lower() if default else None
 
 
+def resolve_environment_label(default: str | None = None) -> str | None:
+    """Return a telemetry-safe environment label.
+
+    Unlike ``resolve_environment_name``, this only returns known deployment
+    labels. Unknown env values may come from shell state and should not be
+    copied into logs or observability metadata.
+    """
+    env_name = resolve_environment_name(default=None)
+    if env_name in _KNOWN_ENVIRONMENT_NAMES:
+        return env_name
+    return default.strip().lower() if default else None
+
+
 def _get_environment_name() -> str:
     """Return normalized ENVIRONMENT value with development as default.
 
-    This intentionally preserves the fail-open semantics of ``is_production``:
-    only the primary ENVIRONMENT key enables production-only behavior.
-    Policy surfaces that must fail closed should use ``treat_as_production``.
+    This intentionally preserves the fail-open semantics of
+    ``is_production_strict_env``: only the primary ENVIRONMENT key enables
+    production-only behavior.
     """
     value = os.getenv("ENVIRONMENT", "development")
     return value.strip().lower()
 
 
-def is_production() -> bool:
-    """Check if running in production mode."""
+def is_production_strict_env() -> bool:
+    """Return True only for exact production ENVIRONMENT aliases.
+
+    This is a legacy compatibility check for developer conveniences such as
+    mock-mode blocking. Policy surfaces should use
+    ``treat_as_production_policy`` so unknown environments fail closed.
+    """
     return _get_environment_name() in _PRODUCTION_ENV_NAMES
 
 
-def treat_as_production() -> bool:
+def is_production() -> bool:
+    """Deprecated legacy production check.
+
+    This function intentionally keeps strict ENVIRONMENT-only semantics for
+    backward compatibility. Use ``is_production_strict_env`` when that exact
+    behavior is needed, or ``treat_as_production_policy`` for auth, billing,
+    privacy, and security gates.
+    """
+    warnings.warn(
+        "is_production() is a legacy strict ENVIRONMENT-only check. "
+        "Use is_production_strict_env() for exact legacy behavior or "
+        "treat_as_production_policy() for security policy surfaces.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return is_production_strict_env()
+
+
+def treat_as_production_policy() -> bool:
     """Return True unless the environment is explicitly non-production.
 
     Use this for policy surfaces: auth, billing, privacy, rate limiting,
@@ -184,6 +221,17 @@ def treat_as_production() -> bool:
     """
     env_name = resolve_environment_name(default=None)
     return env_name not in _NON_PRODUCTION_ENV_NAMES
+
+
+def treat_as_production() -> bool:
+    """Deprecated alias for ``treat_as_production_policy``."""
+    warnings.warn(
+        "treat_as_production() was renamed to treat_as_production_policy() "
+        "to distinguish fail-closed policy checks from exact env checks.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return treat_as_production_policy()
 
 
 @overload
@@ -269,14 +317,14 @@ def get_api_key(provider: str) -> str | None:
 
 def get_database_url() -> str:
     """Get database URL from environment."""
-    if is_production():
+    if is_production_strict_env():
         return get_env_var("DATABASE_URL", required=True)
     return get_env_var("DATABASE_URL", default="postgresql://localhost:5432/traigent")
 
 
 def get_redis_url() -> str:
     """Get Redis URL from environment."""
-    if is_production():
+    if is_production_strict_env():
         return get_env_var("REDIS_URL", required=True)
     return get_env_var("REDIS_URL", default="redis://localhost:6379")
 
@@ -362,9 +410,9 @@ def is_mock_llm() -> bool:
     # Production hard-block runs FIRST — even if the in-code flag was
     # flipped on in a previous shell-script step or a misconfigured
     # deployment, ``is_mock_llm()`` must NEVER report True in production.
-    # ``is_production()`` is recomputed live from ``os.environ`` so late
+    # ``is_production_strict_env()`` is recomputed live from ``os.environ`` so late
     # mutation cannot bypass the guard.
-    if is_production():
+    if is_production_strict_env():
         return False
     from traigent.testing import is_mock_mode_enabled
 

@@ -170,7 +170,7 @@ jobs:
 
 
         def markdown_value(value: str, *, default: str = "unknown") -> str:
-            normalized = re.sub(r"[\r\n|`<>]", " ", value or default).strip()
+            normalized = re.sub(r"[^A-Za-z0-9 ._:/+\-]", " ", value or default).strip()
             return normalized[:160] or default
 
 

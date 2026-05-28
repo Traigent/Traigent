@@ -28,7 +28,7 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import resolve_environment_name
+from traigent.utils.env_config import resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -105,7 +105,7 @@ class SessionOperations:
             self.client.backend_config.backend_base_url
             or BackendConfig.get_backend_url()
         )
-        env = resolve_environment_name(default="production")
+        env = resolve_environment_label(default="production")
         api_key_preview = None
         auth = getattr(self.client, "auth_manager", None)
         if auth and hasattr(auth, "auth") and hasattr(auth.auth, "get_api_key_preview"):
