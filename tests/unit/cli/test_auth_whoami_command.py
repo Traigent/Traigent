@@ -38,6 +38,8 @@ class _FakeResponse:
 
 
 class _FakeSession:
+    last_post_kwargs = None
+
     def __init__(
         self,
         *,
@@ -65,6 +67,11 @@ class _FakeSession:
         if self._error is not None:
             raise self._error
         assert self._response is not None
+        type(self).last_post_kwargs = {
+            "url": url,
+            "headers": headers,
+            **kwargs,
+        }
         return self._response
 
 
@@ -74,6 +81,7 @@ def _install_fake_aiohttp(
     response: _FakeResponse | None = None,
     error: Exception | None = None,
 ) -> Any:
+    _FakeSession.last_post_kwargs = None
     fake_module = types.SimpleNamespace()
 
     class _ClientError(Exception):
@@ -120,6 +128,26 @@ def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "✅ Valid" in result.output
     assert "Category" in result.output
     assert "authenticated" in result.output
+
+
+def test_whoami_posts_json_payload_to_validate_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_key = "sk_" + "a" * 43  # pragma: allowlist secret
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(status=200, json_payload={"valid": True, "data": {}}),
+    )
+
+    result = _run_whoami(monkeypatch, api_key=api_key)
+
+    assert result.exit_code == 0
+    assert _FakeSession.last_post_kwargs is not None
+    assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
+    assert (
+        _FakeSession.last_post_kwargs["headers"]["Content-Type"]
+        == "application/json"
+    )
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])
