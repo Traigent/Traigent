@@ -1027,10 +1027,12 @@ def whoami(key: str) -> None:
     console.print("\n[bold blue]🔍 API Key Information[/bold blue]\n")
 
     # Validate format
-    valid_prefixes = ("tg_", "uk_")
+    valid_prefixes = ("tg_", "uk_", "sk_", "ak_", "tk_")
     if not any(key.startswith(prefix) for prefix in valid_prefixes):
         console.print("[red]❌ Invalid API key format[/red]")
-        console.print("API keys should start with 'tg_' or 'uk_'\n")
+        console.print(
+            "API keys should start with 'tg_', 'uk_', 'sk_', 'ak_', or 'tk_'\n"
+        )
         sys.exit(1)
 
     # Check with backend

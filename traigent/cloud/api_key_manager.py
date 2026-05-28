@@ -293,6 +293,9 @@ class APIKeyManager:
         Supported formats:
         - `tg_`: Standard Traigent API keys (64 characters total)
         - `uk_`: User/utility keys issued by the backend (46 characters total)
+        - `sk_`: Service keys issued by the backend (46 characters total)
+        - `ak_`: Admin keys issued by the backend (46 characters total)
+        - `tk_`: Temporary keys issued by the backend (46 characters total)
 
         Args:
             key: API key to validate
@@ -307,6 +310,9 @@ class APIKeyManager:
         prefix_lengths = {
             "tg_": 64,  # Standard Traigent API keys
             "uk_": 46,  # User/utility keys from backend
+            "sk_": 46,  # Service keys from backend
+            "ak_": 46,  # Admin keys from backend
+            "tk_": 46,  # Temporary keys from backend
         }
 
         # Find matching prefix

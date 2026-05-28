@@ -122,6 +122,27 @@ def test_whoami_valid_key_200(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "authenticated" in result.output
 
 
+@pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])
+def test_whoami_accepts_backend_issued_prefixes(
+    monkeypatch: pytest.MonkeyPatch, prefix: str
+) -> None:
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(
+            status=200,
+            json_payload={
+                "valid": True,
+                "data": {"email": "dev@traigent.ai"},
+            },
+        ),
+    )
+
+    key = prefix + "a" * 43
+    result = _run_whoami(monkeypatch, api_key=key)
+    assert result.exit_code == 0
+    assert "✅ Valid" in result.output
+
+
 @pytest.mark.parametrize("status", [401, 403])
 def test_whoami_auth_failures_classified(
     monkeypatch: pytest.MonkeyPatch, status: int
