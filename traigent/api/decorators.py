@@ -1484,11 +1484,11 @@ def _coerce_auto_detect_tvars_min_confidence(value: Any) -> str:
     from traigent.tuned_variables.detection_types import DetectionConfidence
 
     if isinstance(value, DetectionConfidence):
-        return value.value
+        return str(value.value)
     if isinstance(value, str):
         normalized = value.strip().lower()
         try:
-            return DetectionConfidence(normalized).value
+            return str(DetectionConfidence(normalized).value)
         except ValueError as exc:
             raise TypeError(
                 "auto_detect_tvars_min_confidence must be one of "
@@ -1581,7 +1581,7 @@ def _suggest_detected_tvars(
                 func.__name__,
                 suggestions,
             )
-        return config_space
+        return cast("dict[str, Any]", config_space)
     except Exception:
         logger.debug("auto_detect_tvars: detection failed", exc_info=True)
         return None
@@ -1616,6 +1616,9 @@ def optimize(  # NOSONAR(S107)
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
+    # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -2285,6 +2288,9 @@ def optimize(  # NOSONAR(S107)
             promotion_gate=promotion_gate,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            # Guided-generation defaults (consumed by optimize_with_guidance)
+            prompt_rewrite=prompt_rewrite,
+            grow_dataset=grow_dataset,
             **combined_runtime_overrides,
         )
 

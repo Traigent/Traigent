@@ -295,6 +295,10 @@ class OptimizedFunction:
             "best_config_stale_ok_ttl_seconds", None
         )
         self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
+        # Guided-generation defaults configured at decoration time; consumed by
+        # optimize_with_guidance when not overridden at the call site.
+        self.prompt_rewrite_options = kwargs.pop("prompt_rewrite", None)
+        self.grow_dataset_options = kwargs.pop("grow_dataset", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -2146,8 +2150,18 @@ class OptimizedFunction:
                 return spec
             return cls(**spec)
 
-        prompt_opts = _coerce(prompt_rewrite, PromptRewriteOptions)
-        growth_opts = _coerce(grow_dataset, DatasetGrowthOptions)
+        prompt_opts = _coerce(
+            (
+                prompt_rewrite
+                if prompt_rewrite is not None
+                else self.prompt_rewrite_options
+            ),
+            PromptRewriteOptions,
+        )
+        growth_opts = _coerce(
+            grow_dataset if grow_dataset is not None else self.grow_dataset_options,
+            DatasetGrowthOptions,
+        )
 
         config_space = dict(self.configuration_space or {})
         dataset = self._load_dataset()
