@@ -73,6 +73,7 @@ from traigent.config.types import (
     InjectionMode,
     is_traigent_disabled,
     resolve_execution_mode,
+    validate_execution_mode,
 )
 from traigent.core.objectives import (
     ObjectiveSchema,
@@ -84,7 +85,11 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
-from traigent.utils.exceptions import TVLValidationError, ValidationError
+from traigent.utils.exceptions import (
+    ConfigurationError,
+    TVLValidationError,
+    ValidationError,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -164,14 +169,23 @@ class ExecutionOptions(BaseModel):
         cloud_fallback_policy: Legacy/future cloud fallback behavior. It does
             not enable ``execution_mode="cloud"`` today; cloud remote execution
             is not available yet.
-        reps_per_trial: Number of repetitions per configuration for statistical stability.
-            Running multiple repetitions helps account for LLM non-determinism.
-            Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
-        reps_aggregation: How to aggregate metrics across repetitions.
-            Options: "mean" (default), "median", "min", "max".
+        reps_per_trial: Number of repetitions per configuration for statistical
+            stability. Only the default ``1`` (no repetition) is available in the
+            OSS SDK; passing any other value raises ``pydantic.ValidationError`` at
+            construction time. Per-configuration repetition requires Traigent
+            Enterprise (contact ``sales@traigent.ai``).
+        reps_aggregation: How to aggregate metrics across repetitions. Only the
+            default ``"mean"`` is available in the OSS SDK; passing any other
+            value raises ``pydantic.ValidationError`` at
+            construction time. Per-configuration repetition aggregation
+            requires Traigent Enterprise (contact ``sales@traigent.ai``).
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        validate_assignment=True,
+    )
 
     execution_mode: str = "edge_analytics"
     local_storage_path: str | None = None
@@ -196,16 +210,64 @@ class ExecutionOptions(BaseModel):
     hybrid_api_auto_discover_tvars: bool = False
     cloud_fallback_policy: str | None = None
 
+    @field_validator("reps_per_trial")
+    @classmethod
+    def _reject_non_default_reps_per_trial(cls, v: int) -> int:
+        # Per-configuration repetition is enterprise-gated; fail at the contract
+        # boundary (construction) instead of late at runtime so callers see the
+        # gate before the @optimize decorator is applied. See issue #931.
+        if v != 1:
+            raise ValueError(
+                "reps_per_trial != 1 is not available in this version. "
+                "Per-configuration repetitions for statistical stability "
+                "require Traigent Enterprise. Contact sales@traigent.ai."
+            )
+        return v
+
+    @field_validator("reps_aggregation")
+    @classmethod
+    def _reject_non_default_reps_aggregation(cls, v: str) -> str:
+        if v != "mean":
+            raise ValueError(
+                "reps_aggregation != 'mean' is not available in this version. "
+                "Per-configuration repetition aggregation requires Traigent "
+                "Enterprise. Contact sales@traigent.ai."
+            )
+        return v
+
 
 class MockModeOptions(BaseModel):
-    """Fine-grained configuration for mock mode behaviour."""
+    """Fine-grained configuration for mock mode behaviour.
+
+    .. deprecated::
+        **All MockModeOptions fields are inert in the current SDK.**
+        Mock mode is enabled by calling ``traigent.testing.enable_mock_mode_for_quickstart()``
+        from local tutorial or test code, not via this object. The
+        legacy ``TRAIGENT_MOCK_LLM=true`` env var remains available outside
+        production for shell fixtures and backwards compatibility, but
+        direct user-set env-var activation emits ``DeprecationWarning``. ``enabled``,
+        ``override_evaluator``, ``base_accuracy``, and ``variance`` are
+        retained on the schema for backwards compatibility so existing
+        serialized configs round-trip without breaking, but the
+        optimization pipeline ignores all of them. In mock mode the LLM
+        call layer is intercepted with canned/deterministic responses;
+        the scoring path (built-in metrics, custom evaluators, and the
+        ``LocalEvaluator`` accuracy calculator) is unchanged — there is
+        no random-score fabrication. Walkthrough scripts under
+        ``walkthrough/mock/`` use their own helper ``get_mock_accuracy``
+        for example scoring; that helper is example-only and is not part
+        of the SDK runtime behavior.
+
+        This deprecation is doc-only. The fields will be removed in a
+        future major version. See issue #874.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-    enabled: bool = True
-    override_evaluator: bool = True
-    base_accuracy: float = 0.75
-    variance: float = 0.25
+    enabled: bool = True  # inert; see class docstring
+    override_evaluator: bool = True  # inert; see class docstring
+    base_accuracy: float = 0.75  # inert; see class docstring
+    variance: float = 0.25  # inert; see class docstring
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
@@ -364,6 +426,13 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Config persistence (Phase 1 of optimization-persistency feature)
     "auto_load_best": False,  # Auto-load best config on decoration
     "load_from": None,  # Explicit path to load config from
+    "config_id": None,  # Stable best-config identifier
+    "best_config_source": "off",  # off|repo|cloud|repo_then_cloud|cloud_then_repo
+    "best_config_strict": False,  # Fail startup/refresh on invalid active source
+    "best_config_cache_dir": None,  # Local cloud best-config cache
+    "best_config_cache_ttl_seconds": 24 * 60 * 60,  # Fresh cache window
+    "best_config_stale_ok_ttl_seconds": None,  # Offline stale-cache reuse window
+    "enable_auto_load_dev_logs": None,  # Back-compat dev-log auto-load toggle
     # Tuned variable auto-detection
     "auto_detect_tvars": False,  # Log suggestions when no configuration_space is set
     "auto_detect_tvars_mode": None,  # "off" | "suggest" | "apply"
@@ -466,6 +535,13 @@ class LegacyOptimizeArgs:
     # Config persistence
     auto_load_best: bool | None = None
     load_from: str | None = None
+    config_id: str | None = None
+    best_config_source: str | None = None
+    best_config_strict: bool | None = None
+    best_config_cache_dir: str | None = None
+    best_config_cache_ttl_seconds: int | None = None
+    best_config_stale_ok_ttl_seconds: int | None = None
+    enable_auto_load_dev_logs: bool | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -545,6 +621,13 @@ class LegacyOptimizeArgs:
             ("global_measures", self.global_measures),
             ("auto_load_best", self.auto_load_best),
             ("load_from", self.load_from),
+            ("config_id", self.config_id),
+            ("best_config_source", self.best_config_source),
+            ("best_config_strict", self.best_config_strict),
+            ("best_config_cache_dir", self.best_config_cache_dir),
+            ("best_config_cache_ttl_seconds", self.best_config_cache_ttl_seconds),
+            ("best_config_stale_ok_ttl_seconds", self.best_config_stale_ok_ttl_seconds),
+            ("enable_auto_load_dev_logs", self.enable_auto_load_dev_logs),
         ]
 
 
@@ -922,11 +1005,18 @@ def _resolve_execution_bundle_options(
     base_options: ResolvedExecutionOptions,
     defaults: dict[str, Any],
 ) -> ResolvedExecutionOptions:
-    """Resolve execution options from bundle and validate enterprise features."""
+    """Resolve execution options from bundle.
+
+    Enterprise-gated fields (``reps_per_trial``, ``reps_aggregation``) are
+    rejected at ``ExecutionOptions`` construction time via field validators
+    (see issue #931), so this resolver only handles option merging.
+    """
     if execution_bundle is None:
         return base_options
 
-    # Validate enterprise-gated features
+    # Defense in depth: pydantic field_validator on ExecutionOptions already
+    # rejects non-default values at construction time. This runtime check
+    # catches any path that constructs the bundle through a different route.
     if execution_bundle.reps_per_trial != 1:
         raise NotImplementedError(
             "reps_per_trial is not available in this version. "
@@ -1089,18 +1179,20 @@ def _resolve_execution_mode_enum(
     execution_mode: str | ExecutionMode,
     privacy_enabled: bool | None,
 ) -> tuple[ExecutionMode, bool | None]:
-    """Resolve execution mode enum and handle privacy deprecation."""
+    """Resolve execution mode enum against the public support contract."""
     try:
-        execution_mode_enum = resolve_execution_mode(execution_mode)
+        requested_mode = resolve_execution_mode(execution_mode)
+        execution_mode_enum = validate_execution_mode(requested_mode)
+    except ConfigurationError:
+        raise
     except (TypeError, ValueError) as exc:
-        raise ValueError(str(exc)) from None
+        raise ConfigurationError(str(exc)) from None
 
-    if execution_mode_enum is ExecutionMode.PRIVACY:
+    if requested_mode is ExecutionMode.PRIVACY:
         logger.warning(
             "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
             "with privacy_enabled=True. Mapping automatically."
         )
-        execution_mode_enum = ExecutionMode.HYBRID
         if privacy_enabled is None:
             privacy_enabled = True
 
@@ -1517,6 +1609,13 @@ def optimize(  # NOSONAR(S107)
     # Config persistence
     auto_load_best: bool = False,
     load_from: str | None = None,
+    config_id: str | None = None,
+    best_config_source: str = "off",
+    best_config_strict: bool = False,
+    best_config_cache_dir: str | None = None,
+    best_config_cache_ttl_seconds: int = 24 * 60 * 60,
+    best_config_stale_ok_ttl_seconds: int | None = None,
+    enable_auto_load_dev_logs: bool | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -1612,8 +1711,16 @@ def optimize(  # NOSONAR(S107)
 
         Mock mode options:
             mock: Grouped mock-mode preferences (MockModeOptions or dict).
-            mock_mode_config: Dict controlling mock behaviour keys such as
-                ``enabled``, ``override_evaluator``, ``base_accuracy``, ``variance``.
+            mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
+                no longer reads ``enabled``, ``override_evaluator``,
+                ``base_accuracy``, or ``variance`` from this dict. Use
+                ``traigent.testing.enable_mock_mode_for_quickstart()`` in
+                local tutorial or test code to enable mock mode. The legacy
+                ``TRAIGENT_MOCK_LLM`` env var remains supported outside
+                production for shell fixtures but emits ``DeprecationWarning``
+                when users set it directly. The parameter is retained for
+                config round-trip;
+                see issue #874.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
@@ -1628,15 +1735,22 @@ def optimize(  # NOSONAR(S107)
             legacy: Adapter for the legacy decorator signature. Accepts either a
                 LegacyOptimizeArgs instance or a dict with the historic keyword
                 arguments. Values provided here merge with the explicit parameters.
-            **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
-                ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``metric_limit`` (deprecated alias: ``budget_limit``), ``plateau_window``,
-                ``cost_limit``, and ``cost_approved``.
-                Tuned-variable detection controls are also available via runtime
-                overrides: ``auto_detect_tvars`` (bool), ``auto_detect_tvars_mode``
-                (``off|suggest|apply``), ``auto_detect_tvars_min_confidence``
-                (``high|medium|low``), and optional include/exclude filters via
-                ``auto_detect_tvars_include`` / ``auto_detect_tvars_exclude``.
+            **runtime_overrides: Stop-condition and budget knobs accepted by
+                the decorator. The currently supported keys are:
+                ``metric_limit``, ``metric_name``,
+                ``metric_include_pruned``,
+                ``budget_limit`` (deprecated alias for ``metric_limit``),
+                ``budget_metric``,
+                ``budget_include_pruned``, ``plateau_window``,
+                ``plateau_epsilon``, ``cost_limit``, ``cost_approved``,
+                ``tie_breakers``, and ``tvl_parameter_agents``.
+                Note: ``algorithm`` and ``max_trials`` are first-class
+                parameters of this decorator (not in ``**runtime_overrides``);
+                ``timeout`` is supported on
+                ``OptimizedFunction.optimize(timeout=...)`` at call time,
+                not on the decorator. Tuned-variable detection controls
+                (``auto_detect_tvars`` and friends) are available as
+                first-class parameters.
 
     Warning:
         Optimization runs multiple LLM calls. Use
@@ -1779,6 +1893,13 @@ def optimize(  # NOSONAR(S107)
         "global_measures": global_measures,
         "auto_load_best": auto_load_best,
         "load_from": load_from,
+        "config_id": config_id,
+        "best_config_source": best_config_source,
+        "best_config_strict": best_config_strict,
+        "best_config_cache_dir": best_config_cache_dir,
+        "best_config_cache_ttl_seconds": best_config_cache_ttl_seconds,
+        "best_config_stale_ok_ttl_seconds": best_config_stale_ok_ttl_seconds,
+        "enable_auto_load_dev_logs": enable_auto_load_dev_logs,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1861,6 +1982,17 @@ def optimize(  # NOSONAR(S107)
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    config_id_value = combined_settings["config_id"]
+    best_config_source_value = combined_settings["best_config_source"]
+    best_config_strict_value = combined_settings["best_config_strict"]
+    best_config_cache_dir_value = combined_settings["best_config_cache_dir"]
+    best_config_cache_ttl_seconds_value = combined_settings[
+        "best_config_cache_ttl_seconds"
+    ]
+    best_config_stale_ok_ttl_seconds_value = combined_settings[
+        "best_config_stale_ok_ttl_seconds"
+    ]
+    enable_auto_load_dev_logs_value = combined_settings["enable_auto_load_dev_logs"]
     algorithm_value = combined_settings["algorithm"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
@@ -2142,6 +2274,13 @@ def optimize(  # NOSONAR(S107)
             # Config persistence
             auto_load_best=auto_load_best_config,
             load_from=load_from_config,
+            config_id=config_id_value,
+            best_config_source=best_config_source_value,
+            best_config_strict=best_config_strict_value,
+            best_config_cache_dir=best_config_cache_dir_value,
+            best_config_cache_ttl_seconds=best_config_cache_ttl_seconds_value,
+            best_config_stale_ok_ttl_seconds=best_config_stale_ok_ttl_seconds_value,
+            enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
             # Optimizer limits (extracted from combined_settings)

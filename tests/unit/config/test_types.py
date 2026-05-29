@@ -2,7 +2,12 @@
 
 import pytest
 
-from traigent.config.types import TraigentConfig, validate_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    TraigentConfig,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 
@@ -92,7 +97,6 @@ class TestTraigentConfig:
         expected = {
             "model": "GPT-4o",
             "temperature": 0.7,
-            "execution_mode": "edge_analytics",
             "custom_key": "custom_value",
         }
         assert result == expected
@@ -105,6 +109,11 @@ class TestTraigentConfig:
         assert "model" in result
         assert "temperature" not in result
         assert "max_tokens" not in result
+
+    def test_to_dict_excludes_default_execution_mode(self):
+        """Default edge_analytics must not leak into partial config merges."""
+        assert TraigentConfig().to_dict() == {}
+        assert TraigentConfig(model="GPT-4o").to_dict() == {"model": "GPT-4o"}
 
     def test_from_dict(self):
         """Test creating config from dictionary."""
@@ -142,6 +151,26 @@ class TestTraigentConfig:
         assert merged.temperature == 0.8
         assert merged.max_tokens == 1000
 
+    def test_merge_partial_config_preserves_execution_mode(self):
+        """A default-valued override must not reset a hybrid base config."""
+        base = TraigentConfig(execution_mode="hybrid", privacy_enabled=True)
+        override = TraigentConfig(model="GPT-4o")
+
+        merged = base.merge(override)
+
+        assert merged.model == "GPT-4o"
+        assert merged.execution_mode == "hybrid"
+        assert merged.privacy_enabled is True
+
+    def test_merge_dict_can_explicitly_reset_execution_mode_to_default(self):
+        """Dict overrides preserve explicitly supplied default values."""
+        base = TraigentConfig(execution_mode="hybrid", privacy_enabled=True)
+
+        merged = base.merge({"execution_mode": "edge_analytics"})
+
+        assert merged.execution_mode == "edge_analytics"
+        assert merged.privacy_enabled is True
+
     def test_repr(self):
         """Test string representation."""
         config = TraigentConfig(model="GPT-4o", temperature=0.7)
@@ -167,7 +196,44 @@ class TestTraigentConfig:
 class TestValidateExecutionMode:
     """Tests for validate_execution_mode function."""
 
+    def test_resolve_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+        """Omitted execution mode follows the public SDK default."""
+        assert resolve_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
+
+    def test_validate_execution_mode_none_defaults_to_edge_analytics(self) -> None:
+        """Validation should accept the omitted-mode public default."""
+        assert validate_execution_mode(None) is ExecutionMode.EDGE_ANALYTICS
+
     def test_invalid_mode_string_raises_configuration_error(self) -> None:
         """Invalid mode string should raise ConfigurationError, not ValueError."""
         with pytest.raises(ConfigurationError, match="No such mode 'nonexistent_mode'"):
             validate_execution_mode("nonexistent_mode")
+
+    def test_privacy_alias_validates_as_hybrid(self) -> None:
+        """Privacy remains a legacy alias for hybrid."""
+        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
+
+    def test_removed_standard_mode_raises_configuration_error(self) -> None:
+        """The removed standard mode is rejected everywhere."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            validate_execution_mode("standard")
+
+    def test_reserved_cloud_mode_raises_configuration_error(self) -> None:
+        """Cloud remote execution is reserved and fails closed."""
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            validate_execution_mode("cloud")
+
+    def test_config_privacy_alias_normalizes_to_hybrid(self) -> None:
+        """TraigentConfig normalizes the privacy alias and enables privacy."""
+        config = TraigentConfig(execution_mode="privacy")
+
+        assert config.execution_mode == ExecutionMode.HYBRID.value
+        assert config.privacy_enabled is True
+
+    def test_config_rejects_removed_and_reserved_modes(self) -> None:
+        """TraigentConfig follows the same execution-mode contract."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            TraigentConfig(execution_mode="standard")
+
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            TraigentConfig(execution_mode="cloud")

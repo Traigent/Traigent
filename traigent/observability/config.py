@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
+from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 
 MAX_BATCH_SIZE = 10_000
 MAX_QUEUE_SIZE = 1_000_000
+MAX_BATCH_BYTES = 10 * 1024 * 1024
 MAX_BUFFER_AGE_SECONDS = 3600.0
 MAX_TIMEOUT_SECONDS = 600.0
 
@@ -32,13 +34,13 @@ class ObservabilityConfig:
     batch_size: int = 100
     max_buffer_age: float = 5.0
     max_queue_size: int = 10_000
+    max_batch_bytes: int = 4 * 1024 * 1024
     flush_timeout: float = 30.0
     request_timeout: float = 10.0
     enable_atexit_flush: bool = True
+    offline_mode: bool = field(default_factory=is_backend_offline)
     default_environment: str | None = field(
-        default_factory=lambda: (
-            os.getenv("TRAIGENT_ENVIRONMENT") or os.getenv("ENVIRONMENT")
-        )
+        default_factory=lambda: resolve_environment_label(default=None)
     )
     default_release: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_RELEASE")
@@ -71,6 +73,12 @@ class ObservabilityConfig:
         if self.max_queue_size > MAX_QUEUE_SIZE:
             raise ValueError(
                 f"max_queue_size must be less than or equal to {MAX_QUEUE_SIZE}"
+            )
+        if self.max_batch_bytes <= 0:
+            raise ValueError("max_batch_bytes must be greater than 0")
+        if self.max_batch_bytes > MAX_BATCH_BYTES:
+            raise ValueError(
+                f"max_batch_bytes must be less than or equal to {MAX_BATCH_BYTES}"
             )
         if self.flush_timeout <= 0:
             raise ValueError("flush_timeout must be greater than 0")

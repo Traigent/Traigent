@@ -20,14 +20,16 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -50,6 +52,50 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+resolve_within = _SAFE_HELPERS.resolve_within
+UntrustedPathError = _SAFE_HELPERS.UntrustedPathError
+
+
+# Filesystem root every user-supplied config path is resolved against.
+_BASE_DIR = Path(__file__).resolve().parent
+_CONFIGS_ROOT = _BASE_DIR / "configs"
+_CONFIGS_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_config_path(config_path: str | os.PathLike[str] | None) -> Path | None:
+    """Resolve a user-supplied config path strictly under configs/.
+
+    Returns ``None`` if the input is empty or escapes the allowed root so
+    callers fall back to safe defaults rather than reading attacker-chosen
+    files.
+    """
+    if not config_path:
+        return None
+    try:
+        return resolve_within(_CONFIGS_ROOT, config_path)
+    except UntrustedPathError:
+        return None
+
+
 class OptimizedChatService:
     """Production-ready chat service with Traigent configuration management."""
 
@@ -57,15 +103,17 @@ class OptimizedChatService:
         """Initialize service with configuration management.
 
         Args:
-            config_path: Path to saved configuration file (optional)
+            config_path: Path to saved configuration file (optional). Paths
+            are resolved strictly under ``configs/``; escapes fall back to
+            the default config.
         """
-        self.config_path = config_path
+        self.config_path = _resolve_config_path(config_path)
         self.config = self._load_configuration()
         self._setup_optimized_functions()
 
     def _load_configuration(self) -> dict[str, Any]:
-        """Load configuration based on environment."""
-        if self.config_path and os.path.exists(self.config_path):
+        """Load configuration from the resolved config path."""
+        if self.config_path and self.config_path.exists():
             with open(self.config_path) as f:
                 return json.load(f)
 
@@ -162,26 +210,38 @@ class OptimizedChatService:
         """Hot-swap configuration without restarting.
 
         Args:
-            new_config_path: Path to new configuration file
+            new_config_path: Path to new configuration file. Resolved
+            strictly under ``configs/``; escapes raise ``UntrustedPathError``.
         """
-        with open(new_config_path) as f:
+        resolved = _resolve_config_path(new_config_path)
+        if resolved is None:
+            raise UntrustedPathError(
+                f"Refusing to load config from {new_config_path!r}: outside configs/"
+            )
+        with open(resolved) as f:
             self.config = json.load(f)
 
         # Update all optimized functions
         self.generate_greeting.set_config(self.config)
         self.generate_response.set_config(self.config)
 
-        print(f"Configuration updated from {new_config_path}")
+        print(f"Configuration updated from {resolved}")
 
     def save_current_config(self, save_path: str):
         """Save current configuration to file.
 
         Args:
-            save_path: Path where to save configuration
+            save_path: Path where to save configuration. Resolved strictly
+            under ``configs/``; escapes raise ``UntrustedPathError``.
         """
-        with open(save_path, "w") as f:
+        resolved = _resolve_config_path(save_path)
+        if resolved is None:
+            raise UntrustedPathError(
+                f"Refusing to save config to {save_path!r}: outside configs/"
+            )
+        with open(resolved, "w") as f:
             json.dump(self.config, f, indent=2)
-        print(f"Configuration saved to {save_path}")
+        print(f"Configuration saved to {resolved}")
 
 
 # Production usage examples
@@ -240,7 +300,8 @@ def demo_production_usage():
     greeting = service.generate_greeting("Alice")
     print(f"Greeting: {greeting[:100]}...")
 
-    # Example 2: Load saved configuration
+    # Example 2: Load saved configuration. Demo writes go into configs/ so
+    # they live inside the same allowed root the loader resolves against.
     print("\n2. Using Saved Configuration:")
     saved_config = {
         "model": "gpt-4o-mini",
@@ -250,8 +311,8 @@ def demo_production_usage():
         "creativity_mode": "medium",
     }
 
-    # Save config
-    with open("production_config.json", "w") as f:
+    # Save config under the configs/ root.
+    with open(_CONFIGS_ROOT / "production_config.json", "w") as f:
         json.dump(saved_config, f, indent=2)
 
     # Create service with saved config
@@ -271,7 +332,7 @@ def demo_production_usage():
         "creativity_mode": "high",
     }
 
-    with open("updated_config.json", "w") as f:
+    with open(_CONFIGS_ROOT / "updated_config.json", "w") as f:
         json.dump(new_config, f, indent=2)
 
     prod_service.update_config("updated_config.json")

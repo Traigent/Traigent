@@ -33,10 +33,13 @@ class TestConfigurationBuilder:
         self.builder.global_config = {"execution_mode": "privacy"}
 
         with patch(
-            "traigent.api.config_builder.get_optimize_default", return_value="cloud"
+            "traigent.api.config_builder.get_optimize_default",
+            return_value="edge_analytics",
         ):
-            result = self.builder._resolve_execution_mode("cloud", "cloud")
-            assert result == "privacy"  # Should use global config
+            result = self.builder._resolve_execution_mode(
+                "edge_analytics", "edge_analytics"
+            )
+            assert result == "hybrid"  # privacy alias from global config
 
     def test_resolve_execution_mode_explicit(self):
         """Test execution mode resolution with explicit values."""
@@ -45,7 +48,7 @@ class TestConfigurationBuilder:
         result = self.builder._resolve_execution_mode(
             "edge_analytics", "edge_analytics"
         )
-        assert result == "privacy"  # Matches global config when value equals default
+        assert result == "hybrid"  # privacy alias from global config
 
     def test_resolve_injection_mode_parameter_valid(self):
         """Test injection mode resolution for parameter mode."""
@@ -141,16 +144,12 @@ class TestModuleFunctions:
         """Set up test fixtures."""
         clear_global_config()
 
-    def test_build_optimize_configuration(self):
-        """Test configuration building function."""
+    def test_build_optimize_configuration_rejects_cloud(self):
+        """Cloud is reserved and fails closed in config building."""
         params = OptimizeParameters(eval_dataset="test.jsonl", execution_mode="cloud")
 
-        config = build_optimize_configuration(params, "cloud")
-
-        assert config["eval_dataset"] == "test.jsonl"
-        assert config["execution_mode"] == "cloud"
-        assert "func" in config
-        assert config["objectives"] is None
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            build_optimize_configuration(params, "cloud")
 
     def test_global_config_functions(self):
         """Test global configuration management functions."""
@@ -215,4 +214,5 @@ class TestConfigurationBuilderIntegration:
         assert config["config_param"] == "llm_config"
         assert config["parallel_config"].example_concurrency == 10
         assert config["parallel_config"].trial_concurrency == 3
-        assert config["execution_mode"] == "privacy"  # From global config
+        assert config["execution_mode"] == "hybrid"  # privacy alias from global config
+        assert config["privacy_enabled"] is True

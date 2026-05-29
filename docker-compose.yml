@@ -13,6 +13,10 @@ services:
       - TRAIGENT_MOCK_LLM=true
       - TRAIGENT_OFFLINE_MODE=true
       - TRAIGENT_LOG_LEVEL=DEBUG
+      # Local-dev opt-out of the production-fail-closed credential check
+      # (SDK#896). Production deployments MUST instead set
+      # TRAIGENT_ENCRYPTION_KEY and leave TRAIGENT_ENV unset.
+      - TRAIGENT_ENV=development
     command: ["bash"]
     stdin_open: true
     tty: true

@@ -9,12 +9,10 @@ Tests error scenarios including:
 """
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
-from traigent.api.decorators import optimize
-from traigent.utils.exceptions import (
-    ConfigurationError,
-    ValidationError,
-)
+from traigent.api.decorators import ExecutionOptions, optimize
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 from .test_base import DecoratorTestBase
 
@@ -283,11 +281,36 @@ class TestEdgeCases(DecoratorTestBase):
 
 
 class TestEnterpriseGatedFeatures(DecoratorTestBase):
-    """Test enterprise-gated features raise NotImplementedError."""
+    """Test enterprise-gated reps options are rejected at construction time.
 
-    def test_reps_per_trial_raises_not_implemented(self):
-        """Test that reps_per_trial raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc:
+    See issue #931: ``reps_per_trial`` and ``reps_aggregation`` were documented
+    as public configuration but raised ``NotImplementedError`` late in
+    ``_resolve_execution_bundle_options``. The contract is now enforced at the
+    ``ExecutionOptions`` Pydantic boundary so users learn about the gate before
+    the decorator runs.
+    """
+
+    def test_reps_per_trial_rejected_at_construction(self):
+        """ExecutionOptions(reps_per_trial!=1) fails at construction."""
+        with pytest.raises(PydanticValidationError) as exc:
+            ExecutionOptions(reps_per_trial=3)
+
+        message = str(exc.value)
+        assert "reps_per_trial" in message
+        assert "Traigent Enterprise" in message
+
+    def test_reps_aggregation_rejected_at_construction(self):
+        """ExecutionOptions(reps_aggregation!='mean') fails at construction."""
+        with pytest.raises(PydanticValidationError) as exc:
+            ExecutionOptions(reps_aggregation="median")
+
+        message = str(exc.value)
+        assert "reps_aggregation" in message
+        assert "Traigent Enterprise" in message
+
+    def test_reps_per_trial_dict_rejected_at_decoration(self):
+        """Passing reps_per_trial via execution={...} fails at decoration."""
+        with pytest.raises(PydanticValidationError) as exc:
 
             @optimize(
                 configuration_space={"model": ["gpt-3.5", "gpt-4"]},
@@ -296,12 +319,13 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
             def test_func(text: str) -> str:
                 return text
 
-        assert "reps_per_trial is not available" in str(exc.value)
-        assert "Traigent Enterprise" in str(exc.value)
+        message = str(exc.value)
+        assert "reps_per_trial" in message
+        assert "Traigent Enterprise" in message
 
-    def test_reps_aggregation_raises_not_implemented(self):
-        """Test that reps_aggregation raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc:
+    def test_reps_aggregation_dict_rejected_at_decoration(self):
+        """Passing reps_aggregation via execution={...} fails at decoration."""
+        with pytest.raises(PydanticValidationError) as exc:
 
             @optimize(
                 configuration_space={"model": ["gpt-3.5", "gpt-4"]},
@@ -310,8 +334,9 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
             def test_func(text: str) -> str:
                 return text
 
-        assert "reps_aggregation is not available" in str(exc.value)
-        assert "Traigent Enterprise" in str(exc.value)
+        message = str(exc.value)
+        assert "reps_aggregation" in message
+        assert "Traigent Enterprise" in message
 
     def test_default_reps_values_work(self):
         """Test that default reps values (1, 'mean') work fine."""
@@ -326,3 +351,21 @@ class TestEnterpriseGatedFeatures(DecoratorTestBase):
         # Should not raise - defaults are allowed
         result = test_func("hello")
         assert result == "hello"
+
+    def test_default_reps_construction_succeeds(self):
+        """ExecutionOptions() and explicit defaults must still construct."""
+        # Implicit defaults
+        ExecutionOptions()
+        # Explicit defaults
+        ExecutionOptions(reps_per_trial=1, reps_aggregation="mean")
+
+    def test_reps_assignment_rejected_after_construction(self):
+        """Assignment validation preserves the enterprise gate after construction."""
+        options = ExecutionOptions()
+
+        with pytest.raises(PydanticValidationError) as exc:
+            options.reps_per_trial = 3
+
+        message = str(exc.value)
+        assert "reps_per_trial" in message
+        assert "Traigent Enterprise" in message

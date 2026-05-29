@@ -9,7 +9,10 @@ remains local and only metrics are transmitted to the backend session API.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import (
+    CloudRemoteExecutionUnavailableError,
+    CloudServiceError,
+)
 from traigent.cloud.models import (
     NextTrialRequest,
     OptimizationSession,
@@ -193,7 +196,23 @@ class PrivacyOperations:
             previous_results: Previous trial results (metrics only, no data)
 
         Returns:
-            Next trial suggestion with configuration and dataset subset indices
+            A :class:`TrialSuggestion` when the backend returned one; ``None``
+            when the backend explicitly returned no suggestion (e.g. the
+            optimization is complete or no more trials are needed) **or** when
+            an unexpected internal error occurred (logged and swallowed).
+
+        Raises:
+            CloudRemoteExecutionUnavailableError: When the cloud remote
+                suggestion service is not implemented yet for this
+                deployment. Callers MUST distinguish this from a ``None``
+                return — capability unavailability is a structurally
+                different state from "no suggestion available" and should
+                route to a local optimizer or surface to the user. See
+                issue #888.
+            CloudServiceError: For other typed backend failures (auth,
+                transient remote errors). Callers should treat these as
+                non-final and may retry or fail loud, but MUST NOT treat
+                them as optimization completion.
         """
         logger.debug(f"Getting next trial for privacy session {session_id}")
 
@@ -218,16 +237,42 @@ class PrivacyOperations:
                         response.suggestion.trial_id,  # Trial ID is the config run ID
                     )
 
-                # Update session status
+                # Touch the session's updated_at so progress UIs reflect activity,
+                # but do NOT increment completed_trials — a suggestion is not a
+                # completion. The completion count advances in
+                # submit_privacy_trial_results when the result is accepted.
+                # See issue #889 for the reasoning (overcount on abandoned /
+                # failed-before-result suggestions distorted progress, billing,
+                # and stop conditions).
                 with self.client._active_sessions_lock:
                     session = self.client._active_sessions.get(session_id)
                     if session:
-                        session.completed_trials += 1
                         session.updated_at = datetime.now(UTC)
 
             return response.suggestion
 
+        except CloudRemoteExecutionUnavailableError:
+            # This subclass would also propagate through CloudServiceError below;
+            # keep the explicit arm so the public capability-gap contract is
+            # visible to readers and grep-able in tests. Remote suggestion
+            # capability is intentionally not implemented yet.
+            # This is structurally different from "no more trials" or a
+            # transient backend failure — callers MUST be able to tell them
+            # apart so they can route to a local optimizer instead of
+            # silently treating optimization as complete. Re-raise the typed
+            # exception so the public boundary surfaces the capability gap.
+            # See issue #888.
+            raise
+        except CloudServiceError:
+            # Other typed cloud failures (auth, transient remote errors) are
+            # already documented public exceptions; re-raise them too so
+            # callers can distinguish them from `None == optimization complete`.
+            raise
         except Exception as e:
+            # Genuinely unexpected error: log and return None as the legacy
+            # "no suggestion" sentinel. Anything that should be visible at
+            # the public boundary should have a typed CloudServiceError
+            # subclass and propagate via the branches above.
             logger.error(f"Failed to get next trial for session {session_id}: {e}")
             return None
 
@@ -303,6 +348,20 @@ class PrivacyOperations:
                     f"Failed to submit trial results for session {session_id}, trial {trial_id}"
                 )
                 return False
+
+            # Advance the completion counter exactly once, on result acceptance.
+            # Moved here from get_next_privacy_trial per issue #889.
+            with self.client._active_sessions_lock:
+                session = self.client._active_sessions.get(session_id)
+                if session:
+                    session.completed_trials += 1
+                    session.updated_at = datetime.now(UTC)
+                else:
+                    logger.warning(
+                        "Session %s accepted by backend but not found locally; "
+                        "completed_trials not incremented",
+                        session_id,
+                    )
 
             return True
 

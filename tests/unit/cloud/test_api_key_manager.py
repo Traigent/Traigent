@@ -256,9 +256,18 @@ class TestValidateFormat:
         assert len(key) == 46  # Verify length
         assert manager.validate_format(key) is True
 
+    @pytest.mark.parametrize("prefix", ["uk_", "sk_", "ak_", "tk_"])
+    def test_validate_format_accepts_backend_issued_prefixes(
+        self, manager: APIKeyManager, prefix: str
+    ) -> None:
+        """Backend-issued API key families are 46 characters including prefix."""
+        key = prefix + "a" * 43
+        assert len(key) == 46
+        assert manager.validate_format(key) is True
+
     def test_validate_format_wrong_prefix(self, manager: APIKeyManager) -> None:
         """Test validation rejects wrong prefix."""
-        key = "ak_" + "a" * 61
+        key = "zz_" + "a" * 61
         assert manager.validate_format(key) is False
 
     def test_validate_format_wrong_length(self, manager: APIKeyManager) -> None:

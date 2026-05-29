@@ -113,7 +113,9 @@ async def test_finalize_session_uses_lock(monkeypatch):
     client._active_sessions["session-1"] = session
 
     ops = SessionOperations(client)
-    monkeypatch.setattr(ops, "_finalize_session_via_api", AsyncMock(return_value=False))
+    # _finalize_session_via_api now returns dict|None; None = endpoint
+    # unavailable (formerly False under the dropped bool contract).
+    monkeypatch.setattr(ops, "_finalize_session_via_api", AsyncMock(return_value=None))
 
     await ops.finalize_session("session-1")
     assert lock.enter_count == 1  # Lock entered exactly once for finalization

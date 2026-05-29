@@ -11,7 +11,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    InjectionMode,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
 
@@ -44,7 +49,12 @@ class OptimizeParameters:
 class ParameterValidator:
     """Validates and normalizes parameters for the optimize decorator."""
 
-    VALID_EXECUTION_MODES = {mode.value for mode in ExecutionMode}
+    VALID_EXECUTION_MODES = {
+        ExecutionMode.EDGE_ANALYTICS.value,
+        ExecutionMode.PRIVACY.value,
+        ExecutionMode.HYBRID.value,
+        ExecutionMode.HYBRID_API.value,
+    }
     VALID_INJECTION_MODES = {
         InjectionMode.CONTEXT,
         InjectionMode.PARAMETER,
@@ -65,7 +75,8 @@ class ParameterValidator:
             ValidationError: If any parameter is invalid
         """
         # Validate individual parameter groups
-        self._validate_execution_mode(params.execution_mode)
+        execution_mode_enum = self._validate_execution_mode(params.execution_mode)
+        requested_execution_mode = resolve_execution_mode(params.execution_mode)
         self._validate_injection_mode(params.injection_mode)
         self._validate_dataset(params.eval_dataset)
         self._validate_objectives(params.objectives)
@@ -75,30 +86,29 @@ class ParameterValidator:
 
         # Normalize parameters
         params.injection_mode = self._normalize_injection_mode(params.injection_mode)
-        params.execution_mode = self._normalize_execution_mode(params.execution_mode)
+        if (
+            requested_execution_mode is ExecutionMode.PRIVACY
+            and params.privacy_enabled is None
+        ):
+            params.privacy_enabled = True
+        params.execution_mode = execution_mode_enum.value
 
         return params
 
-    def _validate_execution_mode(self, execution_mode: str | ExecutionMode) -> None:
+    def _validate_execution_mode(
+        self, execution_mode: str | ExecutionMode
+    ) -> ExecutionMode:
         """Validate execution mode parameter."""
         from traigent.utils.exceptions import ConfigurationError
 
         try:
-            normalized = resolve_execution_mode(execution_mode)
+            return validate_execution_mode(execution_mode)
         except (TypeError, ValueError, ConfigurationError) as exc:
+            valid_modes = ", ".join(sorted(self.VALID_EXECUTION_MODES))
             raise ValidationError(
-                f"Invalid execution_mode '{execution_mode}'. {exc}"
+                f"Invalid execution_mode '{execution_mode}'. {exc}. "
+                f"Valid modes: {valid_modes}"
             ) from exc
-
-        if normalized.value not in self.VALID_EXECUTION_MODES:
-            raise ValidationError(
-                f"Invalid execution_mode '{execution_mode}'. "
-                f"Must be one of: {', '.join(self.VALID_EXECUTION_MODES)}"
-            )
-
-    def _normalize_execution_mode(self, execution_mode: str | ExecutionMode) -> str:
-        """Normalize execution mode string for internal consistency."""
-        return resolve_execution_mode(execution_mode).value
 
     def _validate_injection_mode(self, injection_mode: str | InjectionMode) -> None:
         """Validate injection mode parameter."""

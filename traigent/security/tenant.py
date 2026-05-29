@@ -301,7 +301,31 @@ class Tenant:
 
     def is_active(self) -> bool:
         """Check if tenant is active."""
-        return self.status == TenantStatus.ACTIVE
+        if self.status == TenantStatus.ACTIVE:
+            return True
+        if self.status != TenantStatus.TRIAL:
+            return False
+        trial_ends_at = self._trial_ends_at_utc()
+        if trial_ends_at is None:
+            return False
+        return datetime.now(UTC) <= trial_ends_at
+
+    def is_trial_expired(self) -> bool:
+        """Check whether a trial tenant has passed its configured end time."""
+        if self.status != TenantStatus.TRIAL:
+            return False
+        trial_ends_at = self._trial_ends_at_utc()
+        if trial_ends_at is None:
+            return True
+        return datetime.now(UTC) > trial_ends_at
+
+    def _trial_ends_at_utc(self) -> datetime | None:
+        """Return trial expiry as an aware UTC datetime."""
+        if self.trial_ends_at is None:
+            return None
+        if self.trial_ends_at.tzinfo is None:
+            return self.trial_ends_at.replace(tzinfo=UTC)
+        return self.trial_ends_at.astimezone(UTC)
 
     def check_quota(self, resource_type: str, amount: int = 1) -> bool:
         """Check if tenant has quota for resource."""

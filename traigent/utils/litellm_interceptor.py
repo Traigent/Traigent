@@ -48,7 +48,8 @@ def patch_litellm_for_metadata_capture() -> bool:
 
             if MockAdapter.is_mock_enabled("litellm"):
                 mock_data = MockAdapter.get_mock_response(
-                    "litellm", model=kwargs.get("model", args[0] if args else "mock-model")
+                    "litellm",
+                    model=kwargs.get("model", args[0] if args else "mock-model"),
                 )
                 return mock_data
 
@@ -89,7 +90,8 @@ def patch_litellm_for_metadata_capture() -> bool:
 
             if MockAdapter.is_mock_enabled("litellm"):
                 mock_data = MockAdapter.get_mock_response(
-                    "litellm", model=kwargs.get("model", args[0] if args else "mock-model")
+                    "litellm",
+                    model=kwargs.get("model", args[0] if args else "mock-model"),
                 )
                 return mock_data
 

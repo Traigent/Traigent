@@ -1,8 +1,10 @@
 """Unit tests for LocalEvaluator with focus on token estimation and metrics flow."""
 
+from contextlib import contextmanager
+
 import pytest
 
-from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.base import Dataset, EvaluationExample, ExampleResult
 from traigent.evaluators.local import LocalEvaluator
 
 
@@ -416,6 +418,7 @@ class TestPromptTemplateFallbackLength:
             result.example_results[0].metrics["input_tokens"] == expected_input_tokens
         )
 
+
     @pytest.mark.asyncio
     async def test_privacy_uses_rendered_prompt_length_for_prompt_length_based_tokens(
         self, monkeypatch
@@ -476,6 +479,52 @@ class TestPromptTemplateFallbackLength:
         assert (
             result.example_results[0].metrics["input_tokens"] == expected_input_tokens
         )
+
+
+    def test_privacy_tracing_redacts_expected_and_actual_outputs(self, monkeypatch):
+        """Privacy mode must not send example content through tracing hooks."""
+        captured: dict[str, dict] = {}
+
+        @contextmanager
+        def span_fn(**kwargs):
+            captured["span"] = kwargs
+            yield object()
+
+        def record_fn(_span, **kwargs):
+            captured["record"] = kwargs
+
+        monkeypatch.setattr(
+            "traigent.evaluators.base._get_tracing_functions",
+            lambda: (span_fn, record_fn, True),
+        )
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"],
+            detailed=True,
+            privacy_enabled=True,
+            execution_mode="edge_analytics",
+        )
+        example = EvaluationExample(
+            input_data={"prompt": "customer secret"},
+            expected_output="private expected answer",
+        )
+        result = ExampleResult(
+            example_id="example-1",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output="private actual answer",
+            metrics={"accuracy": 1.0},
+            execution_time=0.01,
+            success=True,
+        )
+
+        with evaluator._example_trace_context("example-1", 0, example) as span:
+            evaluator._record_example_trace(span, result)
+
+        assert captured["span"]["input_data"] is None
+        assert captured["span"]["expected_output"] is None
+        assert captured["record"]["actual_output"] is None
+        assert captured["record"]["metrics"] == {"accuracy": 1.0}
 
     @pytest.mark.asyncio
     async def test_privacy_format_failure_falls_back_to_additive_length(

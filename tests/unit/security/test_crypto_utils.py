@@ -720,3 +720,125 @@ class TestSecurityProperties:
         # Only base64 encoded data should be present
         assert encrypted["salt"] in encrypted_str
         assert encrypted["data"] in encrypted_str
+
+
+class TestProductionFailClosed_SDK896:
+    """SDK#896 anti-regression: get_credential_storage() must fail closed
+    in production rather than silently dropping to base64-only fallback.
+
+    The pre-fix behavior caught any RuntimeError from
+    SecureCredentialStorage.__init__ and returned a
+    FallbackCredentialStorage. That silently base64-encoded credentials
+    on a host where TRAIGENT_ENCRYPTION_KEY was unset — exactly the
+    "fail-open in production" pattern Codex review flagged.
+
+    These tests pin both directions: production must raise; explicit
+    dev environments may still use fallback.
+    """
+
+    def setup_method(self):
+        """Reset the singleton before each test (other tests cache it)."""
+        import traigent.security.crypto_utils as crypto_module
+
+        crypto_module._credential_storage_instance = None
+
+    def test_production_without_encryption_key_raises(self, monkeypatch):
+        """Production env (default if no env var is set) + no
+        TRAIGENT_ENCRYPTION_KEY must raise RuntimeError. Previously this
+        silently returned base64-only FallbackCredentialStorage."""
+        # Force production semantics by clearing all env classifiers.
+        monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="TRAIGENT_ENCRYPTION_KEY"):
+            get_credential_storage()
+
+    def test_production_with_encryption_key_returns_secure(self, monkeypatch):
+        """Production env + TRAIGENT_ENCRYPTION_KEY set returns the real
+        SecureCredentialStorage (not the fallback)."""
+        monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        monkeypatch.setenv("TRAIGENT_ENCRYPTION_KEY", "x" * 64)
+
+        storage = get_credential_storage()
+        assert isinstance(storage, SecureCredentialStorage)
+
+    def test_development_without_encryption_key_falls_back(self, monkeypatch):
+        """In an explicit dev environment, missing key still allows the
+        fallback (preserves local-dev workflow). The fallback is the
+        ONLY thing that changed direction in SDK#896 — production is
+        now strict, dev is unchanged."""
+        monkeypatch.setenv("TRAIGENT_ENV", "development")
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+
+        storage = get_credential_storage()
+        # In dev with cryptography available, SecureCredentialStorage's
+        # __init__ generates an ephemeral key with a warning — and that's
+        # what we accept here. The point is no RuntimeError.
+        assert storage is not None
+
+    def test_test_env_without_encryption_key_does_not_raise(self, monkeypatch):
+        """`TRAIGENT_ENV=test` is the env pytest uses for security tests
+        themselves — must not raise so the test suite can run."""
+        monkeypatch.setenv("TRAIGENT_ENV", "test")
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+
+        storage = get_credential_storage()
+        assert storage is not None
+
+    def test_production_without_cryptography_library_raises(self, monkeypatch):
+        """Codex Q4 of PR #964: when `CRYPTOGRAPHY_AVAILABLE=False`
+        in production, `get_credential_storage()` must raise instead
+        of silently using `FallbackCredentialStorage` (base64 only)."""
+        import traigent.security.crypto_utils as crypto_module
+
+        monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENVIRONMENT", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+        monkeypatch.setattr(crypto_module, "CRYPTOGRAPHY_AVAILABLE", False)
+
+        with pytest.raises(RuntimeError, match="cryptography library is required"):
+            get_credential_storage()
+
+    def test_environment_classification_consistent_between_init_and_factory(
+        self, monkeypatch
+    ):
+        """Codex Q3 of PR #964: __init__ and the factory's classifier
+        helper must agree on environment normalization (whitespace,
+        case). Previously __init__ did `.lower()` only, while the
+        helper did `.strip().lower()`, so `" test "` would be
+        classified as non-prod by the factory but prod by __init__.
+        Now both go through `_is_non_production_environment()`."""
+        import traigent.security.crypto_utils as crypto_module
+
+        # Whitespace-padded value: must be treated as non-prod by both
+        # paths since they share the helper.
+        monkeypatch.setenv("TRAIGENT_ENV", "  test  ")
+        monkeypatch.delenv("TRAIGENT_ENCRYPTION_KEY", raising=False)
+        # If the two checks disagree, this would either raise from
+        # __init__ (treating as prod) OR succeed silently with the
+        # factory falling back to FallbackCredentialStorage. With
+        # the shared helper, both classify as non-prod → no raise.
+        storage = get_credential_storage()
+        assert storage is not None
+
+    def test_factory_tail_guard_fails_closed_if_singleton_remains_unset(
+        self, monkeypatch
+    ):
+        """Greptile PR #964: the terminal guard must not silently return
+        FallbackCredentialStorage if a future refactor leaves the singleton
+        unset after the lock body."""
+        import traigent.security.crypto_utils as crypto_module
+
+        monkeypatch.setenv("TRAIGENT_ENV", "development")
+        monkeypatch.setattr(crypto_module, "CRYPTOGRAPHY_AVAILABLE", True)
+        monkeypatch.setattr(crypto_module, "SecureCredentialStorage", lambda: None)
+
+        with pytest.raises(
+            RuntimeError, match="Credential storage initialization failed"
+        ):
+            get_credential_storage()

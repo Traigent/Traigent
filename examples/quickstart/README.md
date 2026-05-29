@@ -21,6 +21,14 @@ export TRAIGENT_MOCK_LLM=true
 python examples/quickstart/01_simple_qa.py
 ```
 
+### Workshop Demo (`01_simple_qa_workshop.py`)
+
+Self-contained Python port of the JS workshop demo — deterministic grid search over 9 trials, no API keys needed.
+
+```bash
+python examples/quickstart/01_simple_qa_workshop.py
+```
+
 ### 2. Customer Support with RAG (`02_customer_support_rag.py`)
 
 Full example with RAG integration for customer support optimization.

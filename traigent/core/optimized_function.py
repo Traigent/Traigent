@@ -41,7 +41,12 @@ from typing import Any, cast
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
-from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    TraigentConfig,
+    resolve_execution_mode,
+    validate_execution_mode,
+)
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.objectives import (
@@ -266,7 +271,7 @@ class OptimizedFunction:
             config_param: Parameter name for injection_mode="parameter"
             auto_override_frameworks: Enable automatic framework parameter overrides
             framework_targets: List of framework class names to override (e.g., ["openai.OpenAI"])
-            execution_mode: Execution mode ("edge_analytics", "privacy", "standard", "cloud")
+            execution_mode: Execution mode ("edge_analytics", "hybrid", "hybrid_api"; "privacy" is a legacy alias)
             local_storage_path: Custom path for local storage (Edge Analytics mode only)
             minimal_logging: Use minimal logging in Edge Analytics mode
             custom_evaluator: Custom evaluation function for advanced use cases
@@ -279,6 +284,17 @@ class OptimizedFunction:
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
+        self._config_id = kwargs.pop("config_id", None)
+        self._best_config_source = kwargs.pop("best_config_source", "off")
+        self._best_config_strict = kwargs.pop("best_config_strict", False)
+        self._best_config_cache_dir = kwargs.pop("best_config_cache_dir", None)
+        self._best_config_cache_ttl_seconds = kwargs.pop(
+            "best_config_cache_ttl_seconds", 24 * 60 * 60
+        )
+        self._best_config_stale_ok_ttl_seconds = kwargs.pop(
+            "best_config_stale_ok_ttl_seconds", None
+        )
+        self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -356,28 +372,17 @@ class OptimizedFunction:
         # Execution mode configuration
         requested_mode = getattr(self, "_requested_execution_mode", None)
         try:
-            effective_mode_enum = resolve_execution_mode(execution_mode)
+            requested_mode_enum = resolve_execution_mode(execution_mode)
+            effective_mode_enum = validate_execution_mode(requested_mode_enum)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = False
-        if effective_mode_enum is ExecutionMode.PRIVACY:
-            effective_mode_enum = ExecutionMode.HYBRID
+        privacy_alias_requested = requested_mode_enum is ExecutionMode.PRIVACY
+        if requested_mode and requested_mode.lower() == "privacy":
             privacy_alias_requested = True
 
         self._effective_execution_mode = effective_mode_enum
-        if (
-            requested_mode
-            and requested_mode.lower() == "privacy"
-            and effective_mode_enum is ExecutionMode.HYBRID
-        ):
-            display_mode = "privacy"
-            privacy_alias_requested = True
-        elif requested_mode:
-            display_mode = requested_mode.lower()
-        else:
-            display_mode = effective_mode_enum.value
-        self.execution_mode = display_mode
+        self.execution_mode = effective_mode_enum.value
         self._privacy_alias_requested = privacy_alias_requested
         self.local_storage_path = local_storage_path
         self.minimal_logging = minimal_logging
@@ -665,6 +670,17 @@ class OptimizedFunction:
             auto_load_best=getattr(self, "_auto_load_best", False),
             load_from=getattr(self, "_load_from", None),
             setup_wrapper_callback=self._setup_function_wrapper,
+            config_id=getattr(self, "_config_id", None),
+            best_config_source=getattr(self, "_best_config_source", "off"),
+            best_config_strict=getattr(self, "_best_config_strict", False),
+            best_config_cache_dir=getattr(self, "_best_config_cache_dir", None),
+            best_config_cache_ttl_seconds=getattr(
+                self, "_best_config_cache_ttl_seconds", 24 * 60 * 60
+            ),
+            best_config_stale_ok_ttl_seconds=getattr(
+                self, "_best_config_stale_ok_ttl_seconds", None
+            ),
+            enable_auto_load_dev_logs=getattr(self, "_enable_auto_load_dev_logs", None),
             optimization_history_limit=self.optimization_history_limit,
         )
 
@@ -843,12 +859,13 @@ class OptimizedFunction:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Make the optimized function callable."""
+        wrapped_func = self._wrapped_func
         # If framework overrides are enabled, use them during function call
         if self.auto_override_frameworks and self.framework_targets:
             with override_context(self.framework_targets):
-                return self._wrapped_func(*args, **kwargs)
+                return wrapped_func(*args, **kwargs)
         else:
-            return self._wrapped_func(*args, **kwargs)
+            return wrapped_func(*args, **kwargs)
 
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
@@ -1519,6 +1536,7 @@ class OptimizedFunction:
             agent_measures=getattr(self, "agent_measures", None),
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
+            safety_constraints=getattr(self, "safety_constraints", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured
@@ -1575,9 +1593,7 @@ class OptimizedFunction:
 
             # Update current config to best found
             if result.best_config:
-                self._current_config = result.best_config.copy()
-                self._best_config = result.best_config.copy()
-                self._setup_function_wrapper()
+                self.apply_best_config(result)
 
             # Set state to OPTIMIZED on success
             self._state = OptimizationState.OPTIMIZED
@@ -1904,9 +1920,7 @@ class OptimizedFunction:
 
             # Update current config and best config (consistent with local optimization)
             if result.best_config:
-                self._current_config = result.best_config.copy()
-                self._best_config = result.best_config.copy()
-                self._setup_function_wrapper()
+                self.apply_best_config(result)
 
             logger.info(
                 "Cloud optimization completed: %s trials, %.1f%% cost reduction",
@@ -2211,6 +2225,15 @@ class OptimizedFunction:
         """Set current configuration manually."""
         self._csm.set_config(config)
 
+    def clear_override(self) -> bool:
+        """Clear a sticky set_config/apply_best_config override."""
+        return self._csm.clear_override()  # type: ignore[no-any-return]
+
+    @property
+    def best_config_snapshot(self):
+        """Return the active immutable best-config snapshot."""
+        return self._csm.best_config_snapshot
+
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results."""
         return self._csm.apply_best_config(  # type: ignore[no-any-return]
@@ -2230,6 +2253,22 @@ class OptimizedFunction:
         return self._csm.export_config(  # type: ignore[no-any-return]
             path, format=format, include_metadata=include_metadata
         )
+
+    def export_best_config(
+        self,
+        directory: str | Path = ".traigent/best-configs",
+        *,
+        config_id: str | None = None,
+        include_metadata: bool = True,
+    ) -> Path:
+        """Export the best configuration as a canonical repo runtime spec."""
+        return self._csm.export_best_config(  # type: ignore[no-any-return]
+            directory, config_id=config_id, include_metadata=include_metadata
+        )
+
+    def publish_best_config(self, *, target: str = "cloud") -> None:
+        """Publish the best config to a durable remote target when supported."""
+        self._csm.publish_best_config(target=target)
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""

@@ -19,7 +19,6 @@ import secrets
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from traigent.cloud.auth import (
@@ -201,7 +200,12 @@ class BackendAuthManager:
 
 
 class BackendSessionManager:
-    """Minimal session management placeholder for backend integrations."""
+    """Backend session manager.
+
+    This component is intentionally fail-closed until it is wired to concrete
+    backend endpoints. It must not synthesize local session payloads that look
+    like successful backend operations.
+    """
 
     def __init__(
         self, auth_manager: BackendAuthManager, backend_config: BackendClientConfig
@@ -215,24 +219,23 @@ class BackendSessionManager:
         session_config: dict[str, Any],
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Construct a canonical payload for creating backend sessions."""
+        """Create a backend session.
 
-        await self.auth_manager.check_rate_limit()
-
-        payload = {
-            "session_id": session_id,
-            "config": session_config,
-            "metadata": metadata or {},
-            "timestamp": datetime.now(UTC).isoformat(),
-            "nonce": self.auth_manager.generate_request_nonce(),
-        }
-
-        logger.info("Prepared Traigent session payload for %s", session_id)
-        return {"session_id": session_id, "payload": payload}
+        Raises:
+            NotImplementedError: until a real backend endpoint is configured.
+        """
+        raise NotImplementedError(
+            "BackendSessionManager.create_session is not wired to a backend "
+            "endpoint. Use the canonical backend client session APIs instead."
+        )
 
 
 class BackendTrialManager:
-    """Simple helpers for privacy trial generation and identifiers."""
+    """Backend trial manager.
+
+    Trial suggestions must come from a real optimizer/backend service. This
+    manager fails closed rather than returning placeholder configurations.
+    """
 
     def __init__(
         self, auth_manager: BackendAuthManager, backend_config: BackendClientConfig
@@ -246,24 +249,11 @@ class BackendTrialManager:
         session_id: str,
         trial_count: int = 1,
     ) -> list[dict[str, Any]]:
-        """Return placeholder trial suggestions for privacy mode."""
-
-        await self.auth_manager.check_rate_limit()
-
-        trials = []
-        for index in range(trial_count):
-            trials.append(
-                {
-                    "trial_id": f"trial_{index}_{int(time.time())}",
-                    "config": {"param1": f"value_{index}"},
-                    "session_id": session_id,
-                }
-            )
-
-        logger.info(
-            "Generated %s privacy trials for session %s", len(trials), session_id
+        """Return privacy trial suggestions from the backend."""
+        raise NotImplementedError(
+            "BackendTrialManager.get_next_privacy_trial is not wired to a "
+            "backend optimizer endpoint."
         )
-        return trials
 
     def generate_trial_id(
         self, session_id: str, config: dict[str, Any], metadata: dict[str, Any] | None

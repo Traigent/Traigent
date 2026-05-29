@@ -10,8 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from traigent_ui.problem_management.example_generator import ExampleGenerator, GeneratedExample
-from traigent_ui.problem_management.intelligence import ProblemInsights, ProblemIntelligence
+from traigent_ui.problem_management.example_generator import (
+    ExampleGenerator,
+    GeneratedExample,
+)
+from traigent_ui.problem_management.intelligence import (
+    ProblemInsights,
+    ProblemIntelligence,
+)
+from traigent_ui.security_utils import sanitize_inline_text, wrap_untrusted
+
 from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .diversity_analyzer import DiversityAnalyzer, DiversityMetrics
@@ -62,7 +70,9 @@ class EnhancedExampleGenerator:
         self.config = config or GenerationConfig()
         self.base_generator = ExampleGenerator()
         self.intelligence = ProblemIntelligence()
-        self.memory = ExampleMemory(max_summaries_per_batch=config.memory_summaries_per_batch)
+        self.memory = ExampleMemory(
+            max_summaries_per_batch=config.memory_summaries_per_batch
+        )
         self.diversity_analyzer = DiversityAnalyzer()
         self.total_generated = 0
 
@@ -93,7 +103,9 @@ class EnhancedExampleGenerator:
         generated_count = 0
 
         # Calculate number of batches
-        num_batches = (target_count + self.config.batch_size - 1) // self.config.batch_size
+        num_batches = (
+            target_count + self.config.batch_size - 1
+        ) // self.config.batch_size
 
         print(f"🎯 Generating {target_count} examples in {num_batches} batches")
 
@@ -122,12 +134,16 @@ class EnhancedExampleGenerator:
             # Check diversity trends
             if batch_id > 0 and batch_id % 5 == 0:
                 overall_metrics = self._calculate_overall_metrics(batches)
-                print(f"📈 Overall diversity score: {overall_metrics.overall_diversity_score:.1f}")
+                print(
+                    f"📈 Overall diversity score: {overall_metrics.overall_diversity_score:.1f}"
+                )
 
                 # Suggest improvements if needed
                 if overall_metrics.overall_diversity_score < 70:
-                    suggestions = self.diversity_analyzer.suggest_diversity_improvements(
-                        self._flatten_examples(batches)
+                    suggestions = (
+                        self.diversity_analyzer.suggest_diversity_improvements(
+                            self._flatten_examples(batches)
+                        )
                     )
                     print("⚠️  Diversity suggestions:")
                     for suggestion in suggestions:
@@ -192,7 +208,10 @@ class EnhancedExampleGenerator:
                 best_diversity = diversity_metrics.overall_diversity_score
 
             # Check if diversity is acceptable
-            if diversity_metrics.overall_diversity_score >= self.config.diversity_threshold * 100:
+            if (
+                diversity_metrics.overall_diversity_score
+                >= self.config.diversity_threshold * 100
+            ):
                 break
             else:
                 print(
@@ -203,7 +222,9 @@ class EnhancedExampleGenerator:
         memory_summaries = []
         for i, example in enumerate(best_examples):
             example_id = self.total_generated + i
-            summary = self.memory.add_example(self._example_to_dict(example), example_id)
+            summary = self.memory.add_example(
+                self._example_to_dict(example), example_id
+            )
             memory_summaries.append(summary)
 
         self.total_generated += len(best_examples)
@@ -232,11 +253,22 @@ class EnhancedExampleGenerator:
         memory_context: list[dict[str, Any]],
         insights: ProblemInsights | None,
     ) -> str:
-        """Create enhanced prompt with memory context."""
+        """Create enhanced prompt with memory context.
+
+        ``problem_type``, ``domain``, and the insight lists are short
+        structured labels and are sanitized inline. The free-form
+        ``description`` and the memory-context payload are user / LLM data
+        and are wrapped in untrusted-data blocks so they cannot redirect
+        the downstream model.
+        """
+        safe_problem_type = sanitize_inline_text(problem_type, max_chars=80)
+        safe_domain = sanitize_inline_text(domain, max_chars=80)
+
         prompt_parts = [
-            f"Generate {batch_size} diverse examples for a {problem_type} problem.",
-            f"Domain: {domain}",
-            f"Description: {description}",
+            f"Generate {batch_size} diverse examples for a {safe_problem_type} problem.",
+            f"Domain: {safe_domain}",
+            "Description:",
+            wrap_untrusted("description", description, max_chars=2000),
             "",
             "Requirements:",
             "- Ensure maximum diversity in patterns, topics, and complexity",
@@ -247,20 +279,32 @@ class EnhancedExampleGenerator:
 
         if insights:
             if insights.suggested_categories:
-                prompt_parts.append(
-                    f"- Categories to cover: {', '.join(insights.suggested_categories)}"
-                )
+                safe_categories = [
+                    sanitize_inline_text(c, max_chars=80)
+                    for c in insights.suggested_categories
+                ]
+                joined = ", ".join(c for c in safe_categories if c)
+                if joined:
+                    prompt_parts.append(f"- Categories to cover: {joined}")
             if insights.complexity_indicators:
-                prompt_parts.append(
-                    f"- Include complexity: {', '.join(insights.complexity_indicators)}"
-                )
+                safe_complexity = [
+                    sanitize_inline_text(c, max_chars=80)
+                    for c in insights.complexity_indicators
+                ]
+                joined = ", ".join(c for c in safe_complexity if c)
+                if joined:
+                    prompt_parts.append(f"- Include complexity: {joined}")
 
         if memory_context:
             prompt_parts.extend(
                 [
                     "",
                     "Existing Example Patterns (avoid repetition):",
-                    json.dumps(memory_context, indent=2),
+                    wrap_untrusted(
+                        "memory_context",
+                        json.dumps(memory_context, indent=2),
+                        max_chars=6000,
+                    ),
                     "",
                     "Generate NEW examples that are different from the above patterns.",
                 ]
@@ -375,7 +419,9 @@ class EnhancedExampleGenerator:
             "metadata": example.metadata,
         }
 
-    def _calculate_overall_metrics(self, batches: list[GenerationBatch]) -> DiversityMetrics:
+    def _calculate_overall_metrics(
+        self, batches: list[GenerationBatch]
+    ) -> DiversityMetrics:
         """Calculate overall diversity metrics across all batches."""
         all_examples = self._flatten_examples(batches)
         return self.diversity_analyzer.analyze_diversity(all_examples)
@@ -395,7 +441,8 @@ class EnhancedExampleGenerator:
                 "total_examples": sum(len(b.examples) for b in batches),
                 "total_generation_time": sum(b.generation_time for b in batches),
                 "average_diversity_score": (
-                    sum(b.diversity_metrics.overall_diversity_score for b in batches) / len(batches)
+                    sum(b.diversity_metrics.overall_diversity_score for b in batches)
+                    / len(batches)
                     if batches
                     else 0
                 ),
@@ -442,7 +489,9 @@ class EnhancedExampleGenerator:
 
         # Add improvement suggestions
         final_metrics = self._calculate_overall_metrics(batches)
-        suggestions = self.diversity_analyzer.suggest_diversity_improvements(all_examples)
+        suggestions = self.diversity_analyzer.suggest_diversity_improvements(
+            all_examples
+        )
         report["final_analysis"] = {
             "overall_diversity_score": final_metrics.overall_diversity_score,
             "suggestions": suggestions,

@@ -127,6 +127,12 @@ class ProjectRateLimitPolicyDTO:
 class ProjectRetentionPolicySettingsDTO:
     export_artifact_retention_days: int
     materialized_export_retention_days: int
+    trace_retention_days: int
+    dataset_retention_days: int
+    dataset_storage_limit_bytes: int
+    observability_ingest_rpm: int
+    inline_payload_max_bytes: int
+    payload_max_bytes: int
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ProjectRetentionPolicySettingsDTO:
@@ -137,6 +143,16 @@ class ProjectRetentionPolicySettingsDTO:
             materialized_export_retention_days=int(
                 payload["materialized_export_retention_days"]
             ),
+            trace_retention_days=int(payload.get("trace_retention_days", 30)),
+            dataset_retention_days=int(payload.get("dataset_retention_days", 30)),
+            dataset_storage_limit_bytes=int(
+                payload.get("dataset_storage_limit_bytes", 5 * 1024 * 1024 * 1024)
+            ),
+            observability_ingest_rpm=int(payload.get("observability_ingest_rpm", 600)),
+            inline_payload_max_bytes=int(
+                payload.get("inline_payload_max_bytes", 256 * 1024)
+            ),
+            payload_max_bytes=int(payload.get("payload_max_bytes", 10 * 1024 * 1024)),
         )
 
 

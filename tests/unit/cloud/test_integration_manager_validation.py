@@ -1,7 +1,7 @@
 """Validation tests for IntegrationManager identifier handling."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -65,6 +65,108 @@ async def test_submit_trial_results_validates_identifiers(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_submit_trial_results_returns_false_without_integration(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        submit_privacy_trial_results=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {}
+
+    success = await manager.submit_trial_results(
+        "session-1", "trial-1", {}, {"accuracy": 0.9}, 1.0
+    )
+
+    assert success is False
+    manager._backend_client.submit_privacy_trial_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_results_returns_false_for_unsupported_mode(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        submit_privacy_trial_results=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "cloud",
+        }
+    }
+
+    success = await manager.submit_trial_results(
+        "session-1", "trial-1", {}, {"accuracy": 0.9}, 1.0
+    )
+
+    assert success is False
+    manager._backend_client.submit_privacy_trial_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_results_uses_privacy_mode_alias(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        submit_privacy_trial_results=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(
+                success=True,
+                session_id="session-1",
+                metadata={"mode": "privacy"},
+            ),
+            "mode": "standard",
+        }
+    }
+
+    success = await manager.submit_trial_results(
+        "session-1", "trial-1", {}, {"accuracy": 0.9}, 1.0
+    )
+
+    assert success is True
+    manager._backend_client.submit_privacy_trial_results.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_results_ignores_mock_metadata(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    result = Mock()
+    result.session_id = "session-1"
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        submit_privacy_trial_results=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {
+        "integration-1": {
+            "result": result,
+            "mode": "private",
+        }
+    }
+
+    success = await manager.submit_trial_results(
+        "session-1", "trial-1", {}, {"accuracy": 0.9}, 1.0
+    )
+
+    assert success is True
+    manager._backend_client.submit_privacy_trial_results.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_finalize_session_validates_identifiers(monkeypatch):
     lifecycle_stub = StubLifecycleManager()
     monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
@@ -90,6 +192,76 @@ async def test_cancel_session_validates_identifiers(monkeypatch):
     success = await manager.cancel_session("")
     assert success is False
     assert lifecycle_stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_returns_false_without_backend_cancel(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace()
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "privacy",
+        }
+    }
+    manager._integration_stats["active_sessions"] = 1
+
+    success = await manager.cancel_session("session-1")
+
+    assert success is False
+    assert lifecycle_stub.calls == []
+    assert "integration-1" in manager._active_integrations
+    assert manager._integration_stats["active_sessions"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_returns_backend_cancel_result(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        cancel_session=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {}
+
+    success = await manager.cancel_session("session-1")
+
+    assert success is True
+    assert lifecycle_stub.calls == [("cancel_session", "session-1")]
+    manager._backend_client.cancel_session.assert_awaited_once_with("session-1")
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_success_removes_active_integration(monkeypatch):
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = SimpleNamespace(
+        cancel_session=AsyncMock(return_value=True)
+    )
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "privacy",
+        }
+    }
+    manager._integration_stats["active_sessions"] = 1
+
+    success = await manager.cancel_session("session-1")
+
+    assert success is True
+    assert lifecycle_stub.calls == [("cancel_session", "session-1")]
+    manager._backend_client.cancel_session.assert_awaited_once_with("session-1")
+    assert manager._active_integrations == {}
+    assert manager._integration_stats["active_sessions"] == 0
 
 
 # Tests for RuntimeError when clients are not initialized
@@ -144,6 +316,20 @@ async def test_finalize_session_raises_when_backend_not_initialized(monkeypatch)
 
     with pytest.raises(RuntimeError, match="Backend client not initialized"):
         await manager.finalize_session("session-123", None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_raises_when_backend_not_initialized(monkeypatch):
+    """Test that cancel_session raises RuntimeError when backend client is None."""
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = None
+
+    with pytest.raises(RuntimeError, match="Backend client not initialized"):
+        await manager.cancel_session("session-123")
 
 
 # Tests for RuntimeError when MCP client is not initialized

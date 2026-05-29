@@ -74,27 +74,40 @@ What this does:
 
 ## Evaluation Modes
 
-### 1) Default semantic similarity
+### 1) Default: exact / case-insensitive match
 
-- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless running in `TRAIGENT_MOCK_LLM`.
-- Great for natural language tasks where paraphrasing is fine.
+- Traigent's built-in `LocalEvaluator` scores `accuracy` by comparing
+  the agent's output to `expected_output` using exact string match,
+  falling back to case-insensitive comparison. There is no embedding
+  model and no LLM judge in this path — paraphrased answers will score
+  0.0 unless you supply your own scorer (see (2) below).
+- Good fit for: classification, span extraction, structured outputs,
+  enum-like answers.
+- Wrong fit for: Q&A, summarization, translation, or any task where
+  multiple wordings are equally valid.
 
 ```python
 import litellm
 import traigent
 
 @traigent.optimize(
-    eval_dataset="data/qa_samples.jsonl",
+    eval_dataset="data/classification_samples.jsonl",
     objectives=["accuracy", "cost"],
 )
-def qa_agent(question: str) -> str:
+def classifier(query: str) -> str:
     response = litellm.completion(
         model="gpt-4o-mini",
-        temperature=0.7,
-        messages=[{"role": "user", "content": f"Question: {question}\nAnswer:"}],
+        temperature=0.0,
+        messages=[{"role": "user", "content": f"Label: {query}"}],
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content.strip()
 ```
+
+> **Note on `evaluation_type: "semantic"`**: If your dataset metadata
+> tags examples as semantic but you don't pass a `scoring_function`,
+> `LocalExecutionAdapter` will mark those examples as `success=False`
+> with an explicit error and log at ERROR level. The contract is
+> "fail loud", not "silently degrade to exact match".
 
 ### 2) Custom scoring functions
 
@@ -175,16 +188,19 @@ def strict_agent(query: str) -> str:
 
 ### 5) Mock mode
 
-`TRAIGENT_MOCK_LLM=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
+Call `traigent.testing.enable_mock_mode_for_quickstart()` near the top of local tutorial or test code to intercept external LLM/API calls and replace them with canned/deterministic responses. Your evaluator (custom or the built-in `LocalEvaluator`) still scores those canned responses with its real scoring logic - the SDK no longer synthesizes metrics. Ideal for CI, demos, and budget-safe smoke tests.
 
-```bash
-export TRAIGENT_MOCK_LLM=true
-python your_optimization_script.py
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
+
+For shell-only fixtures, `TRAIGENT_MOCK_LLM=true` remains available outside production for backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 
 ## Troubleshooting
 
-- **Semantic similarity fails**: Confirm `OPENAI_API_KEY` is set or switch to a custom `scoring_function` or `metric_functions`.
+- **Paraphrased answers score 0.0**: The default `LocalEvaluator` accuracy is exact / case-insensitive match; it is not semantic. Provide your own `scoring_function` (or `metric_functions={"accuracy": ...}`) that performs embedding similarity or LLM-judge scoring. `LocalExecutionAdapter` also raises a visible error when dataset examples are tagged `evaluation_type: "semantic"` without a configured scorer.
 - **Scores all zeros**: Check that dataset `output`/`expected_output` values are non-empty strings.
 - **Dataset errors**: Run `traigent validate path/to/dataset.jsonl` to see the exact row/field causing issues.
 
@@ -396,8 +412,10 @@ Best accuracy: 0.00
    ```
 
 3. **Use Mock Mode for Testing**
-   ```bash
-   export TRAIGENT_MOCK_LLM=true
+   ```python
+   from traigent.testing import enable_mock_mode_for_quickstart
+
+   enable_mock_mode_for_quickstart()
    ```
 
 ### Issue: Out of Memory
@@ -429,7 +447,7 @@ Best accuracy: 0.00
 
 ### 2. Scoring Function Selection
 
-- **Default (Semantic)**: Best for natural language generation - uses embedding similarity
+- **Default (Exact / Case-Insensitive Match)**: Best for classification, span extraction, and structured outputs. Does **not** tolerate paraphrasing — supply a custom `scoring_function` for that.
 - **`scoring_function`**: Single custom scorer for domain-specific metrics
 - **`metric_functions`**: Multiple named metrics (accuracy, cost, latency, etc.)
 - **`custom_evaluator`**: Full control with access to function, config, and example context

@@ -687,7 +687,7 @@ class TestValidateOfflineLicense:
 
     @staticmethod
     def _public_key_pem(private_key) -> str:
-        """Serialize a test RSA public key to PEM."""
+        """Serialize a test public key (RSA or EC) to PEM."""
         from cryptography.hazmat.primitives import serialization
 
         return (
@@ -887,6 +887,22 @@ class TestDecodeLicenseToken:
             validator = LicenseValidator()
             assert validator._decode_license_token(token) is None
 
+    def test_null_algorithm_token_rejected_even_when_legacy_is_allowed(self):
+        """Test legacy mode requires an explicit alg=none header."""
+        header = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"alg": None}).encode()
+        )
+        body = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"tier": "pro", "features": ["parallel_execution"]}).encode()
+        )
+        token = f"{header}.{body}.{TestValidateOfflineLicense._b64url_encode(b'sig')}"
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+        ):
+            validator = LicenseValidator()
+            assert validator._decode_license_token(token) is None
+
     def test_empty_public_key_configuration_fails_closed(self):
         """Test configured-but-empty public key does not fall back to legacy mode."""
         payload = {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"}
@@ -960,11 +976,15 @@ class TestDecodeLicenseToken:
 
     def test_invalid_base64_payload(self):
         """Test token with invalid base64 payload returns None."""
+        header = TestValidateOfflineLicense._b64url_encode(
+            json.dumps({"alg": "none"}).encode()
+        )
+        token = f"{header}.!!!invalid!!!.signature"
         with patch.dict(
             os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
         ):
             validator = LicenseValidator()
-            result = validator._decode_license_token("header.!!!invalid!!!.signature")
+            result = validator._decode_license_token(token)
         assert result is None
 
     def test_invalid_json_payload(self):
@@ -1754,3 +1774,154 @@ class TestValidatorConstants:
     def test_cloud_validation_timeout(self):
         """Test CLOUD_VALIDATION_TIMEOUT constant value."""
         assert LicenseValidator.CLOUD_VALIDATION_TIMEOUT == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Env-sourced TRAIGENT_LICENSE_FILE allowed-root boundary
+# ---------------------------------------------------------------------------
+
+
+class TestEnvLicenseFileBoundary:
+    """Regression tests for the env-sourced license file allow-list.
+
+    Codex review of retry2 flagged that the validator still accepted any
+    regular file under the size cap when its path came from
+    ``TRAIGENT_LICENSE_FILE``. These tests assert the env-sourced path
+    must live under an allowed root, while explicit caller paths still
+    bypass the boundary for trusted in-process configuration.
+    """
+
+    @staticmethod
+    def _write_token_file(directory: str, suffix: str = ".jwt") -> str:
+        """Write a syntactically valid unsigned token in ``directory``."""
+        import os.path as _ospath
+
+        payload = {
+            "tier": "pro",
+            "features": ["parallel_execution"],
+            "exp": time.time() + 3600,
+            "org": "TestCorp",
+        }
+        header = (
+            base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode())
+            .decode()
+            .rstrip("=")
+        )
+        body = (
+            base64.urlsafe_b64encode(json.dumps(payload).encode())
+            .decode()
+            .rstrip("=")
+        )
+        sig = base64.urlsafe_b64encode(b"sig").decode().rstrip("=")
+        token = f"{header}.{body}.{sig}"
+
+        fd, path = tempfile.mkstemp(suffix=suffix, dir=directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token)
+        # Ensure the file is named .jwt and lives in `directory`.
+        assert _ospath.dirname(path) == directory
+        return path
+
+    def test_env_sourced_path_outside_allowed_roots_is_rejected(self, tmp_path):
+        """An attacker-controlled env path outside the allowlist is denied.
+
+        This is the concrete attack class from the local validation gap:
+        ``TRAIGENT_LICENSE_FILE=/etc/passwd`` (or any other small,
+        world-readable file) used to make the validator read and warn on
+        its contents.
+        """
+        # Write a valid token to a temp dir that is NOT under any default
+        # or env-configured allowed root.
+        outside_dir = tmp_path / "anywhere"
+        outside_dir.mkdir()
+        token_path = self._write_token_file(str(outside_dir))
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_FILE": token_path,
+                "TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true",
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            assert validator._license_file_from_env is True
+            result = validator._validate_offline_license()
+
+        assert result is None
+
+    def test_env_sourced_path_inside_allowed_root_is_accepted(self, tmp_path):
+        """An env path under TRAIGENT_LICENSE_ALLOWED_DIRS is accepted."""
+        allowed_dir = tmp_path / "licenses"
+        allowed_dir.mkdir()
+        token_path = self._write_token_file(str(allowed_dir))
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_FILE": token_path,
+                "TRAIGENT_LICENSE_ALLOWED_DIRS": str(allowed_dir),
+                "TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true",
+            },
+            clear=True,
+        ):
+            validator = LicenseValidator()
+            assert validator._license_file_from_env is True
+            result = validator._validate_offline_license()
+
+        assert result is not None
+        assert result.tier == LicenseTier.PRO
+
+    def test_explicit_caller_path_bypasses_allowed_root_check(self, tmp_path):
+        """Explicit ``license_file=...`` paths come from trusted code.
+
+        The constructor argument bypasses the env-sourced boundary so
+        an in-process trusted caller can still point at a license file
+        anywhere on disk (e.g., a deployment-specific directory).
+        """
+        outside_dir = tmp_path / "trusted-caller-only"
+        outside_dir.mkdir()
+        token_path = self._write_token_file(str(outside_dir))
+
+        with patch.dict(
+            os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
+        ):
+            validator = LicenseValidator(license_file=token_path)
+            assert validator._license_file_from_env is False
+            result = validator._validate_offline_license()
+
+        assert result is not None
+        assert result.tier == LicenseTier.PRO
+
+    def test_env_path_rejection_does_not_log_file_contents(
+        self, tmp_path, caplog
+    ):
+        """The rejection log must NOT echo the file's contents.
+
+        A file pointed at by ``TRAIGENT_LICENSE_FILE`` is potentially a
+        secret-bearing system file. The rejection path must surface the
+        path + allowed-roots, never the bytes we just refused to read.
+        """
+        outside_dir = tmp_path / "anywhere"
+        outside_dir.mkdir()
+        secret_path = outside_dir / "fake-passwd"
+        secret_path.write_text("root:x:0:0:root:/root:/bin/bash\n", encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_LICENSE_FILE": str(secret_path),
+                "TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true",
+            },
+            clear=True,
+        ):
+            with caplog.at_level("WARNING", logger="traigent.core.license"):
+                validator = LicenseValidator()
+                assert validator._validate_offline_license() is None
+
+        joined = " ".join(rec.getMessage() for rec in caplog.records)
+        # The file's content must never appear in any log record.
+        assert "root:x:0:0" not in joined
+        # The path itself may appear in the warning, but the byte content
+        # of the file MUST NOT.
+        assert "/bin/bash" not in joined

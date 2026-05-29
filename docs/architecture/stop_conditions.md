@@ -128,9 +128,10 @@ they were declared in `@optimize`.
   Conditions only see `TrialResult` objects, which are populated identically in
   both synchronous and asynchronous evaluator paths.
 * **Injection modes** – The decorator-driven injection (`context`, `parameter`,
-  `attribute`, `seamless`) happens entirely inside the `OptimizedFunction`
-  wrapper. Stop conditions operate at the orchestrator layer and therefore work
-  uniformly for all injection styles.
+  `seamless`) happens entirely inside the `OptimizedFunction` wrapper. Stop
+  conditions operate at the orchestrator layer and therefore work uniformly
+  for all injection styles. (`attribute` mode was removed in v2.x; see the
+  [InjectionMode reference](../api-reference/complete-function-specification.md#injectionmode).)
 
 ### Usage examples
 
@@ -158,16 +159,6 @@ def answer_math(question: str) -> str:
 def chat(question: str, config: dict) -> str:
     ...
 
-# Attribute injection
-@traigent.optimize(
-    eval_dataset="summaries.jsonl",
-    configuration_space={"max_tokens": [128, 256]},
-    injection_mode="attribute",
-    plateau_window=4,
-)
-class Summarizer:
-    ...
-
 # Seamless injection
 @traigent.optimize(
     eval_dataset="scenarios.jsonl",
@@ -180,7 +171,7 @@ def plan_trip(itinerary: str) -> str:
     ...
 ```
 
-All four examples share the same stop-condition machinery with no additional
+All three examples share the same stop-condition machinery with no additional
 plumbing.
 
 Built-in convergence stops report `OptimizationResult.stop_reason = "convergence"`.

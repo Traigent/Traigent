@@ -457,8 +457,10 @@ class TestContextManagement:
         # End context
         base_manager.end_override_context(framework_key)
 
-        # Should be cleaned up
-        # Implementation dependent on whether framework_key is removed
+        # Contract: ending the only active context unregisters that framework
+        # and deactivates the manager.
+        assert framework_key not in base_manager._active_overrides
+        assert base_manager.is_override_active() is False
 
     def test_nested_context_management(self, base_manager):
         """Test nested context management."""
@@ -471,8 +473,11 @@ class TestContextManagement:
         # Start nested context
         base_manager.start_override_context(framework2)
 
-        # Both should be active
-        # Implementation dependent
+        # Contract: nested starts register both frameworks and keep the
+        # manager active until both contexts end.
+        assert framework1 in base_manager._active_overrides
+        assert framework2 in base_manager._active_overrides
+        assert base_manager.is_override_active() is True
 
         # End contexts
         base_manager.end_override_context(framework2)
@@ -592,15 +597,14 @@ class TestErrorHandling:
             framework_key, broken_constructor
         )
 
-        # Wrapper should handle the exception in ONE of two valid ways:
-        # (a) return None to signal failure, or (b) propagate the original
-        # RuntimeError. The test asserts no other failure mode (e.g., a
-        # truthy zombie instance) leaks out.
+        # Documented contract: when the wrapped constructor raises, the wrapper
+        # either swallows and returns None, OR re-raises the original
+        # RuntimeError. Any other return (e.g. a zombie partially-constructed
+        # instance) is a regression.
         try:
             instance = wrapper()
             assert instance is None
         except RuntimeError:
-            # Propagation is the other valid branch.
             pass
 
     def test_method_override_with_broken_method(self, base_manager):
@@ -615,14 +619,14 @@ class TestErrorHandling:
 
         wrapper = base_manager.create_overridden_method(method_key, broken_method)
 
-        # Wrapper should handle the exception in ONE of two valid ways:
-        # (a) return None to signal failure, or (b) propagate the original
-        # ValueError. The test asserts no other return value leaks out.
+        # Documented contract: when the wrapped method raises, the wrapper
+        # either swallows and returns None, OR re-raises the original
+        # ValueError. Anything else (e.g. a fabricated default value) is a
+        # regression.
         try:
             result = wrapper("test")
             assert result is None
         except ValueError:
-            # Propagation is the other valid branch.
             pass
 
     def test_concurrent_access_safety(self, base_manager):
@@ -800,7 +804,7 @@ class TestCTDScenarios:
         [
             ("constructor", "single", "cleaned"),
             ("method", "single", "cleaned"),
-            ("both", "single", "partially_cleaned"),
+            ("both", "single", "cleaned"),
             ("constructor", "all", "cleaned"),
             ("method", "all", "cleaned"),
             ("both", "all", "cleaned"),
@@ -831,5 +835,4 @@ class TestCTDScenarios:
             assert not base_manager.is_constructor_overridden(framework_key)
             assert not base_manager.is_method_overridden(method_key)
         elif expected_result == "partially_cleaned":
-            # Implementation dependent - some overrides may remain
-            pass
+            raise AssertionError("No partial cleanup contract is currently supported")

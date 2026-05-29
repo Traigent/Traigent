@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
 
@@ -318,6 +319,14 @@ class TokenManager:
             AuthResult with new credentials on success
         """
         from traigent.cloud.auth import AuthResult, AuthStatus
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=_GENERIC_REFRESH_ERROR,
+            )
 
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh")
@@ -325,9 +334,22 @@ class TokenManager:
         from traigent.cloud.resilient_client import ResilientClient
         from traigent.config.backend_config import BackendConfig
 
-        backend_api_url = BackendConfig.build_api_base(
-            self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
-        )
+        try:
+            backend_api_url = await validate_cloud_base_url_async(
+                BackendConfig.build_api_base(
+                    self.config.backend_base_url
+                    or BackendConfig.get_cloud_backend_url()
+                ),
+                purpose="JWT token refresh",
+            )
+        except ValueError as exc:
+            logger.warning("Rejected JWT token refresh URL: %s", exc)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=str(exc),
+            )
+
         refresh_url = f"{backend_api_url}/auth/refresh"
 
         client = ResilientClient(
@@ -348,8 +370,10 @@ class TokenManager:
                     if response.status == 401:
                         raise ValueError("Refresh token invalid or expired")
                     if response.status == 429:
+                        await response.text()  # drain body; do not propagate upstream content
                         raise RuntimeError("Token refresh failed with HTTP 429")
                     if response.status != 200:
+                        await response.text()  # drain body; do not propagate upstream content
                         raise RuntimeError(
                             f"Token refresh failed with HTTP {response.status}"
                         )
@@ -481,7 +505,7 @@ class TokenManager:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
-                error_message="OAuth2 cloud_base_url is not allowed",
+                error_message=f"OAuth2 cloud_base_url rejected (private or loopback host not allowed): {exc}",
             )
 
         data = {
@@ -491,14 +515,44 @@ class TokenManager:
             "client_secret": credentials.client_secret,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=data) as response:
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"OAuth2 token refresh failed with HTTP {response.status}"
+        # refresh_oauth2 advertises an ``AuthResult`` return contract and is
+        # called via delegation from AuthManager.refresh_oauth2_token (see
+        # traigent/cloud/auth.py). Network errors, JSON parse errors, and
+        # non-200 responses must be reported as AuthResult(success=False,
+        # status=INVALID) so callers can inspect the result and decide how
+        # to react (e.g. surface to the user, retry, or clear stored
+        # credentials). Propagating exceptions would break that contract.
+        # NOTE: this branch returns the INVALID AuthResult without actively
+        # clearing self credentials; if specific failure modes (e.g. 401
+        # invalid_grant) should also invalidate stored credentials, that
+        # behavior should be added explicitly here.
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(token_url, data=data) as response:
+                    if response.status != 200:
+                        await response.text()  # drain body; do not propagate upstream content
+                        logger.warning(
+                            "OAuth2 token refresh failed with HTTP %s",
+                            response.status,
+                        )
+                        return AuthResult(
+                            success=False,
+                            status=AuthStatus.INVALID,
+                            error_message=(
+                                f"OAuth2 token refresh failed with HTTP {response.status}"
+                            ),
+                        )
+                    token_data = await response.json()
+                    return await self._apply_oauth2_token_response(
+                        credentials, token_data
                     )
-                token_data = await response.json()
-                return await self._apply_oauth2_token_response(credentials, token_data)
+        except Exception as exc:
+            logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
+            return AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message="OAuth2 token refresh failed",
+            )
 
     def build_credentials_from_token_data(
         self, token_data: dict[str, Any]

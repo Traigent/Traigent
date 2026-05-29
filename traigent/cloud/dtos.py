@@ -45,6 +45,79 @@ CONFIGURATION_RUN_STATUS_VALUES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class QuotaExceededErrorDTO:
+    """Canonical backend quota-exceeded error payload."""
+
+    resource_type: str
+    current_usage: float
+    limit: float
+    message: str
+    reset_at: str | None = None
+    upgrade_url: str | None = "/billing"
+    error_code: str = "quota_exceeded"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error_code": self.error_code,
+            "resource_type": self.resource_type,
+            "current_usage": self.current_usage,
+            "limit": self.limit,
+            "reset_at": self.reset_at,
+            "upgrade_url": self.upgrade_url,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class WalletInsufficientBalanceErrorDTO:
+    """Canonical backend wallet insufficient-balance error payload."""
+
+    available_usd: str
+    required_usd: str
+    message: str
+    operation_id: str | None = None
+    operation_group_id: str | None = None
+    error_code: str = "wallet_insufficient_balance"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error_code": self.error_code,
+            "available_usd": self.available_usd,
+            "required_usd": self.required_usd,
+            "operation_id": self.operation_id,
+            "operation_group_id": self.operation_group_id,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class WalletTopUpPackDTO:
+    """Public wallet credit pack metadata."""
+
+    pack_id: str
+    credit_usd: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"pack_id": self.pack_id, "credit_usd": self.credit_usd}
+
+
+@dataclass(frozen=True)
+class WalletTopUpPacksResponseDTO:
+    """Standard backend response wrapper for public wallet credit packs."""
+
+    packs: list[WalletTopUpPackDTO]
+    message: str = "Success"
+    success: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "message": self.message,
+            "data": {"packs": [pack.to_dict() for pack in self.packs]},
+        }
+
+
 def _get_schema_validator_class() -> Any:
     """Load the optional TraigentSchema validator lazily."""
     from traigent_schema.validator import SchemaValidator

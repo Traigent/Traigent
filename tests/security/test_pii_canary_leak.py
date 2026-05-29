@@ -1,22 +1,20 @@
 """End-to-end PII canary leak test for the optimization pipeline.
 
-This is the P0-1 safety net for the declarative-chipmunk redaction plan.
+This is the P0-1 safety net for the SDK result-redaction plan.
 
 It seeds a set of *canary* PII patterns (fake email, CC, SSN, API key) into an
 optimization run and, after the run completes, scans every persistence target
 the SDK might write to for any trace of the canaries. Any hit is a leak.
 
-The test is written to **fail closed** as redaction capability lands. Today,
-several of the persistence targets are known-unscanned and the test is therefore
-marked xfail with a precise reason — flipping those to hard asserts is the P0-1
-acceptance criterion.
+The test is written to fail closed: any raw canary in public trial results,
+serialized exports, stdout/stderr, or enabled sinks fails CI.
 
 Canary patterns are intentionally easy for humans and tooling to recognize so
 that a hit in prod logs during manual review is obvious.
 """
 
 # Traceability: CONC-Layer-Security CONC-Quality-Privacy FUNC-ORCH-LIFECYCLE
-# See docs/security/redaction.md (to be authored as part of P0-1 close-out).
+# See traigent.security.redaction for the public-result redaction helper.
 
 from __future__ import annotations
 
@@ -34,6 +32,12 @@ from traigent.evaluators.base import (
     EvaluationExample,
     EvaluationResult,
 )
+from traigent.observability import (
+    ObservabilityClient,
+    ObservabilityConfig,
+    ObservationType,
+)
+from traigent.security.audit import AuditEventType, AuditLogger
 
 # ---------------------------------------------------------------------------
 # Canary catalogue
@@ -52,8 +56,8 @@ CANARIES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ),
     (
         "credit_card",
-        "4111111111111234",
-        re.compile(r"4111[- ]?1111[- ]?1111[- ]?1234"),
+        "4111111111111111",
+        re.compile(r"4111[- ]?1111[- ]?1111[- ]?1111"),
     ),
     (
         "ssn",
@@ -116,7 +120,7 @@ class _EchoCanaryEvaluator(BaseEvaluator):
         for index, example in enumerate(dataset.examples):
             # Echo the input verbatim — this is what a prompt-compliant model
             # would do if the attacker placed canaries in the prompt.
-            outputs.append(str(example.input))
+            outputs.append(str(example.input_data))
             if progress_callback:
                 progress_callback(index, {"success": True})
         metrics = {"accuracy": 1.0, "examples_attempted": len(outputs)}
@@ -136,10 +140,7 @@ class _EchoCanaryEvaluator(BaseEvaluator):
 # Scan targets
 # ---------------------------------------------------------------------------
 #
-# Each target is a callable that returns an iterable of (location_name, text)
-# tuples. A target that cannot be scanned yet returns an empty iterable and
-# registers the gap via ``pytest.xfail``. As P0-1 implementation lands, gaps
-# should be replaced with real scanners and their corresponding xfails removed.
+# Each scanner checks a public or enabled persistence surface for raw canaries.
 
 
 class _ScanReport:
@@ -169,9 +170,7 @@ class _ScanReport:
         return "\n".join(f"  - {target}: {reason}" for target, reason in self.gaps)
 
 
-def _scan_trial_results(
-    trials: Iterable[TrialResult], report: _ScanReport
-) -> None:
+def _scan_trial_results(trials: Iterable[TrialResult], report: _ScanReport) -> None:
     """Scan in-memory TrialResult objects for canaries.
 
     This is the most-local surface: if canaries survive to here, every
@@ -186,47 +185,66 @@ def _scan_trial_results(
             for i, output in enumerate(trial.outputs or []):
                 blobs.append((f"trial[{trial.trial_id}].outputs[{i}]", str(output)))
         if getattr(trial, "metadata", None):
-            blobs.append(
-                (f"trial[{trial.trial_id}].metadata", str(trial.metadata))
-            )
-        if getattr(trial, "config", None):
-            blobs.append(
-                (f"trial[{trial.trial_id}].config", str(trial.config))
-            )
+            blobs.append((f"trial[{trial.trial_id}].metadata", str(trial.metadata)))
+        # Raw config stays available in memory so callers can replay or apply the
+        # selected configuration. The external serialization scanner below owns
+        # the public leak boundary for config payloads.
         for location, blob in blobs:
             hits = _contains_canary(blob)
             if hits:
                 report.record_hit("in_memory_trial_result", location, hits)
 
 
-def _scan_audit_log(report: _ScanReport) -> None:
+def _scan_serialized_trial_results(
+    trials: Iterable[TrialResult], report: _ScanReport
+) -> None:
+    """Scan the public TrialResult serialization contract."""
+    for trial in trials:
+        serialized = trial.to_dict()
+        hits = _contains_canary(str(serialized))
+        if hits:
+            report.record_hit(
+                "serialized_trial_result",
+                f"trial[{trial.trial_id}].to_dict",
+                hits,
+            )
+
+
+def _scan_audit_log(events: Iterable[Any], report: _ScanReport) -> None:
     """Scan the audit chain (traigent.security.audit) for canaries.
 
-    TODO(P0-1): Hook the audit subsystem's in-memory buffer or test sink and
-    iterate every event.details/event.context for canaries. For now we record
-    a gap so the xfail is precise.
+    The canary test exercises an AuditLogger sink explicitly so this scanner
+    stays a hard assertion instead of a placeholder.
     """
-    report.record_gap(
-        "audit_log",
-        "scanner not wired; audit subsystem has no test sink exposed yet",
-    )
+    for index, event in enumerate(events):
+        payload = event.to_dict() if hasattr(event, "to_dict") else event
+        hits = _contains_canary(str(payload))
+        if hits:
+            report.record_hit("audit_log", f"event[{index}]", hits)
 
 
-def _scan_observability_traces(report: _ScanReport) -> None:
+def _scan_observability_traces(
+    trace_batches: Iterable[Iterable[dict[str, Any]]], report: _ScanReport
+) -> None:
     """Scan observability traces for canaries.
 
-    TODO(P0-1): Wire an in-memory ObservabilityClient sink for tests and
-    iterate its captured traces. Observability payloads include full
-    config values, which is where canaries planted in config are most
-    likely to survive.
+    The canary test exercises ObservabilityClient with an in-memory sender so
+    trace payload redaction is covered before data leaves the SDK.
     """
-    report.record_gap(
-        "observability_traces",
-        "scanner not wired; observability client has no test sink exposed",
-    )
+    for batch_index, trace_batch in enumerate(trace_batches):
+        for trace_index, trace_payload in enumerate(trace_batch):
+            hits = _contains_canary(str(trace_payload))
+            if hits:
+                report.record_hit(
+                    "observability_trace",
+                    f"batch[{batch_index}].trace[{trace_index}]",
+                    hits,
+                )
 
 
-def _scan_stdout_capture(capsys: pytest.CaptureFixture[str], report: _ScanReport) -> None:
+def _scan_stdout_capture(
+    capsys: pytest.CaptureFixture[str], report: _ScanReport
+) -> None:
     """Scan captured stdout/stderr for canaries.
 
     This one IS live today — any print() or logger.* in the pipeline will
@@ -240,6 +258,69 @@ def _scan_stdout_capture(capsys: pytest.CaptureFixture[str], report: _ScanReport
             report.record_hit("stdout_capture", stream_name, hits)
 
 
+def _exercise_audit_sink() -> list[Any]:
+    """Write canaries through AuditLogger and return stored events for scanning."""
+    audit_logger = AuditLogger("CanaryAuditSecret-1234567890!abcdef")
+    audit_logger.log_event(
+        AuditEventType.DATA_READ,
+        user_id=CANARY_VALUES[0],
+        session_id=f"session-{CANARY_VALUES[1]}",
+        tenant_id=f"tenant-{CANARY_VALUES[2]}",
+        resource_id=f"resource-{CANARY_VALUES[3]}",
+        resource_type="dataset",
+        action="read",
+        message=f"Audit canary payload {CANARY_VALUES[4]}",
+        details={
+            "input": CANARY_VALUES[0],
+            "expected": CANARY_VALUES[1],
+            "token": CANARY_VALUES[3],
+        },
+    )
+    return audit_logger.get_events()
+
+
+def _exercise_observability_sink() -> list[list[dict[str, Any]]]:
+    """Write canaries through ObservabilityClient and return captured batches."""
+    sent_batches: list[list[dict[str, Any]]] = []
+
+    def sender(traces: list[dict[str, Any]]) -> None:
+        sent_batches.append(traces)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=1,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+    trace_id = client.start_trace(
+        "pii-canary-trace",
+        trace_id="trace_pii_canary",
+        user_id=CANARY_VALUES[0],
+        metadata={"credit_card": CANARY_VALUES[1]},
+        input_data={"ssn": CANARY_VALUES[2]},
+    )
+    client.record_observation(
+        trace_id,
+        name="pii-canary-observation",
+        observation_type=ObservationType.GENERATION,
+        input_data={"api_key": CANARY_VALUES[3]},
+        output_data={"bearer": CANARY_VALUES[4]},
+        metadata={"email": CANARY_VALUES[0]},
+    )
+    client.end_trace(
+        trace_id,
+        output_data={"answer": CANARY_VALUES[3]},
+        metadata={"ssn": CANARY_VALUES[2]},
+    )
+    client.flush()
+    client.close()
+    return sent_batches
+
+
 # ---------------------------------------------------------------------------
 # The actual test
 # ---------------------------------------------------------------------------
@@ -250,8 +331,8 @@ def canary_dataset() -> Dataset:
     """Dataset whose every example is canary-laden."""
     examples = [
         EvaluationExample(
-            input=f"Question containing {value}",
-            output=f"Expected answer with {value}",
+            input_data={"question": f"Question containing {value}"},
+            expected_output=f"Expected answer with {value}",
         )
         for _label, value, _rx in CANARIES
     ]
@@ -267,19 +348,6 @@ def canary_evaluator() -> _EchoCanaryEvaluator:
     return _EchoCanaryEvaluator()
 
 
-# Explicit xfail until redaction lands. The strict=True means the test
-# *must start failing* (unexpected pass) the moment redaction is functional,
-# which is how we prove the pipeline is complete. Remove xfail and flip any
-# remaining .record_gap() to .record_hit() as each scanner comes online.
-@pytest.mark.xfail(
-    reason=(
-        "P0-1 redaction pipeline not yet implemented. Scanners for audit "
-        "and observability stores are not yet wired. Flip to strict pass "
-        "once redaction is live and all record_gap() calls become "
-        "record_hit() paths with zero hits."
-    ),
-    strict=True,
-)
 @pytest.mark.asyncio
 async def test_canaries_do_not_leak_through_optimization_pipeline(
     canary_dataset: Dataset,
@@ -301,16 +369,17 @@ async def test_canaries_do_not_leak_through_optimization_pipeline(
 
     result = await orchestrator.optimize(lambda x: x, canary_dataset)
     assert result.trials, "optimization produced no trials; canary test vacuous"
+    audit_events = _exercise_audit_sink()
+    observability_trace_batches = _exercise_observability_sink()
 
-    trials = [
-        t for t in result.trials if t.status == TrialStatus.COMPLETED
-    ]
+    trials = [t for t in result.trials if t.status == TrialStatus.COMPLETED]
     assert trials, "no completed trials; cannot assess canary leakage"
 
     report = _ScanReport()
     _scan_trial_results(trials, report)
-    _scan_audit_log(report)
-    _scan_observability_traces(report)
+    _scan_serialized_trial_results(trials, report)
+    _scan_audit_log(audit_events, report)
+    _scan_observability_traces(observability_trace_batches, report)
     _scan_stdout_capture(capsys, report)
 
     # Assertion: zero leaks, no unresolved gaps.
@@ -332,7 +401,9 @@ def test_canary_regexes_match_their_own_values() -> None:
     meaningless even if it passes.
     """
     for label, value, rx in CANARIES:
-        assert rx.search(value), f"canary regex for {label!r} does not match its seed value"
+        assert rx.search(value), (
+            f"canary regex for {label!r} does not match its seed value"
+        )
 
 
 def test_contains_canary_detects_partial_embeddings() -> None:

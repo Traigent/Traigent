@@ -38,6 +38,29 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 from traigent.api.types import OptimizationResult  # noqa: E402
 
+
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+safe_arithmetic = _SAFE_HELPERS.safe_arithmetic
+wrap_untrusted = _SAFE_HELPERS.wrap_untrusted
+
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
@@ -161,10 +184,7 @@ def _print_results(result: OptimizationResult) -> None:
 
 def _calc(expr: str, max_calls: int) -> str:
     try:
-        # very restricted eval context
-        safe = {"__builtins__": {}}
-        val = eval(expr, safe, {})  # noqa: S307 (controlled input in examples)
-        return str(val)
+        return str(safe_arithmetic(expr))
     except Exception:
         return ""
 
@@ -195,7 +215,11 @@ def solve_math(expr: str, config: dict | None = None) -> str:
         tool = _calc(expr, int(cfg.get("max_tool_calls", 1)))
         if tool:
             tool_hint = f"Calculator result: {tool}. Prefer this if consistent.\n\n"
-    prompt = f"Expression: {expr}\n\n{tool_hint}{_PROMPT}"
+    prompt = (
+        "Expression (untrusted):\n"
+        f"{wrap_untrusted('expression', expr)}\n\n"
+        f"{tool_hint}{_PROMPT}"
+    )
     response = ChatAnthropic(
         model_name="claude-sonnet-4-6",
         temperature=float(cfg.get("temperature", 0.0)),

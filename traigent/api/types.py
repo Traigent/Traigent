@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
@@ -263,16 +264,26 @@ class TrialError:
     ) -> dict[str, Any]:
         """Convert structured error details to a JSON-ready dictionary."""
         return {
-            "message": self.message,
+            "message": redact_sensitive_text(self.message),
             "error_type": self.error_type,
-            "traceback": self.traceback,
+            "traceback": redact_sensitive_text(self.traceback),
             "timestamp": _serialize_datetime(
                 self.timestamp, datetime_format=datetime_format
             ),
-            "config": _json_safe_trial_value(
-                self.config, datetime_format=datetime_format
+            "config": redact_sensitive_data(
+                _json_safe_trial_value(self.config, datetime_format=datetime_format)
             ),
         }
+
+    def __repr__(self) -> str:
+        return (
+            "TrialError("
+            "message='<redacted>', "
+            f"error_type={self.error_type!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "config='<redacted>'"
+            ")"
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TrialError:
@@ -332,6 +343,21 @@ class TrialResult:
         """Get the formatted traceback for a failed trial, when available."""
         return self.error.traceback if self.error else None
 
+    def __repr__(self) -> str:
+        return (
+            "TrialResult("
+            f"trial_id={self.trial_id!r}, "
+            "config='<redacted>', "
+            f"metrics={self.metrics!r}, "
+            f"status={self.status!r}, "
+            f"duration={self.duration!r}, "
+            f"timestamp={self.timestamp!r}, "
+            "error_message='<redacted>', "
+            "metadata='<redacted>', "
+            f"error_type={self.error_type!r}"
+            ")"
+        )
+
     def to_dict(
         self,
         *,
@@ -355,23 +381,23 @@ class TrialResult:
             "timestamp": _serialize_datetime(
                 self.timestamp, datetime_format=datetime_format
             ),
-            "error_message": self.error_message,
+            "error_message": redact_sensitive_text(self.error_message),
             "error": _json_safe_trial_value(
                 self.error, datetime_format=datetime_format
             ),
         }
 
         if include_config:
-            result["config"] = _json_safe_trial_value(
-                self.config, datetime_format=datetime_format
+            result["config"] = redact_sensitive_data(
+                _json_safe_trial_value(self.config, datetime_format=datetime_format)
             )
         if include_metrics:
             result["metrics"] = _json_safe_trial_value(
                 self.metrics, datetime_format=datetime_format
             )
         if include_metadata:
-            result["metadata"] = _json_safe_trial_value(
-                self.metadata, datetime_format=datetime_format
+            result["metadata"] = redact_sensitive_data(
+                _json_safe_trial_value(self.metadata, datetime_format=datetime_format)
             )
 
         return result
@@ -1718,14 +1744,56 @@ class ParetoFront:
         return self.configurations[best_idx]  # type: ignore[no-any-return]
 
     def plot_trade_offs(self, x_objective: str, y_objective: str) -> None:
-        """Plot trade-offs between two objectives."""
-        # Implementation would use matplotlib/plotly
-        pass
+        """Plot trade-offs between two objectives.
+
+        .. note::
+            Multi-objective plotting is an experimental scaffold that has
+            not shipped yet. The data backing the plot — ``configurations``,
+            ``objective_values``, ``objectives``, ``is_maximized`` — is real
+            and can be passed to any plotting library directly. To render a
+            Pareto trade-off chart today, use that data with matplotlib,
+            plotly, or your visualization library of choice. ``plot_trade_offs``
+            itself raises ``NotImplementedError`` until first-party plotting
+            ships.
+        """
+        raise NotImplementedError(
+            "ParetoFront.plot_trade_offs() is an experimental visualization "
+            "scaffold and has not shipped yet. To render a Pareto trade-off "
+            "chart today, read the public fields (configurations, "
+            "objective_values, objectives, is_maximized) and pass them to "
+            "matplotlib/plotly directly. "
+            "Tracking: https://github.com/Traigent/Traigent/issues/893"
+        )
 
 
 @dataclass
 class StrategyConfig:
-    """Configuration for optimization strategy."""
+    """Configuration container for optimization strategy parameters.
+
+    .. note::
+        This is a **construction utility** — the fields below are
+        validated and stored, but they are not yet consumed by the
+        SDK's optimization runtime. To configure runtime execution
+        today, use the equivalent supported entry points:
+
+        - ``algorithm``: pass via ``@traigent.optimize(algorithm=...)``
+          or ``OptimizedFunction.optimize(algorithm=...)``.
+        - ``parallel_workers``: pass via
+          ``traigent.configure(parallel_workers=...)`` (which also accepts
+          a ``parallel_config`` for mode / trial_concurrency /
+          example_concurrency / thread_workers).
+        - ``resource_limits``: there is **no supported runtime equivalent
+          yet** for structured resource limits. For coarse cost/time
+          bounds today, use ``cost_limit=...`` /
+          ``TRAIGENT_RUN_COST_LIMIT`` on the decorator and
+          ``OptimizedFunction.optimize(timeout=...)`` at call time.
+          Structured ``resource_limits`` are not wired into the
+          runtime yet.
+
+        Future first-party wiring would need to connect
+        ``StrategyConfig`` to the optimization pipeline. Holding this
+        object does not change optimization behavior.
+    """
 
     algorithm: str
     algorithm_config: dict[str, Any] = field(default_factory=dict)

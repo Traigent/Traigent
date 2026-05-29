@@ -712,31 +712,43 @@ def set_strategy(
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
 ) -> StrategyConfig:
-    """Configure optimization strategy and execution parameters.
+    """Build a validated ``StrategyConfig`` container.
+
+    .. warning::
+        This helper currently only **constructs and validates** a
+        ``StrategyConfig`` object — the returned config is not yet
+        consumed by the optimization runtime. To configure runtime
+        behavior today, use the supported entry points:
+
+        - algorithm: pass directly as
+          ``@traigent.optimize(algorithm=...)`` or
+          ``OptimizedFunction.optimize(algorithm=...)``.
+        - parallel_workers: pass via
+          ``traigent.configure(parallel_workers=...)`` (and use
+          ``parallel_config=`` for mode / trial_concurrency /
+          example_concurrency / thread_workers).
+        - resource_limits: no supported runtime equivalent yet for
+          structured limits. For coarse cost/time bounds, use
+          ``cost_limit=...`` / ``TRAIGENT_RUN_COST_LIMIT`` on the
+          decorator and ``OptimizedFunction.optimize(timeout=...)``
+          at call time. Structured ``resource_limits`` are not wired
+          into the runtime yet.
+
+        Future first-party wiring would need to connect
+        ``StrategyConfig`` to the optimization pipeline.
 
     Args:
         algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
             Default is "tpe" (Tree-structured Parzen Estimator) which is always
             available with Optuna. "bayesian" (Gaussian Process) requires
             the traigent-advanced-algorithms plugin.
-        algorithm_config: Algorithm-specific parameters
-        parallel_workers: Number of parallel evaluation workers
-        resource_limits: Memory, time, and compute constraints
+        algorithm_config: Algorithm-specific parameters.
+        parallel_workers: Number of parallel evaluation workers.
+        resource_limits: Memory, time, and compute constraints.
 
     Returns:
-        StrategyConfig object for use with optimization
-
-    Example::
-
-        strategy = traigent.set_strategy(
-            algorithm="tpe",
-            algorithm_config={
-                "n_startup_trials": 10,
-                "multivariate": True
-            },
-            parallel_workers=4
-        )
-        results = my_agent.optimize(strategy=strategy)
+        Validated ``StrategyConfig``. Holding this object does not change
+        optimization behavior; see the warning above for runtime entry points.
     """
     # Validate algorithm
     available_algorithms = get_available_strategies()
@@ -831,6 +843,40 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "best_for": "Expensive evaluations, continuous optimization, sample efficiency",
             }
 
+        elif algorithm in {
+            "optuna",
+            "optuna_tpe",
+            "tpe",
+            "optuna_random",
+            "optuna_grid",
+            "optuna_cmaes",
+            "optuna_nsga2",
+            "nsga2",
+        }:
+            optuna_names = {
+                "optuna": "Optuna TPE Optimization",
+                "optuna_tpe": "Optuna TPE Optimization",
+                "tpe": "Optuna TPE Optimization",
+                "optuna_random": "Optuna Random Search",
+                "optuna_grid": "Optuna Grid Search",
+                "optuna_cmaes": "Optuna CMA-ES Optimization",
+                "optuna_nsga2": "Optuna NSGA-II Optimization",
+                "nsga2": "Optuna NSGA-II Optimization",
+            }
+            strategies[algorithm] = {
+                "name": optuna_names[algorithm],
+                "description": "Optuna-backed optimization strategy",
+                "supports_continuous": algorithm not in {"optuna_grid"},
+                "supports_categorical": True,
+                "deterministic": algorithm in {"optuna_grid"},
+                "parameters": {
+                    "max_trials": "Maximum number of trials",
+                    "random_seed": "Random seed for reproducibility when supported",
+                    "objective_weights": "Weights for multi-objective aggregation",
+                },
+                "best_for": "Advanced search strategies and multi-objective optimization",
+            }
+
         # Add more algorithms as they are implemented
 
         else:
@@ -916,9 +962,15 @@ def get_version_info() -> dict[str, Any]:
                 registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
                 or "bayesian" in algorithms  # Fallback: check if registered
             ),
-            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE) or True,
-            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL) or True,
-            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS) or True,
+            # Batch 2 fix: removed `or True` bypasses. These three features
+            # were unconditionally advertised as available regardless of
+            # whether the registry actually registered them. If a downstream
+            # user needs them to always report True, the registry should
+            # declare them at base-SDK init time, NOT a presentation-layer
+            # bypass.
+            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE),
+            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL),
+            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS),
             "cloud_execution": registry.has_feature(FEATURE_CLOUD),
             "tracing": registry.has_feature(FEATURE_TRACING),
             "analytics": registry.has_feature(FEATURE_ANALYTICS),

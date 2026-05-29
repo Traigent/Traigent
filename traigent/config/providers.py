@@ -160,18 +160,19 @@ class ContextBasedProvider(ConfigurationProvider):
     ) -> Callable[..., Any]:
         """Inject configuration using context variables."""
 
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Merge with existing context
-            merged_config = merge_with_context(config)
+        if inspect.isasyncgenfunction(func):
 
-            # Set context for function execution
-            from traigent.config.context import ConfigurationContext
+            @wraps(func)
+            async def async_gen_wrapper(*args: Any, **kwargs: Any):
+                merged_config = merge_with_context(config)
+                from traigent.config.context import ConfigurationContext
 
-            with ConfigurationContext(merged_config):
-                return func(*args, **kwargs)
+                with ConfigurationContext(merged_config):
+                    async for item in func(*args, **kwargs):
+                        yield item
 
-        # For async functions
+            return async_gen_wrapper
+
         if inspect.iscoroutinefunction(func):
 
             @wraps(func)
@@ -183,6 +184,30 @@ class ContextBasedProvider(ConfigurationProvider):
                     return await func(*args, **kwargs)
 
             return async_wrapper
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            merged_config = merge_with_context(config)
+            from traigent.config.context import ConfigurationContext
+
+            if inspect.isgeneratorfunction(func):
+
+                def iter_with_context():
+                    with ConfigurationContext(merged_config):
+                        yield from func(*args, **kwargs)
+
+                return iter_with_context()
+
+            with ConfigurationContext(merged_config):
+                result = func(*args, **kwargs)
+                if inspect.isgenerator(result):
+
+                    def iter_result_with_context():
+                        with ConfigurationContext(merged_config):
+                            yield from result
+
+                    return iter_result_with_context()
+                return result
 
         return wrapper
 
@@ -353,9 +378,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
             # Only merge context config when a context has been explicitly set.
             # When no context is set, config_context.get() returns None and
-            # get_config() synthesises a default TraigentConfig whose to_dict()
-            # returns {'execution_mode': 'edge_analytics'} — a truthy dict that
-            # would pollute active_config with irrelevant defaults.
+            # get_config() synthesises a default TraigentConfig. That default
+            # should not pollute active_config with irrelevant values.
             raw_ctx = _config_context.get(None)
             if raw_ctx is not None:
                 current_config = get_config()

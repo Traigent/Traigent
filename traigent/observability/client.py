@@ -38,6 +38,7 @@ from traigent.observability.dtos import (
     TraceRecord,
     utc_now,
 )
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -47,6 +48,10 @@ from traigent.utils.logging import get_logger
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
 
 logger = get_logger(__name__)
+
+_TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
+_TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
+_TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
 
 
 def _new_trace_id() -> str:
@@ -79,7 +84,7 @@ class _TraceState:
                 roots.append(observation)
 
         payload_trace = replace(self.trace, observations=roots)
-        return payload_trace.to_dict()
+        return cast(dict[str, Any], payload_trace.to_dict())
 
 
 class _SyncBatchTransport:
@@ -92,11 +97,13 @@ class _SyncBatchTransport:
         batch_size: int,
         max_buffer_age: float,
         max_queue_size: int,
+        max_batch_bytes: int,
     ) -> None:
         self._sender = sender
         self.batch_size = batch_size
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
+        self.max_batch_bytes = max_batch_bytes
         self._retry_handler = RetryHandler(CLOUD_API_RETRY_CONFIG)
         self._buffer: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
@@ -117,6 +124,9 @@ class _SyncBatchTransport:
         send_now = False
         with self._lock:
             if self._closed:
+                self._append_error(
+                    f"transport closed; dropped payload for item '{item_id}'"
+                )
                 return False
 
             if item_id in self._buffer:
@@ -128,7 +138,9 @@ class _SyncBatchTransport:
                 )
                 return False
 
-            self._buffer[item_id] = copy.deepcopy(payload)
+            # Direct transport callers bypass ObservabilityClient's trace redaction.
+            redacted_payload = cast(dict[str, Any], redact_sensitive_data(payload))
+            self._buffer[item_id] = copy.deepcopy(redacted_payload)
             self._stats["submitted_items"] += 1
             self._stats["pending_items"] = len(self._buffer)
 
@@ -189,12 +201,67 @@ class _SyncBatchTransport:
                     self._stats["pending_items"] = 0
                     return
 
-                batch_items = []
+                batch_items: list[tuple[str, dict[str, Any]]] = []
+                batch_body_bytes = 0
                 for _ in range(min(self.batch_size, len(self._buffer))):
+                    item_id, payload = next(iter(self._buffer.items()))
+                    try:
+                        payload_bytes = self._payload_json_size(payload)
+                    except TypeError as exc:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is not JSON serializable: {exc}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "it is not JSON serializable: %s",
+                            item_id,
+                            exc,
+                        )
+                        continue
+                    item_bytes = self._batch_payload_size_from_body(payload_bytes)
+                    if item_bytes > self.max_batch_bytes:
+                        self._buffer.popitem(last=False)
+                        self._stats["dropped_items"] += 1
+                        self._append_error(
+                            "observability payload for item "
+                            f"'{item_id}' is {item_bytes} bytes, exceeding "
+                            f"max_batch_bytes={self.max_batch_bytes}; dropped"
+                        )
+                        logger.warning(
+                            "Observability transport dropped payload '%s' because "
+                            "its encoded size %d exceeds max_batch_bytes=%d",
+                            item_id,
+                            item_bytes,
+                            self.max_batch_bytes,
+                        )
+                        continue
+
+                    projected_body_bytes = batch_body_bytes + payload_bytes
+                    if batch_items:
+                        projected_body_bytes += _TRACE_BATCH_ITEM_SEPARATOR_BYTES
+                    projected_bytes = self._batch_payload_size_from_body(
+                        projected_body_bytes
+                    )
+                    if batch_items and projected_bytes > self.max_batch_bytes:
+                        break
                     batch_items.append(self._buffer.popitem(last=False))
+                    batch_body_bytes = projected_body_bytes
                 self._stats["pending_items"] = len(self._buffer)
 
+            if not batch_items:
+                continue
             self._send_batch(batch_items)
+
+    @staticmethod
+    def _payload_json_size(payload: dict[str, Any]) -> int:
+        return len(json.dumps(payload).encode("utf-8"))
+
+    @staticmethod
+    def _batch_payload_size_from_body(body_bytes: int) -> int:
+        return _TRACE_BATCH_PREFIX_BYTES + body_bytes + _TRACE_BATCH_SUFFIX_BYTES
 
     def _send_batch(self, batch_items: list[tuple[str, dict[str, Any]]]) -> None:
         payloads = [payload for _, payload in batch_items]
@@ -267,6 +334,7 @@ class ObservabilityClient:
         self._trace_states: dict[str, _TraceState] = {}
         self._lock = threading.RLock()
         self._closed = False
+        self._offline_notice_logged = False
         self._transport = self._create_transport()
 
         if self.config.enable_atexit_flush:
@@ -464,6 +532,9 @@ class ObservabilityClient:
 
     def flush(self, timeout: float | None = None) -> FlushResult:
         timeout = timeout or self.config.flush_timeout
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            return self._offline_flush_result()
         with self._lock:
             trace_ids = list(self._trace_states.keys())
         for trace_id in trace_ids:
@@ -499,6 +570,15 @@ class ObservabilityClient:
                 errors=[],
                 warnings=[],
             )
+
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            self._closed = True
+            return self._offline_flush_result()
+        with self._lock:
+            trace_ids = list(self._trace_states.keys())
+        for trace_id in trace_ids:
+            self._queue_trace_snapshot(trace_id)
 
         self._closed = True
         result = self._transport.close()
@@ -663,6 +743,7 @@ class ObservabilityClient:
             batch_size=self.config.batch_size,
             max_buffer_age=self.config.max_buffer_age,
             max_queue_size=self.config.max_queue_size,
+            max_batch_bytes=self.config.max_batch_bytes,
         )
 
     def _send_payload_batch(
@@ -674,6 +755,10 @@ class ObservabilityClient:
         return self._post_batch_sync(traces)
 
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            return None
+
         payload = json.dumps({"traces": traces}).encode("utf-8")
         http_request = request.Request(
             self.config.ingest_url,
@@ -747,6 +832,11 @@ class ObservabilityClient:
     ) -> dict[str, Any]:
         if self._closed:
             raise ClientError("Observability client is closed")
+        if self.config.offline_mode:
+            self._log_offline_mode_once()
+            raise ClientError(
+                "Observability backend request skipped because TRAIGENT_OFFLINE_MODE=true"
+            )
         if self._request_sender_override is not None:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
@@ -806,12 +896,43 @@ class ObservabilityClient:
         return data
 
     def _queue_trace_snapshot(self, trace_id: str) -> None:
+        if self.config.offline_mode:
+            return
         with self._lock:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed:
                 return
-            payload = state.to_payload()
-        self._transport.submit(trace_id, payload)
+            payload = cast(dict[str, Any], redact_sensitive_data(state.to_payload()))
+        submitted = self._transport.submit(trace_id, payload)
+        if not submitted:
+            stats = self._transport.get_stats()
+            errors = stats.get("errors") or []
+            reason = errors[-1] if errors else "transport rejected trace snapshot"
+            reason = redact_sensitive_text(str(reason))
+            logger.warning(
+                "Observability trace snapshot for %s was not queued: %s",
+                trace_id,
+                reason,
+            )
+
+    def _log_offline_mode_once(self) -> None:
+        if self._offline_notice_logged:
+            return
+        self._offline_notice_logged = True
+        logger.info("Observability transport in offline mode; traces will not be sent")
+
+    @staticmethod
+    def _offline_flush_result() -> FlushResult:
+        return FlushResult(
+            success=True,
+            items_sent=0,
+            items_pending=0,
+            items_dropped=0,
+            successful_batches=0,
+            failed_batches=0,
+            errors=[],
+            warnings=[],
+        )
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str] = {}

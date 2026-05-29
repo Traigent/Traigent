@@ -356,11 +356,11 @@ class TestApplyConfigSettings:
     @patch("traigent.api.functions.logger")
     def test_apply_config_settings_execution_mode(self, mock_logger):
         """Test _apply_config_settings with execution_mode."""
-        config = TraigentConfig(execution_mode="cloud")
+        config = TraigentConfig(execution_mode="hybrid")
 
         _apply_config_settings(config)
 
-        assert _GLOBAL_CONFIG["execution_mode"] == "cloud"
+        assert _GLOBAL_CONFIG["execution_mode"] == "hybrid"
         assert _GLOBAL_CONFIG["default_storage_backend"] == "cloud"
 
     @patch("traigent.api.functions.logger")
@@ -508,7 +508,7 @@ class TestGetCurrentConfig:
     @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_traigent_config(self, mock_get_config):
         """Test get_current_config with TraigentConfig object."""
-        config = TraigentConfig(execution_mode="cloud")
+        config = TraigentConfig(execution_mode="hybrid")
         mock_get_config.return_value = config
 
         result = get_current_config()

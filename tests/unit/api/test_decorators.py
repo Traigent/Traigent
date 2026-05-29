@@ -9,6 +9,7 @@ import pytest
 from traigent.api.decorators import optimize
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestOptimizeDecorator:
@@ -78,23 +79,21 @@ class TestOptimizeDecorator:
         assert sample_function.execution_mode == "hybrid_api"
         assert sample_function.hybrid_api_transport is transport
 
-    def test_execution_bundle_passes_cloud_fallback_policy(self):
-        """Execution bundle should propagate cloud fallback policy to runtime."""
+    def test_execution_bundle_rejects_cloud_fallback_policy(self):
+        """Reserved cloud mode fails closed even with an auto fallback policy."""
         from traigent.api.decorators import ExecutionOptions
 
-        @optimize(
-            configuration_space={"x": [1, 2]},
-            execution=ExecutionOptions(
-                execution_mode="cloud",
-                cloud_fallback_policy="auto",
-            ),
-        )
-        def sample_function(x: int) -> int:
-            return x
+        with pytest.raises(ConfigurationError, match="not available yet"):
 
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.execution_mode == "cloud"
-        assert sample_function.cloud_fallback_policy == "auto"
+            @optimize(
+                configuration_space={"x": [1, 2]},
+                execution=ExecutionOptions(
+                    execution_mode="cloud",
+                    cloud_fallback_policy="auto",
+                ),
+            )
+            def sample_function(x: int) -> int:
+                return x
 
     def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
         """Direct runtime options should accept hybrid_api_transport."""
@@ -184,18 +183,17 @@ class TestOptimizeDecorator:
         result = complex_function("test", 10, "extra", key="value")
         assert "test-10-1-1" in result
 
-    def test_decorator_with_cloud_execution_mode(self):
-        """Test decorator when execution_mode='cloud'."""
+    def test_decorator_with_cloud_execution_mode_fails_closed(self):
+        """Reserved cloud execution is rejected at decoration time."""
 
-        @optimize(
-            configuration_space={"model": ["claude", "gpt-4"]},
-            execution_mode="cloud",
-        )
-        def ai_function(model: str) -> str:
-            return f"Using {model}"
+        with pytest.raises(ConfigurationError, match="not available yet"):
 
-        assert isinstance(ai_function, OptimizedFunction)
-        assert ai_function.cloud_fallback_policy == "never"
+            @optimize(
+                configuration_space={"model": ["claude", "gpt-4"]},
+                execution_mode="cloud",
+            )
+            def ai_function(model: str) -> str:
+                return f"Using {model}"
 
     def test_decorator_accepts_cost_limit_runtime_override(self):
         """cost_limit should be accepted as a runtime override key."""
@@ -414,7 +412,7 @@ class TestOptimizedFunctionIntegration:
             constraints=[mock_constraint],
             injection_mode="parameter",
             config_param="llm_config",
-            execution_mode="cloud",
+            execution_mode="hybrid",
             auto_override_frameworks=False,
             framework_targets=["openai.OpenAI"],
         )
@@ -471,7 +469,10 @@ class TestOptimizedFunctionIntegration:
 
         inline_examples = [
             {"input": {"question": "What is 2+2?"}, "expected": "4"},
-            {"input_data": {"question": "Capital of France?"}, "expected_output": "Paris"},
+            {
+                "input_data": {"question": "Capital of France?"},
+                "expected_output": "Paris",
+            },
         ]
 
         @optimize(
@@ -870,6 +871,7 @@ class TestRemovedExecutionRuntimeOptions:
         from traigent.api.decorators import InjectionOptions
 
         for mode in ["context", "seamless"]:
+
             @optimize(
                 configuration_space={"x": [1, 2, 3]},
                 injection=InjectionOptions(injection_mode=mode),

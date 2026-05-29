@@ -195,6 +195,45 @@ class TestMeasuresDictValidationInSubmission:
         mock_client._normalize_execution_mode.assert_called_once_with("hybrid")
 
     @pytest.mark.asyncio
+    async def test_invalid_configuration_run_submission_does_not_post(self) -> None:
+        """Schema validation failure must stop trial result network submission."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._sanitize_error_message = Mock(return_value="")
+
+        ops = TrialOperations(mock_client)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+                side_effect=ValueError("invalid payload"),
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            result = await ops.submit_trial_result_via_session(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"model": "gpt-4"},
+                metrics={"accuracy": 0.95},
+                status="completed",
+            )
+
+        assert result is False
+        mock_client.auth_manager.augment_headers.assert_not_awaited()
+        mock_aiohttp.ClientSession.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_invalid_metric_key_logs_warning_and_submits_unvalidated(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -353,6 +392,97 @@ class TestMeasuresDictValidationInSubmission:
             assert call_args.args[5] == {"accuracy": 0.95}
 
 
+class TestSummaryStatsValidation:
+    """Tests for fail-closed summary_stats submission validation."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_summary_stats_submission_does_not_post(self) -> None:
+        """Schema validation failure must stop summary stats network submission."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+
+        ops = TrialOperations(mock_client)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+                side_effect=ValueError("invalid summary"),
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            result = await ops.submit_summary_stats(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"model": "gpt-4"},
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is False
+        mock_client.auth_manager.augment_headers.assert_not_awaited()
+        mock_aiohttp.ClientSession.assert_not_called()
+
+
+class TestWeightedScoreUpdates:
+    """Tests for weighted-score backend update accounting."""
+
+    @pytest.mark.asyncio
+    async def test_missing_configuration_run_is_not_counted_as_update(self) -> None:
+        """Backend not-found responses should not report an applied update."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = Mock()
+        mock_response.status = 400
+        mock_response.text = AsyncMock(return_value="Configuration run not found")
+
+        mock_put_ctx = AsyncMock()
+        mock_put_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_put_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(return_value=mock_put_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.update_trial_weighted_scores(
+                trial_id="trial-missing",
+                weighted_score=0.73,
+            )
+
+        assert result is False
+        mock_session.put.assert_called_once()
+
+
 class TestSummaryStatsLogging:
     """Test logging behavior for optional summary_stats metadata."""
 
@@ -377,6 +507,181 @@ class TestSummaryStatsLogging:
             "No summary_stats found for trial trial_abc" in msg
             for msg in caplog.messages
         )
+
+
+class TestOfflineModeReturnsNone:
+    """Offline mode must return None (not True) so callers don't treat skip as success.
+
+    Per workspace Rule 2 (no fake completion), returning True when no backend
+    call was made would conflate 'skipped' with 'succeeded'.
+    """
+
+    def _make_ops(self) -> TrialOperations:
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="ACTIVE")
+        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        return TrialOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_register_trial_start_offline_returns_none(self) -> None:
+        """register_trial_start returns None when backend is offline."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = await ops.register_trial_start("sess-1", "trial-1", {"k": "v"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_result_offline_returns_none(self) -> None:
+        """submit_trial_result_via_session returns None when backend is offline."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = await ops.submit_trial_result_via_session(
+                session_id="sess-1",
+                trial_id="trial-1",
+                config={"k": "v"},
+                metrics={"accuracy": 0.9},
+                status="completed",
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_submit_summary_stats_offline_returns_none(self) -> None:
+        """submit_summary_stats returns None when backend is offline."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = await ops.submit_summary_stats(
+                session_id="sess-1",
+                trial_id="trial-1",
+                config={"k": "v"},
+                summary_stats={"metrics": {"accuracy": 0.9}},
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_update_trial_weighted_scores_offline_returns_none(self) -> None:
+        """update_trial_weighted_scores returns None when backend is offline."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = await ops.update_trial_weighted_scores(
+                trial_id="trial-1",
+                weighted_score=0.85,
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_register_trial_start_exception_offline_returns_none(self) -> None:
+        """Exception path in register_trial_start also returns None when offline."""
+        ops = self._make_ops()
+
+        # First call to is_backend_offline returns False (enter try block),
+        # second call returns True (in exception handler).
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                side_effect=[False, True],
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(
+                side_effect=ConnectionError("simulated offline")
+            )
+            result = await ops.register_trial_start("sess-1", "trial-1", {"k": "v"})
+        assert result is None
+
+    def test_register_trial_start_sync_offline_returns_none(self) -> None:
+        """Sync wrapper also returns None when offline."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = ops.register_trial_start_sync("sess-1", "trial-1", {"k": "v"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_register_trial_start_sync_running_loop_offline_returns_none(
+        self,
+    ) -> None:
+        """Sync wrapper preserves None even when called inside a running loop."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = ops.register_trial_start_sync("sess-1", "trial-1", {"k": "v"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_result_exception_offline_returns_none(self) -> None:
+        """Exception path in submit_trial_result_via_session returns None offline."""
+        ops = self._make_ops()
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                side_effect=[False, True],
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(
+                side_effect=ConnectionError("simulated offline")
+            )
+            result = await ops.submit_trial_result_via_session(
+                session_id="sess-1",
+                trial_id="trial-1",
+                config={"k": "v"},
+                metrics={"accuracy": 0.9},
+                status="completed",
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_submit_summary_stats_exception_offline_returns_none(self) -> None:
+        """Exception path in submit_summary_stats returns None offline."""
+        ops = self._make_ops()
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                side_effect=[False, True],
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(
+                side_effect=ConnectionError("simulated offline")
+            )
+            result = await ops.submit_summary_stats(
+                session_id="sess-1",
+                trial_id="trial-1",
+                config={"k": "v"},
+                summary_stats={"metrics": {"accuracy": 0.9}},
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_offline_result_is_falsy(self) -> None:
+        """None is falsy so callers using `if result:` treat it as non-success."""
+        ops = self._make_ops()
+        with patch(
+            "traigent.cloud.trial_operations.is_backend_offline", return_value=True
+        ):
+            result = await ops.register_trial_start("sess-1", "trial-1", {"k": "v"})
+        # The critical invariant: callers must NOT interpret this as success.
+        assert not result
 
 
 class TestMeasuresLogging:

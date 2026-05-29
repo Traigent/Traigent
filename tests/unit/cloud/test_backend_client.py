@@ -175,6 +175,109 @@ class TestBackendIntegratedClient:
         assert client.backend_config.backend_base_url == "https://api.test.com"
         assert client.backend_config.api_base_url == "https://api.test.com/api/v1"
 
+    @pytest.mark.asyncio
+    async def test_register_trial_start_preserves_offline_none(self, backend_client):
+        """register_trial_start propagates None for offline skips."""
+        backend_client._trial_ops.register_trial_start = AsyncMock(return_value=None)
+
+        result = await backend_client.register_trial_start(
+            "session-1", "trial-1", {"model": "gpt-4o-mini"}
+        )
+
+        assert result is None
+        backend_client._trial_ops.register_trial_start.assert_awaited_once_with(
+            "session-1", "trial-1", {"model": "gpt-4o-mini"}
+        )
+
+    def test_register_trial_start_sync_preserves_offline_none(self, backend_client):
+        """Sync trial-start wrapper propagates None for offline skips."""
+        backend_client._trial_ops.register_trial_start_sync = MagicMock(
+            return_value=None
+        )
+
+        result = backend_client.register_trial_start_sync(
+            "session-1", "trial-1", {"model": "gpt-4o-mini"}
+        )
+
+        assert result is None
+        backend_client._trial_ops.register_trial_start_sync.assert_called_once_with(
+            "session-1", "trial-1", {"model": "gpt-4o-mini"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_result_preserves_offline_none(self, backend_client):
+        """Trial-result wrapper propagates None for offline skips."""
+        backend_client._trial_ops.submit_trial_result_via_session = AsyncMock(
+            return_value=None
+        )
+
+        result = await backend_client._submit_trial_result_via_session(
+            "session-1",
+            "trial-1",
+            {"model": "gpt-4o-mini"},
+            {"accuracy": 0.9},
+            "completed",
+            None,
+            "edge_analytics",
+        )
+
+        assert result is None
+        backend_client._trial_ops.submit_trial_result_via_session.assert_awaited_once_with(
+            "session-1",
+            "trial-1",
+            {"model": "gpt-4o-mini"},
+            {"accuracy": 0.9},
+            "completed",
+            None,
+            "edge_analytics",
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_summary_stats_preserves_offline_none(self, backend_client):
+        """Summary-stats wrapper propagates None for offline skips."""
+        backend_client._trial_ops.submit_summary_stats = AsyncMock(return_value=None)
+
+        result = await backend_client._submit_summary_stats(
+            "session-1",
+            "trial-1",
+            {"model": "gpt-4o-mini"},
+            {"metrics": {"accuracy": 0.9}},
+            "completed",
+        )
+
+        assert result is None
+        backend_client._trial_ops.submit_summary_stats.assert_awaited_once_with(
+            "session-1",
+            "trial-1",
+            {"model": "gpt-4o-mini"},
+            {"metrics": {"accuracy": 0.9}},
+            "completed",
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_trial_weighted_scores_preserves_offline_none(
+        self, backend_client
+    ):
+        """Weighted-score wrapper propagates None for offline skips."""
+        backend_client._trial_ops.update_trial_weighted_scores = AsyncMock(
+            return_value=None
+        )
+
+        result = await backend_client.update_trial_weighted_scores(
+            "trial-1",
+            0.87,
+            {"accuracy": [0.0, 1.0]},
+            {"accuracy": 1.0},
+        )
+
+        assert result is None
+        backend_client._trial_ops.update_trial_weighted_scores.assert_awaited_once_with(
+            "trial-1",
+            0.87,
+            {"accuracy": [0.0, 1.0]},
+            {"accuracy": 1.0},
+        )
+
     @patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", False)
     def test_client_without_aiohttp(self, backend_config):
         """Test client initialization without aiohttp."""
@@ -182,9 +285,9 @@ class TestBackendIntegratedClient:
             client = BackendIntegratedClient(backend_config=backend_config)
             # Check that the aiohttp warning was logged (among possibly other warnings)
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any(
-                "aiohttp not available" in msg for msg in warning_calls
-            ), f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
+            assert any("aiohttp not available" in msg for msg in warning_calls), (
+                f"Expected 'aiohttp not available' warning, but got: {warning_calls}"
+            )
             assert client is not None
 
     def test_async_context_manager(self, backend_client):
@@ -440,8 +543,11 @@ class TestPrivacyFirstOptimization:
                 # Verify trial mapping (no backend config run creation anymore)
                 mock_bridge.add_trial_mapping.assert_called_once()
 
-                # Verify session update
-                assert backend_client._active_sessions[session_id].completed_trials == 1
+                # Verify the suggestion touches the session without counting as a completion.
+                assert backend_client._active_sessions[session_id].completed_trials == 0
+                assert (
+                    backend_client._active_sessions[session_id].updated_at is not None
+                )
 
         import asyncio
 

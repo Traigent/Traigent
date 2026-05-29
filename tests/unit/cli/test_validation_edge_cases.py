@@ -224,36 +224,48 @@ class TestErrorScenarios:
             os.unlink(external_file)
 
     def test_discover_functions_permission_denied(self):
-        """Test function discovery with permission-denied file."""
+        """Test function discovery with permission-denied file.
+
+        On a file with mode 0o000, ``discover_optimized_functions`` must EITHER
+        raise a typed error (PermissionError / OSError / ImportError /
+        ValueError) OR return a result whose discovered function list is
+        empty — i.e. it MUST NOT silently report fake functions. Returning a
+        non-empty result for an unreadable file would be a real regression.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("running as root — chmod 000 does not restrict reads")
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("# Valid Python file")
+            f.write("# Valid Python file (empty, no decorated functions)\n")
             restricted_file = f.name
 
-        test_completed = False
         try:
-            # Make file unreadable
             os.chmod(restricted_file, 0o000)
 
-            # Should handle permission error gracefully
             try:
-                discover_optimized_functions(restricted_file)
-                # If it doesn't raise an exception, that's also acceptable
-                test_completed = True
-            except PermissionError:
-                # Expected behavior
-                test_completed = True
-            except Exception:
-                # Other exceptions might also be acceptable
-                test_completed = True
+                result = discover_optimized_functions(restricted_file)
+            except (PermissionError, OSError, ImportError, ValueError):
+                # Typed failure is a valid, documented behavior.
+                return
+
+            # If no exception was raised, the result MUST be a sensible empty
+            # discovery result — not a hallucinated function list.
+            if isinstance(result, list):
+                discovered = result
+            elif hasattr(result, "functions"):
+                discovered = list(result.functions)
+            else:
+                discovered = result
+            assert not discovered, (
+                f"discover_optimized_functions silently returned data for an "
+                f"unreadable file: {discovered!r}"
+            )
         finally:
-            # Restore permissions and clean up
             try:
                 os.chmod(restricted_file, 0o644)
                 os.unlink(restricted_file)
-            except Exception:
+            except OSError:
                 pass
-        # Verify test completed one of the expected paths
-        assert test_completed
 
     @pytest.mark.asyncio
     async def test_validator_with_failing_baseline(self):

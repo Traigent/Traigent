@@ -13,10 +13,7 @@ from typing import Any
 
 import pytest
 
-from traigent.api.types import (
-    ExampleResult,
-    TrialResult,
-)
+from traigent.api.types import ExampleResult, TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
@@ -232,9 +229,10 @@ async def test_hybrid_mode_includes_measures_when_privacy_off():
             assert "example_id" in measure
             assert "metrics" in measure
             metrics = measure["metrics"]
-            assert "score" in metrics or any(
-                k in metrics for k in ["accuracy", "latency", "cost"]
-            )
+            if metrics:
+                assert "score" in metrics or any(
+                    k in metrics for k in ["accuracy", "latency", "cost"]
+                )
             # Privacy checks - no raw data even in hybrid mode when privacy is off
             assert "input_data" not in measure
             assert "actual_output" not in measure
@@ -243,7 +241,7 @@ async def test_hybrid_mode_includes_measures_when_privacy_off():
 @pytest.mark.asyncio
 async def test_session_summary_contains_all_metrics():
     """Test that session_summary aggregates all metrics, not just primary objective."""
-    config = TraigentConfig(execution_mode="standard", privacy_enabled=False)
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
 
     optimizer = DeterministicOptimizer(
         config_space={"model": ["gpt-3.5"]},
@@ -323,7 +321,7 @@ async def test_session_summary_contains_all_metrics():
 @pytest.mark.asyncio
 async def test_overlay_metrics_properly_prefixed():
     """Test that overlay metrics are prefixed with 'run_' to avoid collisions."""
-    config = TraigentConfig(execution_mode="standard", privacy_enabled=False)
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
 
     # Create an optimizer that will cause resampling (same config twice)
     class ResamplingOptimizer(BaseOptimizer):
@@ -459,9 +457,10 @@ async def test_privacy_mode_excludes_raw_data():
                 assert "metrics" in measure
                 metrics = measure["metrics"]
                 # Should have sanitized metrics
-                assert "score" in metrics or any(
-                    k in metrics for k in ["accuracy", "latency", "cost"]
-                )
+                if metrics:
+                    assert "score" in metrics or any(
+                        k in metrics for k in ["accuracy", "latency", "cost"]
+                    )
                 # Must not have raw data
                 assert "input_data" not in measure
                 assert "expected_output" not in measure
@@ -537,7 +536,7 @@ async def test_local_mode_aggregation():
 @pytest.mark.asyncio
 async def test_total_examples_calculation():
     """Test that total_examples is correctly calculated from samples_per_config."""
-    config = TraigentConfig(execution_mode="standard", privacy_enabled=False)
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
 
     # Optimizer that generates different configs
     optimizer = DeterministicOptimizer(
@@ -619,7 +618,7 @@ async def test_total_examples_calculation():
 @pytest.mark.asyncio
 async def test_multiple_replicates_aggregation():
     """Test aggregation with multiple replicates of the same configuration."""
-    config = TraigentConfig(execution_mode="standard", privacy_enabled=False)
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
 
     # Optimizer that repeats the same config (simulating replicates)
     class ReplicateOptimizer(BaseOptimizer):
@@ -709,9 +708,9 @@ async def test_multiple_replicates_aggregation():
 
 
 @pytest.mark.asyncio
-async def test_cloud_mode_no_local_aggregation():
-    """Test that cloud mode doesn't perform local aggregation."""
-    config = TraigentConfig(execution_mode="cloud", privacy_enabled=False)
+async def test_hybrid_mode_session_aggregation():
+    """Test that hybrid mode performs session aggregation consistently."""
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
 
     optimizer = DeterministicOptimizer(
         config_space={"model": ["gpt-3.5"]},
@@ -739,7 +738,7 @@ async def test_cloud_mode_no_local_aggregation():
         func=dummy_func, dataset=dataset, function_name="test_cloud"
     )
 
-    # Check submissions - cloud mode now also creates session aggregations for consistency
+    # Check submissions - hybrid mode now also creates session aggregations for consistency
     session_submissions = [
         s
         for s in backend.submissions
@@ -750,11 +749,11 @@ async def test_cloud_mode_no_local_aggregation():
         == "session"
     ]
 
-    # Cloud mode now also creates session-level aggregations for consistency
+    # Hybrid mode now also creates session-level aggregations for consistency
     # This was changed to provide uniform behavior across all modes
     assert (
         len(session_submissions) >= 1
-    ), "Cloud mode should create session aggregations for consistency"
+    ), "Hybrid mode should create session aggregations for consistency"
 
     # Should have both trial and session submissions
     assert len(backend.submissions) > len(

@@ -10,6 +10,12 @@ from traigent.cloud.auth import InvalidCredentialsError
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 
 
+@pytest.fixture(autouse=True)
+def _enable_backend_auth(monkeypatch):
+    """Most password-auth tests mock backend calls and must bypass CI offline mode."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_default_backend_no_longer_implies_dev_mode():
     """Cloud auth should not infer dev mode from the generic backend fallback."""
     handler = PasswordAuthHandler()
@@ -25,12 +31,47 @@ def test_default_backend_no_longer_implies_dev_mode():
 
 
 def test_explicit_local_backend_still_enables_dev_mode():
-    """Explicit localhost backend configuration should still enable dev mode."""
+    """Explicit localhost backend config should enable dev mode only in non-production."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict(
+        "os.environ",
+        {
+            "ENVIRONMENT": "development",
+            "TRAIGENT_BACKEND_URL": "http://localhost:5000",
+        },
+        clear=True,
+    ):
+        assert handler._is_dev_mode_enabled() is True
+
+
+def test_local_backend_without_non_prod_env_does_not_enable_dev_mode():
+    """A localhost backend URL alone must not opt policy code out of production."""
     handler = PasswordAuthHandler()
 
     with patch.dict(
         "os.environ",
         {"TRAIGENT_BACKEND_URL": "http://localhost:5000"},
+        clear=True,
+    ):
+        assert handler._is_dev_mode_enabled() is False
+
+
+def test_dev_mode_flag_without_non_prod_env_does_not_enable_dev_mode():
+    """TRAIGENT_DEV_MODE alone should fail closed in unknown deployments."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict("os.environ", {"TRAIGENT_DEV_MODE": "1"}, clear=True):
+        assert handler._is_dev_mode_enabled() is False
+
+
+def test_dev_mode_flag_with_non_prod_env_enables_dev_mode():
+    """TRAIGENT_DEV_MODE can opt in only after an explicit non-production env."""
+    handler = PasswordAuthHandler()
+
+    with patch.dict(
+        "os.environ",
+        {"ENVIRONMENT": "development", "TRAIGENT_DEV_MODE": "1"},
         clear=True,
     ):
         assert handler._is_dev_mode_enabled() is True
@@ -45,6 +86,27 @@ def test_mock_auth_fallback_still_requires_dev_mode():
         patch.object(handler, "_is_dev_mode_enabled", return_value=False),
     ):
         assert handler._is_mock_auth_fallback_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_offline_mode_skips_backend_password_auth(monkeypatch):
+    """Offline mode should fail closed without attempting backend login."""
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+    execute = AsyncMock(return_value={"access_token": "should-not-be-used"})
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    with patch(
+        "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+        new=execute,
+    ):
+        token_data = await handler._perform_authentication(credentials)
+
+    assert token_data is None
+    execute.assert_not_called()
 
 
 @pytest.mark.asyncio

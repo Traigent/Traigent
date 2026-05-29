@@ -141,8 +141,42 @@ def _register_builtin_optimizers() -> None:
     except ImportError:
         logger.debug("Bayesian optimizer not available (requires scikit-learn)")
 
+    _register_batch_optimizers()
+    _register_remote_optimizer()
+
     # Optuna optimizers will be registered after the function is defined
     logger.debug("Registered built-in optimizers")
+
+
+def _register_batch_optimizers() -> None:
+    """Register batch optimization algorithms under documented public names."""
+    from traigent.optimizers.batch_optimizers import (
+        AdaptiveBatchOptimizer,
+        MultiObjectiveBatchOptimizer,
+        ParallelBatchOptimizer,
+    )
+
+    register_optimizer("parallel_batch", ParallelBatchOptimizer)
+    register_optimizer("multi_objective_batch", MultiObjectiveBatchOptimizer)
+    register_optimizer("adaptive_batch", AdaptiveBatchOptimizer)
+    logger.debug("Registered batch optimizers")
+
+
+def _register_remote_optimizer() -> None:
+    """Register the remote optimizer compatibility entry.
+
+    The remote optimizer intentionally fails loud at construction unless a
+    remote client is injected, but the registry entry must remain present so
+    algorithm="remote" returns the migration error instead of KeyError.
+    """
+    try:
+        from traigent.optimizers.remote import RemoteOptimizer
+    except ImportError:
+        logger.debug("Remote optimizer not available")
+        return
+
+    if "remote" not in _OPTIMIZER_REGISTRY:
+        register_optimizer("remote", RemoteOptimizer)
 
 
 def register_optuna_optimizers(force: bool = False) -> None:

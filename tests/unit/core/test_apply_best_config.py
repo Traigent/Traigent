@@ -301,12 +301,12 @@ class TestApplyBestConfig:
         result_local = opt_func_local.apply_best_config(sample_optimization_result)
         assert result_local is True
 
-        # Test cloud mode
+        # Test hybrid mode
         opt_func_commercial = OptimizedFunction(
             func=mock_function,
             config_space=sample_config_space,
             objectives=sample_objectives,
-            execution_mode="cloud",
+            execution_mode="hybrid",
             use_cloud_service=False,
         )
 
@@ -315,12 +315,12 @@ class TestApplyBestConfig:
         )
         assert result_commercial is True
 
-        # Test hybrid mode (cloud + service)
+        # Test hybrid mode with service flag
         opt_func_hybrid = OptimizedFunction(
             func=mock_function,
             config_space=sample_config_space,
             objectives=sample_objectives,
-            execution_mode="cloud",
+            execution_mode="hybrid",
             use_cloud_service=True,
         )
 

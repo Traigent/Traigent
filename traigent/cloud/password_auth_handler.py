@@ -36,7 +36,7 @@ class PasswordAuthHandler:
     - Email/password validation
     - Rate limiting of login attempts
     - Backend authentication calls
-    - Development mode mocking
+    - Explicit development-only mock fallback
     """
 
     def __init__(self) -> None:
@@ -165,9 +165,8 @@ class PasswordAuthHandler:
         """Validate email/password credentials without logging sensitive values."""
         if self._is_dev_mode_enabled():
             logger.warning(
-                "Development mode enabled - skipping strict credential validation"
+                "Development mode enabled - credential format is still enforced"
             )
-            return True
 
         required_fields = {"email", "password"}
         if not all(field in credentials for field in required_fields):
@@ -187,8 +186,28 @@ class PasswordAuthHandler:
         return True
 
     def _is_dev_mode_enabled(self) -> bool:
-        """Return True when running in an explicitly non-production mode."""
-        env = os.getenv("TRAIGENT_ENV", "").strip().lower()
+        """Return True when running in an explicitly non-production mode.
+
+        Production detection wins: if ENVIRONMENT names the deployment as
+        production, the dev/mock-auth bypass is refused even when callers
+        set TRAIGENT_DEV_MODE=1 or TRAIGENT_ENV=dev. This protects against
+        a stale dev env var leaking into a production deployment.
+        """
+        try:
+            from traigent.utils.env_config import (
+                resolve_environment_name,
+                treat_as_production_policy,
+            )
+
+            if treat_as_production_policy():
+                return False
+        except Exception as e:  # pragma: no cover - defensive guard
+            logger.debug(f"Could not resolve production env: {e}")
+            return False
+
+        # The resolver import succeeded above; otherwise this method already
+        # failed closed before any dev/mock-auth checks.
+        env = resolve_environment_name(default="") or ""
         if env in {"dev", "development", "local"}:
             return True
 
@@ -226,6 +245,14 @@ class PasswordAuthHandler:
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
         """Perform backend authentication using resilient HTTP client."""
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            logger.debug(
+                "Skipping password authentication: backend offline mode enabled"
+            )
+            return None
+
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for authentication") from None
 
@@ -301,9 +328,10 @@ class PasswordAuthHandler:
                     return token_data
 
         try:
-            return await client.execute_with_retry(
+            result = await client.execute_with_retry(
                 perform_login, operation_name="backend_authentication"
             )
+            return cast(dict[str, Any] | None, result)
         except InvalidCredentialsError:
             raise
         except Exception as exc:

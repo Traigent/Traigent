@@ -10,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
 
 ### Security
+- SDK auth and security policy checks now use `treat_as_production_policy()`, which treats unset or unknown environment names as production-safe by default. Local development JWT validation and mock password auth now require an explicit non-production environment such as `ENVIRONMENT=development` or `TRAIGENT_ENV=development`.
 - Bump `litellm` floor from `>=1.83.0` to `>=1.83.7` to fix [GHSA-xqmj-j6mv-4862](https://github.com/BerriAI/litellm/security/advisories/GHSA-xqmj-j6mv-4862) — prompt-template SSTI in `POST /prompts/test` that could run arbitrary code in the LiteLLM Proxy process. 1.83.7 renders templates in a sandboxed Jinja environment.
 - Bump `langchain-core` floor `>=1.2.22` → `>=1.2.28` (CVE-2026-40087 — improper element neutralization in templates).
 - Bump `langchain-openai` floor `>=0.3.30` → `>=1.1.14` (GHSA-r7w7-9xr2-qq2r — SSRF). Major-version-line bump; lock currently resolves to 1.2.x.
@@ -19,6 +20,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`langgraph-checkpoint` 3.x → 4.x:** the 4.0 release drops default deserialization of payloads serialized with the legacy `"json"` serde mode. Users running `langgraph` with a persistent checkpoint saver (SQLite, Postgres, Redis, etc.) whose stored state contains JSON-format blobs will see deserialization failures unless they configure `serde` with an explicit `allowed_json_modules` list. Traigent does not bind `langgraph-checkpoint` directly — it arrives transitively through the `langgraph` dependency — so this only affects projects that also use `langgraph` checkpointers in their own code. See [CVE-2026-27794](https://github.com/langchain-ai/langgraph/security/advisories) for the underlying RCE that motivated removing the default.
 
 ### Changed
+- Agent platform helpers now distinguish executable platforms from configuration-mapping-only platforms: `get_supported_platforms()` reports only executor-backed platforms, while `get_mapping_platforms()` returns all registered mappings.
+- Agent executors without real cost-estimation support now raise `NotImplementedError` instead of returning an authoritative-looking zero-cost estimate.
+- Langfuse trace metrics now include an `observations_partial` numeric flag in `to_measures_dict()` when observation pagination returns incomplete metrics.
 - `OptimizationJob.wait()` now raises `PlatformCapabilityError` with an actionable
   experimental-feature message instead of `NotImplementedError`. This is an
   intentional public exception-type change to remove a concrete public
@@ -28,6 +32,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `metric_limit` in parallel mode is evaluated after each batch and may overshoot by up to `parallel_trials - 1` trials; use `cost_limit` when a hard spend bound is required.
 - Deprecated `budget_limit` stop-condition aliases now report `OptimizationResult.stop_reason="metric_limit"` instead of `"cost_limit"`. Use `cost_limit` for hard USD spend control and `metric_limit` with `metric_name` for soft cumulative metric stopping.
 - Built-in hypervolume convergence now reports `OptimizationResult.stop_reason="convergence"`; arbitrary custom stop conditions still report the generic `"condition"` reason unless explicitly mapped.
+
+### Fixed
+- Trial tenants now pass quota checks until `trial_ends_at` and are blocked after expiry.
+- Unsupported hybrid keep-alive now marks the session status as `unsupported` instead of treating every tracked session as alive.
+
+## [0.11.4] - 2026-04-04
+
+### Fixed
+- Mock mode reported 0% accuracy when callers passed custom `metric_functions` because the mock evaluator returned a constant value that didn't satisfy the user-provided metric closure. The mock now honors registered `metric_functions` so mock-mode optimizations produce non-trivial scores (#649).
+
+## [0.11.3] - 2026-04-04
+
+### Changed
+- Release-prep version bump on top of 0.11.2; no user-visible behavior change. Published to PyPI at 2026-04-03T22:27:47Z (2026-04-04 local release date) to align metadata with the next-patch release pipeline.
 
 ## [0.11.2] - 2026-04-01
 

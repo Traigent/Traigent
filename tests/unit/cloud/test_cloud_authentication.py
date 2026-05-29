@@ -16,6 +16,7 @@ from traigent.cloud.auth import (
     AuthStatus,
     UnifiedAuthConfig,
 )
+from traigent.security.jwt_validator import ValidationMode
 
 
 def _mock_backend_validate(success: bool = True):
@@ -75,11 +76,13 @@ class TestAPIKey:
         assert api_key.usage_limit == 1000
 
     def test_api_key_default_permissions(self):
-        """Test APIKey with default permissions."""
+        """Missing APIKey permissions fail closed."""
         api_key = APIKey(key="test_key", name="test", created_at=datetime.now(UTC))
 
-        expected_permissions = {"optimize": True, "analytics": True, "billing": False}
-        assert api_key.permissions == expected_permissions
+        assert api_key.permissions == {}
+        assert api_key.has_permission("optimize") is False
+        assert api_key.has_permission("analytics") is False
+        assert api_key.has_permission("billing") is False
 
     def test_api_key_is_valid_not_expired(self):
         """Test API key validity when not expired."""
@@ -183,6 +186,17 @@ class TestAuthManager:
 
         assert result.success is False
         assert manager._authenticated is False
+
+    @pytest.mark.asyncio
+    async def test_authenticate_offline_mode_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        manager = AuthManager(api_key="tg_" + "x" * 61)
+
+        result = await manager.authenticate()
+
+        assert result.success is False
+        assert manager._authenticated is False
+        assert "backend offline mode enabled" in (result.error_message or "")
 
     @pytest.mark.asyncio
     async def test_is_authenticated(self):
@@ -392,7 +406,8 @@ class TestDemoAuthManager:
         with _mock_backend_validate():
             await manager.authenticate()
         assert manager._api_key is not None
-        assert manager._api_key.has_permission("optimize") is True
+        assert manager._api_key.permissions == {}
+        assert manager._api_key.has_permission("optimize") is False
 
     @pytest.mark.asyncio
     async def test_demo_auth_headers(self):
@@ -463,9 +478,12 @@ class TestAuthenticationModes:
         )
 
         # Mock the JWT validator to return success (patched at import location)
-        with patch(
-            "traigent.security.jwt_validator.get_secure_jwt_validator"
-        ) as mock_validator:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.security.jwt_validator.get_secure_jwt_validator"
+            ) as mock_validator,
+        ):
             mock_result = type(
                 "ValidationResult",
                 (),
@@ -484,6 +502,42 @@ class TestAuthenticationModes:
             assert result.success is True
             assert result.status == AuthStatus.AUTHENTICATED
             assert "Authorization" in result.headers
+            mock_validator.assert_called_once_with(ValidationMode.PRODUCTION)
+
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_uses_development_validation_only_for_non_prod_env(
+        self,
+    ):
+        """JWT validation mode should use the fail-closed environment resolver."""
+        manager = AuthManager()
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="header.payload.signature",
+        )
+
+        with (
+            patch.dict("os.environ", {"ENVIRONMENT": "development"}, clear=True),
+            patch(
+                "traigent.security.jwt_validator.get_secure_jwt_validator"
+            ) as mock_validator,
+        ):
+            mock_result = type(
+                "ValidationResult",
+                (),
+                {
+                    "valid": True,
+                    "claims": {"sub": "test"},
+                    "warnings": [],
+                    "expires_at": None,
+                    "error": None,
+                },
+            )()
+            mock_validator.return_value.validate_token.return_value = mock_result
+
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is True
+        mock_validator.assert_called_once_with(ValidationMode.DEVELOPMENT)
 
     @pytest.mark.asyncio
     async def test_authenticate_jwt_missing_token(self):
@@ -1290,8 +1344,8 @@ class TestPasswordAuthentication:
 
         assert result is False
 
-    def test_validate_login_credentials_dev_mode_skips_validation(self):
-        """Test _validate_login_credentials skips validation in dev mode."""
+    def test_validate_login_credentials_dev_mode_enforces_format(self):
+        """Test _validate_login_credentials still validates format in dev mode."""
         manager = AuthManager()
         credentials = {
             "email": "bad",
@@ -1303,7 +1357,7 @@ class TestPasswordAuthentication:
         ):
             result = manager._validate_login_credentials(credentials)
 
-        assert result is True
+        assert result is False
 
     def test_should_rate_limit_login_no_failures(self):
         """Test _should_rate_limit_login returns False with no failures."""
@@ -1482,3 +1536,128 @@ class TestPasswordAuthentication:
         assert result.success is False
         assert result.status == AuthStatus.INVALID
         assert "Backend unavailable" in result.error_message
+
+
+# ---------------------------------------------------------------------------
+# SDK#937 anti-regression: APIKey instances created from local credentials
+# (CLI auth response, env vars, secure storage) must NOT fabricate any
+# permission grants. The SDK has no way to know what the backend actually
+# granted; pretending it does is forgery.
+# ---------------------------------------------------------------------------
+
+
+class TestSDK937_NoFabricatedPermissionGrants:
+    """Locally-constructed APIKey objects do not invent claims."""
+
+    @staticmethod
+    def _assert_no_hardcoded_api_key_permission_grants(module) -> None:
+        """Inspect APIKey(...) calls, ignoring comments/docstrings."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(module))
+        forbidden_permissions = {"optimize", "analytics", "billing"}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "APIKey":
+                continue
+            permissions_kw = next(
+                (kw for kw in node.keywords if kw.arg == "permissions"),
+                None,
+            )
+            if permissions_kw is None or not isinstance(permissions_kw.value, ast.Dict):
+                continue
+            for key_node, value_node in zip(
+                permissions_kw.value.keys,
+                permissions_kw.value.values,
+                strict=False,
+            ):
+                if not isinstance(key_node, ast.Constant):
+                    continue
+                if key_node.value not in forbidden_permissions:
+                    continue
+                if isinstance(value_node, ast.Constant) and value_node.value is True:
+                    pytest.fail(
+                        f"{module.__name__} must not hard-code "
+                        f"{key_node.value}: True in APIKey permissions (SDK#937)"
+                    )
+
+    def test_apikey_default_post_init_has_empty_permissions(self):
+        """The dataclass default must not grant local permissions."""
+        from datetime import UTC, datetime
+
+        from traigent.cloud.auth import APIKey
+
+        api_key = APIKey(key="test", name="t", created_at=datetime.now(UTC))
+        assert api_key.permissions == {}
+        assert api_key.has_permission("optimize") is False
+        assert api_key.has_permission("analytics") is False
+        assert api_key.has_permission("billing") is False
+
+    def test_api_key_manager_set_credentials_does_not_grant_permissions(self):
+        """Pin: APIKeyManager.set_credentials_for_environment (or
+        equivalent local-credential constructor) does NOT explicitly
+        override permissions to grant capabilities. The SDK can't know
+        what the backend granted."""
+        from traigent.cloud import api_key_manager
+
+        self._assert_no_hardcoded_api_key_permission_grants(api_key_manager)
+
+    def test_authmanager_apply_token_data_does_not_grant_permissions(self):
+        """Pin: AuthManager.apply_token_data (or equivalent) does NOT
+        construct an APIKey with local permission grants."""
+        from traigent.cloud import auth
+
+        self._assert_no_hardcoded_api_key_permission_grants(auth)
+
+    def test_authmanager_token_data_preserves_explicit_backend_permissions(self):
+        """Backend permission claims may be recorded when explicit and boolean."""
+        manager = AuthManager()
+
+        credentials = manager._build_credentials_from_token_data(
+            {
+                "access_token": "new_access_token_12345",
+                "expires_in": 3600,
+                "api_key": "tg_" + "p" * 61,
+                "permissions": {"optimize": True, "billing": "yes"},
+            }
+        )
+
+        assert credentials.api_key == "tg_" + "p" * 61
+        assert manager._api_key is not None
+        assert manager._api_key.permissions == {"optimize": True}
+
+    def test_get_info_for_env_keyed_path_returns_empty_permissions(self):
+        """SDK#937: when reporting info for an env-keyed source (the
+        SDK never received an APIKey object from the backend), the
+        permissions field must be `{}` not the previously-fabricated
+        `{"optimize": True, "analytics": True}`. Empty dict is the
+        honest answer — caller checking specific permissions gets a
+        clear `False` for whatever they ask."""
+        from unittest.mock import patch
+
+        from traigent.cloud.api_key_manager import APIKeyManager
+        from traigent.cloud.auth import UnifiedAuthConfig
+
+        config = UnifiedAuthConfig(
+            api_key_default_ttl_days=30,
+            api_key_warning_days=14,
+            api_key_critical_days=7,
+        )
+        manager = APIKeyManager(config)
+        # Force the env-keyed path by giving no in-memory APIKey
+        # object and mocking the env-key reader to return a valid key.
+        with (
+            patch.object(manager, "get_key_for_internal_use", return_value="tg_envkey"),
+            patch.object(manager, "validate_format", return_value=True),
+        ):
+            info = manager.get_info()
+
+        assert info is not None
+        assert info["name"] == "environment"
+        # The honest empty answer:
+        assert info["permissions"] == {}, (
+            f"env-keyed permissions must be {{}}, got {info['permissions']}"
+        )

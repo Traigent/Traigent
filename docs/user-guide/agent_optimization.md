@@ -35,7 +35,9 @@ agent_spec = AgentSpecification(
     },
     persona="helpful assistant",
     guidelines=["Be concise", "Be accurate"],
-    custom_tools=["search", "calculator"]  # Optional
+    # Tool execution is not available in the local LangChain executor yet;
+    # tool-bearing specs fail closed instead of running as plain LLM calls.
+    custom_tools=None
 )
 ```
 
@@ -366,8 +368,8 @@ agent_spec = generator.from_optimized_function(
 
 ### LangChain Platform
 
-- Supports various LLM backends
-- Additional features: tools, memory, chains
+- Supports conversational and task-style LLM execution
+- Tool-bearing specs are rejected until LangChain tool invocation is implemented
 - Requires langchain package installation
 
 ### Custom Platforms
@@ -519,7 +521,7 @@ response = await client.optimize_agent(
 
 1. **"Platform not supported"**
 
-   - Check available platforms: `get_supported_platforms()`
+   - Check executable platforms with `get_supported_platforms()`; use `get_mapping_platforms()` when you need mapping-only targets.
    - Register custom platform if needed
 
 2. **"Configuration validation failed"**

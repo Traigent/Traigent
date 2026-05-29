@@ -306,8 +306,9 @@ def exact_match(prediction: str, expected: str) -> float:
             trial_concurrency=2,
             example_concurrency=4,
         ),
-        reps_per_trial=3,
-        reps_aggregation="mean",
+        # NOTE: reps_per_trial / reps_aggregation are enterprise-only in this
+        # SDK release. Passing non-default values raises a ValidationError at
+        # ExecutionOptions construction. Defaults (1 / "mean") are required.
     ),
     objectives=["accuracy"],
     configuration_space={

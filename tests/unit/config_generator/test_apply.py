@@ -23,6 +23,7 @@ from traigent.config_generator.types import (
     AutoConfigResult,
     ObjectiveSpec,
     SafetySpec,
+    StructuralConstraintSpec,
     TVarSpec,
 )
 
@@ -318,6 +319,47 @@ class TestApplyConfig:
         assert "old" not in modified
         assert "@traigent.optimize(" in modified
         assert "temperature" in modified
+
+    def test_rejects_structural_constraints(
+        self, tmp_path: Path, simple_source: str
+    ) -> None:
+        """apply_config must propagate the structural-constraint rejection.
+
+        Regression for #869: previously --apply silently dropped generated
+        structural constraints. Now apply_config refuses and points users
+        at the TVL export path. The source file must remain untouched.
+        """
+        src = tmp_path / "agent.py"
+        src.write_text(simple_source)
+
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            structural_constraints=(
+                StructuralConstraintSpec(
+                    description="Conservative temp for factual models",
+                    constraint_code=(
+                        "implies(model.equals('gpt-4o'), temperature.lte(1.0))"
+                    ),
+                    requires_tvars=("model", "temperature"),
+                ),
+            ),
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            apply_config(src, result, "answer_question", backup=False)
+        message = str(excinfo.value)
+        assert "tvl" in message.lower()
+        assert "structural constraint" in message.lower()
+        # Source file must NOT have been modified.
+        assert src.read_text() == simple_source
+        # No backup written either (we failed before any I/O).
+        assert not (tmp_path / "agent.py.bak").exists()
 
     def test_async_function(
         self, tmp_path: Path, result_with_tvars: AutoConfigResult

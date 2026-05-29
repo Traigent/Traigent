@@ -7,6 +7,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from typing import NoReturn
+
+from traigent.utils.env_config import resolve_environment_name
 
 
 class SecurityProfile(Enum):
@@ -45,7 +48,7 @@ def get_security_profile() -> SecurityProfile:
         except ValueError:
             pass
 
-    env = (os.getenv("TRAIGENT_ENV") or "production").strip().lower()
+    env = resolve_environment_name(default="production") or "production"
     if os.getenv("PYTEST_CURRENT_TEST") and explicit is None:
         return SecurityProfile.DEVELOPMENT
     if env in {"dev", "development", "local"}:
@@ -99,6 +102,10 @@ def get_security_flags() -> SecurityFlags:
     )
 
 
-def reset_security_cache() -> None:
-    """Compatibility shim (no-op)."""
-    return None
+def reset_security_cache() -> NoReturn:
+    """Compatibility shim. Previously a silent `return None`, which the
+    validation spine flagged as a `public_stub_runtime` (Batch 1 of the
+    public-surface gate). Either a real cache-reset implementation lands
+    here, or the symbol gets removed from `__all__`. Until then, fail loud
+    so callers don't silently get a no-op."""
+    raise NotImplementedError("reset_security_cache is not implemented")

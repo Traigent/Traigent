@@ -128,7 +128,7 @@ class TestOptimizedFunctionConfig:
             config_param="llm_config",
             auto_override_frameworks=True,
             framework_targets=["langchain"],
-            execution_mode="cloud",
+            execution_mode="hybrid",
             local_storage_path="/tmp/traigent",
             minimal_logging=False,
             custom_evaluator=custom_evaluator,
@@ -146,7 +146,7 @@ class TestOptimizedFunctionConfig:
         assert config.config_param == "llm_config"
         assert config.auto_override_frameworks is True
         assert config.framework_targets == ["langchain"]
-        assert config.execution_mode == "cloud"
+        assert config.execution_mode == "hybrid"
         assert config.local_storage_path == "/tmp/traigent"
         assert config.minimal_logging is False
         assert config.custom_evaluator == custom_evaluator
@@ -210,14 +210,14 @@ class TestOptimizedFunctionConfig:
         config_dict = {
             "configuration_space": sample_config_space,
             "objectives": sample_objectives,
-            "execution_mode": "cloud",
+            "execution_mode": "hybrid",
         }
 
         config = OptimizedFunctionConfig.from_dict(config_dict)
 
         assert config.configuration_space == sample_config_space
         assert config.objective_schema == sample_objectives
-        assert config.execution_mode == "cloud"
+        assert config.execution_mode == "hybrid"
 
     def test_to_dict(
         self,
@@ -386,7 +386,7 @@ class TestOptimizedFunctionConfig:
     def test_merge_configurations(self) -> None:
         """Test merging two configurations."""
         config1 = OptimizedFunctionConfig(
-            configuration_space={"temperature": (0.0, 1.0)}, execution_mode="cloud"
+            configuration_space={"temperature": (0.0, 1.0)}, execution_mode="hybrid"
         )
 
         config2 = OptimizedFunctionConfig(
@@ -452,7 +452,7 @@ class TestOptimizedFunctionConfig:
             func=sample_func,
             objectives=sample_objectives,
             configuration_space=sample_config_space,
-            execution_mode="cloud",
+            execution_mode="hybrid",
         )
 
         cloned = original.clone()

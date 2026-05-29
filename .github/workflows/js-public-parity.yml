@@ -3,7 +3,7 @@ name: JS Public Parity
 on:
   pull_request:
     branches:
-      - develop
+      - main
     # Client/config file moves outside these conventional module names are still
     # caught by the weekly schedule; keep PR triggers scoped to parity-relevant
     # files so unrelated Python changes do not pay the cross-repo clone/install cost.
@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout Python SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           path: Traigent
 
@@ -56,7 +56,7 @@ jobs:
       # copy or the latest npm-published tag.
       - name: Checkout JS SDK
         if: steps.cross-repo-token.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           repository: Traigent/traigent-js
           ref: main
@@ -65,7 +65,7 @@ jobs:
 
       - name: Checkout TraigentSchema
         if: steps.cross-repo-token.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           repository: Traigent/TraigentSchema
           ref: main
@@ -74,7 +74,7 @@ jobs:
 
       - name: Set up Python
         if: steps.cross-repo-token.outputs.available == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.11"
 

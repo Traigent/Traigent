@@ -15,14 +15,21 @@ A response of ``{"valid": "false"}`` would silently authenticate because the
 non-empty string ``"false"`` is truthy in Python. The fix tightens this to
 ``data.get("valid") is True``.
 """
+
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.cloud.auth import AuthManager
+
+
+@pytest.fixture(autouse=True)
+def _enable_backend_validation(monkeypatch):
+    """These tests mock backend validation and must override CI offline mode."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
 
 
 class _FakeResponse:
@@ -45,6 +52,8 @@ class _FakeResponse:
 class _FakeSession:
     """Stub aiohttp.ClientSession returning a configurable JSON payload."""
 
+    last_post_kwargs = None
+
     def __init__(self, payload):
         self._payload = payload
 
@@ -54,12 +63,18 @@ class _FakeSession:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    def post(self, url, headers=None, allow_redirects=None):  # noqa: ARG002
+    def post(self, url, headers=None, **kwargs):
+        type(self).last_post_kwargs = {
+            "url": url,
+            "headers": headers,
+            **kwargs,
+        }
         return _FakeResponse(self._payload)
 
 
 def _patch_aiohttp(payload):
     """Patch the aiohttp surface used by ``_validate_api_key_with_backend``."""
+    _FakeSession.last_post_kwargs = None
     fake_aiohttp = MagicMock()
     fake_aiohttp.ClientSession = MagicMock(return_value=_FakeSession(payload))
     fake_aiohttp.ClientTimeout = MagicMock()
@@ -92,9 +107,9 @@ async def test_validate_rejects_string_false_payload():
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason is not None, (
-        "String 'false' was treated as truthy — strict ``is True`` check missing"
-    )
+    assert (
+        reason is not None
+    ), "String 'false' was treated as truthy — strict ``is True`` check missing"
     assert "invalid" in reason.lower() or "reported" in reason.lower()
 
 
@@ -122,9 +137,28 @@ async def test_validate_accepts_strict_true_payload():
 
 
 @pytest.mark.asyncio
+async def test_validate_posts_json_payload_to_backend():
+    """Backend validation must send a JSON body, not an empty POST."""
+    manager = _auth_manager_with_public_backend()
+    api_key = "tg_" + "x" * 61  # pragma: allowlist secret
+
+    with _patch_aiohttp({"valid": True}):
+        reason = await manager._validate_api_key_with_backend(api_key)
+
+    assert reason is None
+    assert _FakeSession.last_post_kwargs is not None
+    assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
+    assert (
+        _FakeSession.last_post_kwargs["headers"]["Content-Type"]
+        == "application/json"
+    )
+
+
+@pytest.mark.asyncio
 async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
     """Missing aiohttp must not block API-key validation when the stdlib can call backend."""
     manager = _auth_manager_with_public_backend()
+    api_key = "tg_" + "x" * 61  # pragma: allowlist secret
 
     with (
         patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
@@ -133,10 +167,12 @@ async def test_validate_uses_stdlib_fallback_when_aiohttp_unavailable():
             return_value=_RequestsResponse(200, b'{"valid": true}'),
         ) as post,
     ):
-        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+        reason = await manager._validate_api_key_with_backend(api_key)
 
     assert reason is None
     post.assert_called_once()
+    assert post.call_args.kwargs["json"] == {"api_key": api_key}
+    assert post.call_args.kwargs["headers"]["Content-Type"] == "application/json"
     assert post.call_args.kwargs["allow_redirects"] is False
 
 
@@ -168,6 +204,22 @@ async def test_validate_rejects_invalid_backend_validation_url():
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
     assert reason == "backend validation URL is invalid"
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_plaintext_backend_validation_url():
+    """Backend key validation must not send API keys over plaintext HTTP."""
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://backend.example.test"
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == "backend validation URL must use HTTPS"
     post.assert_not_called()
 
 

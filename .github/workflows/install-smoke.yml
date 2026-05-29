@@ -2,7 +2,7 @@ name: Install Smoke Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "pyproject.toml"
       - "uv.lock"
@@ -11,7 +11,7 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/install-smoke.yml"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "pyproject.toml"
       - "uv.lock"
@@ -20,6 +20,13 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/install-smoke.yml"
   workflow_dispatch:
+
+# Cancel in-flight runs when a new commit lands on the same ref.
+# Pattern matches existing concurrency blocks in
+# validation-spine-pr.yml, release-review.yml, sonarcloud.yml.
+concurrency:
+  group: install-smoke-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -34,10 +41,10 @@ jobs:
         python-version: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -66,10 +73,10 @@ jobs:
   install-recommended-uv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.11"
 
@@ -96,10 +103,10 @@ jobs:
   install-enterprise:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.11"
 
@@ -121,10 +128,10 @@ jobs:
   pip-install-quickstart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4  # needed to build the wheel
+      - uses: actions/checkout@v6.0.2  # needed to build the wheel
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.11"
 

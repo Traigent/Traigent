@@ -1314,7 +1314,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.CLOUD.value,
+                execution_mode=ExecutionMode.HYBRID.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config
@@ -1348,7 +1348,7 @@ class TestGlobalFunctions:
             "traigent.utils.incentives.TraigentConfig.from_environment"
         ) as mock_config:
             config = TraigentConfig(
-                execution_mode=ExecutionMode.CLOUD.value,
+                execution_mode=ExecutionMode.HYBRID.value,
                 local_storage_path=temp_storage_path,
             )
             mock_config.return_value = config
@@ -1408,8 +1408,10 @@ class TestEdgeCases:
 
         hint = manager.get_contextual_hint("general")
 
-        # Should work without errors
-        assert hint is not None or hint is None  # Either is acceptable
+        # Contract: get_contextual_hint returns either a str (the rendered
+        # hint) or None (no hint for this context). Anything else (e.g. a
+        # raw object leaking from the registry) would signal a bug.
+        assert hint is None or isinstance(hint, str)
 
     def test_handles_negative_session_count(self, manager: IncentiveManager) -> None:
         """Test handles negative session count gracefully."""

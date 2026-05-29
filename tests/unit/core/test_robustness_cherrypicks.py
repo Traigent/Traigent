@@ -19,6 +19,7 @@ streaming feature that the patch also introduced.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import time
 from datetime import UTC, datetime
@@ -164,7 +165,10 @@ class TestSessionMappingRecovery:
         with client._active_sessions_lock:
             client._active_sessions[session_id] = active_session
 
-        client._session_ops._finalize_session_via_api = AsyncMock(return_value=True)
+        # _finalize_session_via_api now returns dict|None (was bool); empty
+        # dict represents "finalized successfully, backend returned no body"
+        # — the contract documented for issue #890.
+        client._session_ops._finalize_session_via_api = AsyncMock(return_value={})
 
         assert client.session_bridge.get_session_mapping(session_id) is None
 
@@ -195,7 +199,10 @@ class TestSessionMappingRecovery:
         with client._active_sessions_lock:
             client._active_sessions[session_id] = active_session
 
-        client._session_ops._finalize_session_via_api = AsyncMock(return_value=True)
+        # _finalize_session_via_api now returns dict|None (was bool); empty
+        # dict represents "finalized successfully, backend returned no body"
+        # — the contract documented for issue #890.
+        client._session_ops._finalize_session_via_api = AsyncMock(return_value={})
 
         await client._session_ops.finalize_session(session_id)
 
@@ -223,12 +230,18 @@ class TestBlockingEvaluatorOffloading:
             time.sleep(0.2)
             return "done"
 
-        async def offloaded_call() -> str:
-            return await asyncio.to_thread(blocking_work)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-        start = time.monotonic()
-        _, result = await asyncio.gather(heartbeat(), offloaded_call())
-        elapsed = time.monotonic() - start
+        async def offloaded_call() -> str:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(executor, blocking_work)
+
+        try:
+            start = time.monotonic()
+            _, result = await asyncio.gather(heartbeat(), offloaded_call())
+            elapsed = time.monotonic() - start
+        finally:
+            executor.shutdown(wait=True)
 
         assert result == "done"
         assert len(heartbeats) == 5

@@ -141,19 +141,19 @@ Unified authentication leverages the shared `CredentialManager` to look for cred
 
 The discovery order is:
 - System environment variable (`TRAIGENT_API_KEY`)
-- CLI-managed credentials saved via `traigent auth login` (local credentials file)
+- CLI-managed credentials saved via `traigent auth login` in encrypted local storage
 - Development defaults only when explicit test flags are enabled
 
 If nothing is found, the CLI will prompt you during `traigent auth login`; the SDK expects explicit configuration or environment variables.
 
 ## Credential Storage
 
-Credentials are stored using file-based storage with restricted permissions:
+Credentials saved by `traigent auth login` and `traigent auth configure` are written through the SDK secure credential store. The legacy `~/.traigent/credentials.json` plaintext file is ignored unless `TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS=true` is set explicitly for one-time migration.
 
-### 1. Local File
-- Location: `~/.traigent/credentials.json`
-- Permissions: 0600 (user read/write only)
-- Contents are JSON-encoded
+### 1. Secure Local Storage
+- Encrypted credential store managed by the SDK
+- Raw API keys and refresh tokens are not written to plaintext CLI credential files
+- `TRAIGENT_MASTER_PASSWORD` is required so the SDK can derive the encryption key for file-backed credential storage
 
 ### 2. Environment Variables
 - `TRAIGENT_API_KEY`
@@ -300,9 +300,14 @@ For automated environments:
 # Set API key at runtime
 ENV TRAIGENT_API_KEY=${TRAIGENT_API_KEY}
 
-# Or mount credentials
+# Or mount CLI-managed encrypted credentials
 VOLUME /root/.traigent
 ```
+
+When mounting CLI-managed credentials in containers, provide the same
+`TRAIGENT_MASTER_PASSWORD` used when the file-backed encrypted store was
+created. The mounted encrypted store cannot be unlocked without this
+environment variable.
 
 ### Jenkins
 
@@ -392,6 +397,30 @@ export TRAIGENT_API_KEY=your_key
 ```
 
 The new system remains compatible with existing `TRAIGENT_API_KEY` workflows.
+
+### Migrating from `~/.traigent/credentials.json`
+
+Older CLI versions wrote credentials to `~/.traigent/credentials.json`. Current
+SDK releases ignore that plaintext file by default. For one-time migration:
+
+```bash
+export TRAIGENT_MASTER_PASSWORD="<new encrypted-store password>"
+export TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS=true
+traigent auth status   # Optional: confirms the old plaintext key is still valid
+traigent auth logout   # Deletes the legacy plaintext file so login cannot reuse it
+unset TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS
+traigent auth login    # Fresh login writes to the encrypted credential store
+```
+
+Keep `TRAIGENT_MASTER_PASSWORD` available for future CLI and SDK processes that
+need to unlock the encrypted store. Do not leave
+`TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS` set after the legacy file has been
+removed.
+
+If you previously relied on a local `.master_password` file for an older
+encrypted store, set `TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_PASSWORD=true` only
+long enough to read or clear that old store. Unset it before the fresh
+`traigent auth login` that writes credentials with `TRAIGENT_MASTER_PASSWORD`.
 
 ## Support
 

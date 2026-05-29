@@ -720,7 +720,9 @@ class TestSmartTrialSuggestions:
 
         optimizer.session_id = "test_session"
 
-        with patch("random.sample") as mock_sample:
+        with patch(
+            "traigent.optimizers.cloud_optimizer._SECURE_RANDOM.sample"
+        ) as mock_sample:
             mock_sample.return_value = sample_dataset[:2]
             suggestion = await optimizer.suggest_smart_trial(
                 sample_trial_results, sample_dataset

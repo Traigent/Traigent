@@ -729,10 +729,30 @@ class EnterpriseDeploymentManager:
         return status
 
     def perform_health_check(self) -> dict[str, Any]:
-        """Perform comprehensive health check"""
-        health_checks = {}
+        """Perform comprehensive health check.
 
-        # System health
+        Honest-status contract (SDK#918 fix): the per-service probes
+        for `database` and `external_services` were previously
+        hardcoded to `"healthy"` (the source comments said `(mock)`).
+        Operators integrating with this method got a green light even
+        when the underlying components were absent or unconfigured.
+
+        The system-metrics check IS real (driven by
+        `metrics_collector.collect_system_metrics()`) and continues
+        to report its actual status. The two stubbed sub-checks now
+        report `status="unsupported"` with a `reason` explaining
+        what's missing, so monitoring/dashboards see the gap. Overall
+        status downgrades to `"degraded"` when any sub-check is
+        `unsupported`, so an alerting pipeline that key-checks
+        `overall_status == "healthy"` will (correctly) not page on
+        the system-metrics half but also won't claim everything is
+        fine.
+
+        Wire real probes by overriding this method in a subclass.
+        """
+        health_checks: dict[str, dict[str, Any]] = {}
+
+        # System health — real probe via metrics_collector.
         try:
             metrics = self.metrics_collector.collect_system_metrics()
             health_checks["system"] = {
@@ -743,56 +763,111 @@ class EnterpriseDeploymentManager:
         except Exception as e:
             health_checks["system"] = {"status": "error", "error": str(e)}
 
-        # Database connectivity (mock)
-        health_checks["database"] = {"status": "healthy", "response_time_ms": 5}
-
-        # External services (mock)
-        health_checks["external_services"] = {
-            "status": "healthy",
-            "services_checked": ",".join(
-                [
-                    "auth_service",
-                    "billing_service",
-                    "notification_service",
-                ]
+        # Database connectivity — no real probe configured. Honest
+        # response so monitoring sees the gap.
+        health_checks["database"] = {
+            "status": "unsupported",
+            "reason": (
+                "DatabaseHealthProbe not configured; the SDK does not ship "
+                "a default DB connectivity check. Override "
+                "perform_health_check in a subclass to wire a real probe."
             ),
         }
 
-        # Overall status
+        # External services — same: no built-in probes.
+        health_checks["external_services"] = {
+            "status": "unsupported",
+            "reason": (
+                "ExternalServiceHealthProbe not configured; the SDK does "
+                "not ship default reachability checks for "
+                "auth_service/billing_service/notification_service."
+            ),
+            "services_listed": [
+                "auth_service",
+                "billing_service",
+                "notification_service",
+            ],
+        }
+
+        # Overall status: only "healthy" iff every check says so. Any
+        # `unsupported` (or other non-healthy) drops the rollup so
+        # monitoring catches the unconfigured probes.
         all_healthy = all(
             check.get("status") == "healthy" for check in health_checks.values()
         )
+        any_unsupported = any(
+            check.get("status") == "unsupported" for check in health_checks.values()
+        )
+        any_bad = any(
+            check.get("status") in {"unhealthy", "error"}
+            for check in health_checks.values()
+        )
+        if all_healthy:
+            overall = "healthy"
+        elif any_bad:
+            overall = "unhealthy"
+        elif any_unsupported:
+            overall = "degraded"
+        else:
+            overall = "unhealthy"
+
+        if any_unsupported:
+            unsupported_count = sum(
+                1 for c in health_checks.values() if c.get("status") == "unsupported"
+            )
+            logger.warning(
+                "EnterpriseManager.perform_health_check: %d sub-check(s) "
+                "report 'unsupported' — see returned `reason` fields.",
+                unsupported_count,
+            )
 
         return {
-            "overall_status": "healthy" if all_healthy else "unhealthy",
+            "overall_status": overall,
             "timestamp": datetime.now(UTC).isoformat(),
             "checks": health_checks,
         }
 
     def create_backup(self) -> dict[str, Any]:
-        """Create system backup"""
-        backup_id = f"backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+        """Create system backup.
 
-        # In production, this would:
-        # - Backup database
-        # - Backup configuration files
-        # - Backup user data
-        # - Store in secure location
+        Honest-status contract (SDK#918 fix): this method previously
+        returned `status="completed"` with a fabricated `backup_id`,
+        a fake `size_bytes=100MB`, and a fake `retention_until` —
+        without doing any actual backup work. Source comments said
+        `# In production, this would: backup database / config / user
+        data / store in secure location`.
 
-        backup_info = {
-            "backup_id": backup_id,
+        That was catastrophically misleading: an operator calling
+        `create_backup()` got a "completed" status and a backup_id
+        they could record as proof of backup, then would discover
+        during disaster recovery that no backup data existed.
+
+        This method now returns `status="unsupported"` (no
+        `backup_id`, no fake size, no fake retention) with a
+        `reason` explaining how to wire a real backup implementation.
+        Callers that previously checked `status == "completed"` will
+        now correctly see the failure. A logger.error fires so
+        monitoring catches the call.
+
+        Override this method in a subclass to provide a real backup
+        implementation.
+        """
+        logger.error(
+            "EnterpriseManager.create_backup called but no backup executor "
+            "is configured. Returning status='unsupported'; no data was "
+            "persisted. See SDK#918 for the migration path."
+        )
+        return {
+            "status": "unsupported",
+            "reason": (
+                "BackupExecutor not configured; the SDK does not ship a "
+                "default backup implementation. Override "
+                "EnterpriseManager.create_backup in a subclass. "
+                "NO DATA WAS PERSISTED."
+            ),
             "timestamp": datetime.now(UTC).isoformat(),
             "deployment_mode": self.deployment_mode.value,
-            "size_bytes": 1024 * 1024 * 100,  # Mock 100MB
-            "retention_until": (
-                datetime.now(UTC)
-                + timedelta(days=self.config.get("backup_retention_days", 30))
-            ).isoformat(),
-            "status": "completed",
         }
-
-        logger.info(f"Created backup {backup_id}")
-        return backup_info
 
     def get_enterprise_dashboard(self) -> dict[str, Any]:
         """Get enterprise dashboard data"""

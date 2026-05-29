@@ -21,6 +21,21 @@ from traigent.config.types import TraigentConfig
 from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
 
 
+def test_batch_optimizers_are_publicly_exported() -> None:
+    """Batch optimizer classes should be importable from traigent.optimizers."""
+    from traigent.optimizers import (
+        AdaptiveBatchOptimizer,
+        BatchOptimizationConfig,
+        MultiObjectiveBatchOptimizer,
+        ParallelBatchOptimizer,
+    )
+
+    assert BatchOptimizationConfig.__name__ == "BatchOptimizationConfig"
+    assert ParallelBatchOptimizer.__name__ == "ParallelBatchOptimizer"
+    assert MultiObjectiveBatchOptimizer.__name__ == "MultiObjectiveBatchOptimizer"
+    assert AdaptiveBatchOptimizer.__name__ == "AdaptiveBatchOptimizer"
+
+
 class TestConfigure:
     """Test the configure function."""
 
@@ -431,6 +446,18 @@ class TestGetAvailableStrategies:
         assert "initial_random_samples" in bayesian_info["parameters"]
 
     @patch("traigent.api.functions.list_optimizers")
+    def test_get_available_strategies_optuna_metadata(self, mock_list_optimizers):
+        """Test registered Optuna strategies have concrete metadata."""
+        mock_list_optimizers.return_value = ["optuna_tpe", "nsga2", "optuna_grid"]
+
+        strategies = get_available_strategies()
+
+        assert strategies["optuna_tpe"]["name"] == "Optuna TPE Optimization"
+        assert strategies["nsga2"]["name"] == "Optuna NSGA-II Optimization"
+        assert strategies["optuna_grid"]["description"] != "Custom optimization algorithm"
+        assert "max_trials" in strategies["optuna_tpe"]["parameters"]
+
+    @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_custom(self, mock_list_optimizers):
         """Test custom strategy info."""
         mock_list_optimizers.return_value = ["custom_algo"]
@@ -487,6 +514,7 @@ class TestGetVersionInfo:
         assert features["constraint_handling"] is True
         assert features["async_evaluation"] is True
         assert features["parallel_evaluation"] is True
+        assert features["seamless_injection"] is True
 
         # Check integrations
         integrations = info["integrations"]

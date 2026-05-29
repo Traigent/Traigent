@@ -21,12 +21,12 @@ from traigent.api.decorators import ExecutionOptions
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward sample limits. |
 | `cloud_fallback_policy` | `str \| None` | `None` | Legacy setting for future cloud execution. `cloud` is not available yet and fails closed. |
 
-### Repetition Fields
+### Repetition Fields (enterprise-only)
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `reps_per_trial` | `int` | `1` | Number of times to repeat each configuration. Useful for noisy LLM evaluations. Set to 3-5 for statistical stability. |
-| `reps_aggregation` | `str` | `"mean"` | How to aggregate metrics across repetitions: `"mean"`, `"median"`, `"min"`, or `"max"`. |
+| `reps_per_trial` | `int` | `1` | **Enterprise-only.** Number of times to repeat each configuration. Only `1` is accepted in the OSS SDK; any other value raises `ValidationError` at `ExecutionOptions` construction. Per-configuration repetition requires Traigent Enterprise (contact `sales@traigent.ai`). |
+| `reps_aggregation` | `str` | `"mean"` | **Enterprise-only.** How to aggregate metrics across repetitions. Only `"mean"` is accepted in the OSS SDK; any other value raises `ValidationError`. Per-configuration repetition aggregation requires Traigent Enterprise. |
 
 ### Hybrid API Fields
 
@@ -141,28 +141,27 @@ def my_func(query: str) -> str:
     return call_llm(model=cfg["model"], prompt=query)
 ```
 
-## Repetitions for Statistical Stability
+## Repetitions for Statistical Stability (enterprise-only)
 
-LLM outputs are non-deterministic. Use `reps_per_trial` to repeat each configuration multiple times and aggregate the results:
+LLM outputs are non-deterministic. Per-configuration repetition aggregation is
+an **enterprise-only** feature in the current OSS SDK release. Constructing
+`ExecutionOptions` with any non-default value for `reps_per_trial` or
+`reps_aggregation` raises a `pydantic.ValidationError` at construction time
+(see issue #931) - the gate is enforced at the contract boundary instead of
+late in the optimization run.
 
 ```python
-@traigent.optimize(
-    execution=ExecutionOptions(
-        reps_per_trial=5,          # Run each config 5 times
-        reps_aggregation="median", # Use median score (robust to outliers)
-    ),
-    configuration_space={"temperature": [0.0, 0.3, 0.7, 1.0]},
-)
-def my_func(query: str) -> str:
-    cfg = traigent.get_config()
-    return call_llm(temperature=cfg["temperature"], prompt=query)
+# Enterprise-only - raises ValidationError in the OSS SDK:
+# ExecutionOptions(reps_per_trial=5, reps_aggregation="median")
 ```
 
-Aggregation options:
+Aggregation options shipped with Traigent Enterprise:
 
 | Method | Use When |
 |---|---|
-| `"mean"` | Default. Good for normally distributed scores. |
-| `"median"` | Robust to outliers. Good for noisy evaluations. |
-| `"min"` | Worst-case analysis. Conservative. |
-| `"max"` | Best-case analysis. Optimistic. |
+| `"mean"` | Default. Good for normally distributed scores. Only value accepted by the OSS SDK. |
+| `"median"` | Enterprise-only. Robust to outliers; good for noisy evaluations. |
+| `"min"` | Enterprise-only. Worst-case analysis; conservative. |
+| `"max"` | Enterprise-only. Best-case analysis; optimistic. |
+
+Contact `sales@traigent.ai` to unlock per-configuration repetitions.

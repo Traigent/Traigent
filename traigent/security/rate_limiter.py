@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 import time
 from collections import defaultdict, deque
@@ -24,6 +25,7 @@ from cryptography.hazmat.primitives import hashes, hmac
 from traigent.security.config import get_security_flags
 
 logger = logging.getLogger(__name__)
+_FALLBACK_IDENTIFIER_KEY = b"traigent-rate-limit-identifier-v1"
 
 
 class RateLimitStrategy(Enum):
@@ -216,8 +218,6 @@ class SecureTokenBucket:
 class SecureRateLimiter:
     """Production-hardened rate limiter with enhanced security."""
 
-    _DEFAULT_IDENTIFIER_SECRET = b"traigent-rate-limiter-identifier-v1"
-
     def __init__(self, config: SecureRateLimitConfig) -> None:
         """Initialize secure rate limiter."""
         self.config = config
@@ -226,10 +226,25 @@ class SecureRateLimiter:
         self.token_buckets: dict[str, SecureTokenBucket] = {}
         self._lock = Lock()
 
+        if self.config.enable_distributed:
+            raise NotImplementedError(
+                "Distributed rate limiting is not implemented in the SDK. "
+                "Do not set enable_distributed=True until a Redis-backed "
+                "counter implementation is available."
+            )
+
         # Initialize cryptographic salt if not provided
         if self.config.use_cryptographic_ids and not self.config.identifier_salt:
-            self.config.identifier_salt = secrets.token_bytes(32)
-            logger.info("Generated new identifier salt for rate limiting")
+            env_salt = os.getenv("TRAIGENT_RATE_LIMIT_IDENTIFIER_SALT")
+            if env_salt:
+                self.config.identifier_salt = env_salt.encode("utf-8")
+            else:
+                self.config.identifier_salt = secrets.token_bytes(32)
+                logger.warning(
+                    "Generated process-local identifier salt for rate limiting. "
+                    "Set TRAIGENT_RATE_LIMIT_IDENTIFIER_SALT for stable "
+                    "deployment-wide buckets."
+                )
 
         # Security metrics
         self._metrics: dict[str, Any] = {
@@ -242,14 +257,18 @@ class SecureRateLimiter:
 
     @classmethod
     def _keyed_identifier(cls, secret: bytes | None, value: str) -> str:
-        key = secret or cls._DEFAULT_IDENTIFIER_SECRET
+        if not secret:
+            raise ValueError("identifier_salt is required for keyed identifiers")
+        key = secret
         mac = hmac.HMAC(key, hashes.SHA256())
         mac.update(value.encode("utf-8"))
         return cast(bytes, mac.finalize()).hex()
 
     @staticmethod
     def _plain_identifier(value: str) -> str:
-        return hashlib.blake2b(value.encode("utf-8"), digest_size=32).hexdigest()
+        mac = hmac.HMAC(_FALLBACK_IDENTIFIER_KEY, hashes.SHA256())
+        mac.update(value.encode("utf-8"))
+        return cast(bytes, mac.finalize()).hex()
 
     def _generate_secure_identifier(
         self,
@@ -280,10 +299,14 @@ class SecureRateLimiter:
             components.append(f"user:{username}")
 
         if api_key:
-            key_fingerprint = self._keyed_identifier(
-                identifier_secret,
-                f"api_key:{api_key}",
-            )[:16]
+            key_material = f"api_key:{api_key}"
+            if self.config.use_cryptographic_ids:
+                key_fingerprint = self._keyed_identifier(
+                    identifier_secret,
+                    key_material,
+                )[:16]
+            else:
+                key_fingerprint = self._plain_identifier(key_material)[:16]
             components.append(f"key:{key_fingerprint}")
 
         if additional_context:

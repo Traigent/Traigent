@@ -12,6 +12,7 @@ from traigent.integrations.llms.cohere_plugin import CoherePlugin
 from traigent.integrations.llms.gemini_plugin import GeminiPlugin
 from traigent.integrations.llms.huggingface_plugin import HuggingFacePlugin
 from traigent.integrations.llms.langchain_plugin import LangChainPlugin
+from traigent.integrations.llms.litellm_plugin import LiteLLMPlugin
 from traigent.integrations.llms.llamaindex_plugin import LlamaIndexPlugin
 from traigent.integrations.llms.mistral_plugin import MistralPlugin
 from traigent.integrations.llms.openai_plugin import OpenAIPlugin
@@ -26,6 +27,7 @@ __all__ = [
     "HuggingFacePlugin",
     "LangChainPlugin",
     "LlamaIndexPlugin",
+    "LiteLLMPlugin",
     "MistralPlugin",
     "OpenAIPlugin",
 ]

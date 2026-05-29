@@ -1,5 +1,6 @@
 """Tests for encryption and data protection systems"""
 
+import base64
 import json
 import os
 import tempfile
@@ -88,6 +89,37 @@ class TestKeyManager:
         assert key_manager.get_key(key_id) is None
         assert key_id not in key_manager.keys
         assert key_id not in key_manager.key_metadata
+
+    def test_configured_key_store_persists_keys_across_instances(
+        self, tmp_path, monkeypatch
+    ):
+        """Configured key stores must survive process-local manager lifetimes."""
+        monkeypatch.setenv("TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", "test-key-store-passphrase")
+        storage_path = tmp_path / "keys.json"
+        key_manager = KeyManager(storage_path=storage_path)
+
+        key_id = key_manager.generate_key("AES-256")
+        key = key_manager.get_key(key_id)
+        raw_key = base64.b64encode(key).decode("ascii")
+        stored_payload = storage_path.read_text(encoding="utf-8")
+
+        reloaded = KeyManager(storage_path=storage_path)
+
+        assert reloaded.get_key(key_id) == key
+        assert reloaded.key_metadata[key_id].algorithm == "AES-256"
+        assert raw_key not in stored_payload
+        assert '"payload"' in stored_payload
+        assert '"keys"' not in stored_payload
+        if os.name != "nt":
+            assert oct(storage_path.stat().st_mode & 0o777) == "0o600"
+
+    def test_configured_key_store_requires_wrapping_secret(self, tmp_path, monkeypatch):
+        """Persistent key stores must not fall back to plaintext key material."""
+        monkeypatch.delenv("TRAIGENT_KEY_MANAGER_MASTER_PASSWORD", raising=False)
+        monkeypatch.delenv("TRAIGENT_MASTER_PASSWORD", raising=False)
+
+        with pytest.raises(ValueError, match="wrapping secret"):
+            KeyManager(storage_path=tmp_path / "keys.json")
 
 
 class TestEncryptionManager:
@@ -328,6 +360,16 @@ class TestPIIDetector:
         assert len(ip_detections) == 1
         assert ip_detections[0].value == "192.168.1.1"
 
+    def test_declared_name_and_address_detection(self):
+        """Declared NAME and ADDRESS PII types must have detectors."""
+        detector = PIIDetector()
+
+        text = "name: Ada Lovelace; address: 123 Main Street"
+        detections = detector.detect_pii(text)
+
+        assert any(d.pii_type == PIIType.NAME for d in detections)
+        assert any(d.pii_type == PIIType.ADDRESS for d in detections)
+
     def test_anonymize_text(self):
         """Test text anonymization"""
         detector = PIIDetector()
@@ -493,6 +535,36 @@ class TestSecureStorage:
         assert retrieved_data["username"] == "testuser"
         # Email should be anonymized
         assert "test@example.com" not in str(retrieved_data)
+
+    def test_nested_structured_data_is_recursively_anonymized(self):
+        """Nested fields must be scanned without flattening the payload."""
+        key_manager = KeyManager()
+        encryption_manager = EncryptionManager(key_manager)
+        pii_detector = PIIDetector()
+        protection_manager = DataProtectionManager(encryption_manager, pii_detector)
+        storage = SecureStorage(protection_manager)
+
+        storage.store(
+            "nested-user",
+            {
+                "profile": {
+                    "name": "Ada Lovelace",
+                    "contacts": [{"email": "ada@example.com"}],
+                    "address": "123 Main Street",
+                }
+            },
+            DataClassification.INTERNAL,
+        )
+
+        retrieved_data = storage.retrieve("nested-user")
+
+        assert isinstance(retrieved_data, dict)
+        assert retrieved_data["profile"]["name"] == "[NAME_REDACTED]"
+        assert retrieved_data["profile"]["contacts"][0]["email"] == "[EMAIL_REDACTED]"
+        assert retrieved_data["profile"]["address"] == "[ADDRESS_REDACTED]"
+        assert "Ada Lovelace" not in str(retrieved_data)
+        assert "ada@example.com" not in str(retrieved_data)
+        assert "123 Main Street" not in str(retrieved_data)
 
     def test_data_not_found(self):
         """Test retrieving non-existent data"""

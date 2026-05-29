@@ -67,9 +67,17 @@ def optimize(
 - **Description**: Target metrics to optimize
 
 > **Understanding Accuracy**: The meaning of "accuracy" depends on your use case:
-> - **Classification**: Exact match percentage (e.g., sentiment classification)
-> - **Semantic Similarity**: Embedding-based comparison (default, requires `OPENAI_API_KEY`)
+> - **Classification (built-in default)**: Exact / case-insensitive
+>   string match between the agent's output and `expected_output`.
+>   No embeddings, no LLM judge, no API key required.
+> - **Semantic Similarity (bring your own scorer)**: Pass a
+>   `scoring_function` or `metric_functions={"accuracy": ...}` that
+>   implements embedding-based comparison or an LLM judge. Traigent
+>   does **not** ship one by default, and `LocalExecutionAdapter` will
+>   fail loudly on dataset examples tagged
+>   `evaluation_type: "semantic"` if no such scorer is configured.
 > - **Custom Metrics**: ROUGE, BLEU, or business-specific calculations
+>   via `scoring_function` / `metric_functions` / `custom_evaluator`.
 >
 > See the [Evaluation Guide](../user-guide/evaluation_guide.md#understanding-accuracy) for detailed explanations and examples.
 
@@ -485,23 +493,32 @@ from traigent.config.parallel import ParallelConfig
 ```python
 from traigent.api.decorators import MockModeOptions
 
+# DEPRECATED: MockModeOptions and its fields are inert in the current SDK.
+# They round-trip cleanly for backwards compatibility but do not affect
+# runtime behavior. Enable mock mode in local tutorial or test code by
+# calling traigent.testing.enable_mock_mode_for_quickstart(). The legacy
+# TRAIGENT_MOCK_LLM=true env var remains for shell fixtures only and
+# emits DeprecationWarning when users set it directly. See issue #874.
 @traigent.optimize(
-    mock=MockModeOptions(
-        enabled=True,
-        override_evaluator=True,
-        base_accuracy=0.75,
-        variance=0.25,
-    ),
+    mock=MockModeOptions(enabled=True),  # inert; kept for config round-trip
     ...
 )
 ```
 
-**MockModeOptions Fields**:
+**MockModeOptions Fields (DEPRECATED — all inert)**:
 
-- `enabled`: Enable mock mode
-- `override_evaluator`: Use mock evaluator
-- `base_accuracy`: Base accuracy for mock results
-- `variance`: Variance in mock results
+The fields below are kept on the schema for backwards compatibility but
+are ignored at runtime. Mock mode is enabled by calling
+`traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. In mock mode the LLM call
+layer is intercepted with canned responses; evaluator scoring (built-in
+or custom) is unchanged — there is no fabricated random-score path.
+
+- `enabled`: Inert. Use `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code to enable mock mode.
+- `override_evaluator`: Inert. The SDK no longer ships a mock evaluator
+  override; custom and local evaluators always run their real scoring
+  logic.
+- `base_accuracy`: Inert. No baseline-accuracy fabrication path remains.
+- `variance`: Inert. No score-variance fabrication path remains.
 
 ### Runtime Overrides
 

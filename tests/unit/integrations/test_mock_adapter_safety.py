@@ -77,7 +77,7 @@ def test_env_var_works_in_dev_blocks_in_prod(
     # — reloading has side effects beyond ``os.environ`` (sys.modules
     # reference churn, .env re-loaded). The prod guard is a callable
     # function (``_check_mock_llm_prod_guard``) and ``is_mock_llm`` reads
-    # ``is_production()`` live, so we can test both without a reload.
+    # ``is_production_strict_env()`` live, so we can test both without a reload.
     from traigent.utils.env_config import _check_mock_llm_prod_guard
 
     monkeypatch.setenv("ENVIRONMENT", "development")

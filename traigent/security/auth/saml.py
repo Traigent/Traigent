@@ -110,7 +110,11 @@ class SAMLAuthProvider:
                 attributes.get("email", [f"{nameid}@saml"])[0],
                 default_domain="saml.local",
             )
-            roles = sanitize_roles(attributes.get("roles", ["user"]))
+            try:
+                roles = sanitize_roles(attributes.get("roles", ["user"]), strict=True)
+            except ValueError as exc:
+                logger.warning("SAML response contains invalid role claims: %s", exc)
+                return None
 
             user = User(
                 user_id=sanitize_string(nameid, max_length=255),

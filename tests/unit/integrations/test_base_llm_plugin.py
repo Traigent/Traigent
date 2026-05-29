@@ -9,8 +9,13 @@ from traigent.integrations.base_plugin import (
     PluginMetadata,
     ValidationRule,
 )
-from traigent.integrations.llms import LLMPlugin
+from traigent.integrations.llms import LiteLLMPlugin, LLMPlugin
 from traigent.integrations.utils import Framework
+
+
+def test_litellm_plugin_is_publicly_exported() -> None:
+    """LiteLLMPlugin should be available from traigent.integrations.llms."""
+    assert LiteLLMPlugin.__name__ == "LiteLLMPlugin"
 
 
 class ConcreteOpenAIPlugin(LLMPlugin):

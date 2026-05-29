@@ -40,8 +40,9 @@ dependencies = [
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
+    "PyJWT[crypto]>=2.12.0,<3.0.0",  # CVE-2026-32597 floor; required by traigent.security.jwt_validator and traigent.cloud.auth at import time
     "backoff>=2.2.0",
-    "litellm==1.84.0rc1",  # Temporary RC: 1.83.x conflicts with patched dotenv/openai floors
+    "litellm==1.84.0rc1",  # Temporary RC pin: needed to escape litellm 1.83.7-1.83.13's python-dotenv==1.0.1 pin (blocks GHSA-mf9w-mj56-hr94 fix) AND litellm 1.83.14's openai==2.24.0 pin (conflicts with langchain-openai>=1.1.14 needing openai>=2.26.0). Revisit when litellm 1.84.0 stable releases — validate the released version doesn't reintroduce either pin, then bump.
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
@@ -82,7 +83,7 @@ integrations = [
     "rank_bm25>=0.2.2",
     "mlflow>=3.11.1,<4.0",  # Defensive bump — Aikido flagged tarfile.extractall path-traversal in mlflow <3.9.0 (see #616)
     "wandb>=0.15.0",
-    "python-dotenv>=1.2.2",  # GHSA-mf9w-mj56-hr94
+    "python-dotenv>=1.2.2",  # GHSA-mf9w-mj56-hr94 fix. Compatible because litellm pinned to ==1.84.0rc1 above (litellm 1.83.7-1.83.13 incompatibly pinned python-dotenv==1.0.1).
     "boto3>=1.28.0",
     "botocore>=1.31.0",
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
@@ -100,8 +101,7 @@ pydanticai = [
 
 # Enterprise security features (Sprint 7)
 security = [
-    "pyjwt>=2.12.0",  # CVE-2026-32597 fix
-    # cryptography and psutil are in core dependencies
+    # PyJWT[crypto], cryptography, psutil are core dependencies — not redeclared here.
     "passlib>=1.7.4",
     "python-multipart>=0.0.26",  # CVE-2026-24486, CVE-2026-40347 fix
     "fastapi>=0.95.0",

@@ -204,7 +204,7 @@ Returns service capabilities for the initial handshake.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `version` | string | Yes | API version (currently "1.0") |
-| `supports_evaluate` | boolean | No | Whether `/evaluate` endpoint is available (default: `true`) |
+| `supports_evaluate` | boolean | No | Whether `/evaluate` endpoint is available (default: `false`) |
 | `supports_keep_alive` | boolean | No | Whether session heartbeat is supported |
 | `supports_streaming` | boolean | No | Whether streaming responses are supported |
 | `max_batch_size` | integer | No | Maximum inputs per execute request (default: 100) |

@@ -154,7 +154,7 @@ class TestOptimizedFunction:
             max_trials=100,
             timeout=120.0,
             custom_evaluator=mock_custom_evaluator,
-            execution_mode="cloud",
+            execution_mode="hybrid",
             use_cloud_service=False,
         )
 
@@ -162,7 +162,7 @@ class TestOptimizedFunction:
         assert opt_func.max_trials == 100
         assert opt_func.timeout == 120.0
         assert opt_func.custom_evaluator is mock_custom_evaluator
-        assert opt_func.execution_mode == "cloud"
+        assert opt_func.execution_mode == "hybrid"
         assert opt_func.use_cloud_service is False
 
     def test_optimized_function_creation_invalid_function(
@@ -692,119 +692,35 @@ class TestOptimizedFunction:
             assert evaluator_arg.custom_evaluator is mock_custom_evaluator
 
     @pytest.mark.asyncio
-    async def test_optimize_with_cloud_service(
+    async def test_optimize_with_cloud_service_fails_closed(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Test optimization with cloud service."""
-        opt_func = OptimizedFunction(
-            func=mock_function,
-            config_space=sample_config_space,
-            objectives=sample_objectives,
-            execution_mode="cloud",
-            max_trials=5,
-            eval_dataset=sample_dataset,
-        )
-
-        with patch.object(
-            opt_func, "_optimize_with_cloud_service"
-        ) as mock_cloud_optimize:
-            from datetime import datetime
-
-            mock_result = OptimizationResult(
-                trials=[],
-                best_config={"temperature": 0.3},
-                best_score=0.95,
-                optimization_id="test_opt_3",
-                duration=15.0,
-                convergence_info={},
-                status=OptimizationStatus.COMPLETED,
+        """Reserved cloud execution fails before local completion."""
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            OptimizedFunction(
+                func=mock_function,
+                config_space=sample_config_space,
                 objectives=sample_objectives,
-                algorithm="cloud",
-                timestamp=datetime.now(),
-                metadata={},
+                execution_mode="cloud",
+                max_trials=5,
+                eval_dataset=sample_dataset,
             )
-            mock_cloud_optimize.return_value = mock_result
-
-            result = await opt_func.optimize()
-
-            assert result is mock_result
-            # Check that cloud optimization was attempted
-            assert mock_cloud_optimize.call_count == 1
-            call_args = mock_cloud_optimize.call_args[0]
-            assert isinstance(call_args[0], Dataset)
 
     @pytest.mark.asyncio
-    async def test_optimize_cloud_service_fallback(
+    async def test_optimize_cloud_service_fallback_fails_closed(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Test cloud service fallback to local optimization."""
-        opt_func = OptimizedFunction(
-            func=mock_function,
-            config_space=sample_config_space,
-            objectives=sample_objectives,
-            execution_mode="cloud",
-            cloud_fallback_policy="auto",
-            max_trials=3,
-            eval_dataset=sample_dataset,
-        )
-
-        with (
-            patch.object(
-                opt_func, "_optimize_with_cloud_service"
-            ) as mock_cloud_optimize,
-            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
-            patch(
-                "traigent.core.optimized_function.OptimizationOrchestrator"
-            ) as mock_orchestrator_class,
-        ):
-            # Cloud service fails
-            mock_cloud_optimize.side_effect = OptimizationError(
-                "Cloud service unavailable"
-            )
-
-            # Setup local fallback
-            mock_optimizer = Mock()
-            mock_get_optimizer.return_value = mock_optimizer
-
-            mock_orchestrator = Mock()
-            mock_orchestrator_class.return_value = mock_orchestrator
-
-            from datetime import datetime
-
-            from traigent.api.types import TrialResult, TrialStatus
-
-            mock_trial = TrialResult(
-                trial_id="trial_1",
-                config={"temperature": 0.4},
-                metrics={"accuracy": 0.7},
-                status=TrialStatus.COMPLETED,
-                duration=2.0,
-                timestamp=datetime.now(),
-                metadata={},
-            )
-
-            mock_result = OptimizationResult(
-                trials=[mock_trial],
-                best_config={"temperature": 0.4},
-                best_score=0.7,
-                optimization_id="test_opt_4",
-                duration=8.0,
-                convergence_info={},
-                status=OptimizationStatus.COMPLETED,
+        """Auto fallback cannot make reserved cloud mode locally complete."""
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            OptimizedFunction(
+                func=mock_function,
+                config_space=sample_config_space,
                 objectives=sample_objectives,
-                algorithm="random",
-                timestamp=datetime.now(),
-                metadata={},
+                execution_mode="cloud",
+                cloud_fallback_policy="auto",
+                max_trials=3,
+                eval_dataset=sample_dataset,
             )
-            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
-
-            result = await opt_func.optimize(algorithm="random")
-
-            # Should fallback to local optimization
-            assert result is mock_result
-            mock_cloud_optimize.assert_called_once()
-            # get_optimizer may or may not be called depending on implementation optimizations
-            # The key thing is that we got a result, indicating fallback worked
 
     @pytest.mark.asyncio
     async def test_optimize_with_none_dataset(
@@ -929,21 +845,17 @@ class TestOptimizedFunction:
             # This would happen during actual optimization call
             assert opt_func.algorithm == "random"  # Original value
 
-    def test_cloud_mode_activation(
+    def test_cloud_mode_activation_fails_closed(
         self, mock_function, sample_config_space, sample_objectives
     ):
-        """Test cloud execution activation."""
-        opt_func = OptimizedFunction(
-            func=mock_function,
-            config_space=sample_config_space,
-            objectives=sample_objectives,
-            execution_mode="cloud",
-        )
-
-        assert opt_func.execution_mode == "cloud"
-
-        # In actual implementation, this would enable additional features
-        # For now, just verify the flag is set correctly
+        """Reserved cloud execution is rejected on direct construction."""
+        with pytest.raises(ConfigurationError, match="not available yet"):
+            OptimizedFunction(
+                func=mock_function,
+                config_space=sample_config_space,
+                objectives=sample_objectives,
+                execution_mode="cloud",
+            )
 
     # Error Handling Tests
 

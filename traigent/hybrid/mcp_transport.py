@@ -208,8 +208,8 @@ class MCPTransport:
             )
             return self._capabilities
         except TransportError:
-            # If capabilities resource not available, return defaults
-            logger.warning("Capabilities resource not available, using defaults")
+            # Missing capabilities must not claim support for optional endpoints.
+            logger.warning("Capabilities resource not available, using safe defaults")
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 

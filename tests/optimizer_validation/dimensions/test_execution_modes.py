@@ -1,8 +1,8 @@
 """Tests for execution mode configurations.
 
-Tests execution modes. Note: only edge_analytics is currently supported.
-cloud and hybrid raise ConfigurationError (not yet supported).
-privacy and standard raise ConfigurationError (removed).
+Tests execution modes. edge_analytics and hybrid are supported today.
+cloud raises ConfigurationError because remote cloud execution is reserved.
+privacy is a legacy alias for hybrid; standard raises ConfigurationError.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from tests.optimizer_validation.specs import (
 )
 from traigent.utils.exceptions import ConfigurationError
 
-# Only edge_analytics is currently supported
-SUPPORTED_EXECUTION_MODES = ["edge_analytics"]
+# Supported local execution modes.
+SUPPORTED_EXECUTION_MODES = ["edge_analytics", "hybrid"]
 
 # Modes that raise ConfigurationError
-UNSUPPORTED_MODES = ["cloud", "hybrid"]  # Not yet supported
-REMOVED_MODES = ["privacy", "standard"]  # Removed
+UNSUPPORTED_MODES = ["cloud"]  # Not yet supported
+REMOVED_MODES = ["standard"]  # Removed
 
 
 class TestExecutionModeMatrix:
@@ -68,7 +68,7 @@ class TestExecutionModeMatrix:
         execution_mode: str,
     ) -> None:
         """Test that unsupported modes raise ConfigurationError."""
-        with pytest.raises(ConfigurationError, match="not yet supported"):
+        with pytest.raises(ConfigurationError, match="not available yet"):
             from traigent.config.types import validate_execution_mode
 
             validate_execution_mode(execution_mode)
@@ -111,7 +111,7 @@ class TestInvalidExecutionMode:
             max_trials=1,
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
-                error_type=ValueError,
+                error_type=ConfigurationError,
             ),
             gist_template="invalid-mode -> {error_type()} | {status()}",
         )
@@ -196,27 +196,25 @@ class TestEdgeAnalyticsMode:
 
 
 class TestPrivacyMode:
-    """Tests for PRIVACY execution mode - now removed."""
+    """Tests for PRIVACY execution mode legacy alias."""
 
     @pytest.mark.unit
-    def test_privacy_mode_raises_configuration_error(self) -> None:
-        """Test privacy mode raises ConfigurationError (removed)."""
-        from traigent.config.types import validate_execution_mode
+    def test_privacy_mode_aliases_to_hybrid(self) -> None:
+        """Privacy is accepted as hybrid with the privacy flag set elsewhere."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="No such mode"):
-            validate_execution_mode("privacy")
+        assert validate_execution_mode("privacy") is ExecutionMode.HYBRID
 
 
 class TestHybridMode:
-    """Tests for HYBRID execution mode - not yet supported."""
+    """Tests for HYBRID execution mode."""
 
     @pytest.mark.unit
-    def test_hybrid_mode_raises_configuration_error(self) -> None:
-        """Test hybrid mode raises ConfigurationError (not yet supported)."""
-        from traigent.config.types import validate_execution_mode
+    def test_hybrid_mode_is_supported(self) -> None:
+        """Hybrid is the supported portal-tracked local execution mode."""
+        from traigent.config.types import ExecutionMode, validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="not yet supported"):
-            validate_execution_mode("hybrid")
+        assert validate_execution_mode("hybrid") is ExecutionMode.HYBRID
 
 
 class TestStandardMode:
@@ -239,7 +237,7 @@ class TestCloudMode:
         """Test cloud mode raises ConfigurationError (not yet supported)."""
         from traigent.config.types import validate_execution_mode
 
-        with pytest.raises(ConfigurationError, match="not yet supported"):
+        with pytest.raises(ConfigurationError, match="not available yet"):
             validate_execution_mode("cloud")
 
 

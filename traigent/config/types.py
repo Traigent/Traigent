@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from traigent.utils.validation import Validators, validate_or_raise
 
@@ -40,7 +40,7 @@ class ExecutionMode(StrEnum):
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
-    default: ExecutionMode = ExecutionMode.CLOUD,
+    default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
 ) -> ExecutionMode:
     """Normalize user-provided execution mode values into an ExecutionMode enum."""
 
@@ -70,14 +70,15 @@ _SUPPORTED_MODES = {
     ExecutionMode.HYBRID_API,
 }
 _NOT_YET_SUPPORTED_MODES = {ExecutionMode.CLOUD}
-# PRIVACY and STANDARD are removed — not in either set
+# PRIVACY is a legacy alias for HYBRID + privacy_enabled=True. STANDARD is removed.
 
 
 def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     """Resolve *and* validate that an execution mode is currently supported.
 
-    Raises :class:`~traigent.utils.exceptions.ConfigurationError` for removed
-    modes (``privacy``, ``standard``) and not-yet-supported modes (``cloud``).
+    ``privacy`` is accepted as a legacy alias for ``hybrid``. Raises
+    :class:`~traigent.utils.exceptions.ConfigurationError` for removed
+    modes (``standard``) and not-yet-supported modes (``cloud``).
     Use :func:`resolve_execution_mode` when you only need
     string-to-enum conversion without support validation.
     """
@@ -88,6 +89,8 @@ def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
     except ValueError:
         raise ConfigurationError(f"No such mode '{mode}'") from None
 
+    if resolved is ExecutionMode.PRIVACY:
+        return ExecutionMode.HYBRID
     if resolved in _NOT_YET_SUPPORTED_MODES:
         raise ConfigurationError(
             "Cloud remote execution is not available yet; use hybrid for "
@@ -188,8 +191,6 @@ class TraigentConfig:
         "edge_analytics",
         "privacy",
         "hybrid",
-        "standard",
-        "cloud",
         "hybrid_api",
     ] = "edge_analytics"
     local_storage_path: str | None = None
@@ -241,14 +242,16 @@ class TraigentConfig:
                 )
                 validate_or_raise(result)
 
-        # Validate execution mode using Enum helper
-        mode_enum = resolve_execution_mode(self.execution_mode)
-        if mode_enum is ExecutionMode.PRIVACY:
-            # Map legacy 'privacy' to 'hybrid' + privacy_enabled=True
-            mode_enum = ExecutionMode.HYBRID
+        # Validate execution mode against the public support contract.
+        requested_mode = resolve_execution_mode(self.execution_mode)
+        mode_enum = validate_execution_mode(requested_mode)
+        if requested_mode is ExecutionMode.PRIVACY:
             self.privacy_enabled = True
 
-        self.execution_mode = mode_enum.value
+        self.execution_mode = cast(
+            Literal["edge_analytics", "privacy", "hybrid", "hybrid_api"],
+            mode_enum.value,
+        )
 
         # Handle local storage path
         if self.is_edge_analytics_mode() and self.local_storage_path:
@@ -267,7 +270,7 @@ class TraigentConfig:
 
         # Define default values to exclude
         defaults = {
-            "execution_mode": "cloud",
+            "execution_mode": "edge_analytics",
             "minimal_logging": True,
             "auto_sync": False,
             "privacy_enabled": False,
@@ -345,14 +348,27 @@ class TraigentConfig:
         Returns:
             New TraigentConfig with merged values (other takes precedence)
         """
+        explicit_override_keys: set[str] = set()
         if isinstance(other, dict):
+            explicit_override_keys = set(other)
             other = self.from_dict(other)
 
-        # Start with current values
+        # Start with current values.
         merged_dict = self.to_dict()
 
-        # Override with other values
-        merged_dict.update(other.to_dict())
+        # Override with non-default values from the other config. For dict
+        # inputs, preserve explicitly supplied defaults such as
+        # {"execution_mode": "edge_analytics"} so callers can intentionally
+        # reset a value without default leakage from TraigentConfig().
+        override_dict = other.to_dict()
+        dataclass_fields = getattr(self, "__dataclass_fields__", {})
+        for key in explicit_override_keys:
+            if key in dataclass_fields and key != "custom_params":
+                value = getattr(other, key)
+                if value is not None:
+                    override_dict[key] = value
+
+        merged_dict.update(override_dict)
 
         return self.from_dict(merged_dict)
 
@@ -486,12 +502,12 @@ class TraigentConfig:
             if not isinstance(value, list):
                 raise TypeError("stop_sequences must be a list of strings")
         elif key == "execution_mode" and value is not None:
-            resolved_mode = resolve_execution_mode(value)
-            if resolved_mode is ExecutionMode.PRIVACY:
+            requested_mode = resolve_execution_mode(value)
+            resolved_mode = validate_execution_mode(requested_mode)
+            if requested_mode is ExecutionMode.PRIVACY:
                 # Promote legacy alias to hybrid and enable privacy
                 object.__setattr__(self, "privacy_enabled", True)
                 object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)
-                resolved_mode = ExecutionMode.HYBRID
             value = resolved_mode.value
         elif key == "local_storage_path" and value:
             value = str(Path(value).expanduser().resolve())

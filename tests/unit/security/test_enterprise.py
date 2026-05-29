@@ -423,7 +423,11 @@ class TestEnterpriseDeploymentManager:
 
         health_check = manager.perform_health_check()
 
-        assert health_check["overall_status"] in ["healthy", "unhealthy"]
+        # SDK#918 fix: with database + external_services reporting
+        # `unsupported` (no real probes wired), overall_status is now
+        # `degraded` instead of the previous fabricated `healthy`. May
+        # still be `unhealthy` if the system metrics check fails.
+        assert health_check["overall_status"] in ["healthy", "unhealthy", "degraded"]
         assert "timestamp" in health_check
         assert "checks" in health_check
 
@@ -432,28 +436,44 @@ class TestEnterpriseDeploymentManager:
         assert "database" in checks
         assert "external_services" in checks
 
-        # System check should have status and score
+        # System check should have status and score (real probe)
         assert "status" in checks["system"]
         if checks["system"]["status"] != "error":
             assert "score" in checks["system"]
             assert "details" in checks["system"]
 
-    def test_create_backup(self):
-        """Test backup creation"""
+        # SDK#918 anti-regression: database + external_services must NOT
+        # report a fabricated `healthy` status. They must surface the
+        # missing-probe condition honestly.
+        assert checks["database"]["status"] == "unsupported"
+        assert "reason" in checks["database"]
+        assert "DatabaseHealthProbe" in checks["database"]["reason"]
+        assert checks["external_services"]["status"] == "unsupported"
+        assert "reason" in checks["external_services"]
+        assert "ExternalServiceHealthProbe" in checks["external_services"]["reason"]
+
+    def test_create_backup_reports_unsupported_when_no_executor_wired(self):
+        """SDK#918 anti-regression: `create_backup()` previously
+        returned `status="completed"` with a fabricated backup_id and
+        size despite doing no work. Now it must report `unsupported`
+        with no fake backup_id, so callers (and monitoring) see the
+        truth."""
         manager = EnterpriseDeploymentManager(DeploymentMode.ON_PREMISE)
 
         backup_info = manager.create_backup()
 
-        assert "backup_id" in backup_info
-        assert backup_info["backup_id"].startswith("backup_")
-        assert "timestamp" in backup_info
+        # The previous "success" shape is GONE: no backup_id, no
+        # size_bytes, no retention_until.
+        assert "backup_id" not in backup_info
+        assert "size_bytes" not in backup_info
+        assert "retention_until" not in backup_info
+        # The honest shape MUST be present.
+        assert backup_info["status"] == "unsupported"
+        assert "reason" in backup_info
+        assert "BackupExecutor" in backup_info["reason"]
+        assert "NO DATA WAS PERSISTED" in backup_info["reason"]
         assert backup_info["deployment_mode"] == DeploymentMode.ON_PREMISE.value
-        assert backup_info["status"] == "completed"
-        assert backup_info["size_bytes"] > 0
-        assert "retention_until" in backup_info
-
-        # Retention should be based on deployment config
-        assert manager.config["backup_retention_days"] == 365  # On-premise default
+        assert "timestamp" in backup_info
 
     @patch("traigent.security.enterprise.psutil")
     def test_enterprise_dashboard(self, mock_psutil):

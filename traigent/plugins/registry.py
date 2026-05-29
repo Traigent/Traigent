@@ -336,6 +336,38 @@ class FeaturePlugin(TraigentPlugin):
         raise NotImplementedError("FeaturePlugin must declare provides_features()")
 
 
+class _BaseSDKFeaturePlugin(FeaturePlugin):
+    """Declares features implemented by the base Traigent SDK."""
+
+    @property
+    def name(self) -> str:
+        """Plugin name."""
+        return "traigent-base-sdk"
+
+    @property
+    def version(self) -> str:
+        """Plugin version."""
+        return _get_traigent_version()
+
+    @property
+    def description(self) -> str:
+        """Plugin description."""
+        return "Built-in Traigent SDK feature declarations."
+
+    @property
+    def author(self) -> str:
+        """Plugin author."""
+        return "Traigent"
+
+    def initialize(self) -> None:
+        """Initialize the plugin."""
+        return None
+
+    def provides_features(self) -> list[str]:
+        """Return feature flags provided by the base SDK."""
+        return [FEATURE_MULTI_OBJECTIVE, FEATURE_PARALLEL, FEATURE_SEAMLESS]
+
+
 class PluginRegistry:
     """Registry for managing Traigent plugins.
 
@@ -926,6 +958,7 @@ class PluginRegistry:
 
 # Global plugin registry instance
 _global_registry = PluginRegistry()
+_global_registry.register_plugin(_BaseSDKFeaturePlugin())
 
 
 def get_plugin_registry() -> PluginRegistry:

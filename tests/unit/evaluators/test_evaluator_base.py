@@ -531,6 +531,53 @@ class TestBaseEvaluator:
         with pytest.raises(TypeError):
             BaseEvaluator()
 
+    def test_privacy_mode_redacts_expected_and_actual_outputs_from_tracing(
+        self, mock_evaluator, monkeypatch
+    ):
+        """Privacy mode must not export expected/actual outputs to tracing spans."""
+        mock_evaluator.privacy_enabled = True
+        span_kwargs: dict[str, Any] = {}
+        record_kwargs: dict[str, Any] = {}
+
+        class _SpanContext:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, *_args):
+                return False
+
+        def span_fn(**kwargs):
+            span_kwargs.update(kwargs)
+            return _SpanContext()
+
+        def record_fn(_span, **kwargs):
+            record_kwargs.update(kwargs)
+
+        monkeypatch.setattr(
+            "traigent.evaluators.base._get_tracing_functions",
+            lambda: (span_fn, record_fn, True),
+        )
+
+        example = EvaluationExample({"prompt": "secret"}, "expected secret")
+        with mock_evaluator._example_trace_context("ex-1", 0, example) as span:
+            mock_evaluator._record_example_trace(
+                span,
+                ExampleResult(
+                    example_id="ex-1",
+                    input_data=example.input_data,
+                    expected_output=example.expected_output,
+                    actual_output="actual secret",
+                    metrics={"accuracy": 1.0},
+                    execution_time=0.01,
+                    success=True,
+                    error_message=None,
+                ),
+            )
+
+        assert span_kwargs["input_data"] is None
+        assert span_kwargs["expected_output"] is None
+        assert record_kwargs["actual_output"] is None
+
     @pytest.mark.asyncio
     async def test_mock_evaluator_basic_evaluation(
         self, mock_evaluator, sample_dataset

@@ -17,8 +17,9 @@ _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # Regex pattern for validating email addresses (RFC 5322 simplified)
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
-# Regex pattern for validating role names (lowercase alphanumeric with dash/underscore)
-ROLE_PATTERN = re.compile(r"^[a-z0-9_-]+$")
+# Regex pattern for validating role names. Enterprise IdPs commonly emit
+# separators such as "api:read", "team.member", and "org/admin".
+ROLE_PATTERN = re.compile(r"^[a-z0-9_-][a-z0-9_:/.-]{0,49}$")
 
 # Security constant: Delay to prevent timing attacks on authentication.
 # This intentionally blocks to ensure constant-time failure responses.
@@ -60,11 +61,12 @@ def sanitize_email(email: str, default_domain: str = "unknown.local") -> str:
     return email
 
 
-def sanitize_roles(roles: Any) -> list[str]:
+def sanitize_roles(roles: Any, *, strict: bool = False) -> list[str]:
     """Sanitize role list.
 
     Args:
         roles: List of roles or single role value
+        strict: Raise ValueError when explicit role claims are malformed
 
     Returns:
         List of sanitized role strings, defaults to ["user"] if empty
@@ -74,9 +76,18 @@ def sanitize_roles(roles: Any) -> list[str]:
     if not isinstance(roles, list):
         roles = [roles]
     sanitized = []
+    invalid_claim = False
     for role in roles:
         if isinstance(role, str):
             clean_role = sanitize_string(role, max_length=50).lower()
             if clean_role and ROLE_PATTERN.match(clean_role):
                 sanitized.append(clean_role)
-    return sanitized if sanitized else ["user"]
+            else:
+                invalid_claim = True
+        else:
+            invalid_claim = True
+    if invalid_claim or not sanitized:
+        if strict:
+            raise ValueError("Invalid role claim from identity provider")
+        return ["user"]
+    return sanitized

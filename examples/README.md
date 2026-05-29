@@ -218,7 +218,7 @@ cd examples
 ./test_all_examples.sh multi-objective    # Run 5 multi-objective variants
 ./test_all_examples.sh walkthrough        # Run 8 walkthrough examples
 ./test_all_examples.sh advanced-walkthrough # Run 5 advanced walkthrough examples
-./test_all_examples.sh manifest           # Run all 37 manifest examples (strict)
+./test_all_examples.sh manifest           # Run all 39 manifest examples (strict)
 ./test_all_examples.sh all                # Run all categories
 
 # Run with real API keys

@@ -21,18 +21,18 @@ jobs:
 
     steps:
       - name: Checkout base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: baseline
 
       - name: Checkout PR branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           path: work
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: '3.11'
 
@@ -150,17 +150,18 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ci-results
           path: |
             work/results-ci/
             work/examples/integrations/ci-cd/math-qa/saved_config.json
 
+          retention-days: 30
       - name: Comment on PR
         if: failure()
         continue-on-error: true  # Don't fail the workflow if PR comment fails (permissions issue on forks)
-        uses: actions/github-script@v6
+        uses: actions/github-script@v9.0.0
         with:
           script: |
             const fs = require('fs');

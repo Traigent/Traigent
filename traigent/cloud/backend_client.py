@@ -379,7 +379,7 @@ class BackendIntegratedClient:
             session_token = secrets.token_urlsafe(32)
 
         self._session_credentials[session_id] = session_token
-        return session_token
+        return cast(str, session_token)
 
     def _revoke_security_session(self, session_id: str) -> None:
         """Revoke a session from the security manager and clear cached token."""
@@ -543,13 +543,16 @@ class BackendIntegratedClient:
     ) -> tuple[str, str, str]:
         """Create privacy-first optimization session.
         Delegates to privacy_operations module."""
-        return await self._privacy_ops.create_privacy_optimization_session(
-            function_name,
-            configuration_space,
-            objectives,
-            dataset_metadata,
-            max_trials,
-            user_id,
+        return cast(
+            tuple[str, str, str],
+            await self._privacy_ops.create_privacy_optimization_session(
+                function_name,
+                configuration_space,
+                objectives,
+                dataset_metadata,
+                max_trials,
+                user_id,
+            ),
         )
 
     async def _deprecated_create_privacy_optimization_session(
@@ -597,8 +600,11 @@ class BackendIntegratedClient:
     ) -> bool:
         """Submit trial results for privacy-first optimization.
         Delegates to privacy_operations module."""
-        return await self._privacy_ops.submit_privacy_trial_results(
-            session_id, trial_id, config, metrics, duration, error_message
+        return cast(
+            bool,
+            await self._privacy_ops.submit_privacy_trial_results(
+                session_id, trial_id, config, metrics, duration, error_message
+            ),
         )
 
     # Reserved Cloud Operations
@@ -652,19 +658,28 @@ class BackendIntegratedClient:
     ) -> tuple[str, str, str]:
         """Create a hybrid execution session.
         Delegates to session_operations module."""
-        return await self._session_ops.create_hybrid_session(
-            problem_statement, search_space, optimization_config, metadata
+        return cast(
+            tuple[str, str, str],
+            await self._session_ops.create_hybrid_session(
+                problem_statement, search_space, optimization_config, metadata
+            ),
         )
 
     async def get_hybrid_session_status(self, session_id: str) -> dict[str, Any]:
         """Get status of a hybrid session.
         Delegates to session_operations module."""
-        return await self._session_ops.get_hybrid_session_status(session_id)
+        return cast(
+            dict[str, Any],
+            await self._session_ops.get_hybrid_session_status(session_id),
+        )
 
     async def finalize_hybrid_session(self, session_id: str) -> dict[str, Any]:
         """Finalize hybrid session and get results.
         Delegates to session_operations module."""
-        return await self._session_ops.finalize_hybrid_session(session_id)
+        return cast(
+            dict[str, Any],
+            await self._session_ops.finalize_hybrid_session(session_id),
+        )
 
     async def finalize_session(
         self, session_id: str, include_full_history: bool = False
@@ -678,7 +693,7 @@ class BackendIntegratedClient:
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
         """Delete optimization session and optionally related data.
         Delegates to session_operations module."""
-        return await self._session_ops.delete_session(session_id, cascade)
+        return cast(bool, await self._session_ops.delete_session(session_id, cascade))
 
     def finalize_session_sync(
         self, session_id: str, include_full_history: bool = False
@@ -690,12 +705,14 @@ class BackendIntegratedClient:
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
         """Synchronous wrapper for delete_session.
         Delegates to session_operations module."""
-        return self._session_ops.delete_session_sync(session_id, cascade)
+        return cast(bool, self._session_ops.delete_session_sync(session_id, cascade))
 
     def get_active_sessions(self) -> dict[str, OptimizationSession]:
         """Get all active optimization sessions.
         Delegates to session_operations module."""
-        return self._session_ops.get_active_sessions()
+        return cast(
+            dict[str, OptimizationSession], self._session_ops.get_active_sessions()
+        )
 
     def get_session_mapping(self, session_id: str) -> SessionExperimentMapping | None:
         """Get session to experiment mapping.
@@ -745,7 +762,7 @@ class BackendIntegratedClient:
         auth = getattr(self.auth_manager, "auth", None)
         if auth is None or not hasattr(auth, "get_headers"):
             raise CloudServiceError(
-                "auth manager is in an invalid state; cannot construct " "auth headers"
+                "auth manager is in an invalid state; cannot construct auth headers"
             )
 
         async def _get_headers_async() -> dict[str, str]:
@@ -817,8 +834,11 @@ class BackendIntegratedClient:
             f"{parsed.path.rstrip('/')}/analytics/example-scoring/"
             f"{encoded_run_id}/features"
         )
-        return urlunparse(
-            parsed._replace(path=upload_path, params="", query="", fragment="")
+        return cast(
+            str,
+            urlunparse(
+                parsed._replace(path=upload_path, params="", query="", fragment="")
+            ),
         )
 
     def upload_example_features(
@@ -904,9 +924,14 @@ class BackendIntegratedClient:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Register a trial start with the backend.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.register_trial_start(session_id, trial_id, config)
 
     def register_trial_start_sync(
@@ -914,9 +939,14 @@ class BackendIntegratedClient:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-    ) -> bool:
+    ) -> bool | None:
         """Synchronous wrapper for register_trial_start.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if registration succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return self._trial_ops.register_trial_start_sync(session_id, trial_id, config)
 
     def _generate_trial_id(
@@ -932,7 +962,7 @@ class BackendIntegratedClient:
 
         from traigent.utils.hashing import generate_trial_hash
 
-        return generate_trial_hash(session_id, config, "")
+        return cast(str, generate_trial_hash(session_id, config, ""))
 
     async def _submit_trial_result_via_session(
         self,
@@ -943,9 +973,14 @@ class BackendIntegratedClient:
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Submit trial results via the Traigent session endpoint.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.submit_trial_result_via_session(
             session_id, trial_id, config, metrics, status, error_message, execution_mode
         )
@@ -957,9 +992,14 @@ class BackendIntegratedClient:
         config: dict[str, Any],
         summary_stats: dict[str, Any],
         status: str = "completed",
-    ) -> bool:
+    ) -> bool | None:
         """Submit summary statistics for privacy-preserving mode.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if submission succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.submit_summary_stats(
             session_id, trial_id, config, summary_stats, status
         )
@@ -970,9 +1010,14 @@ class BackendIntegratedClient:
         weighted_score: float,
         normalization_info: dict[str, Any] | None = None,
         objective_weights: dict[str, float] | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Update configuration run with weighted multi-objective scores.
-        Delegates to trial_operations module."""
+        Delegates to trial_operations module.
+
+        Returns:
+            True if update succeeded, False if it failed,
+            None if the operation was skipped (e.g. offline mode).
+        """
         return await self._trial_ops.update_trial_weighted_scores(
             trial_id, weighted_score, normalization_info, objective_weights
         )
@@ -988,11 +1033,6 @@ class BackendIntegratedClient:
 
         logger.debug("submit_result called for session=%s score=%s", session_id, score)
 
-        session = self._active_sessions.get(session_id)
-        if session:
-            session.completed_trials += 1
-            session.updated_at = datetime.now(UTC)
-
         if self.enable_fallback and self.local_storage:
             try:
                 self.local_storage.add_trial_result(
@@ -1004,11 +1044,16 @@ class BackendIntegratedClient:
             except Exception as exc:
                 logger.debug("Local storage trial result fallback failed: %s", exc)
 
+        session = self._active_sessions.get(session_id)
+        if session:
+            session.completed_trials += 1
+            session.updated_at = datetime.now(UTC)
+
     # API Operations
     def _map_to_backend_status(self, status: str) -> str:
         """Map Traigent status values to backend-expected values.
         Delegates to api_operations module."""
-        return self._api_ops.map_to_backend_status(status)
+        return cast(str, self._api_ops.map_to_backend_status(status))
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
         """Translate SDK execution modes to backend-supported values."""
@@ -1032,19 +1077,25 @@ class BackendIntegratedClient:
     def _sanitize_error_message(self, error_message: str | None) -> str | None:
         """Sanitize error message for transmission.
         Delegates to api_operations module."""
-        return self._api_ops.sanitize_error_message(error_message)
+        return cast(str | None, self._api_ops.sanitize_error_message(error_message))
 
     async def _create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
     ) -> tuple[str, str, str]:
         """Create a Traigent optimization session using the new session endpoints.
         Delegates to api_operations module."""
-        return await self._api_ops.create_traigent_session_via_api(session_request)
+        return cast(
+            tuple[str, str, str],
+            await self._api_ops.create_traigent_session_via_api(session_request),
+        )
 
     async def _update_config_run_status(self, config_run_id: str, status: str) -> bool:
         """Update configuration run status in the backend.
         Delegates to api_operations module."""
-        return await self._api_ops.update_config_run_status(config_run_id, status)
+        return cast(
+            bool,
+            await self._api_ops.update_config_run_status(config_run_id, status),
+        )
 
     async def _update_config_run_measures(
         self,
@@ -1054,8 +1105,11 @@ class BackendIntegratedClient:
     ) -> bool:
         """Update configuration run measures in the backend.
         Delegates to api_operations module."""
-        return await self._api_ops.update_config_run_measures(
-            config_run_id, metrics, execution_time
+        return cast(
+            bool,
+            await self._api_ops.update_config_run_measures(
+                config_run_id, metrics, execution_time
+            ),
         )
 
     async def _update_experiment_run_status_on_completion(

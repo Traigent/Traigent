@@ -66,7 +66,13 @@ class RemoteOptimizer(BaseOptimizer):
     ) -> None:
         # Fail closed: without a real remote_client, this optimizer cannot do
         # what its name advertises. See module docstring and issue #872.
-        remote_client = kwargs.get("remote_client")
+        # Keep .pop (not .get): the client is stored on self by BaseOptimizer
+        # via algorithm_config; leaving it in kwargs propagates the remote
+        # client into the local fallback path, which is not what we want when
+        # this construction-time guard raises. Develop's behavior is the
+        # intended one; main's .get during #872 work was a regression we are
+        # not propagating forward.
+        remote_client = kwargs.pop("remote_client", None)
         if remote_client is None or not remote_enabled:
             raise OptimizationError(_NO_REMOTE_CLIENT_MSG)
 

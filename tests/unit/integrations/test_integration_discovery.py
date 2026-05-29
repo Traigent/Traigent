@@ -802,7 +802,8 @@ class TestCTDScenarios:
         if mappings:
             avg_confidence = sum(confidence.values()) / len(confidence)
             accepted = avg_confidence >= confidence_threshold
-            # Parametrize cases are deterministic — each (mapping_quality,
-            # threshold) tuple has a fixed expected_acceptance. The previous
-            # `or True` muted real regressions in generate_mapping_confidence.
+            # The parametrize cases below are deterministic: known mappings
+            # with the perfect/good/poor confidence_threshold MUST produce
+            # the expected_acceptance value. `or True` was masking
+            # regressions in generate_mapping_confidence.
             assert accepted == expected_acceptance

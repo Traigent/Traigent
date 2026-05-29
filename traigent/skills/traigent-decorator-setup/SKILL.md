@@ -198,8 +198,8 @@ Configure where and how optimization runs execute.
         execution_mode="edge_analytics",  # Local execution
         local_storage_path="./results",
         privacy_enabled=True,
-        reps_per_trial=3,              # Repeat each config 3 times
-        reps_aggregation="mean",        # Average across repetitions
+        # reps_per_trial / reps_aggregation are enterprise-only in this SDK
+        # release. Non-default values raise ValidationError at construction.
     ),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )
@@ -271,8 +271,7 @@ def exact_match(prediction: str, expected: str) -> float:
     execution=ExecutionOptions(
         execution_mode="edge_analytics",
         local_storage_path="./optimization_results",
-        reps_per_trial=3,
-        reps_aggregation="mean",
+        # reps_per_trial / reps_aggregation are enterprise-only; keep defaults.
     ),
     objectives=["accuracy", "cost"],
     configuration_space={

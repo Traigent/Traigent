@@ -291,6 +291,82 @@ class TestDocumentationConsistency(unittest.TestCase):
                         self.fail(f"Syntax error in example {py_file.name}: {e}")
                         # Function completed successfully (no assertion needed for smoke test)
 
+    def test_examples_manifest_includes_advertised_privacy_walkthrough(self):
+        """Keep the strict manifest aligned with the 8-step walkthrough docs."""
+        manifest_path = self.project_root / "examples" / "MANIFEST.txt"
+        script_path = self.project_root / "examples" / "test_all_examples.sh"
+        privacy_example = "../walkthrough/mock/08_privacy_modes.py"
+
+        entries = [
+            line.strip()
+            for line in manifest_path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        self.assertEqual(39, len(entries))
+        self.assertIn(privacy_example, entries)
+
+        script = script_path.read_text()
+        self.assertIn(f"\"{privacy_example}\"", script)
+        self.assertIn("SDK Publication Manifest (39 examples)", script)
+        self.assertIn("--- Walkthrough (8) ---", script)
+
+    def test_documented_dataset_and_decorator_surface_is_current(self):
+        """Smoke-test public SDK surface used by repaired docs snippets."""
+        import traigent
+        from traigent import Dataset, EvaluationExample
+
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(
+                    input_data={"question": "What is 2+2?"},
+                    expected_output="4",
+                )
+            ]
+        )
+
+        optimized_function = traigent.optimize(
+            configuration_space={"temperature": [0.1]},
+            eval_dataset=dataset,
+        )(lambda question: "4")
+
+        self.assertTrue(hasattr(optimized_function, "optimize"))
+
+    def test_public_docs_root_traigent_imports_exist(self):
+        """Validate root traigent imports advertised in public docs/examples."""
+        import traigent
+
+        public_paths = [
+            *self.project_root.glob("docs/**/*.md"),
+            *self.project_root.glob("examples/**/*.md"),
+            *self.project_root.glob("examples/**/*.py"),
+        ]
+        missing = []
+
+        for path in public_paths:
+            if any(part in path.parts for part in {"__pycache__", "node_modules"}):
+                continue
+
+            for line_number, line in enumerate(
+                path.read_text(errors="ignore").splitlines(), 1
+            ):
+                match = re.match(r"\s*from\s+traigent\s+import\s+(.+)", line)
+                if not match:
+                    continue
+
+                imported_names = match.group(1).split("#", 1)[0].strip()
+                if imported_names.startswith("("):
+                    continue
+
+                for item in imported_names.split(","):
+                    name = item.strip().split(" as ", 1)[0].strip()
+                    if not name or name == "*" or not name.isidentifier():
+                        continue
+                    if not hasattr(traigent, name):
+                        rel_path = path.relative_to(self.project_root)
+                        missing.append(f"{rel_path}:{line_number}: {name}")
+
+        self.assertEqual([], missing)
+
     def test_documentation_structure(self):
         """Test that documentation follows the expected structure."""
         expected_structure = {

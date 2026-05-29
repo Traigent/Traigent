@@ -15,6 +15,7 @@ def test_run_examples_passes_timeout_to_each_example(
     example.parent.mkdir(parents=True)
     example.write_text("#!/usr/bin/env python3\n")
 
+    monkeypatch.setattr("scripts.examples.run_examples._PROJECT_ROOT", tmp_path)
     runner = ExampleRunner(base_dir=str(tmp_path))
     observed: dict[str, object] = {}
 
@@ -45,6 +46,7 @@ def test_main_passes_cli_timeout_to_runner(tmp_path: Path, monkeypatch) -> None:
         def __init__(self, *, base_dir: str, verbose: bool) -> None:
             observed["base_dir"] = base_dir
             observed["verbose"] = verbose
+            self.base_path = Path(base_dir)
 
         def run_examples(
             self, pattern: str, validate_structure: bool = True, timeout: int = 60

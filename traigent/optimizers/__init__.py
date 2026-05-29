@@ -5,6 +5,12 @@
 from __future__ import annotations
 
 from traigent.optimizers.base import BaseOptimizer
+from traigent.optimizers.batch_optimizers import (
+    AdaptiveBatchOptimizer,
+    BatchOptimizationConfig,
+    MultiObjectiveBatchOptimizer,
+    ParallelBatchOptimizer,
+)
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.optuna_adapter import OptunaAdapter
 from traigent.optimizers.optuna_coordinator import (
@@ -79,6 +85,10 @@ __all__ = [
     "BaseOptimizer",
     "GridSearchOptimizer",
     "RandomSearchOptimizer",
+    "BatchOptimizationConfig",
+    "ParallelBatchOptimizer",
+    "MultiObjectiveBatchOptimizer",
+    "AdaptiveBatchOptimizer",
     "OptunaBaseOptimizer",
     "OptunaTPEOptimizer",
     "OptunaRandomOptimizer",

@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6.0.2
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: "3.11"
 
     - name: Cache pip dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5.0.5
       with:
         path: ~/.cache/pip
         key: ubuntu-latest-pip-quality-${{ hashFiles('**/requirements*.txt') }}-${{ hashFiles('**/pyproject.toml') }}
@@ -136,22 +136,23 @@ jobs:
         "
 
     - name: Upload quality reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7.0.1
       if: always()
       with:
         name: quality-reports
         path: |
           bandit-report.json
           safety-report.json
+        retention-days: 30
 
   documentation-quality:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6.0.2
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: "3.11"
 
@@ -234,10 +235,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6.0.2
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: "3.11"
 
@@ -261,9 +262,10 @@ jobs:
         pip-audit || true
 
     - name: Upload dependency reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7.0.1
       if: always()
       with:
         name: dependency-reports
         path: |
           pip-audit-report.json
+        retention-days: 30

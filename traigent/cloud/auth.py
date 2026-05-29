@@ -9,6 +9,7 @@ secure token management, and resilient HTTP client integration.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import hmac
 import inspect
@@ -30,8 +31,9 @@ from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
+from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
-from traigent.utils.url_security import UnsafeUrlError, validate_outbound_url
+from traigent.utils.url_security import UnsafeUrlError
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +184,9 @@ class APIKey:
     usage_limit: int | None = None
 
     def __post_init__(self) -> None:
-        """Initialise default permissions when not provided."""
+        """Initialise missing permissions to no local grants."""
         if self.permissions is None:
-            self.permissions = {"optimize": True, "analytics": True, "billing": False}
+            self.permissions = {}
 
         # Normalise date fields to timezone-aware datetime instances.
         self.created_at = self._coerce_datetime(self.created_at, "created_at")
@@ -1158,18 +1160,16 @@ class AuthManager:
         # Validate JWT token
         try:
             # Use secure JWT validation
-            # Determine validation mode based on environment
-            import os
-
             from traigent.security.jwt_validator import (
                 ValidationMode,
                 get_secure_jwt_validator,
             )
+            from traigent.utils.env_config import treat_as_production_policy
 
             validation_mode = (
-                ValidationMode.DEVELOPMENT
-                if os.getenv("TRAIGENT_ENV") == "development"
-                else ValidationMode.PRODUCTION
+                ValidationMode.PRODUCTION
+                if treat_as_production_policy()
+                else ValidationMode.DEVELOPMENT
             )
 
             validator = get_secure_jwt_validator(validation_mode)
@@ -1385,6 +1385,10 @@ class AuthManager:
         to bypass authentication.
         """
         from traigent.config.backend_config import BackendConfig
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return "backend offline mode enabled"
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1401,15 +1405,24 @@ class AuthManager:
         if unsafe_url_reason:
             return unsafe_url_reason
 
-        headers = {"X-API-Key": api_key}
+        validation_payload = {"api_key": api_key}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+        }
 
         if not AIOHTTP_AVAILABLE:
             try:
-                return await asyncio.to_thread(
-                    self._validate_api_key_with_backend_sync,
-                    url,
-                    headers,
-                )
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    return await loop.run_in_executor(
+                        executor,
+                        self._validate_api_key_with_backend_sync,
+                        url,
+                        headers,
+                        validation_payload,
+                    )
             except ImportError:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary
@@ -1426,6 +1439,7 @@ class AuthManager:
                 async with session.post(
                     url,
                     headers=headers,
+                    json=validation_payload,
                     allow_redirects=False,
                 ) as response:
                     if response.status == 200:
@@ -1485,15 +1499,22 @@ class AuthManager:
         try:
             host_ip = ipaddress.ip_address(normalized_host)
         except ValueError:
+            # Hostname resolves to a DNS name (not an IP). HTTPS still required.
+            if parsed.scheme != "https":
+                return "backend validation URL must use HTTPS"
             return None
         if not host_ip.is_global:
             return "backend validation URL host is not allowed"
+        # IP-literal global host: HTTPS still required.
+        if parsed.scheme != "https":
+            return "backend validation URL must use HTTPS"
         return None
 
     def _validate_api_key_with_backend_sync(
         self,
         url: str,
         headers: dict[str, str],
+        validation_payload: dict[str, str],
     ) -> str | None:
         """Requests fallback for backend key validation when aiohttp is unavailable."""
         import requests
@@ -1502,6 +1523,7 @@ class AuthManager:
             response = requests.post(
                 url,
                 headers=headers,
+                json=validation_payload,
                 timeout=15,
                 allow_redirects=False,
             )
@@ -1578,15 +1600,12 @@ class AuthManager:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
         try:
-            cloud_base_url = validate_outbound_url(
-                self.config.cloud_base_url,
-                purpose="OAuth2 cloud_base_url",
-                allow_private_hosts=False,
+            cloud_base_url = await validate_cloud_base_url_async(
+                self.config.cloud_base_url, purpose="OAuth2 client credentials"
             )
-        except UnsafeUrlError as exc:
+        except (ValueError, UnsafeUrlError) as exc:
             logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
             raise RuntimeError("OAuth2 cloud_base_url is not allowed") from None
-
         token_url = f"{cloud_base_url}/oauth/token"
 
         data = {
@@ -1717,11 +1736,21 @@ class AuthManager:
         # AuthManager-specific: update _api_key if present
         api_key = token_data.get("api_key") or token_data.get("apiKey")
         if api_key and self._validate_key_format(api_key):
+            raw_permissions = token_data.get("permissions")
+            permissions = (
+                {
+                    str(permission): enabled
+                    for permission, enabled in raw_permissions.items()
+                    if isinstance(enabled, bool)
+                }
+                if isinstance(raw_permissions, dict)
+                else {}
+            )
             self._api_key = APIKey(
                 key=api_key,
                 name="cli",
                 created_at=datetime.now(UTC),
-                permissions={"optimize": True, "analytics": True, "billing": True},
+                permissions=permissions,
             )
 
         return credentials

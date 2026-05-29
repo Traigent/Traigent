@@ -1781,6 +1781,160 @@ class TestCreateAgent:
             assert result.success is True
             mock_call_tool.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_create_agent_payload_matches_bridge_schema(self):
+        """create_agent must forward the bridge schema verbatim (issue #900).
+
+        Regression: the MCP client previously read ``agent_type`` / ``platform``
+        / ``model_parameters`` from the bridge output, none of which exist
+        there, so bridge fields were silently dropped. This test asserts the
+        exact ``call_tool("create_agent", arguments)`` payload.
+
+        ``agent_id`` is deliberately absent: the backend MCP ``create_agent``
+        tool does not accept it (see
+        ``TraigentBackend/src/mcp/tools/agent_tools.create_agent`` — its
+        payload is built from a fixed key set and drops ``**kwargs``), and
+        ``AgentSpecification.__post_init__`` cannot distinguish a default
+        ``id`` from a caller explicitly passing ``id="test-agent"``. Letting
+        the backend allocate the id matches the pre-#900 SDK behavior.
+        """
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        agent_spec = AgentSpecification(
+            id="agent_xyz",
+            name="QA Agent",
+            agent_type="conversational",
+            agent_platform="openai",
+            prompt_template="Answer: {input}",
+            model_parameters={"model": "gpt-4o", "temperature": 0.3},
+            reasoning="chain-of-thought",
+            style="professional",
+            tone="helpful",
+            format="structured",
+            persona="expert",
+            guidelines=["be accurate"],
+            response_validation=True,
+            custom_tools=["calculator"],
+            metadata={"version": "1.0"},
+            description="user-supplied description",
+        )
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_xyz"}
+            )
+
+            await self.client.create_agent(agent_spec)
+
+        assert mock_call_tool.call_count == 1
+        (tool_name, arguments), _kwargs = (
+            mock_call_tool.call_args.args,
+            mock_call_tool.call_args.kwargs,
+        )
+        assert tool_name == "create_agent"
+        assert arguments == {
+            "name": "QA Agent",
+            # ``agent_type`` maps via the bridge into ``agent_type_id`` —
+            # the canonical backend field. Issue #900 fixes the drop of this
+            # mapping in the MCP client.
+            "agent_type_id": "agent-type-1",
+            "description": "user-supplied description",
+            "agent_platform": "openai",
+            "prompt_template": "Answer: {input}",
+            "model_parameters": {"model": "gpt-4o", "temperature": 0.3},
+            "reasoning": "chain-of-thought",
+            "style": "professional",
+            "tone": "helpful",
+            "format": "structured",
+            "persona": "expert",
+            "guidelines": ["be accurate"],
+            "response_validation": True,
+            "custom_tools": ["calculator"],
+            "metadata": {"version": "1.0"},
+        }
+        assert "agent_id" not in arguments
+
+    @pytest.mark.asyncio
+    async def test_create_agent_payload_with_defaults(self):
+        """Defaults from AgentSpecification.__post_init__ flow through cleanly."""
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        # All fields default — exercises the ``or "default"`` fallback in the
+        # bridge and ensures we still emit ``agent_type_id`` (never
+        # ``agent_type``) downstream.
+        agent_spec = AgentSpecification()
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"agent_id": "test-agent"}
+            )
+
+            await self.client.create_agent(agent_spec)
+
+        tool_name, arguments = mock_call_tool.call_args.args
+        assert tool_name == "create_agent"
+        # Unknown ``agent_type='test'`` falls back to the default mapping.
+        assert arguments["agent_type_id"] == "agent-type-1"
+        assert arguments["agent_platform"] == "test"
+        assert arguments["prompt_template"] == "Test prompt"
+        assert arguments["model_parameters"] == {}
+        assert arguments["response_validation"] is False
+        # No spurious legacy keys.
+        assert "agent_type" not in arguments
+        assert "platform" not in arguments
+        # Issue #900 / Codex review on PR #1016: ``agent_id`` is NEVER
+        # forwarded from the MCP client. The backend tool does not accept it,
+        # and the SDK-side ``id`` cannot be disambiguated from the synthetic
+        # ``__post_init__`` placeholder. The backend allocates the id.
+        assert "agent_id" not in arguments
+
+    @pytest.mark.asyncio
+    async def test_create_agent_never_forwards_agent_id(self):
+        """``agent_id`` is never forwarded from create_agent, regardless of caller intent.
+
+        Codex review on PR #1016: the prior conditional that suppressed only
+        the synthetic ``"test-agent"`` placeholder could not distinguish a
+        default ``AgentSpecification()`` from a caller that explicitly passed
+        ``id="test-agent"``. Combined with the backend MCP tool dropping
+        ``agent_id`` from its ``**kwargs`` anyway, the safe minimal fix is to
+        not forward ``agent_id`` from the SDK at all and let the backend
+        allocate. This regression guard pins that behavior for every spec
+        shape callers can construct.
+        """
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        # The default __post_init__ placeholder.
+        default_spec = AgentSpecification()
+        assert default_spec.id == "test-agent"
+
+        # A user explicitly passing the same string as the placeholder. The
+        # prior suppression logic would have silently dropped this even though
+        # the caller intended it. We now drop the field for both shapes, which
+        # is a no-op on the wire (backend doesn't accept agent_id).
+        explicit_same_as_placeholder = AgentSpecification(id="test-agent")
+
+        # A user-supplied unique id.
+        explicit_unique = AgentSpecification(id="agent_xyz")
+
+        for spec in (default_spec, explicit_same_as_placeholder, explicit_unique):
+            with patch.object(
+                self.client, "call_tool", new_callable=AsyncMock
+            ) as mock_call_tool:
+                mock_call_tool.return_value = MCPResponse(success=True, data={})
+                await self.client.create_agent(spec)
+
+            _, arguments = mock_call_tool.call_args.args
+            assert (
+                "agent_id" not in arguments
+            ), f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+
 
 class TestUploadDataset:
     """Test upload_dataset method."""
@@ -2033,12 +2187,164 @@ class TestCreateOptimizationWorkflow:
                             success=True, data={"experiment_run_id": "run_123"}
                         )
 
-                        agent_id, exp_id, run_id = (
-                            await self.client.create_optimization_workflow(request)
-                        )
+                        (
+                            agent_id,
+                            exp_id,
+                            run_id,
+                        ) = await self.client.create_optimization_workflow(request)
                         assert agent_id == "agent_123"
                         assert exp_id == "exp_123"
                         assert run_id == "run_123"
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_threads_real_ids_to_create_experiment(
+        self,
+    ):
+        """Regression test for issue #899: create_optimization_workflow must
+        forward the agent_id and example_set_id returned by create_agent and
+        upload_dataset into create_experiment via explicit parameters, not
+        dynamic attrs that the bridge silently ignores.
+        """
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            metadata={},
+        )
+
+        real_agent_id = "agent_real_uuid_abc"
+        real_example_set_id = "set_real_uuid_xyz"
+
+        with (
+            patch.object(
+                self.client, "create_agent", new_callable=AsyncMock
+            ) as mock_create_agent,
+            patch.object(
+                self.client, "upload_dataset", new_callable=AsyncMock
+            ) as mock_upload,
+            patch.object(
+                self.client, "create_experiment", new_callable=AsyncMock
+            ) as mock_create_exp,
+            patch.object(
+                self.client, "start_experiment_run", new_callable=AsyncMock
+            ) as mock_start_run,
+        ):
+            mock_create_agent.return_value = MCPResponse(
+                success=True, data={"agent_id": real_agent_id}
+            )
+            mock_upload.return_value = MCPResponse(
+                success=True, data={"example_set_id": real_example_set_id}
+            )
+            mock_create_exp.return_value = MCPResponse(
+                success=True, data={"experiment_id": "exp_123"}
+            )
+            mock_start_run.return_value = MCPResponse(
+                success=True, data={"experiment_run_id": "run_123"}
+            )
+
+            await self.client.create_optimization_workflow(request)
+
+            mock_create_exp.assert_called_once()
+            call_args = mock_create_exp.call_args
+            # The real IDs must be threaded through explicit kwargs, not
+            # silently set as attributes on the request object.
+            assert call_args.kwargs.get("agent_id") == real_agent_id
+            assert call_args.kwargs.get("example_set_id") == real_example_set_id
+
+    @pytest.mark.asyncio
+    async def test_create_experiment_tool_args_contain_real_backend_ids(self):
+        """Regression test for issue #899: when create_experiment is called
+        with explicit agent_id / example_set_id, the underlying create_experiment
+        MCP tool arguments must contain exactly those IDs (not bridge-generated
+        placeholders).
+        """
+        from traigent.cloud.models import OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        dataset = Dataset(name="test", examples=[example])
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=dataset,
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+
+        real_agent_id = "agent_real_uuid_abc"
+        real_example_set_id = "set_real_uuid_xyz"
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"experiment_id": "exp_123"}
+            )
+
+            result = await self.client.create_experiment(
+                request,
+                agent_id=real_agent_id,
+                example_set_id=real_example_set_id,
+            )
+
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+            tool_name, tool_args = mock_call_tool.call_args.args
+            assert tool_name == "create_experiment"
+            assert tool_args["agent_id"] == real_agent_id
+            assert tool_args["example_set_id"] == real_example_set_id
+
+    @pytest.mark.asyncio
+    async def test_create_experiment_falls_back_to_bridge_ids_when_unspecified(
+        self,
+    ):
+        """When create_experiment is called without explicit IDs (legacy path),
+        it falls back to the bridge-generated IDs so existing callers keep
+        working.
+        """
+        from traigent.cloud.models import OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        dataset = Dataset(name="test", examples=[example])
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=dataset,
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"experiment_id": "exp_123"}
+            )
+
+            await self.client.create_experiment(request)
+
+            tool_name, tool_args = mock_call_tool.call_args.args
+            assert tool_name == "create_experiment"
+            # Bridge fills agent_id from function name, example_set_id from uuid.
+            assert tool_args["agent_id"] == "test_function"
+            assert tool_args["example_set_id"]  # non-empty fallback
 
 
 class TestSessionUnavailableAfterConnect:

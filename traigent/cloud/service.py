@@ -13,9 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.cloud.client import CloudRemoteExecutionUnavailableError
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.evaluators.local import LocalEvaluator
-from traigent.optimizers.registry import get_optimizer
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -225,6 +224,23 @@ class TraigentCloudService:
                 status="completed",
             )
 
+        except CloudRemoteExecutionUnavailableError as e:
+            logger.error(f"Cloud service unavailable for request {request_id}: {e}")
+            return OptimizationResponse(
+                request_id=request_id,
+                best_config={},
+                best_metrics={},
+                trials_count=0,
+                optimization_time=time.time() - start_time,
+                cost_reduction=0.0,
+                subset_used=False,
+                billing_info={
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                },
+                status="failed_unavailable",
+            )
+
         except Exception as e:
             logger.error(f"Optimization failed for request {request_id}: {e}")
             return OptimizationResponse(
@@ -247,79 +263,16 @@ class TraigentCloudService:
         max_trials: int,
         billing_tier: str,
     ) -> dict[str, Any]:
-        """Run optimization with enhanced algorithms based on billing tier.
+        """Fail closed until this scaffold has a real optimization driver.
 
-        Args:
-            dataset: Evaluation dataset
-            configuration_space: Parameter search space
-            objectives: Optimization objectives
-            max_trials: Maximum number of trials
-            billing_tier: User's billing tier
-
-        Returns:
-            Dict with optimization results
+        OptimizationRequest does not include a callable to evaluate, and the
+        optimizer interface exposes suggest_next_trial / observe_trial rather
+        than a monolithic optimize method. Returning a fabricated success here
+        would hide that the service path is not implemented.
         """
-        # Adjust max_trials based on billing tier before optimizer selection
-        tier_multipliers = {
-            "free": 0.5,
-            "standard": 1.0,
-            "professional": 1.5,
-            "enterprise": 2.0,
-        }
-
-        multiplier = tier_multipliers.get(billing_tier)
-        if multiplier is None:
-            logger.warning("Unknown billing tier; falling back to standard multiplier")
-            multiplier = 1.0
-
-        adjusted_max_trials = int(max_trials * multiplier)
-
-        # Choose optimizer based on billing tier
-        if billing_tier in ["professional", "enterprise"]:
-            # Use advanced algorithms for premium tiers
-            try:
-                optimizer = get_optimizer(
-                    "bayesian",
-                    configuration_space,
-                    objectives,
-                    max_trials=adjusted_max_trials,
-                )
-                logger.info("Using Bayesian optimization for premium tier")
-            except (ImportError, ValueError, Exception):
-                optimizer = get_optimizer(
-                    "random",
-                    configuration_space,
-                    objectives,
-                    max_trials=adjusted_max_trials,
-                )
-                logger.info("Fallback to random optimization")
-        else:
-            # Use standard algorithms for free/standard tiers
-            optimizer = get_optimizer(
-                "random",
-                configuration_space,
-                objectives,
-                max_trials=adjusted_max_trials,
-            )
-            logger.info("Using random optimization for standard tier")
-
-        # Enhanced evaluator with cloud-specific optimizations
-        evaluator = LocalEvaluator()
-
-        # Run optimization
-        optimization_result = await optimizer.optimize(  # type: ignore[attr-defined]
-            configuration_space=configuration_space,
-            evaluator=evaluator,
-            dataset=dataset,
-            objectives=objectives,
-            max_trials=adjusted_max_trials,
+        raise CloudRemoteExecutionUnavailableError(
+            "TraigentCloudService._run_enhanced_optimization"
         )
-
-        return {
-            "best_config": optimization_result.best_config,
-            "best_metrics": optimization_result.best_metrics,
-            "trials_count": len(optimization_result.trials),
-        }
 
     async def get_service_health(self) -> dict[str, Any]:
         """Get service health and status information.
@@ -336,19 +289,19 @@ class TraigentCloudService:
             else 0.0
         )
 
+        unavailable = CloudRemoteExecutionUnavailableError(
+            "TraigentCloudService._run_enhanced_optimization"
+        )
         return {
-            "status": "healthy",
+            "status": "unavailable",
             "uptime_hours": round(uptime_hours, 2),
             "total_optimizations": self.total_optimizations,
             "average_cost_reduction": round(avg_cost_reduction * 100, 1),
             "service_version": "1.0.0",
-            "available_algorithms": ["random", "grid", "bayesian"],
-            "supported_objectives": [
-                "accuracy",
-                "success_rate",
-                "error_rate",
-                "avg_execution_time",
-            ],
+            "remote_execution_available": False,
+            "unavailable_reason": str(unavailable),
+            "available_algorithms": [],
+            "supported_objectives": [],
             "max_dataset_size": 10000,
             "max_trials": 1000,
         }
@@ -365,22 +318,13 @@ class TraigentCloudService:
         Returns:
             List of optimization records
         """
-        # In real implementation, this would query a database
-        # For demo, return mock data
-        mock_history = []
-        for i in range(min(limit, 10)):
-            mock_history.append(
-                {
-                    "request_id": f"opt_{int(time.time() * 1000) - i * 60000}",
-                    "function_name": f"function_{i % 3 + 1}",
-                    "timestamp": time.time() - i * 3600,
-                    "trials_count": 25 + i * 5,
-                    "cost_reduction": 0.6 + (i % 3) * 0.1,
-                    "status": "completed",
-                }
-            )
-
-        return mock_history
+        logger.debug(
+            "Optimization history retrieval is not wired to persistent storage; "
+            "returning no records (user_id=%s, limit=%d)",
+            user_id,
+            limit,
+        )
+        return []
 
     def create_optimization_request(
         self,

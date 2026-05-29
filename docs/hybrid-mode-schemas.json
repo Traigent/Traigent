@@ -18,7 +18,7 @@
         "supports_evaluate": {
           "type": "boolean",
           "description": "Whether separate evaluate endpoint is available",
-          "default": true
+          "default": false
         },
         "supports_keep_alive": {
           "type": "boolean",

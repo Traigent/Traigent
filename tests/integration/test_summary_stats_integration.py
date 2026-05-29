@@ -87,10 +87,10 @@ class TestSummaryStatsIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_cloud_mode_does_not_use_summary_stats(self):
-        """Test that cloud mode does NOT generate summary_stats."""
-        # Create evaluator with cloud execution mode (or None which defaults to no summary_stats)
-        evaluator = LocalEvaluator(metrics=["accuracy"], execution_mode="cloud")
+    async def test_hybrid_mode_uses_summary_stats(self):
+        """Test that hybrid mode generates summary_stats."""
+        # Create evaluator with hybrid execution mode
+        evaluator = LocalEvaluator(metrics=["accuracy"], execution_mode="hybrid")
 
         # Create a simple test function
         async def test_function(**kwargs):
@@ -106,8 +106,9 @@ class TestSummaryStatsIntegration:
         # Run evaluation
         result = await evaluator.evaluate(test_function, {"temperature": 0.7}, dataset)
 
-        # Check that summary_stats was NOT generated
-        assert not hasattr(result, "summary_stats") or result.summary_stats is None
+        # Check that summary_stats was generated
+        assert hasattr(result, "summary_stats")
+        assert result.summary_stats is not None
 
     @pytest.mark.asyncio
     async def test_orchestrator_passes_execution_mode_to_evaluator(self):
@@ -282,27 +283,25 @@ class TestExecutionModeHandling:
         config = TraigentConfig(execution_mode="edge_analytics")
         assert config.execution_mode == "edge_analytics"
 
-        # TraigentConfig accepts all valid enum values (lenient resolution)
-        for mode in ["cloud", "hybrid", "standard"]:
+        # TraigentConfig accepts supported modes and normalizes aliases.
+        for mode in ["edge_analytics", "hybrid", "hybrid_api"]:
             config = TraigentConfig(execution_mode=mode)
             assert config.execution_mode == mode
 
-        # 'privacy' is a back-compat alias that maps to 'hybrid' + privacy_enabled
         config = TraigentConfig(execution_mode="privacy")
         assert config.execution_mode == "hybrid"
         assert config.privacy_enabled is True
 
-        # validate_execution_mode provides strict validation
         from traigent.config.types import validate_execution_mode
 
         with pytest.raises(ConfigurationError, match="Cloud remote execution"):
             validate_execution_mode("cloud")
 
         assert validate_execution_mode("hybrid").value == "hybrid"
+        assert validate_execution_mode("privacy").value == "hybrid"
 
-        for mode in ["privacy", "standard"]:
-            with pytest.raises(ConfigurationError, match="No such mode"):
-                validate_execution_mode(mode)
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            validate_execution_mode("standard")
 
     def test_traigent_config_invalid_execution_mode(self):
         """Test that TraigentConfig rejects invalid execution mode strings."""

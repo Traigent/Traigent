@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from typing import Any, cast
 
 try:
     from cryptography.fernet import Fernet as _Fernet
+    from cryptography.fernet import InvalidToken
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     CRYPTO_AVAILABLE = True
@@ -42,6 +44,10 @@ from ..utils.secure_path import (
 )
 
 logger = get_logger(__name__)
+
+
+def _truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class DataClassification(Enum):
@@ -410,6 +416,8 @@ class PIIDetector:
             PIIType.SSN: r"\b\d{3}-?\d{2}-?\d{4}\b",
             PIIType.CREDIT_CARD: r"\b(?:\d{4}[-\s]?){3}\d{4}\b",
             PIIType.IP_ADDRESS: r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+            PIIType.NAME: r"\b(?:full_?name|customer_?name|name)['\"]?\s*[:=]\s*['\"]?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b",
+            PIIType.ADDRESS: r"\b(?:street_?address|mailing_?address|address)['\"]?\s*[:=]\s*['\"]?\d{1,6}\s+[A-Za-z0-9 .'-]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr)\b",
             PIIType.PASSPORT: r"\b[A-Z]{1,2}\d{6,9}\b",
             PIIType.DRIVER_LICENSE: r"\b[A-Z]{1,2}\d{6,8}\b",
             PIIType.BANK_ACCOUNT: r"\b\d{8,17}\b",
@@ -511,7 +519,7 @@ class PIIDetector:
         pii_matches.sort(key=lambda x: x.start_pos, reverse=True)
 
         for match in pii_matches:
-            if match.confidence > 0.7:  # Only anonymize high-confidence matches
+            if match.confidence >= 0.7:
                 replacement = replacement_char * len(match.value)
                 anonymized_text = (
                     anonymized_text[: match.start_pos]
@@ -734,6 +742,47 @@ class SecureStorage:
         # Alias for test compatibility
         self.storage = self.simple_storage
 
+    def _detect_pii_in_value(self, value: Any) -> list[PIIMatch]:
+        """Recursively detect PII while preserving structured field context."""
+        matches: list[PIIMatch] = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(item, str):
+                    matches.extend(self.pii_detector.detect_pii(f"{key}: {item}"))
+                else:
+                    matches.extend(self._detect_pii_in_value(item))
+            return matches
+        if isinstance(value, list):
+            for item in value:
+                matches.extend(self._detect_pii_in_value(item))
+            return matches
+        if isinstance(value, str):
+            return list(self.pii_detector.detect_pii(value))
+        return []
+
+    def _anonymize_value(self, value: Any, field_name: str | None = None) -> Any:
+        """Recursively anonymize PII without flattening dict/list payloads."""
+        if isinstance(value, dict):
+            return {
+                key: self._anonymize_value(item, str(key))
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self._anonymize_value(item, field_name) for item in value]
+        if isinstance(value, str):
+            scan_text = f"{field_name}: {value}" if field_name else value
+            matches = self.pii_detector.detect_pii(scan_text)
+            if not matches:
+                return value
+            if field_name:
+                for pii_type in {match.pii_type for match in matches}:
+                    value = self.pii_detector.anonymize_text(
+                        f"{field_name}: {value}", pii_types=[pii_type]
+                    ).split(": ", 1)[-1]
+                return value
+            return self.pii_detector.anonymize_text(value)
+        return value
+
     def store_data(
         self,
         data: str,
@@ -876,19 +925,8 @@ class SecureStorage:
             data: Data to store
             classification: Data classification level
         """
-        # Convert dict to string if needed
-        if isinstance(data, dict):
-            data_str = str(data)
-        else:
-            data_str = data
-
-        # Detect and anonymize PII
-        pii_matches = self.pii_detector.detect_pii(data_str)
-        if pii_matches:
-            # Anonymize PII for secure storage
-            anonymized_data = self.pii_detector.anonymize_text(data_str)
-        else:
-            anonymized_data = data_str
+        pii_matches = self._detect_pii_in_value(data)
+        anonymized_data = self._anonymize_value(data) if pii_matches else data
 
         # Store with simple key-value API
         self.simple_storage[key] = {
@@ -924,19 +962,7 @@ class SecureStorage:
 
         # Return anonymized version if PII was detected
         if stored_data["pii_detected"] > 0:
-            # Parse back to original format if it was a dict
-            original = stored_data["original_data"]
-            if isinstance(original, dict):
-                # Create anonymized version of the dict
-                anonymized_dict = {}
-                for k, v in original.items():
-                    if isinstance(v, str):
-                        anonymized_dict[k] = self.pii_detector.anonymize_text(v)
-                    else:
-                        anonymized_dict[k] = v
-                return anonymized_dict
-            else:
-                return cast(str | dict[str, Any] | None, stored_data["anonymized_data"])
+            return cast(str | dict[str, Any] | None, stored_data["anonymized_data"])
         else:
             return cast(str | dict[str, Any] | None, stored_data["original_data"])
 
@@ -1202,10 +1228,140 @@ class KeyMetadata:
 class KeyManager:
     """Key management for encryption operations."""
 
-    def __init__(self) -> None:
+    KEY_STORE_VERSION = 2
+    KEY_STORE_KDF_ITERATIONS = 390_000
+
+    def __init__(
+        self,
+        storage_path: str | Path | None = None,
+        master_password: str | None = None,
+    ) -> None:
         """Initialize key manager."""
         self.keys: dict[str, Any] = {}  # key_id -> key_bytes
         self.key_metadata: dict[str, Any] = {}  # key_id -> KeyMetadata
+        configured_path = storage_path or os.getenv("TRAIGENT_KEY_MANAGER_STORE")
+        self.storage_path = (
+            Path(configured_path).expanduser() if configured_path else None
+        )
+        self._store_master_password = self._resolve_store_master_password(
+            master_password
+        )
+        if self.storage_path:
+            if self._store_master_password is None:
+                raise ValueError(
+                    "Persistent KeyManager storage requires a wrapping secret. "
+                    "Set TRAIGENT_KEY_MANAGER_MASTER_PASSWORD, set "
+                    "TRAIGENT_MASTER_PASSWORD, or pass master_password explicitly."
+                )
+            self._load_keys()
+
+    def _resolve_store_master_password(self, master_password: str | None) -> str | None:
+        return (
+            master_password
+            or os.getenv("TRAIGENT_KEY_MANAGER_MASTER_PASSWORD")
+            or os.getenv("TRAIGENT_MASTER_PASSWORD")
+        )
+
+    def _store_fernet(self, salt: bytes) -> Any:
+        if self._store_master_password is None:
+            raise ValueError("Key store wrapping secret is not configured")
+        key_material = hashlib.pbkdf2_hmac(
+            "sha256",
+            self._store_master_password.encode("utf-8"),
+            salt,
+            self.KEY_STORE_KDF_ITERATIONS,
+            dklen=32,
+        )
+        return Fernet(base64.urlsafe_b64encode(key_material))
+
+    def _load_keys(self) -> None:
+        if self.storage_path is None or not self.storage_path.exists():
+            return
+        stored_payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
+        if (
+            stored_payload.get("version") == self.KEY_STORE_VERSION
+            and "payload" in stored_payload
+        ):
+            salt = base64.b64decode(stored_payload["salt"])
+            try:
+                decrypted = self._store_fernet(salt).decrypt(
+                    stored_payload["payload"].encode("ascii")
+                )
+            except InvalidToken as exc:
+                raise ValueError(
+                    "Unable to decrypt KeyManager store with the configured "
+                    "wrapping secret"
+                ) from exc
+            payload = json.loads(decrypted.decode("utf-8"))
+        elif "keys" in stored_payload and _truthy(
+            os.getenv("TRAIGENT_ALLOW_PLAINTEXT_KEY_STORE")
+        ):
+            logger.warning(
+                "Loading legacy plaintext KeyManager store at %s for migration. "
+                "The next write will persist an encrypted key store.",
+                self.storage_path,
+            )
+            payload = stored_payload
+        elif "keys" in stored_payload:
+            raise ValueError(
+                "Refusing to load plaintext KeyManager key material. Set "
+                "TRAIGENT_ALLOW_PLAINTEXT_KEY_STORE=true only long enough to "
+                "migrate this store with a configured wrapping secret."
+            )
+        else:
+            raise ValueError("Unsupported KeyManager store format")
+        for key_id, key_entry in payload.get("keys", {}).items():
+            self.keys[key_id] = base64.b64decode(key_entry["key"])
+            metadata = key_entry["metadata"]
+            self.key_metadata[key_id] = KeyMetadata(
+                algorithm=metadata["algorithm"],
+                key_length=int(metadata["key_length"]),
+                created_at=datetime.fromisoformat(metadata["created_at"]),
+                expires_at=(
+                    datetime.fromisoformat(metadata["expires_at"])
+                    if metadata.get("expires_at")
+                    else None
+                ),
+                rotation_count=int(metadata.get("rotation_count", 0)),
+                is_active=bool(metadata.get("is_active", True)),
+            )
+
+    def _persist_keys(self) -> None:
+        if self.storage_path is None:
+            return
+        self.storage_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload: dict[str, Any] = {"keys": {}}
+        for key_id, key_data in self.keys.items():
+            metadata = self.key_metadata[key_id]
+            payload["keys"][key_id] = {
+                "key": base64.b64encode(key_data).decode("ascii"),
+                "metadata": {
+                    "algorithm": metadata.algorithm,
+                    "key_length": metadata.key_length,
+                    "created_at": metadata.created_at.isoformat(),
+                    "expires_at": (
+                        metadata.expires_at.isoformat() if metadata.expires_at else None
+                    ),
+                    "rotation_count": metadata.rotation_count,
+                    "is_active": metadata.is_active,
+                },
+            }
+        salt = secrets.token_bytes(16)
+        encrypted_payload = self._store_fernet(salt).encrypt(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        )
+        stored_payload = {
+            "version": self.KEY_STORE_VERSION,
+            "kdf": "pbkdf2-sha256",
+            "iterations": self.KEY_STORE_KDF_ITERATIONS,
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "payload": encrypted_payload.decode("ascii"),
+        }
+        self.storage_path.write_text(
+            json.dumps(stored_payload, sort_keys=True), encoding="utf-8"
+        )
+        if os.name != "nt":
+            self.storage_path.chmod(0o600)
 
     def generate_key(self, algorithm: str, expires_in_days: int | None = None) -> str:
         """Generate a new encryption key.
@@ -1239,6 +1395,7 @@ class KeyManager:
         self.key_metadata[key_id] = KeyMetadata(
             algorithm=algorithm, key_length=key_length, expires_at=expires_at
         )
+        self._persist_keys()
 
         return key_id
 
@@ -1278,6 +1435,7 @@ class KeyManager:
         old_metadata.is_active = False
         new_metadata = self.key_metadata[new_key_id]
         new_metadata.rotation_count = old_metadata.rotation_count + 1
+        self._persist_keys()
 
         return new_key_id
 
@@ -1303,5 +1461,6 @@ class KeyManager:
         # Remove from storage
         del self.keys[key_id]
         del self.key_metadata[key_id]
+        self._persist_keys()
 
         return True

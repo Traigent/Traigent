@@ -433,6 +433,28 @@ class TestMetricsComputer:
         assert "custom_metric" in result
         assert result["custom_metric"] == 2 / 3
 
+    def test_compute_metrics_includes_registered_custom_metrics(
+        self, default_computer: MetricsComputer
+    ) -> None:
+        """Test compute_metrics includes registered custom metric values."""
+
+        def custom_func(outputs: list, expected: list) -> float:
+            return len(outputs) / len(expected)
+
+        default_computer.add_custom_metric("custom_metric", custom_func)
+
+        invocation_results = [
+            InvocationResult(result="output1", is_successful=True),
+            InvocationResult(result="output2", is_successful=True),
+        ]
+        expected_outputs = ["output1", "output2"]
+
+        result = default_computer.compute_metrics(
+            invocation_results, expected_outputs
+        )
+
+        assert result.metrics["custom_metric"] == 1.0
+
     def test_compute_custom_metrics_filters_failed_invocations(
         self, default_computer: MetricsComputer
     ) -> None:

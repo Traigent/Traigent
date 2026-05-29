@@ -10,26 +10,64 @@ import re
 import threading
 import uuid
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from ..utils.logging import get_logger
+from .redaction import redact_sensitive_data, redact_sensitive_text
 
 logger = get_logger(__name__)
 
 _COMPLIANCE_NOT_IMPLEMENTED = (
-    "Compliance reporting subsystem is not yet implemented; do not call in production"
+    "Compliance reporting is not yet implemented. "
+    "Track progress at https://github.com/Traigent/Traigent/issues/876"
 )
-_PERSISTENT_STORAGE_NOT_IMPLEMENTED = (
-    "Persistent audit storage is not yet implemented; AuditStorage accepts "
-    "storage_path for compatibility but stores events in memory"
-)
+
+
+class ComplianceReportUnavailableError(NotImplementedError):
+    """Raised when a compliance report method is called before the subsystem is implemented."""
+
+    def __init__(self, msg: str = _COMPLIANCE_NOT_IMPLEMENTED) -> None:
+        super().__init__(msg)
+
+
 _TAMPER_DETECTION_NOT_IMPLEMENTED = (
     "Tamper-detection is not yet implemented; verify_integrity will be available "
     "in a future release"
 )
+_GEOLOCATION_PROVIDER_UNAVAILABLE = (
+    "No geolocation provider configured. Inject one via "
+    "EventProcessor(geolocation_provider=...) — the SDK ships no default "
+    "geolocation backend."
+)
+_THREAT_INTEL_PROVIDER_UNAVAILABLE = (
+    "No threat intelligence provider configured. Inject one via "
+    "EventProcessor(threat_intelligence_provider=...) — the SDK ships no "
+    "default threat-intel backend."
+)
+
+
+class EnrichmentProviderUnavailableError(RuntimeError):
+    """Raised when an audit-event enrichment provider is not configured.
+
+    The SDK previously returned hard-coded geolocation/threat-intel data,
+    which silently produced fake compliance signal. Callers must inject a
+    real provider before invoking enrichment.
+    """
+
+
+def _redact_filterable_identifier(value: str | None, label: str) -> str | None:
+    """Redact sensitive identifiers while preserving exact-match filtering."""
+    if value is None:
+        return None
+    redacted = redact_sensitive_text(value)
+    if redacted == value:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"[REDACTED:{label}:{digest}]"
 
 
 class AuditSeverity(Enum):
@@ -248,24 +286,25 @@ class AuditLogger:
 
         # Handle source_ip alias
         final_ip = ip_address or source_ip
+        redacted_message = redact_sensitive_text(message)
 
         event = AuditEvent(
             event_id=secrets.token_urlsafe(16),
             event_type=event_type,
             timestamp=datetime.now(UTC),
-            user_id=user_id,
-            session_id=session_id,
-            tenant_id=tenant_id,
-            message=message,
-            resource_id=resource_id,
-            resource_type=resource_type,
-            resource=resource,  # Add resource field
-            action=action,
+            user_id=_redact_filterable_identifier(user_id, "user_id"),
+            session_id=redact_sensitive_text(session_id),
+            tenant_id=_redact_filterable_identifier(tenant_id, "tenant_id"),
+            message=redacted_message if redacted_message is not None else "",
+            resource_id=redact_sensitive_text(resource_id),
+            resource_type=redact_sensitive_text(resource_type),
+            resource=redact_sensitive_text(resource),  # Add resource field
+            action=redact_sensitive_text(action),
             result=result,
-            ip_address=final_ip,
-            source_ip=final_ip,  # Set both for compatibility
-            user_agent=user_agent,
-            details=details or {},
+            ip_address=redact_sensitive_text(final_ip),
+            source_ip=redact_sensitive_text(final_ip),  # Set both for compatibility
+            user_agent=redact_sensitive_text(user_agent),
+            details=redact_sensitive_data(details or {}),
             severity=severity,
             compliance_tags=compliance_tags or [],
         )
@@ -282,7 +321,10 @@ class AuditLogger:
         )  # Store in AuditStorage (thread-safe internally)
         self.event_queue.put(event)  # Add to queue for async processing (thread-safe)
 
-        logger.info(f"Audit event logged: {event_type.value} by {user_id or 'system'}")
+        actor = (
+            _redact_filterable_identifier(user_id, "user_id") if user_id else "system"
+        )
+        logger.info("Audit event logged: %s by %s", event_type.value, actor)
         return event
 
     def _calculate_checksum(self, event: AuditEvent) -> str:
@@ -488,67 +530,55 @@ class AuditLogger:
 
 
 class ComplianceReporter:
-    """Compliance report entry points.
+    """Compliance report entry points (not yet implemented).
 
-    Report generation is intentionally fail-loud until the real reporting
-    subsystem ships; callers must handle ``NotImplementedError`` instead of
-    consuming synthetic compliance data.
+    This class is excluded from the public API (``traigent.security.__all__``).
+    All report methods raise :class:`ComplianceReportUnavailableError`.
+    Implementation is tracked in https://github.com/Traigent/Traigent/issues/876.
     """
 
     def __init__(self, audit_logger: AuditLogger) -> None:
         """Initialize compliance reporter."""
         self.audit_logger = audit_logger
 
-    def generate_soc2_report(
-        self, start_date: datetime, end_date: datetime
-    ) -> dict[str, Any]:
-        """Raise until SOC 2 Type II report generation is implemented."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
-
-    def generate_gdpr_report(
-        self, start_date: datetime, end_date: datetime
-    ) -> dict[str, Any]:
-        """Raise until GDPR report generation is implemented."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
-
     def _test_access_control(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test access control effectiveness."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_change_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test change management controls."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_data_protection(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test data protection controls."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _test_monitoring(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Test monitoring effectiveness."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _analyze_consent_management(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze consent management for GDPR."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _analyze_security_incidents(self, events: list[AuditEvent]) -> dict[str, Any]:
         """Analyze security incidents."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
-    def generate_report(
+    def _generate_report(
         self,
         framework: ComplianceFramework,
         start_date: datetime,
         end_date: datetime,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Raise until real compliance report generation is implemented."""
+        """Private fail-loud report hook until real reporting ships."""
         if framework in (
             ComplianceFramework.SOC2,
             ComplianceFramework.ISO27001,
             ComplianceFramework.GDPR,
         ):
-            raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+            raise ComplianceReportUnavailableError()
 
         raise ValueError(f"Unsupported compliance framework: {framework}") from None
 
@@ -556,19 +586,19 @@ class ComplianceReporter:
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate SOC 2 Type II compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _generate_iso27001_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate ISO 27001 compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _generate_gdpr_report(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
     ) -> dict[str, Any]:
         """Generate GDPR compliance report."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
     def _get_events_for_period(
         self, start_date: datetime, end_date: datetime, tenant_id: str | None = None
@@ -581,7 +611,8 @@ class ComplianceReporter:
         ]
 
         if tenant_id:
-            events = [e for e in events if e.tenant_id == tenant_id]
+            normalized_tenant_id = _redact_filterable_identifier(tenant_id, "tenant_id")
+            events = [e for e in events if e.tenant_id == normalized_tenant_id]
 
         return events
 
@@ -589,11 +620,11 @@ class ComplianceReporter:
         self, events: list[AuditEvent]
     ) -> dict[str, Any]:
         """Analyze data subject requests for GDPR."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+        raise ComplianceReportUnavailableError()
 
-    def get_compliance_dashboard(self) -> dict[str, Any]:
-        """Generate compliance dashboard with metrics."""
-        raise NotImplementedError(_COMPLIANCE_NOT_IMPLEMENTED)
+    def _get_compliance_dashboard(self) -> dict[str, Any]:
+        """Private fail-loud dashboard hook until real reporting ships."""
+        raise ComplianceReportUnavailableError()
 
 
 class SecurityMonitor:
@@ -660,12 +691,40 @@ class SecurityMonitor:
         return alerts
 
 
-class EventProcessor:
-    """Processes and enriches audit events."""
+GeolocationProvider = Callable[[str], dict[str, Any]]
+ThreatIntelligenceProvider = Callable[[str], dict[str, Any]]
 
-    def __init__(self) -> None:
-        """Initialize event processor."""
+
+class EventProcessor:
+    """Processes and enriches audit events.
+
+    Enrichment providers must be injected explicitly. If callers invoke
+    ``enrich_with_geolocation`` or ``enrich_with_threat_intelligence`` without
+    a configured provider, the call raises
+    :class:`EnrichmentProviderUnavailableError` instead of synthesizing fake
+    geolocation/threat data — which would otherwise feed bogus signal into
+    audit and compliance pipelines.
+    """
+
+    def __init__(
+        self,
+        geolocation_provider: GeolocationProvider | None = None,
+        threat_intelligence_provider: ThreatIntelligenceProvider | None = None,
+    ) -> None:
+        """Initialize event processor with optional enrichment providers.
+
+        Args:
+            geolocation_provider: Callable that takes an IP address string and
+                returns a dict of geolocation fields (e.g. country, region,
+                city). Required for :meth:`enrich_with_geolocation` to work.
+            threat_intelligence_provider: Callable that takes an IP address
+                string and returns a dict of threat-intel fields (e.g.
+                malicious flag, reputation score, categories). Required for
+                :meth:`enrich_with_threat_intelligence` to work.
+        """
         self.processors: list[Any] = []
+        self._geolocation_provider = geolocation_provider
+        self._threat_intelligence_provider = threat_intelligence_provider
 
     def add_processor(self, processor_func) -> None:
         """Add event processor function."""
@@ -678,41 +737,47 @@ class EventProcessor:
         return event
 
     def enrich_with_geolocation(self, event: AuditEvent) -> AuditEvent:
-        """Enrich event with geolocation data."""
+        """Enrich event with geolocation data from the injected provider.
+
+        Raises:
+            EnrichmentProviderUnavailableError: if no geolocation provider was
+                supplied at construction.
+        """
+        if self._geolocation_provider is None:
+            raise EnrichmentProviderUnavailableError(_GEOLOCATION_PROVIDER_UNAVAILABLE)
         if event.ip_address:
-            # Simplified geolocation (in production, use actual service)
-            event.details["geolocation"] = {
-                "country": "US",
-                "region": "California",
-                "city": "San Francisco",
-            }
+            event.details["geolocation"] = self._geolocation_provider(event.ip_address)
         return event
 
     def enrich_with_threat_intelligence(self, event: AuditEvent) -> AuditEvent:
-        """Enrich event with threat intelligence."""
+        """Enrich event with threat intelligence from the injected provider.
+
+        Raises:
+            EnrichmentProviderUnavailableError: if no threat-intelligence
+                provider was supplied at construction.
+        """
+        if self._threat_intelligence_provider is None:
+            raise EnrichmentProviderUnavailableError(_THREAT_INTEL_PROVIDER_UNAVAILABLE)
         if event.ip_address:
-            # Simplified threat check (in production, use actual threat feeds)
-            event.details["threat_intel"] = {
-                "malicious": False,
-                "reputation_score": 95,
-                "categories": [],
-            }
+            event.details["threat_intel"] = self._threat_intelligence_provider(
+                event.ip_address
+            )
         return event
 
 
 class AuditStorage:
     """In-memory storage backend for audit events.
 
-    ``storage_path`` is accepted for backward compatibility with callers that
-    previously constructed ``AuditStorage("audit_logs")``. This class does not
-    implement file-backed persistence yet; it records the configured path for
-    diagnostics while keeping events in memory.
+    This backend keeps events in a Python list. It does NOT persist to disk
+    or any external store, so events do not survive process restarts. The
+    historical ``storage_path`` parameter has been removed because it falsely
+    implied persistence — wire up a real persistence backend rather than
+    passing a path here.
     """
 
-    def __init__(self, storage_path: str | None = "audit_logs") -> None:
-        """Initialize storage backend."""
-        self.storage_path = storage_path
-        self.events: list[Any] = []  # In-memory storage for testing
+    def __init__(self) -> None:
+        """Initialize the in-memory storage backend."""
+        self.events: list[Any] = []
 
     def store_event(self, event: AuditEvent) -> None:
         """Store an audit event."""
@@ -746,7 +811,10 @@ class AuditStorage:
         if end_time:
             filtered_events = [e for e in filtered_events if e.timestamp <= end_time]
         if user_id:
-            filtered_events = [e for e in filtered_events if e.user_id == user_id]
+            normalized_user_id = _redact_filterable_identifier(user_id, "user_id")
+            filtered_events = [
+                e for e in filtered_events if e.user_id == normalized_user_id
+            ]
         if event_types:
             filtered_events = [
                 e for e in filtered_events if e.event_type in event_types

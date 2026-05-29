@@ -1067,17 +1067,10 @@ class TestErrorHandling:
         constraint_manager.add_constraint(broken_constraint)
         constraint_manager.add_constraint(working_constraint)
 
-        # Should handle exceptions gracefully
-        try:
-            is_valid, violations = constraint_manager.validate_configuration(
-                {"test": "config"}
-            )
-            # Implementation dependent - may treat exception as failure or ignore
-            assert isinstance(is_valid, bool)
-            assert isinstance(violations, list)
-        except (ValueError, RuntimeError, AttributeError):
-            # If constraint exceptions propagate, that's also acceptable behavior
-            pass
+        # Contract: raw constraint exceptions propagate so callers see
+        # broken custom constraints instead of receiving synthetic success.
+        with pytest.raises(RuntimeError, match="Broken validation"):
+            constraint_manager.validate_configuration({"test": "config"})
 
     def test_conditional_constraint_with_broken_condition(self):
         """Test conditional constraint with condition that throws exception."""

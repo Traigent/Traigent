@@ -172,22 +172,21 @@ flowchart LR
     subgraph Modes["Injection Modes"]
         context["Context Mode<br/>(Default)"]
         param["Parameter Mode"]
-        attr["Attribute Mode"]
         seamless["Seamless Mode<br/>(AST Transform)"]
     end
 
     subgraph Usage["How You Access Config"]
         context --> ctx_code["traigent.get_config()"]
         param --> param_code["def func(query, config):"]
-        attr --> attr_code["func.current_config"]
         seamless --> seamless_code["Direct variable names<br/>(temperature, model)"]
     end
 
     style context fill:#e3f2fd
     style param fill:#f3e5f5
-    style attr fill:#fff3e0
     style seamless fill:#e8f5e9
 ```
+
+> A fourth function-attribute-based mode existed in v1.x but was removed in v2.x because it could not be made thread-safe under parallel trials. The wrapper still exposes the read-only `OptimizedFunction.current_config` property to inspect the active configuration after `apply_best_config()` — that is a separate surface, not an injection mode. See [User Guide / Section 4](../user-guide/injection_modes.md#4-attribute-mode-removed-in-v2x) for migration guidance.
 
 ---
 

@@ -445,12 +445,22 @@ class TestSecureRateLimiter:
         assert isinstance(limiter.token_buckets, dict)
 
     def test_initialization_generates_salt(self) -> None:
-        """Test that initialization generates salt if not provided."""
+        """Test that initialization generates a process-local salt if not provided."""
         config = SecureRateLimitConfig(use_cryptographic_ids=True)
         limiter = SecureRateLimiter(config)
 
         assert limiter.config.identifier_salt is not None
         assert len(limiter.config.identifier_salt) == 32
+
+    def test_distributed_rate_limiter_fails_closed_until_implemented(self) -> None:
+        """Distributed settings must not silently run as local-only limits."""
+        config = SecureRateLimitConfig(
+            enable_distributed=True,
+            redis_url="redis://localhost:6379",
+        )
+
+        with pytest.raises(NotImplementedError, match="Distributed rate limiting"):
+            SecureRateLimiter(config)
 
     def test_generate_secure_identifier_with_ip(
         self, limiter: SecureRateLimiter
@@ -1332,19 +1342,16 @@ class TestIdentifierGeneration:
         # Should be the same due to sorting
         assert id1 == id2
 
-    def test_identifier_with_default_salt_fallback(self) -> None:
-        """Test identifier generation falls back to default salt."""
+    def test_identifier_without_salt_fails_closed(self) -> None:
+        """Identifier generation must not fall back to a shared default salt."""
         config = SecureRateLimitConfig(use_cryptographic_ids=True, identifier_salt=None)
         limiter = SecureRateLimiter(config)
 
-        # Manually set salt to None to test fallback
+        # Manually remove the initialization salt to test the low-level guard.
         limiter.config.identifier_salt = None
 
-        identifier = limiter._generate_secure_identifier(ip_address="1.2.3.4")
-
-        # Should still generate identifier with default salt
-        assert isinstance(identifier, str)
-        assert len(identifier) == 64
+        with pytest.raises(ValueError, match="identifier_salt is required"):
+            limiter._generate_secure_identifier(ip_address="1.2.3.4")
 
 
 class TestConcurrentAccess:

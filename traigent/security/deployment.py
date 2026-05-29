@@ -195,23 +195,46 @@ class HealthChecker:
         self.check_interval = 60  # seconds
 
     def check_service_health(self, service_name: str) -> HealthCheck:
-        """Check health of a specific service."""
+        """Check health of a specific service.
+
+        Honest-status contract (SDK#918 fix): the previous body returned
+        hardcoded `HealthStatus.HEALTHY` for `database`, `api`, and
+        `optimizer` with fabricated metric values (`connections: 45`,
+        `active_requests: 23`, etc.). The source comment said
+        `# Simulate health check (replace with actual checks)`. Operators
+        querying this method got a green light regardless of whether the
+        underlying services were running.
+
+        This implementation now returns `HealthStatus.UNKNOWN` for every
+        recognized service name with a `details["reason"]` explaining
+        that no real probe is configured. Subclasses (or callers) must
+        wire real probes by overriding this method. A logger.warning
+        fires so monitoring catches the call.
+        """
         start_time = time.time()
 
         try:
-            # Simulate health check (replace with actual checks)
-            if service_name == "database":
-                status = HealthStatus.HEALTHY
-                details: dict[str, Any] = {"connections": 45, "query_time_avg_ms": 12}
-            elif service_name == "api":
-                status = HealthStatus.HEALTHY
-                details = {"active_requests": 23, "queue_length": 2}
-            elif service_name == "optimizer":
-                status = HealthStatus.HEALTHY
-                details = {"active_optimizations": 5, "cpu_usage": 67}
+            if service_name in {"database", "api", "optimizer"}:
+                # Recognized service slot but no real probe wired.
+                status = HealthStatus.UNKNOWN
+                details: dict[str, Any] = {
+                    "reason": (
+                        f"No real health probe configured for "
+                        f"'{service_name}'. Override "
+                        f"HealthChecker.check_service_health in a subclass "
+                        f"to wire a real probe (SDK#918)."
+                    ),
+                }
+                logger.warning(
+                    "HealthChecker.check_service_health('%s') returned UNKNOWN "
+                    "because no real probe is configured (SDK#918).",
+                    service_name,
+                )
             else:
                 status = HealthStatus.UNKNOWN
-                details = {}
+                details = {
+                    "reason": f"Unrecognized service name '{service_name}'.",
+                }
 
             response_time = (time.time() - start_time) * 1000  # Convert to ms
 
@@ -270,23 +293,43 @@ class BackupManager:
         self.retention_days = 30
 
     def create_backup(self, backup_type: str = "full") -> dict[str, Any]:
-        """Create system backup."""
-        backup_id = f"backup_{int(time.time())}"
+        """Create system backup.
 
-        backup_info = {
-            "backup_id": backup_id,
+        Honest-status contract (SDK#918 fix): this method previously
+        returned `status="completed"` with a fabricated `backup_id`
+        and a fake `size_gb=2.5` — without performing any backup work.
+        Operators calling `create_backup()` got a "completed" status
+        and a backup_id they could record as proof of backup, then
+        would discover during disaster recovery that no backup data
+        existed.
+
+        This implementation now returns `status="unsupported"` (no
+        `backup_id`, no fake size) with a `reason` explaining how to
+        wire a real backup. A logger.error fires so monitoring catches
+        the call. Callers that previously checked `status == "completed"`
+        will now correctly see the failure.
+
+        Override `BackupManager.create_backup` in a subclass to provide
+        a real backup implementation; `self.backups` is left untouched
+        when no real backup occurs.
+        """
+        logger.error(
+            "BackupManager.create_backup(%r) called but no backup executor "
+            "is configured. Returning status='unsupported'; no data was "
+            "persisted. See SDK#918 for the migration path.",
+            backup_type,
+        )
+        return {
             "type": backup_type,
+            "status": "unsupported",
+            "reason": (
+                "No real backup implementation is wired. The SDK does not "
+                "ship a default BackupExecutor. Override "
+                "BackupManager.create_backup in a subclass to provide one. "
+                "NO DATA WAS PERSISTED."
+            ),
             "created_at": datetime.now(UTC).isoformat(),
-            "size_gb": 2.5,  # Simulated
-            "status": "completed",
-            "retention_until": (
-                datetime.now(UTC) + timedelta(days=self.retention_days)
-            ).isoformat(),
         }
-
-        self.backups.append(backup_info)
-        logger.info(f"Created {backup_type} backup: {backup_id}")
-        return backup_info
 
     def list_backups(self) -> list[dict[str, Any]]:
         """List available backups."""

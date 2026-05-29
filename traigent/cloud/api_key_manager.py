@@ -293,6 +293,9 @@ class APIKeyManager:
         Supported formats:
         - `tg_`: Standard Traigent API keys (64 characters total)
         - `uk_`: User/utility keys issued by the backend (46 characters total)
+        - `sk_`: Service keys issued by the backend (46 characters total)
+        - `ak_`: Admin keys issued by the backend (46 characters total)
+        - `tk_`: Temporary keys issued by the backend (46 characters total)
 
         Args:
             key: API key to validate
@@ -307,6 +310,9 @@ class APIKeyManager:
         prefix_lengths = {
             "tg_": 64,  # Standard Traigent API keys
             "uk_": 46,  # User/utility keys from backend
+            "sk_": 46,  # Service keys from backend
+            "ak_": 46,  # Admin keys from backend
+            "tk_": 46,  # Temporary keys from backend
         }
 
         # Find matching prefix
@@ -422,11 +428,11 @@ class APIKeyManager:
                 name="default",
                 created_at=now,
                 expires_at=now + timedelta(days=365),
-                permissions={
-                    "optimize": True,
-                    "analytics": True,
-                    "billing": True,
-                },
+                # SDK#937 fix: do not fabricate any permission grants
+                # locally. The SDK has no way to know what the backend
+                # actually granted this credential, so the APIKey default
+                # is an empty permission set and has_permission() fails
+                # closed unless authoritative claims are supplied.
             )
 
     def get_info(self) -> dict[str, Any] | None:
@@ -451,11 +457,18 @@ class APIKeyManager:
         api_key_value = self.get_key_for_internal_use()
 
         if api_key_value and self.validate_format(api_key_value):
+            # SDK#937 fix: report `permissions={}` for the env-key
+            # path. Previously this fabricated `{optimize: True,
+            # analytics: True}` even though the SDK has no way to
+            # know what the backend actually granted this key.
+            # Empty dict is the honest answer — callers checking
+            # specific permissions get a clear "no claimed rights"
+            # response and the backend remains authoritative.
             return {
                 "name": "environment",
                 "created_at": None,
                 "expires_at": None,
-                "permissions": {"optimize": True, "analytics": True},
+                "permissions": {},
                 "is_valid": True,
                 "preview": self.get_preview(),
             }

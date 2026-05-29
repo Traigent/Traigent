@@ -203,7 +203,20 @@ class AutoConfigResult:
         return spec
 
     def to_python_code(self) -> str:
-        """Generate copy-pasteable ``@traigent.optimize(...)`` Python code."""
+        """Generate copy-pasteable ``@traigent.optimize(...)`` Python code.
+
+        Raises
+        ------
+        ValueError
+            If ``structural_constraints`` is non-empty. The Python decorator
+            surface does not currently support structural constraints, and
+            silently dropping them would let invalid sampled configurations
+            slip through. Export to TVL (``-o tvl`` / ``to_tvl_spec()``) to
+            preserve them.
+        """
+        if self.structural_constraints:
+            raise ValueError(_structural_constraint_error(self.structural_constraints))
+
         lines: list[str] = []
         lines.append("@traigent.optimize(")
 
@@ -236,6 +249,22 @@ class AutoConfigResult:
 
         lines.append(")")
         return "\n".join(lines)
+
+
+def _structural_constraint_error(
+    constraints: tuple[StructuralConstraintSpec, ...],
+) -> str:
+    """Build the rejection message for structural constraints in Python output."""
+    count = len(constraints)
+    sample = "; ".join(sc.description or sc.constraint_code for sc in constraints[:3])
+    suffix = "" if count <= 3 else f" (+{count - 3} more)"
+    return (
+        f"Cannot emit @traigent.optimize(...) Python code: {count} generated "
+        f"structural constraint(s) would be silently dropped because the "
+        f"decorator surface does not accept them. Re-export with `-o tvl` "
+        f"(or call AutoConfigResult.to_tvl_spec()) to preserve them. "
+        f"Constraints: {sample}{suffix}"
+    )
 
 
 # Metrics in traigent.api.safety that are factory functions (need "()")

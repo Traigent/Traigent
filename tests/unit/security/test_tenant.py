@@ -4,7 +4,7 @@ Tests for multi-tenant support systems
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -303,6 +303,48 @@ class TestTenant:
         assert not tenant.check_quota("optimizations_per_month", 1)
         assert not tenant.consume_quota("optimizations_per_month", 1)
 
+    def test_trial_tenant_has_quota_until_expiry(self):
+        """Trial tenants should behave as active until trial_ends_at."""
+        tenant = Tenant(
+            tenant_id="tenant123",
+            name="Trial Tenant",
+            contact_email="trial@test.com",
+            status=TenantStatus.TRIAL,
+            trial_ends_at=datetime.now(UTC) + timedelta(days=1),
+        )
+
+        assert tenant.is_active()
+        assert not tenant.is_trial_expired()
+        assert tenant.check_quota("optimizations_per_month", 1)
+
+    def test_expired_trial_tenant_is_blocked(self):
+        """Expired trials must not continue consuming quotas."""
+        tenant = Tenant(
+            tenant_id="tenant123",
+            name="Expired Trial",
+            contact_email="trial@test.com",
+            status=TenantStatus.TRIAL,
+            trial_ends_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+
+        assert not tenant.is_active()
+        assert tenant.is_trial_expired()
+        assert not tenant.check_quota("optimizations_per_month", 1)
+        assert not tenant.consume_quota("optimizations_per_month", 1)
+
+    def test_trial_tenant_accepts_naive_expiry_datetimes(self):
+        """Naive trial expiries should be interpreted as UTC."""
+        tenant = Tenant(
+            tenant_id="tenant123",
+            name="Naive Trial",
+            contact_email="trial@test.com",
+            status=TenantStatus.TRIAL,
+            trial_ends_at=datetime.now() + timedelta(days=1),
+        )
+
+        assert tenant.is_active()
+        assert not tenant.is_trial_expired()
+
     def test_tenant_serialization(self):
         """Test tenant serialization"""
         tenant = Tenant(
@@ -415,6 +457,22 @@ class TestTenantManager:
         # Should be stored in manager
         retrieved_tenant = manager.get_tenant(tenant.tenant_id)
         assert retrieved_tenant == tenant
+
+    def test_create_trial_tenant_is_active_until_expiry(self):
+        """TenantManager-created trial tenants should pass quota checks."""
+        manager = TenantManager()
+
+        tenant = manager.create_tenant(
+            name="Trial Company",
+            contact_email="trial@testcompany.com",
+            status=TenantStatus.TRIAL,
+        )
+
+        assert tenant.trial_ends_at is not None
+        assert tenant.is_active()
+        assert manager.check_quota(
+            "optimizations_per_month", tenant_id=tenant.tenant_id
+        )
 
     def test_list_tenants(self):
         """Test listing tenants with filters"""

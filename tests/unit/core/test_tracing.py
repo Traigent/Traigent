@@ -504,3 +504,137 @@ class TestRecordTrialMetricsFiltering:
         # Check that non-numeric metric was NOT set
         call_args = [call[0] for call in span.set_attribute.call_args_list]
         assert ("example.metric.label", "positive") not in call_args
+
+
+class TestPIITelemetryScrubbing:
+    """Regression tests for PII scrubbing in tracing exports.
+
+    Codex review of retry2 flagged that the validator was only
+    redacting secret-bearing dict keys, not the raw prompt / message /
+    content text. These tests assert PII gets scrubbed from both span
+    names and the exported ``example.input`` / ``example.expected_output``
+    / ``example.actual_output`` attributes.
+    """
+
+    def test_input_preview_scrubs_email_in_span_name(self) -> None:
+        """Raw email in a prompt must not survive into the span name."""
+        from traigent.core.tracing import _format_input_preview
+
+        preview = _format_input_preview(
+            {"prompt": "Please email me at john@example.com about this."}
+        )
+
+        assert "john@example.com" not in preview
+        assert "***EMAIL***" in preview
+
+    def test_input_preview_scrubs_ssn_in_span_name(self) -> None:
+        from traigent.core.tracing import _format_input_preview
+
+        preview = _format_input_preview({"text": "SSN 123-45-6789 confirmed"})
+
+        assert "123-45-6789" not in preview
+        assert "***SSN***" in preview
+
+    def test_config_summary_scrubs_pii_in_span_name(self) -> None:
+        from traigent.core.tracing import _format_config_summary
+
+        summary = _format_config_summary({"model": "gpt-4", "user": "a@b.co"})
+
+        assert "a@b.co" not in summary
+        assert "***EMAIL***" in summary
+
+    def test_example_input_attribute_is_scrubbed(self) -> None:
+        """The example.input attribute must not leak raw PII."""
+        from traigent.core import tracing as core_tracing
+
+        span = MagicMock()
+        fake_tracer = MagicMock()
+        fake_tracer.start_as_current_span.return_value.__enter__.return_value = span
+        fake_tracer.start_as_current_span.return_value.__exit__.return_value = False
+
+        with patch.object(core_tracing, "get_tracer", return_value=fake_tracer):
+            with core_tracing.example_evaluation_span(
+                "ex-1", 0, input_data={"prompt": "Reach me at jane@example.org"}
+            ):
+                pass
+
+        input_call = next(
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == "example.input"
+        )
+        exported = input_call.args[1]
+        assert "jane@example.org" not in exported
+        assert "***EMAIL***" in exported
+
+    def test_example_expected_output_attribute_is_scrubbed(self) -> None:
+        from traigent.core import tracing as core_tracing
+
+        span = MagicMock()
+        fake_tracer = MagicMock()
+        fake_tracer.start_as_current_span.return_value.__enter__.return_value = span
+        fake_tracer.start_as_current_span.return_value.__exit__.return_value = False
+
+        with patch.object(core_tracing, "get_tracer", return_value=fake_tracer):
+            with core_tracing.example_evaluation_span(
+                "ex-2", 0, expected_output="Customer SSN: 123-45-6789"
+            ):
+                pass
+
+        expected_call = next(
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == "example.expected_output"
+        )
+        exported = expected_call.args[1]
+        assert "123-45-6789" not in exported
+        assert "***SSN***" in exported
+
+    def test_example_actual_output_attribute_is_scrubbed(self) -> None:
+        span = MagicMock()
+        record_example_result(
+            span,
+            success=True,
+            actual_output="Contact: ops@example.io, SSN 999-12-3456",
+        )
+
+        actual_call = next(
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == "example.actual_output"
+        )
+        exported = actual_call.args[1]
+        assert "ops@example.io" not in exported
+        assert "999-12-3456" not in exported
+        assert "***EMAIL***" in exported
+        assert "***SSN***" in exported
+
+    def test_example_actual_output_jwt_is_scrubbed(self) -> None:
+        """Even JWT-like substrings in actual output must be scrubbed."""
+        span = MagicMock()
+        jwt_like = ".".join(["ey" + "Jheader", "payload", "signature"])
+        record_example_result(
+            span,
+            success=True,
+            actual_output=f"token={jwt_like}",
+        )
+
+        actual_call = next(
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == "example.actual_output"
+        )
+        exported = actual_call.args[1]
+        assert "eyJ" not in exported
+        assert "***JWT***" in exported
+
+    def test_record_example_result_keeps_clean_string_unchanged(self) -> None:
+        """A non-PII string should pass through unchanged.
+
+        This anchors the scrubber: false positives on plain text would
+        produce noisy traces and erode the value of the scrubbing.
+        """
+        span = MagicMock()
+        record_example_result(span, success=True, actual_output="Generated response")
+
+        span.set_attribute.assert_any_call("example.actual_output", "Generated response")

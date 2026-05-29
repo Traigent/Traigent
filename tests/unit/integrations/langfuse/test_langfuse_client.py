@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.integrations.langfuse import client as langfuse_client_module
 from traigent.integrations.langfuse.client import (
     AIOHTTP_AVAILABLE,
     REQUESTS_AVAILABLE,
@@ -128,8 +129,20 @@ class TestLangfuseTraceMetrics:
         assert "total_cost" in measures
         assert "total_latency_ms" in measures
         assert "total_tokens" in measures
+        assert measures["observations_partial"] == 0
         assert measures["total_cost"] == 0.01
         assert measures["total_latency_ms"] == 2000.0
+
+    def test_to_measures_dict_flags_partial_observations(self):
+        """Partial observation metrics must be visible to callers."""
+        metrics = LangfuseTraceMetrics(
+            trace_id="trace-partial",
+            observations_partial=True,
+        )
+
+        measures = metrics.to_measures_dict(prefix="lf_")
+
+        assert measures["lf_observations_partial"] == 1
 
     def test_to_measures_dict_per_agent_metrics(
         self, sample_metrics: LangfuseTraceMetrics
@@ -692,12 +705,33 @@ class TestLangfuseClientErrorHandling:
 
     @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
     def test_get_observations_http_handles_request_exception(self, client):
-        """Test that observations HTTP errors return partial results."""
+        """HTTP errors must mark returned observations as partial."""
         import requests
 
         with patch("requests.get", side_effect=requests.exceptions.Timeout("Timeout")):
             result = client._get_observations_http("trace-123")
             assert result == []
+            assert client._observations_partial_by_trace["trace-123"] is True
+
+    @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+    def test_get_observations_http_marks_accumulated_results_partial(self, client):
+        """A later page failure must not look like complete metrics."""
+        import requests
+
+        first_page = MagicMock()
+        first_page.json.return_value = {
+            "data": [{"id": "obs-1", "name": "llm-call", "type": "GENERATION"}],
+            "meta": {"totalItems": 2},
+        }
+
+        with patch(
+            "requests.get",
+            side_effect=[first_page, requests.exceptions.Timeout("Timeout")],
+        ):
+            result = client._get_observations_http("trace-123")
+
+        assert len(result) == 1
+        assert client._observations_partial_by_trace["trace-123"] is True
 
 
 class TestLangfuseClientGetTrace:
@@ -765,6 +799,17 @@ class TestLangfuseClientMetricsAggregation:
             mock_get_obs.return_value = []
             client._extract_metrics_from_trace(trace_data)
             mock_get_obs.assert_called_once_with("trace-123")
+
+    def test_extract_metrics_carries_partial_observation_flag(self, client):
+        """Fetched partial observations must be surfaced on aggregate metrics."""
+        trace_data = {"id": "trace-123", "name": "test"}  # No observations key
+        client._observations_partial_by_trace["trace-123"] = True
+
+        with patch.object(client, "get_observations_for_trace", return_value=[]):
+            metrics = client._extract_metrics_from_trace(trace_data)
+
+        assert metrics.observations_partial is True
+        assert metrics.to_measures_dict()["observations_partial"] == 1
 
     def test_aggregate_multiple_agents_accumulates(self, client):
         """Test that metrics accumulate correctly for same agent."""
@@ -924,6 +969,70 @@ class TestLangfuseClientAsync:
                 is True
             )
 
+    @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+    @pytest.mark.asyncio
+    async def test_get_observations_async_marks_accumulated_results_partial(
+        self, client
+    ):
+        """A later async page failure must mark accumulated observations partial."""
+
+        class AsyncResponse:
+            def __init__(self, payload=None, exc=None):
+                self.payload = payload or {}
+                self.exc = exc
+
+            async def __aenter__(self):
+                if self.exc:
+                    raise self.exc
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def json(self):
+                return self.payload
+
+        class AsyncSession:
+            def __init__(self):
+                self.calls = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def get(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return AsyncResponse(
+                        {
+                            "data": [
+                                {
+                                    "id": "obs-1",
+                                    "name": "llm-call",
+                                    "type": "GENERATION",
+                                }
+                            ],
+                            "meta": {"totalItems": 2},
+                        }
+                    )
+                return AsyncResponse(
+                    exc=langfuse_client_module.aiohttp.ClientError("timeout")
+                )
+
+        with patch(
+            "traigent.integrations.langfuse.client.aiohttp.ClientSession",
+            new=AsyncSession,
+        ):
+            result = await client.get_observations_for_trace_async("trace-123")
+
+        assert len(result) == 1
+        assert client._observations_partial_by_trace["trace-123"] is True
+
 
 class TestLangfuseClientSDK:
     """Test SDK integration paths."""
@@ -970,6 +1079,7 @@ class TestLangfuseClientSDK:
 
         result = client.get_observations_for_trace("trace-123")
         assert len(result) == 1
+        assert client._observations_partial_by_trace["trace-123"] is False
         mock_sdk.get_observations.assert_called_once()
 
     def test_get_observations_for_trace_sdk_exception(self, client):

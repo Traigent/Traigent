@@ -17,10 +17,11 @@ pip install -e ".[dev]"
 ### Run Tests
 
 ```bash
-# Run all tests (mock mode to avoid API costs)
+# Run all tests through the legacy shell fixture path
+# (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)
 TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
 
-# Run with coverage
+# Run with coverage through the same legacy shell fixture path
 TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=html
 
 # Run all unit tests with repo-default ignores
@@ -101,24 +102,38 @@ Use the generated report (`coverage.xml` or `htmlcov/`) to track current coverag
 
 ## Mock Mode Testing
 
-Traigent includes a mock mode for testing without real API calls:
+Traigent includes a mock mode for testing without real API calls. In local tutorial or test code, use the in-code helper:
+
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
+```
+
+For shell-only fixtures and older scripts, the legacy env var still works outside production, but direct user-set activation emits `DeprecationWarning`:
 
 ```bash
-# Enable mock mode
-export TRAIGENT_MOCK_LLM=true
-
-# Run tests with mock mode
 TRAIGENT_MOCK_LLM=true pytest tests/
-
-# Run specific example in mock mode
 TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
 ```
 
 **Mock Mode Features:**
-- No API keys required
-- Realistic accuracy scores (0.75 +/- 0.25)
-- Fast execution
-- Deterministic results when you set `mock={"random_seed": 123}`
+- No API keys required.
+- Fast execution — LLM calls are intercepted and replaced with canned
+  responses so trials don't hit the network.
+- Evaluator scoring is unchanged — your `metric_functions`, custom
+  evaluator, or the built-in `LocalEvaluator` accuracy calculator runs
+  the same scoring logic in both mock and real modes. There is no
+  fabricated random-score path.
+
+> Note: The legacy `MockModeOptions` fields (`enabled`,
+> `override_evaluator`, `base_accuracy`, `variance`) are kept on the
+> schema for backwards compatibility but are inert — mock mode is
+> activated by `traigent.testing.enable_mock_mode_for_quickstart()`
+> in local code, not by passing `mock=...`. The legacy
+> `TRAIGENT_MOCK_LLM=true` env var remains for shell fixtures and
+> backwards compatibility, but emits `DeprecationWarning` when users set
+> it directly. See issue #874.
 
 ## Development Testing Workflow
 
@@ -141,10 +156,10 @@ pip install -e ".[dev]"
 ### 2. Run Tests Before Committing
 
 ```bash
-# Run all tests
+# Run all tests through the legacy shell fixture path
 TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
 
-# Run with coverage
+# Run with coverage through the same legacy shell fixture path
 TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
@@ -236,12 +251,16 @@ grep -A 5 'tool.pytest' pyproject.toml
 ### Mock Mode Not Working
 
 ```bash
-# Verify environment variable
+# Legacy shell fixture path only
 echo $TRAIGENT_MOCK_LLM
+```
 
-# Set explicitly in test
-import os
-os.environ["TRAIGENT_MOCK_LLM"] = "true"
+Preferred explicit activation in local tutorial or test code:
+
+```python
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
 
 ## 📈 Continuous Integration

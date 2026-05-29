@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE
 from traigent.cloud.auth import (
     AuthCredentials,
     AuthMode,
@@ -429,6 +430,109 @@ class TestRefreshAccessToken:
         assert token_manager.last_refresh_attempt >= before
 
 
+class TestRefreshSecurity:
+    """Security regressions around token refresh network boundaries."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_rejects_private_cloud_base_url_in_production(
+        self, token_manager
+    ):
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="test_refresh_token_12345",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        token_manager.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+        token_manager.config.cloud_base_url = "https://127.0.0.1:5000"
+
+        with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+            result = await token_manager.refresh_oauth2()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "private or loopback" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_rejects_private_backend_url_in_production(
+        self, token_manager
+    ):
+        token_manager.config.backend_base_url = "https://127.0.0.1:5000"
+
+        with patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True):
+            result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "private or loopback" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_offline_mode_fails_closed(
+        self, token_manager, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+
+        result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+    @pytest.mark.asyncio
+    async def test_refresh_jwt_secure_redacts_unexpected_server_errors(
+        self, token_manager, monkeypatch
+    ):
+        if not AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp unavailable")
+
+        async def _raise_sensitive_error(*_args, **_kwargs):
+            raise RuntimeError("upstream leaked token=secret-value")
+
+        monkeypatch.setattr(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            _raise_sensitive_error,
+        )
+
+        result = await token_manager.refresh_jwt_secure("test_refresh_token_12345")
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+    @pytest.mark.asyncio
+    async def test_refresh_access_token_redacts_unexpected_refresh_errors(
+        self, token_manager
+    ):
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="test_token_12345",
+            refresh_token="test_refresh_token_12345",
+        )
+        token_manager.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        with patch.object(
+            token_manager,
+            "refresh_jwt_secure",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("upstream leaked token=secret-value"),
+        ):
+            result = await token_manager.refresh_access_token()
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "Token refresh failed"
+
+
 class TestBuildCredentialsFromTokenData:
     """Test building credentials from token response data."""
 
@@ -566,7 +670,8 @@ class TestOAuth2RefreshHardening:
 
         assert result.success is False
         assert result.status == AuthStatus.INVALID
-        assert result.error_message == "OAuth2 cloud_base_url is not allowed"
+        assert "OAuth2 cloud_base_url" in result.error_message
+        assert "not allowed" in result.error_message
 
     @pytest.mark.asyncio
     async def test_refresh_jwt_error_message_does_not_return_raw_body(
@@ -589,6 +694,86 @@ class TestOAuth2RefreshHardening:
         assert result.error_message == "Token refresh failed"
         assert "secret-token-value" not in result.error_message
         assert "password" not in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_returns_authresult_on_non_200(self, config):
+        """refresh_oauth2 must report HTTP failures as AuthResult, not raise.
+
+        AuthManager.refresh_oauth2_token delegates directly to this method
+        and its callers expect AuthResult(success=False). A raised exception
+        would skip the documented invalidation path and break the
+        return-contract that auth.py:_refresh_oauth2_token relies on.
+        """
+        config.cloud_base_url = "https://api.example.test"
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        # Build a 503 response via aiohttp mock context-managers
+        response = AsyncMock()
+        response.status = 503
+        response.text = AsyncMock(return_value="upstream noise; do not propagate")
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+
+        session = AsyncMock()
+        session.post = MagicMock(return_value=response)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "traigent.cloud.token_manager.aiohttp.ClientSession",
+            return_value=session,
+        ):
+            result = await tm.refresh_oauth2()
+
+        assert isinstance(result, AuthResult)
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert "503" in result.error_message
+        # Response body must never propagate upstream content into the
+        # error message — that's how internal errors leak to callers.
+        assert "upstream noise" not in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_refresh_oauth2_returns_authresult_on_network_error(self, config):
+        """refresh_oauth2 must report network exceptions as AuthResult, not raise."""
+        config.cloud_base_url = "https://api.example.test"
+        credentials = AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="refresh_token_placeholder",
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+        tm = TokenManager(config)
+        tm.set_callbacks(
+            get_credentials=lambda: credentials,
+            set_credentials=MagicMock(),
+            cache_credentials=AsyncMock(),
+            auth_lock=asyncio.Lock(),
+        )
+
+        with patch(
+            "traigent.cloud.token_manager.aiohttp.ClientSession",
+            side_effect=RuntimeError("connection refused: do not propagate"),
+        ):
+            result = await tm.refresh_oauth2()
+
+        assert isinstance(result, AuthResult)
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        # Internal exception message must not leak verbatim to callers.
+        assert "connection refused: do not propagate" not in result.error_message
 
 
 class TestGetAuthorizationHeader:

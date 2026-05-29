@@ -2,6 +2,7 @@
 Tests for audit logging and compliance reporting systems
 """
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
@@ -17,12 +18,19 @@ from traigent.security.audit import (
     AuditStorage,
     ComplianceFramework,
     ComplianceReporter,
+    ComplianceReportUnavailableError,
+    EnrichmentProviderUnavailableError,
+    EventProcessor,
 )
 
-STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"
-COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting subsystem is not yet implemented"
-PERSISTENT_STORAGE_NOT_IMPLEMENTED = "Persistent audit storage is not yet implemented"
+STRONG_AUDIT_SECRET = "StrongAuditSecretKey123!@#ABC4567890"  # pragma: allowlist secret
+COMPLIANCE_NOT_IMPLEMENTED = "Compliance reporting is not yet implemented"
 TAMPER_DETECTION_NOT_IMPLEMENTED = "Tamper-detection is not yet implemented"
+GEOLOCATION_PROVIDER_UNAVAILABLE = "No geolocation provider configured"
+THREAT_INTEL_PROVIDER_UNAVAILABLE = "No threat intelligence provider configured"
+FAKE_AUDIT_API_KEY = (
+    "sk-ant-canary-DO-NOT-USE-123456789abcdef"  # pragma: allowlist secret
+)
 
 
 class TestAuditEvent:
@@ -87,22 +95,37 @@ class TestAuditEvent:
 class TestAuditStorage:
     """Test AuditStorage class"""
 
-    def test_default_storage_path_keeps_backward_compatible_value(self):
-        """No-arg construction preserves the historical default path."""
+    def test_storage_has_no_storage_path_attribute(self):
+        """AuditStorage no longer exposes a misleading storage_path attribute.
+
+        The historical ``storage_path`` parameter implied persistence that
+        was never implemented. It has been removed so the in-memory nature
+        of this backend is honest.
+        """
         storage = AuditStorage()
 
-        assert storage.storage_path == "audit_logs"
+        assert not hasattr(storage, "storage_path")
         assert storage.events == []
 
-    def test_explicit_storage_path_is_accepted_for_compatibility(self):
-        """Explicit paths remain constructible while storage stays in-memory."""
-        storage = AuditStorage(storage_path="custom_audit_logs")
-        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+    def test_storage_rejects_storage_path_kwarg(self):
+        """Passing storage_path now fails fast instead of silently being ignored."""
+        with pytest.raises(TypeError):
+            AuditStorage(storage_path="audit_logs")
 
-        storage.store_event(event)
+    def test_events_do_not_survive_reinstantiation(self):
+        """In-memory storage is honest: events vanish on re-instantiation.
 
-        assert storage.storage_path == "custom_audit_logs"
-        assert storage.get_events() == [event]
+        This documents the lack of persistence so future callers don't
+        re-introduce a misleading storage_path parameter.
+        """
+        storage = AuditStorage()
+        storage.store_event(
+            AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="user123")
+        )
+        assert len(storage.get_events()) == 1
+
+        fresh_storage = AuditStorage()
+        assert fresh_storage.get_events() == []
 
     def test_store_and_retrieve_events(self):
         """Test storing and retrieving events"""
@@ -169,6 +192,31 @@ class TestAuditStorage:
         assert event1 in user123_events
         assert event3 in user123_events
         assert event2 not in user123_events
+
+    def test_filter_events_by_redacted_email_user_id(self):
+        """Email user IDs stay redacted while exact-match storage filters work."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        user_id = "alice@example.com"
+        other_user_id = "bob@example.com"
+
+        matching_event = audit_logger.log_event(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id=user_id,
+            message="Alice login",
+        )
+        other_event = audit_logger.log_event(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id=other_user_id,
+            message="Bob login",
+        )
+
+        events = audit_logger.storage.get_events(user_id=user_id)
+
+        assert events == [matching_event]
+        assert other_event not in events
+        assert matching_event.user_id != other_event.user_id
+        assert matching_event.user_id.startswith("[REDACTED:user_id:")
+        assert user_id not in json.dumps(matching_event.to_dict(), sort_keys=True)
 
     def test_filter_events_by_type(self):
         """Test filtering events by event type"""
@@ -280,6 +328,61 @@ class TestAuditLogger:
 
         # Event should be queued for processing
         assert not audit_logger.event_queue.empty()
+
+    def test_log_event_redacts_sensitive_payloads_before_storage(self):
+        """Audit events should not store raw PII or credential-like values."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+
+        event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="alice@example.com",
+            session_id="session-4111111111111111",
+            tenant_id="tenant-123-45-6789",
+            resource_id=FAKE_AUDIT_API_KEY,
+            message="Bearer canary.jwt.header.payload.signature",
+            details={
+                "email": "alice@example.com",
+                "ssn": "123-45-6789",
+                "api_key": FAKE_AUDIT_API_KEY,
+            },
+        )
+
+        event_blob = str(event.to_dict())
+        assert "alice@example.com" not in event_blob
+        assert "4111111111111111" not in event_blob
+        assert "123-45-6789" not in event_blob
+        assert FAKE_AUDIT_API_KEY not in event_blob
+        assert "canary.jwt.header.payload.signature" not in event_blob
+        assert event.message == "[REDACTED:bearer_token]"
+        assert "[REDACTED:email]" in event_blob
+        assert "[REDACTED:credit_card]" in event_blob
+        assert "[REDACTED:ssn]" in event_blob
+        assert "[REDACTED:api_key]" in event_blob
+        assert "[REDACTED:bearer_token]" in event_blob
+
+    def test_email_user_filter_matches_only_the_original_redacted_identifier(self):
+        """Email user IDs should stay filterable without storing raw addresses."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        alice_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="alice@example.com",
+            message="Alice event",
+        )
+        bob_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            user_id="bob@example.com",
+            message="Bob event",
+        )
+
+        alice_events = audit_logger.storage.get_events(user_id="alice@example.com")
+        redacted_bucket_events = audit_logger.storage.get_events(
+            user_id="[REDACTED:email]"
+        )
+
+        assert alice_events == [alice_event]
+        assert bob_event not in alice_events
+        assert redacted_bucket_events == []
+        assert "alice@example.com" not in str(alice_event.to_dict())
 
     def test_log_authentication_events(self):
         """Test logging authentication events"""
@@ -408,8 +511,10 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_report(
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            reporter._generate_report(
                 framework=ComplianceFramework.SOC2,
                 start_date=start_date,
                 end_date=end_date,
@@ -423,8 +528,10 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_report(
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            reporter._generate_report(
                 framework=ComplianceFramework.ISO27001,
                 start_date=start_date,
                 end_date=end_date,
@@ -438,8 +545,10 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_report(
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            reporter._generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
                 end_date=end_date,
@@ -459,7 +568,7 @@ class TestComplianceReporter:
             class UnsupportedFramework:
                 pass
 
-            reporter.generate_report(
+            reporter._generate_report(
                 framework=UnsupportedFramework(),
                 start_date=start_date,
                 end_date=end_date,
@@ -470,8 +579,10 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.get_compliance_dashboard()
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            reporter._get_compliance_dashboard()
 
     def test_tenant_specific_reporting(self):
         """Tenant-specific compliance reporting fails loudly until implemented."""
@@ -481,27 +592,46 @@ class TestComplianceReporter:
         start_date = datetime.now(UTC) - timedelta(days=30)
         end_date = datetime.now(UTC)
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_report(
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            reporter._generate_report(
                 framework=ComplianceFramework.GDPR,
                 start_date=start_date,
                 end_date=end_date,
                 tenant_id="tenant1",
             )
 
-    def test_legacy_compliance_methods_fail_loud(self):
-        """Legacy report entry points fail loudly instead of returning fake status."""
+    def test_legacy_compliance_methods_not_public(self):
+        """Legacy report entry points must not remain public fake-completion surfaces."""
+        assert not hasattr(ComplianceReporter, "generate_soc2_report")
+        assert not hasattr(ComplianceReporter, "generate_gdpr_report")
+
+    def test_tenant_period_filter_matches_redacted_sensitive_identifier(self):
+        """Tenant filters should work when stored tenant IDs are pseudonymized."""
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
+        tenant_id = "tenant-123-45-6789"
+        matching_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            tenant_id=tenant_id,
+            message="Tenant event",
+        )
+        other_event = audit_logger.log_event(
+            event_type=AuditEventType.DATA_READ,
+            tenant_id="tenant-987-65-4321",
+            message="Other tenant event",
+        )
+        start_date = datetime.now(UTC) - timedelta(minutes=1)
+        end_date = datetime.now(UTC) + timedelta(minutes=1)
 
-        start_date = datetime.now(UTC) - timedelta(days=30)
-        end_date = datetime.now(UTC)
+        events = reporter._get_events_for_period(
+            start_date, end_date, tenant_id=tenant_id
+        )
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_soc2_report(start_date, end_date)
-
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
-            reporter.generate_gdpr_report(start_date, end_date)
+        assert events == [matching_event]
+        assert other_event not in events
+        assert tenant_id not in str(matching_event.to_dict())
 
     def test_security_incident_analysis_fails_loud(self):
         """Incident compliance analysis fails loudly instead of faking resolution."""
@@ -515,5 +645,243 @@ class TestComplianceReporter:
             )
         ]
 
-        with pytest.raises(NotImplementedError, match=COMPLIANCE_NOT_IMPLEMENTED):
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
             reporter._analyze_security_incidents(events)
+
+    def test_not_in_public_surface(self):
+        """ComplianceReporter must not appear in traigent.security.__all__."""
+        import traigent.security as sec
+
+        assert "ComplianceReporter" not in sec.__all__
+        assert not hasattr(sec, "ComplianceReporter")
+
+    def test_error_is_notimplementederror_subclass(self):
+        """ComplianceReportUnavailableError inherits NotImplementedError for back-compat."""
+        err = ComplianceReportUnavailableError()
+        assert isinstance(err, NotImplementedError)
+        assert "876" in str(err)
+
+    def test_error_accepts_custom_message(self):
+        """ComplianceReportUnavailableError.__init__ accepts a custom message
+        for callers that want to add context beyond the default link to #876."""
+        custom = "report generation requires the enterprise backend"
+        err = ComplianceReportUnavailableError(custom)
+        assert str(err) == custom
+        assert isinstance(err, NotImplementedError)
+
+    def test_error_caught_by_notimplementederror_handler(self):
+        """Existing `except NotImplementedError:` handlers must keep catching
+        the new typed exception unchanged — proves we didn't break callers."""
+        caught = False
+        try:
+            raise ComplianceReportUnavailableError()
+        except NotImplementedError as exc:
+            caught = True
+            assert "876" in str(exc)
+        assert caught, "NotImplementedError handler did not catch the typed subclass"
+
+    def test_compliance_reporter_still_importable_from_audit_module(self):
+        """Even though ComplianceReporter is no longer in traigent.security.__all__,
+        deep imports from traigent.security.audit must keep working — that's
+        the back-compat contract for callers that already know the class lives
+        in the audit module."""
+        from traigent.security.audit import ComplianceReporter as _Cr
+
+        assert _Cr is ComplianceReporter
+
+    @pytest.mark.parametrize(
+        "method_name,args",
+        [
+            ("_test_access_control", ([],)),
+            ("_test_change_management", ([],)),
+            ("_test_data_protection", ([],)),
+            ("_test_monitoring", ([],)),
+            ("_analyze_consent_management", ([],)),
+            ("_analyze_data_subject_requests", ([],)),
+            ("_get_compliance_dashboard", ()),
+        ],
+    )
+    def test_all_unimplemented_methods_raise_typed_error(self, method_name, args):
+        """Every ComplianceReporter method that is part of the unimplemented
+        compliance-report surface MUST raise ComplianceReportUnavailableError
+        (not bare NotImplementedError). Parametrized so a future refactor that
+        accidentally drops one of these raise sites will fail the suite."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        method = getattr(reporter, method_name)
+
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            method(*args)
+
+    @pytest.mark.parametrize(
+        "internal_method_name",
+        [
+            "_generate_soc2_report",
+            "_generate_iso27001_report",
+            "_generate_gdpr_report",
+        ],
+    )
+    def test_internal_generate_helpers_raise_typed_error(self, internal_method_name):
+        """The three internal _generate_*_report helpers — wrapped by the
+        private _generate_report() dispatcher — must also raise the typed
+        exception when called directly."""
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        start_date = datetime.now(UTC) - timedelta(days=30)
+        end_date = datetime.now(UTC)
+
+        method = getattr(reporter, internal_method_name)
+        with pytest.raises(
+            ComplianceReportUnavailableError, match=COMPLIANCE_NOT_IMPLEMENTED
+        ):
+            method(start_date, end_date)
+
+    def test_generate_report_unknown_framework_raises_value_error(self):
+        """_generate_report's fall-through branch for unsupported frameworks
+        must raise ValueError (not ComplianceReportUnavailableError) — those
+        are two distinct error classes for two distinct caller mistakes."""
+        from enum import Enum
+
+        class _UnknownFramework(Enum):
+            FAKE = "fake-framework"
+
+        audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
+        reporter = ComplianceReporter(audit_logger)
+        start_date = datetime.now(UTC) - timedelta(days=30)
+        end_date = datetime.now(UTC)
+
+        with pytest.raises(ValueError, match="Unsupported compliance framework"):
+            reporter._generate_report(_UnknownFramework.FAKE, start_date, end_date)
+
+
+class TestComplianceReporterPublicSurface:
+    """Verify that fake-completion report methods are not public API."""
+
+    @staticmethod
+    def _public_methods() -> list[str]:
+        return [
+            name
+            for name in dir(ComplianceReporter)
+            if not name.startswith("_") and callable(getattr(ComplianceReporter, name))
+        ]
+
+    def test_generate_report_not_public(self):
+        """generate_report must not be a public method on ComplianceReporter."""
+        assert "generate_report" not in self._public_methods()
+
+    def test_get_compliance_dashboard_not_public(self):
+        """get_compliance_dashboard must not be public."""
+        assert "get_compliance_dashboard" not in self._public_methods()
+
+    def test_generate_soc2_report_not_public(self):
+        """generate_soc2_report must not be public."""
+        assert "generate_soc2_report" not in self._public_methods()
+
+    def test_generate_gdpr_report_not_public(self):
+        """generate_gdpr_report must not be public."""
+        assert "generate_gdpr_report" not in self._public_methods()
+
+    def test_no_public_report_methods_on_compliance_reporter(self):
+        """ComplianceReporter should expose no public methods."""
+        assert self._public_methods() == []
+
+
+class TestEventProcessorEnrichment:
+    """EventProcessor enrichment surfaces must fail-loud without providers."""
+
+    def test_geolocation_without_provider_raises(self):
+        """Geolocation enrichment must not fabricate hard-coded location data."""
+        processor = EventProcessor()
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="8.8.8.8",
+        )
+
+        with pytest.raises(
+            EnrichmentProviderUnavailableError,
+            match=GEOLOCATION_PROVIDER_UNAVAILABLE,
+        ):
+            processor.enrich_with_geolocation(event)
+
+        assert "geolocation" not in event.details
+
+    def test_threat_intelligence_without_provider_raises(self):
+        """Threat-intel enrichment must not fabricate hard-coded reputation."""
+        processor = EventProcessor()
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="8.8.8.8",
+        )
+
+        with pytest.raises(
+            EnrichmentProviderUnavailableError,
+            match=THREAT_INTEL_PROVIDER_UNAVAILABLE,
+        ):
+            processor.enrich_with_threat_intelligence(event)
+
+        assert "threat_intel" not in event.details
+
+    def test_geolocation_provider_is_called_with_ip(self):
+        """When a provider is injected, geolocation is delegated to it."""
+        captured: dict[str, str] = {}
+
+        def provider(ip: str) -> dict[str, str]:
+            captured["ip"] = ip
+            return {"country": "DE", "city": "Berlin"}
+
+        processor = EventProcessor(geolocation_provider=provider)
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="203.0.113.5",
+        )
+
+        processor.enrich_with_geolocation(event)
+
+        assert captured == {"ip": "203.0.113.5"}
+        assert event.details["geolocation"] == {"country": "DE", "city": "Berlin"}
+
+    def test_threat_intelligence_provider_is_called_with_ip(self):
+        """When a provider is injected, threat-intel is delegated to it."""
+        captured: dict[str, str] = {}
+
+        def provider(ip: str) -> dict[str, object]:
+            captured["ip"] = ip
+            return {"malicious": True, "reputation_score": 12, "categories": ["botnet"]}
+
+        processor = EventProcessor(threat_intelligence_provider=provider)
+        event = AuditEvent(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            user_id="user123",
+            ip_address="198.51.100.7",
+        )
+
+        processor.enrich_with_threat_intelligence(event)
+
+        assert captured == {"ip": "198.51.100.7"}
+        assert event.details["threat_intel"] == {
+            "malicious": True,
+            "reputation_score": 12,
+            "categories": ["botnet"],
+        }
+
+    def test_enrichment_no_ip_still_requires_provider(self):
+        """Even without an IP, calling enrichment without a provider must fail.
+
+        Previously the code silently no-op'd when ip_address was missing, but
+        that hides the misconfiguration — the public surface still claims
+        enrichment is supported. Require a provider regardless.
+        """
+        processor = EventProcessor()
+        event = AuditEvent(event_type=AuditEventType.LOGIN_SUCCESS, user_id="u")
+
+        with pytest.raises(EnrichmentProviderUnavailableError):
+            processor.enrich_with_geolocation(event)
+        with pytest.raises(EnrichmentProviderUnavailableError):
+            processor.enrich_with_threat_intelligence(event)

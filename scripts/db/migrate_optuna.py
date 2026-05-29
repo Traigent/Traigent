@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Tuple
-from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from traigent.utils.logging import get_logger
 
@@ -40,6 +41,36 @@ def _load_migrations(directory: Path) -> Iterable[Path]:
     return sorted(directory.glob("*.sql"))
 
 
+def _redact_database_url(database_url: str) -> str:
+    """Return a database URL safe enough for logs."""
+    parsed = urlparse(database_url)
+    if parsed.scheme.startswith("sqlite"):
+        return database_url
+    if not parsed.netloc:
+        return "<invalid database URL>"
+
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+
+    try:
+        port = f":{parsed.port}" if parsed.port else ""
+    except ValueError:
+        port = ""
+
+    userinfo = ""
+    if parsed.username is not None:
+        userinfo = parsed.username
+        if parsed.password is not None:
+            userinfo += ":***"
+        userinfo += "@"
+    elif parsed.password is not None:
+        userinfo = "***@"
+
+    query = "***" if parsed.query else ""
+    return urlunparse(parsed._replace(netloc=f"{userinfo}{host}{port}", query=query))
+
+
 def _adapt_sql_for_sqlite(sql: str) -> str:
     replacements = {
         "UUID": "TEXT",
@@ -54,7 +85,7 @@ def _adapt_sql_for_sqlite(sql: str) -> str:
     return sql
 
 
-def _connect(database_url: str) -> Tuple[str, object]:
+def _connect(database_url: str) -> tuple[str, Any]:
     parsed = urlparse(database_url)
     scheme = parsed.scheme
 
@@ -83,14 +114,12 @@ def _connect(database_url: str) -> Tuple[str, object]:
     return "sqlalchemy", engine
 
 
-def _execute_sql(engine_type: str, handle: object, sql: str) -> None:
+def _execute_sql(engine_type: str, handle: Any, sql: str) -> None:
     if engine_type == "sqlite":
         conn = handle
         conn.executescript(sql)
         conn.commit()
         return
-
-    from sqlalchemy import text
 
     engine = handle
     statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
@@ -107,7 +136,11 @@ def apply_migrations(database_url: str, migrations_dir: Path, dry_run: bool) -> 
         logger.info("No migrations found in %s", migrations_dir)
         return
 
-    logger.info("Applying %s migrations to %s", len(migrations), database_url)
+    logger.info(
+        "Applying %s migrations to %s",
+        len(migrations),
+        _redact_database_url(database_url),
+    )
 
     for migration in migrations:
         sql = migration.read_text()

@@ -23,9 +23,44 @@ from traigent.evaluators.base import (
     _maybe_restore_trial_context,
 )
 from traigent.utils.logging import get_logger
-from traigent.utils.optimization_logger import sanitize_for_logging
 
 logger = get_logger(__name__)
+
+# Substrings that mark a config key as secret-bearing. Comparison is
+# case-insensitive against the full key, so e.g. "api_key", "API-KEY",
+# "openai_secret", or "x-auth-token" all match.
+_SECRET_KEY_SUBSTRINGS = (
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "passwd",
+    "token",
+    "authorization",
+    "credential",
+    "private_key",
+)
+
+
+def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of *config* with secret-bearing values redacted.
+
+    Logging full trial configs at INFO leaks API keys when callers pass
+    provider credentials through the config dict. Redact known secret
+    fields here so a config such as ``{"model": "gpt-4o", "api_key": "sk-…"}``  # pragma: allowlist secret
+    is logged as ``{"model": "gpt-4o", "api_key": "***REDACTED***"}``.
+    """
+    if not isinstance(config, dict):
+        return config
+    redacted: dict[str, Any] = {}
+    for key, value in config.items():
+        key_str = str(key).lower()
+        if any(needle in key_str for needle in _SECRET_KEY_SUBSTRINGS):
+            redacted[key] = "***REDACTED***"
+        else:
+            redacted[key] = value
+    return redacted
+
 
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
@@ -390,9 +425,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             EvaluationError: If evaluation fails
         """
         logger.info(
-            "Starting custom evaluation with %s examples, config: %s",
+            "Starting custom evaluation with %d examples, config: %s",
             len(dataset.examples),
-            sanitize_for_logging(config),
+            _redact_config_for_log(config),
         )
 
         start_time = time.time()

@@ -20,7 +20,9 @@ else:
     for _depth in range(1, 7):
         try:
             _repo_root = _module_path.parents[_depth]
-            if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if (_repo_root / "traigent").is_dir() and (
+                _repo_root / "examples"
+            ).is_dir():
                 if str(_repo_root) not in sys.path:
                     sys.path.insert(0, str(_repo_root))
                 break
@@ -48,6 +50,30 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+
+def _load_safe_helpers():
+    """Load examples/utils/safe_helpers.py without depending on sys.path."""
+    import importlib.util
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "examples" / "utils" / "safe_helpers.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "_traigent_examples_safe_helpers", candidate
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+    raise ImportError("examples/utils/safe_helpers.py not found")
+
+
+_SAFE_HELPERS = _load_safe_helpers()
+resolve_within = _SAFE_HELPERS.resolve_within
+UntrustedPathError = _SAFE_HELPERS.UntrustedPathError
+
+
 _DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-3.5-turbo",
     "temperature": 0.7,
@@ -71,10 +97,25 @@ class OptimizedChatBot:
 
     def __init__(self, config_path: str | None = None):
         self._base_dir = Path(__file__).resolve().parent
-        self._config_path = Path(config_path) if config_path else None
+        self._configs_dir = self._base_dir / "configs"
+        self._configs_dir.mkdir(parents=True, exist_ok=True)
+        self._config_path = self._resolve_config(config_path)
         self.config: dict[str, Any] = self._load_configuration()
         self._response_fn: Callable[[str, str], str] | None = None
         self._setup_optimized_function()
+
+    def _resolve_config(self, config_path: str | None) -> Path | None:
+        """Resolve a user-supplied config path strictly under configs/.
+
+        Rejects ``..`` traversal, absolute paths outside the configs/ root,
+        and symlink escapes. Returns ``None`` when no config_path was given.
+        """
+        if not config_path:
+            return None
+        try:
+            return resolve_within(self._configs_dir, config_path)
+        except UntrustedPathError:
+            return None
 
     def _load_configuration(self) -> dict[str, Any]:
         candidates: list[Path] = []
@@ -82,11 +123,10 @@ class OptimizedChatBot:
             candidates.append(self._config_path)
 
         env = os.getenv("ENVIRONMENT")
-        configs_dir = self._base_dir / "configs"
         if env == "production":
-            candidates.append(configs_dir / "prod_config.json")
+            candidates.append(self._configs_dir / "prod_config.json")
         else:
-            candidates.append(configs_dir / "dev_config.json")
+            candidates.append(self._configs_dir / "dev_config.json")
 
         for candidate in candidates:
             if candidate.exists():
@@ -137,7 +177,9 @@ class OptimizedChatBot:
         return self._response_fn(user_input, context)
 
     def update_config(self, new_config_path: str) -> None:
-        self._config_path = Path(new_config_path)
+        # Re-resolve against configs/; an invalid path falls back to the
+        # default config rather than escaping the configs/ root.
+        self._config_path = self._resolve_config(new_config_path)
         self.config = self._load_configuration()
         self._apply_config_to_function()
 

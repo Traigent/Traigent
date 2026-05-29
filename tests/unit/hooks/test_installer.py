@@ -410,8 +410,20 @@ class TestFindGitRoot:
     def test_find_git_root_returns_none_for_non_git_directory(self) -> None:
         """Test find_git_root returns None when not in Git repository."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = find_git_root(Path(tmpdir))
-            assert result is None
+            tmp_root = Path(tmpdir).resolve()
+            real_exists = Path.exists
+
+            def exists_without_external_git_roots(path: Path) -> bool:
+                if path.name == ".git":
+                    try:
+                        path.parent.resolve().relative_to(tmp_root)
+                    except ValueError:
+                        return False
+                return real_exists(path)
+
+            with patch.object(Path, "exists", exists_without_external_git_roots):
+                result = find_git_root(Path(tmpdir))
+                assert result is None
 
     @patch("traigent.hooks.installer.Path.cwd")
     def test_find_git_root_uses_cwd_when_none(
@@ -425,10 +437,22 @@ class TestFindGitRoot:
     def test_find_git_root_stops_at_filesystem_root(self) -> None:
         """Test find_git_root stops at filesystem root."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            deep_path = Path(tmpdir) / "a" / "b" / "c" / "d" / "e"
+            tmp_root = Path(tmpdir).resolve()
+            real_exists = Path.exists
+
+            def exists_without_external_git_roots(path: Path) -> bool:
+                if path.name == ".git":
+                    try:
+                        path.parent.resolve().relative_to(tmp_root)
+                    except ValueError:
+                        return False
+                return real_exists(path)
+
+            deep_path = tmp_root / "a" / "b" / "c" / "d" / "e"
             deep_path.mkdir(parents=True)
-            result = find_git_root(deep_path)
-            assert result is None
+            with patch.object(Path, "exists", exists_without_external_git_roots):
+                result = find_git_root(deep_path)
+                assert result is None
 
 
 class TestInstallHooks:

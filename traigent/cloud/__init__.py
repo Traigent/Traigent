@@ -13,9 +13,23 @@ from importlib import import_module
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TraigentCloudClient": ("traigent.cloud.client", "TraigentCloudClient"),
     "TraigentCloudService": ("traigent.cloud.service", "TraigentCloudService"),
+    "TraigentCloudRemoteGuidanceAdapter": (
+        "traigent.cloud.remote_guidance",
+        "TraigentCloudRemoteGuidanceAdapter",
+    ),
     "AuthManager": ("traigent.cloud.auth", "AuthManager"),
     "APIKey": ("traigent.cloud.auth", "APIKey"),
     "BillingManager": ("traigent.cloud.billing", "BillingManager"),
+    "QuotaExceededErrorDTO": ("traigent.cloud.dtos", "QuotaExceededErrorDTO"),
+    "WalletInsufficientBalanceErrorDTO": (
+        "traigent.cloud.dtos",
+        "WalletInsufficientBalanceErrorDTO",
+    ),
+    "WalletTopUpPackDTO": ("traigent.cloud.dtos", "WalletTopUpPackDTO"),
+    "WalletTopUpPacksResponseDTO": (
+        "traigent.cloud.dtos",
+        "WalletTopUpPacksResponseDTO",
+    ),
     "UsageTracker": ("traigent.cloud.billing", "UsageTracker"),
     "SmartSubsetSelector": ("traigent.cloud.subset_selection", "SmartSubsetSelector"),
     "DiverseSampling": ("traigent.cloud.subset_selection", "DiverseSampling"),
@@ -31,10 +45,15 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
 
 __all__ = [
     "TraigentCloudClient",
+    "TraigentCloudRemoteGuidanceAdapter",
     "TraigentCloudService",
     "AuthManager",
     "APIKey",
     "BillingManager",
+    "QuotaExceededErrorDTO",
+    "WalletInsufficientBalanceErrorDTO",
+    "WalletTopUpPackDTO",
+    "WalletTopUpPacksResponseDTO",
     "UsageTracker",
     "SmartSubsetSelector",
     "DiverseSampling",

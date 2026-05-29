@@ -391,8 +391,16 @@ class TestLangChainAgentExecutor:
 
         assert "conversational" in capabilities
         assert "task" in capabilities
-        assert "tools" in capabilities
+        assert "tools" not in capabilities
         assert "async" in capabilities
+
+    @pytest.mark.asyncio
+    async def test_estimate_cost_fails_closed(self, langchain_agent_spec):
+        """LangChain must not inherit a fake zero-cost estimate."""
+        executor = LangChainAgentExecutor()
+
+        with pytest.raises(NotImplementedError, match="cost estimation"):
+            await executor.estimate_cost(langchain_agent_spec, {"question": "test"})
 
     @pytest.mark.asyncio
     async def test_execute_without_langchain(self, langchain_agent_spec):
@@ -411,6 +419,43 @@ class TestLangChainAgentExecutor:
         assert result.error is not None
         # Check for expected error indicating LangChain is not available
         assert "langchain not available" in result.error.lower()
+
+    @pytest.mark.parametrize("agent_type", ["task", "conversational"])
+    @pytest.mark.asyncio
+    async def test_agent_with_custom_tools_fails_closed_before_langchain_import(
+        self, monkeypatch, agent_type
+    ):
+        """Tool-bearing specs must not import LangChain and run as plain LLM calls."""
+
+        def fail_import(self):
+            raise AssertionError(
+                "tool-bearing specs should fail before LangChain import"
+            )
+
+        monkeypatch.setattr(
+            LangChainAgentExecutor, "_import_langchain_components", fail_import
+        )
+
+        executor = LangChainAgentExecutor()
+        await executor.initialize()
+        executor._langchain_available = True
+        spec = AgentSpecification(
+            id="tool-agent",
+            name="Tool Agent",
+            agent_type=agent_type,
+            agent_platform="langchain",
+            prompt_template="Answer: {question}",
+            model_parameters={"model": "gpt-4o-mini"},
+            custom_tools=["search", "calculator"],
+        )
+
+        result = await executor.execute(spec, {"question": "What is AI?"})
+
+        assert result.output is None
+        assert result.error is not None
+        assert "custom tool execution is not implemented" in result.error
+        assert "search, calculator" in result.error
+        assert result.metadata == {"error_type": "AgentExecutionError"}
 
 
 class TestOpenAIAgentExecutor:
@@ -708,6 +753,9 @@ class TestPlatformRegistry:
 
         assert "langchain" in platforms
         assert "openai" in platforms
+        assert "anthropic" not in platforms
+        assert "cohere" not in platforms
+        assert "huggingface" not in platforms
 
     def test_get_executor_for_platform(self):
         """Test getting executor instance."""

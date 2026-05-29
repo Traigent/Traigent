@@ -322,9 +322,10 @@ class TestFrameworkIntegrationSetup:
     )
     def test_langchain_integration_setup(self):
         """Test LangChain integration setup."""
-        # Should not raise any errors
+        # Contract: enable_langchain_optimization must complete without
+        # raising on the import-available path and returns None.
         result = enable_langchain_optimization()
-        assert result is None or result is not None  # Function completed
+        assert result is None
 
         # Test convenience functions
         enable_chatgpt_optimization()
@@ -341,9 +342,10 @@ class TestFrameworkIntegrationSetup:
     )
     def test_openai_sdk_integration_setup(self):
         """Test OpenAI SDK integration setup."""
-        # Should not raise any errors
+        # Contract: enable_openai_optimization must complete without raising
+        # on the import-available path and returns None.
         result = enable_openai_optimization()
-        assert result is None or result is not None  # Function completed
+        assert result is None
 
         # Test convenience functions
         enable_sync_openai()

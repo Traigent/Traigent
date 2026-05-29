@@ -908,13 +908,31 @@ class TestBayesianOptimizer:
 class TestBayesianOptimizerNotInstalled:
     """Test behavior when scikit-learn is not installed."""
 
-    @pytest.mark.skipif(
-        SKLEARN_AVAILABLE if "SKLEARN_AVAILABLE" in globals() else False,
-        reason="Test only runs when sklearn is not available",
-    )
     def test_import_error(self):
-        """Test that proper error is raised when sklearn not available."""
-        # This test is tricky because we need sklearn to not be available
-        # In practice, this would be tested in an environment without sklearn
-        # Skip test is conditional - if we reach here, sklearn is unavailable
-        assert not SKLEARN_AVAILABLE if "SKLEARN_AVAILABLE" in globals() else True
+        """Test that proper error is raised when sklearn not available.
+
+        Two scenarios:
+          * sklearn IS installed (common dev path): the test is skipped via
+            ``pytest.importorskip`` so it produces a SKIPPED result, not a
+            tautological pass.
+          * sklearn is NOT installed: importing the Bayesian optimizer module
+            from ``traigent.optimizers.bayesian`` MUST raise a typed import
+            failure rather than silently expose a broken class.
+        """
+        try:
+            __import__("sklearn")
+        except ImportError:
+            pass
+        else:
+            pytest.skip("test_import_error only meaningful when sklearn is missing")
+
+        # We get here only when sklearn is genuinely missing. Importing the
+        # Bayesian optimizer module must surface that fact (either via an
+        # ImportError at import time, or via a guarded constructor raising).
+        import importlib
+
+        with pytest.raises((ImportError, ModuleNotFoundError, RuntimeError)):
+            mod = importlib.import_module("traigent.optimizers.bayesian")
+            # If the module imported (because it guards with try/except),
+            # constructing the optimizer must raise instead.
+            mod.BayesianOptimizer({"x": (0.0, 1.0)}, ["accuracy"])

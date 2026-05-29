@@ -91,21 +91,21 @@ class TestKeyInjectionExecutionCombinations:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_parameter_cloud_explicit_config(
+    async def test_parameter_hybrid_explicit_config(
         self,
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test parameter injection with cloud execution.
+        """Test parameter injection with hybrid execution.
 
-        Explicit config parameter for cloud-based optimization.
+        Explicit config parameter for hybrid optimization.
         """
         scenario = basic_scenario(
-            name="parameter_cloud",
+            name="parameter_hybrid",
             injection_mode="parameter",
-            execution_mode="cloud",
+            execution_mode="hybrid",
             max_trials=3,
-            gist_template="parameter+cloud -> {trial_count()} | {status()}",
+            gist_template="parameter+hybrid -> {trial_count()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
