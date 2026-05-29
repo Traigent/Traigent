@@ -9,6 +9,7 @@ client or credentials.
 
 from __future__ import annotations
 
+from .backend_provider import BackendGuidanceError, BackendGuidanceProvider
 from .example_synth import ExampleSynthesizer
 from .llm_provider import (
     CallbackRewriteLLM,
@@ -59,6 +60,9 @@ __all__ = [
     "GuidanceLoopResult",
     "GuidanceRoundResult",
     "GuidancePlanProvider",
+    # backend provider
+    "BackendGuidanceProvider",
+    "BackendGuidanceError",
     # options
     "PromptRewriteOptions",
     "DatasetGrowthOptions",
