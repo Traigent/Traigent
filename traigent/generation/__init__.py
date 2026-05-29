@@ -16,6 +16,12 @@ from .llm_provider import (
     RewriteLLM,
     resolve_rewrite_llm,
 )
+from .loop import (
+    GuidanceLoop,
+    GuidanceLoopResult,
+    GuidancePlanProvider,
+    GuidanceRoundResult,
+)
 from .models import (
     CoarsePriority,
     GuidanceAction,
@@ -48,6 +54,11 @@ __all__ = [
     "PromptRewriter",
     "merge_prompt_candidates",
     "ExampleSynthesizer",
+    # loop
+    "GuidanceLoop",
+    "GuidanceLoopResult",
+    "GuidanceRoundResult",
+    "GuidancePlanProvider",
     # options
     "PromptRewriteOptions",
     "DatasetGrowthOptions",
