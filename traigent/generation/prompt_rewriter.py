@@ -9,12 +9,12 @@ client; Traigent only ever issued the opaque plan.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from traigent.api.parameter_ranges import Choices
 
-from .llm_provider import RewriteLLM
+from .llm_provider import RewriteLLM, resolve_rewrite_llm
 from .models import GuidancePlan
 from .options import PromptRewriteOptions
 from .validators import clean_prompt_candidates, extract_json_block
@@ -58,9 +58,12 @@ class PromptRewriter:
     """Generate improved prompt candidates with the user's own LLM."""
 
     def __init__(
-        self, llm: RewriteLLM, options: PromptRewriteOptions | None = None
+        self,
+        llm: RewriteLLM | Callable[[str], str],
+        options: PromptRewriteOptions | None = None,
     ) -> None:
-        self._llm = llm
+        # Accept a RewriteLLM, a constructed client, or a bare fn(prompt) -> str.
+        self._llm = resolve_rewrite_llm(llm)
         self._options = options or PromptRewriteOptions()
 
     def rewrite(
@@ -81,7 +84,7 @@ class PromptRewriter:
             # Fall back to newline-separated lines if the model ignored the JSON ask.
             candidates = [ln.strip(" -*\t") for ln in raw.splitlines() if ln.strip()]
 
-        cleaned = clean_prompt_candidates(candidates, list(current_variants))
+        cleaned: list[str] = clean_prompt_candidates(candidates, list(current_variants))
         return cleaned[:n]
 
 

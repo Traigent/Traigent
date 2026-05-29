@@ -8,12 +8,12 @@ the dataset. No seed content leaves the client.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from traigent.evaluators.base import EvaluationExample
 
-from .llm_provider import RewriteLLM
+from .llm_provider import RewriteLLM, resolve_rewrite_llm
 from .models import GuidanceAction
 from .options import DatasetGrowthOptions
 from .validators import _example_key, dedupe_example_keys, extract_json_block
@@ -61,9 +61,12 @@ class ExampleSynthesizer:
     """Synthesize new evaluation examples with the user's own LLM."""
 
     def __init__(
-        self, llm: RewriteLLM, options: DatasetGrowthOptions | None = None
+        self,
+        llm: RewriteLLM | Callable[[str], str],
+        options: DatasetGrowthOptions | None = None,
     ) -> None:
-        self._llm = llm
+        # Accept a RewriteLLM, a constructed client, or a bare fn(prompt) -> str.
+        self._llm = resolve_rewrite_llm(llm)
         self._options = options or DatasetGrowthOptions()
 
     def synthesize(
