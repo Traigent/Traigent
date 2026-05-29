@@ -16,23 +16,46 @@ from typing import Any
 MAX_PROMPT_CHARS = 8000
 MAX_EXAMPLE_CHARS = 20000
 
-# Conservative prompt-injection markers. A candidate matching any is dropped.
-_INJECTION_PATTERNS = [
-    re.compile(
-        r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions", re.IGNORECASE
-    ),
-    re.compile(r"disregard\s+(the\s+)?(system|previous)\s+prompt", re.IGNORECASE),
-    re.compile(r"you\s+are\s+now\s+(a\s+)?(developer|dan|jailbroken)", re.IGNORECASE),
-    re.compile(
-        r"reveal\s+(your\s+)?(system\s+prompt|instructions|hidden)", re.IGNORECASE
-    ),
-    re.compile(r"<\s*/?\s*(system|assistant)\s*>", re.IGNORECASE),
-]
+# Prompt-injection marker phrases, matched after whitespace normalization via
+# plain substring search (no backtracking regex -> no ReDoS surface). Each entry
+# is the normalized (lowercased, single-spaced) form.
+_INJECTION_MARKERS = (
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "ignore prior instructions",
+    "ignore all prior instructions",
+    "ignore above instructions",
+    "ignore all above instructions",
+    "disregard the system prompt",
+    "disregard system prompt",
+    "disregard the previous prompt",
+    "disregard previous prompt",
+    "you are now a developer",
+    "you are now developer",
+    "you are now a dan",
+    "you are now dan",
+    "you are now a jailbroken",
+    "you are now jailbroken",
+    "reveal your system prompt",
+    "reveal system prompt",
+    "reveal your instructions",
+    "reveal instructions",
+    "reveal your hidden",
+    "reveal hidden",
+    # role-tag spoofing (whitespace around the tag is collapsed before matching)
+    "</system>",
+    "< /system>",
+    "<system>",
+    "</assistant>",
+    "< /assistant>",
+    "<assistant>",
+)
 
 
 def looks_like_injection(text: str) -> bool:
     """True if the text contains an obvious prompt-injection marker."""
-    return any(p.search(text) for p in _INJECTION_PATTERNS)
+    normalized = re.sub(r"\s+", " ", text.lower())
+    return any(marker in normalized for marker in _INJECTION_MARKERS)
 
 
 def is_valid_prompt_candidate(text: Any) -> bool:
