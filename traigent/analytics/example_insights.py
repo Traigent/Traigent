@@ -1,9 +1,13 @@
-"""Client for retrieving example-level insights and dataset quality metrics from backend.
+"""Client for triggering example scoring and retrieving non-signal scoring metadata.
 
-This module provides async-first methods to retrieve:
-- Example-level scores (uniqueness, novelty, informativeness, etc.)
-- Dataset-level quality metrics (coverage, diversity, efficiency)
-- Scoring job status (for async computation polling)
+This module provides async-first methods to:
+- Trigger scoring computation (async job) and poll job status
+- Retrieve per-example and dataset-level scoring *metadata* (whether scoring ran,
+  sample count, algorithm version)
+
+Proprietary tuning signals (the per-example signal vector and dataset quality
+signals) are NOT returned to clients — the backend redacts them. Signal-driven
+guidance is delivered via the GuidancePlan API.
 
 Usage:
     >>> from traigent.analytics import ExampleInsightsClient
@@ -17,13 +21,7 @@ Usage:
     >>>
     >>> # Poll for completion (use asyncio.timeout for custom deadline)
     >>> async with asyncio.timeout(60):
-    ...     scores = await client.get_example_scores(
-    ...         experiment_run_id="run_123",
-    ...     )
-    >>>
-    >>> # Retrieve dataset quality metrics
-    >>> quality = await client.get_dataset_quality(experiment_run_id="run_123")
-    >>> print(f"Dataset Quality: {quality['dataset_quality']}")
+    ...     scored = await client.get_example_scores(experiment_run_id="run_123")
 """
 
 from __future__ import annotations
@@ -220,20 +218,14 @@ class ExampleInsightsClient:
             poll_interval: Time between polling attempts in seconds
 
         Returns:
-            Dict mapping example_id -> score_dict with keys:
+            Dict mapping example_id -> non-signal scoring metadata with keys:
             - example_id: Stable example identifier
-            - content_uniqueness: Uniqueness score (0-1)
-            - content_novelty: Novelty score (0-1)
-            - informativeness: Informativeness score (0-1)
-            - consistency: Consistency score (0-1)
-            - difficulty: Difficulty score (0-1)
-            - discriminative_power: Discriminative power score (0-1)
-            - cost_efficiency: Cost efficiency score (0-1)
-            - error_sensitivity: Error sensitivity score (0-1)
-            - predictive_value: Predictive value score (0-1)
-            - ambiguity: Ambiguity score (0-1)
-            - composite_score: Weighted composite score (0-1)
-            - sample_count: Number of trials contributing to score
+            - sample_count: Number of trials contributing to the score
+            - algorithm_version: Scoring algorithm version
+            - scored: True when scoring has been computed for the example
+
+            Proprietary tuning signals are NOT returned; use the GuidancePlan API
+            for signal-driven guidance.
 
         Raises:
             httpx.HTTPError: If request fails
@@ -269,17 +261,14 @@ class ExampleInsightsClient:
             poll_interval: Time between polling attempts in seconds
 
         Returns:
-            Dict with keys:
-            - dataset_quality: Overall quality score (0-1)
-            - coverage_score: Coverage score (0-1)
-            - diversity_score: Diversity score (0-1)
-            - efficiency_score: Efficiency score (0-1)
-            - top_informative_ids: List of top informative example IDs (max 20)
-            - top_difficult_ids: List of top difficult example IDs (max 20)
-            - low_value_ids: List of low-value example IDs (max 20)
-            - redundant_pairs: List of redundant example ID pairs (max 50)
-            - score_distributions: Score distribution statistics
-            - recommendations: List of improvement recommendations
+            Dict with non-signal dataset scoring metadata:
+            - experiment_run_id: The experiment run
+            - algorithm_version: Scoring algorithm version
+            - scored: True when dataset scoring has been computed
+
+            Proprietary dataset quality signals (overall quality, coverage,
+            diversity, efficiency, top-K rankings, distributions, and
+            recommendations) are NOT returned to clients.
 
         Raises:
             httpx.HTTPError: If request fails
