@@ -103,22 +103,37 @@ def dedupe_example_keys(
 
 
 def extract_json_block(text: str) -> Any:
-    """Best-effort JSON extraction from an LLM response (handles ``` fences)."""
+    """Best-effort JSON extraction from an LLM response (handles ``` fences).
+
+    Uses bounded string scans (find/rfind), never backtracking regexes, so it is
+    not vulnerable to catastrophic-backtracking ReDoS on adversarial LLM output.
+    """
     candidate = text.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL)
-    if fence:
-        candidate = fence.group(1).strip()
+    # Strip a leading ``` / ```json fence (and its closing fence) via string ops.
+    if candidate.startswith("```"):
+        first_newline = candidate.find("\n")
+        closing_fence = candidate.rfind("```")
+        if first_newline != -1 and closing_fence > first_newline:
+            candidate = candidate[first_newline + 1 : closing_fence].strip()
     try:
         return json.loads(candidate)
     except (ValueError, json.JSONDecodeError):
-        # Fall back to the first {...} or [...] span.
-        match = re.search(r"(\[.*\]|\{.*\})", candidate, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except (ValueError, json.JSONDecodeError):
-                return None
-        return None
+        # Fall back to the first {...} or [...] span located by index, not regex.
+        obj_start = candidate.find("{")
+        arr_start = candidate.find("[")
+        if arr_start != -1 and (obj_start == -1 or arr_start < obj_start):
+            start, closer = arr_start, "]"
+        elif obj_start != -1:
+            start, closer = obj_start, "}"
+        else:
+            return None
+        end = candidate.rfind(closer)
+        if end <= start:
+            return None
+        try:
+            return json.loads(candidate[start : end + 1])
+        except (ValueError, json.JSONDecodeError):
+            return None
 
 
 __all__ = [
