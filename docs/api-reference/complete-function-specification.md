@@ -179,7 +179,7 @@ async def optimize(
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `algorithm` | `str \| None` | Decorator default | Optimizer to use: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. |
+| `algorithm` | `str \| None` | Decorator default | Optimizer to use. Local defaults are `"grid"` and `"random"`; local Bayesian/Optuna strategies require their explicit feature flags, and `"hyperband"` is backend-routed only. |
 | `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
@@ -356,6 +356,11 @@ def configure(
 def get_version_info() -> dict[str, Any]
 ```
 
+Returns local `algorithms` separately from `backend_routed_algorithms`. Hyperband
+appears only in `backend_routed_algorithms` when
+`TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED=1` or
+`feature_flags={"optimizers": {"backend_smart": {"enabled": True}}}` is set.
+
 ### `traigent.initialize()`
 
 ```python
@@ -379,6 +384,11 @@ def override_config(
 ```python
 def get_available_strategies() -> dict[str, Any]
 ```
+
+The default local strategy surface contains `grid` and `random`. When backend
+smart strategies are explicitly enabled, `hyperband` is returned with
+`backend_routed=True` and `local_execution=False`; use `set_strategy()` with a
+managed backend rather than `get_optimizer("hyperband", ...)`.
 
 ### `traigent.get_optimization_insights()`
 

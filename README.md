@@ -244,7 +244,7 @@ def multi_provider_agent(question: str) -> str:
 | Feature | Description |
 |---------|-------------|
 | **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
-| **Multi-algorithm** | Random, Grid, Bayesian (TPE, NSGA-II, CMA-ES) via Optuna |
+| **Multi-algorithm** | Random and Grid by default; Bayesian/Optuna and backend-routed smart strategies by explicit opt-in |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
 | **Cost tracking** | Integrated tokencost library with 500+ model pricing |
@@ -311,9 +311,9 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | All (Random/Grid/Bayesian/Optuna) | All use cases |
-| **Hybrid** | ✅ Available | ✅ Execution local | All (Random/Grid/Bayesian/Optuna) | Balanced approach |
-| **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Random/Grid/Bayesian | Production, teams |
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random/Grid by default; Bayesian/Optuna behind local advanced flags | All use cases |
+| **Hybrid** | ✅ Available | ✅ Execution local | Random/Grid locally; backend-routed smart strategies such as Hyperband when enabled | Balanced approach |
+| **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Backend-advertised strategies | Production, teams |
 
 **[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
 
@@ -324,7 +324,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | `configuration_space` | `@traigent.optimize()` | Parameters to test (required) |
 | `objectives` | `@traigent.optimize()` | Metrics to optimize for |
 | `eval_dataset` | `@traigent.optimize()` | Dataset for evaluation |
-| `algorithm` | `.optimize()` call | `"random"`, `"grid"`, `"bayesian"` |
+| `algorithm` | `.optimize()` call | `"random"`, `"grid"` locally by default; advanced strategies require explicit flags or backend routing |
 | `max_trials` | `.optimize()` call | Number of configurations to test |
 | `progress_bar` | `.optimize()` call | `True` / `False` / `None` (auto) — live progress bar |
 

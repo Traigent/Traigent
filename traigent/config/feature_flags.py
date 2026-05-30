@@ -170,6 +170,7 @@ class FlagRegistry:
 class FlagNames:
     """Canonical flag identifiers used across the codebase."""
 
+    BACKEND_SMART_OPTIMIZERS = "optimizers.backend_smart.enabled"
     LOCAL_ADVANCED_OPTIMIZERS = "optimizers.advanced_local.enabled"
     OPTUNA_ROLLOUT = "optimizers.optuna.enabled"
 
@@ -178,6 +179,15 @@ class FlagNames:
 flag_registry = FlagRegistry()
 
 # Register built-in flags
+flag_registry.register(
+    Flag(
+        name=FlagNames.BACKEND_SMART_OPTIMIZERS,
+        default=False,
+        env_var="TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED",
+        description="Toggle backend-routed smart optimizer capabilities.",
+        config_path="optimizers.backend_smart.enabled",
+    )
+)
 flag_registry.register(
     Flag(
         name=FlagNames.OPTUNA_ROLLOUT,
@@ -198,6 +208,12 @@ flag_registry.register(
 )
 
 
+def is_backend_smart_optimizers_enabled() -> bool:
+    """Convenience accessor for backend-routed smart optimizer capability flags."""
+
+    return flag_registry.is_enabled(FlagNames.BACKEND_SMART_OPTIMIZERS)
+
+
 def is_local_advanced_optimizers_enabled() -> bool:
     """Convenience accessor for the local advanced optimizer flag."""
 
@@ -215,6 +231,7 @@ __all__ = [
     "FlagNames",
     "FlagRegistry",
     "flag_registry",
+    "is_backend_smart_optimizers_enabled",
     "is_local_advanced_optimizers_enabled",
     "is_optuna_enabled",
 ]

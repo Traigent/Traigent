@@ -22,6 +22,7 @@ from traigent.api.functions import (
     set_strategy,
 )
 from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
+from traigent.config.feature_flags import FlagNames, flag_registry
 from traigent.config.parallel import ParallelConfig
 from traigent.config.types import TraigentConfig
 
@@ -678,6 +679,26 @@ class TestSetStrategy:
         """Test set_strategy with invalid algorithm."""
         with pytest.raises(ValueError, match="Unknown algorithm"):
             set_strategy(algorithm="nonexistent_algo")
+
+    def test_set_strategy_hyperband_requires_backend_smart_flag(self, monkeypatch):
+        """Hyperband selection is explicit and backend-routed, not default local."""
+        monkeypatch.delenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", raising=False)
+        flag_registry.reset()
+
+        with pytest.raises(ValueError, match="Unknown algorithm"):
+            set_strategy(algorithm="hyperband")
+
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            strategy = set_strategy(
+                algorithm="hyperband",
+                algorithm_config={"max_resource": 27, "reduction_factor": 3},
+            )
+
+        assert strategy.algorithm == "hyperband"
+        assert strategy.algorithm_config == {
+            "max_resource": 27,
+            "reduction_factor": 3,
+        }
 
     def test_set_strategy_uses_global_workers(self):
         """Test set_strategy uses global parallel_workers when not specified."""

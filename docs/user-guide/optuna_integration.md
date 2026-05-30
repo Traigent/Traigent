@@ -160,5 +160,31 @@ print("Best parameters", result["best_params"])
 ## Dependency
 
 The Optuna features require the `optuna` package, which is included in Traigent's
-core dependencies and enabled by default. No additional installation or
-environment variables are required—Optuna optimizers are available out of the box.
+core dependencies. Local Optuna strategy aliases are still feature-gated so the
+default local optimizer surface remains `grid` and `random`; enable them with
+`TRAIGENT_OPTUNA_ENABLED=1` or
+`traigent.configure(feature_flags={"optimizers": {"optuna": {"enabled": True}}})`.
+
+## Hyperband
+
+Hyperband is exposed as a backend-routed smart strategy, not a local Optuna
+optimizer. It appears in `traigent.get_available_strategies()` only when backend
+smart strategies are explicitly enabled:
+
+```python
+import traigent
+
+traigent.configure(
+    feature_flags={"optimizers": {"backend_smart": {"enabled": True}}}
+)
+
+strategy = traigent.set_strategy(
+    algorithm="hyperband",
+    algorithm_config={"max_resource": 27, "reduction_factor": 3},
+)
+```
+
+Direct local construction with `get_optimizer("hyperband", ...)` intentionally
+fails with a backend-routing error. Use Hyperband with a managed backend that
+advertises the capability, or keep local runs on `grid`/`random` unless you have
+explicitly enabled local Bayesian or Optuna strategies.

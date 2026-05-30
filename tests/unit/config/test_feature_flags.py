@@ -9,6 +9,7 @@ from traigent.config.feature_flags import (
     Flag,
     FlagNames,
     flag_registry,
+    is_backend_smart_optimizers_enabled,
     is_local_advanced_optimizers_enabled,
     is_optuna_enabled,
 )
@@ -18,6 +19,7 @@ from traigent.config.feature_flags import (
 def reset_flags(monkeypatch):
     """Reset registry overrides/config before each test."""
     flag_registry.reset()
+    monkeypatch.delenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
     yield
@@ -25,6 +27,7 @@ def reset_flags(monkeypatch):
 
 
 def test_smart_optimizer_flags_default_to_false():
+    assert is_backend_smart_optimizers_enabled() is False
     assert is_optuna_enabled() is False
     assert is_local_advanced_optimizers_enabled() is False
 
@@ -63,10 +66,24 @@ def test_registering_duplicate_flag_raises():
 
 def test_snapshot_includes_registered_flags():
     snapshot = flag_registry.snapshot()
+    assert FlagNames.BACKEND_SMART_OPTIMIZERS in snapshot
+    assert snapshot[FlagNames.BACKEND_SMART_OPTIMIZERS] is False
     assert FlagNames.OPTUNA_ROLLOUT in snapshot
     assert snapshot[FlagNames.OPTUNA_ROLLOUT] is False
     assert FlagNames.LOCAL_ADVANCED_OPTIMIZERS in snapshot
     assert snapshot[FlagNames.LOCAL_ADVANCED_OPTIMIZERS] is False
+
+
+def test_backend_smart_optimizer_flag_overrides(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", "enabled")
+    assert is_backend_smart_optimizers_enabled() is True
+
+    monkeypatch.setenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", "0")
+    assert is_backend_smart_optimizers_enabled() is False
+
+    monkeypatch.delenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", raising=False)
+    flag_registry.apply_config({"optimizers": {"backend_smart": {"enabled": True}}})
+    assert is_backend_smart_optimizers_enabled() is True
 
 
 def test_configure_applies_feature_flags(monkeypatch):

@@ -63,6 +63,12 @@ def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     """
     if not isinstance(name, str) or not name.strip():
         raise PluginError("Optimizer name must be a non-empty string")
+    normalized_name = name.strip().lower()
+    if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
+        raise PluginError(
+            f"Optimizer '{name}' is reserved for backend-routed execution and "
+            "cannot be registered for local execution."
+        )
 
     # Allow mocks in tests, but validate real classes
     is_mock = hasattr(optimizer_class, "_mock_name") or str(
@@ -101,18 +107,20 @@ def get_optimizer(
     Raises:
         OptimizationError: If optimizer name not found
     """
+    normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
+    if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
+        raise OptimizationError(
+            "Hyperband is not supported by the local SDK. It is a "
+            "backend-routed smart optimizer. Use traigent.set_strategy("
+            "algorithm='hyperband') with a Traigent backend that advertises "
+            "Hyperband capability, or use local 'grid' or 'random'."
+        )
+
     if name not in _OPTIMIZER_REGISTRY:
-        normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
         if normalized_name in _SMART_LOCAL_OPTIMIZERS:
             refresh_enabled_optimizers(normalized_name)
 
     if name not in _OPTIMIZER_REGISTRY:
-        normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
-        if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
-            raise OptimizationError(
-                "Hyperband is not supported by the local SDK. Configure a Traigent "
-                "backend with Hyperband capability, or use local 'grid' or 'random'."
-            )
         if normalized_name in _SMART_LOCAL_OPTIMIZERS:
             raise OptimizationError(
                 f"Optimizer '{name}' is not enabled or unavailable for local execution. Local "
@@ -141,6 +149,14 @@ def list_optimizers() -> list[str]:
         List of optimizer names
     """
     return list(_OPTIMIZER_REGISTRY.keys())
+
+
+def list_backend_routed_optimizers() -> list[str]:
+    """Get backend-routed optimizer names enabled for explicit strategy selection."""
+
+    if not flag_registry.is_enabled(FlagNames.BACKEND_SMART_OPTIMIZERS):
+        return []
+    return sorted(_BACKEND_ONLY_OPTIMIZERS)
 
 
 def get_optimizer_info(name: str) -> dict[str, Any]:

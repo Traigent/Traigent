@@ -17,6 +17,7 @@ from traigent.optimizers.registry import (
     clear_registry,
     get_optimizer,
     get_optimizer_info,
+    list_backend_routed_optimizers,
     list_optimizers,
     register_optimizer,
     register_optuna_optimizers,
@@ -62,6 +63,7 @@ def reset_optuna_flag(monkeypatch):
 
     Smart local optimizers are default-off, so tests must opt in explicitly.
     """
+    monkeypatch.delenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
     flag_registry.reset()
@@ -268,6 +270,18 @@ class TestOptimizerRegistry:
         _register_builtin_optimizers()
 
         assert sorted(list_optimizers()) == ["grid", "random"]
+        assert list_backend_routed_optimizers() == []
+
+    def test_hyperband_is_backend_routed_only_when_explicitly_enabled(self):
+        """Hyperband is discoverable only as an opted-in backend capability."""
+        _register_builtin_optimizers()
+
+        assert "hyperband" not in list_optimizers()
+        assert list_backend_routed_optimizers() == []
+
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            assert list_backend_routed_optimizers() == ["hyperband"]
+            assert "hyperband" not in list_optimizers()
 
     def test_package_import_default_surface_is_basic(self):
         """Package-level optimizer imports must not auto-register extra algorithms."""
@@ -393,7 +407,29 @@ class TestOptimizerRegistry:
 
         message = str(exc_info.value)
         assert "Hyperband is not supported by the local SDK" in message
-        assert "backend" in message
+        assert "backend-routed" in message
+        assert "set_strategy" in message
+
+    def test_backend_only_optimizer_names_cannot_be_registered_locally(self):
+        """Public plugin registration must not bypass backend-only policy."""
+        with pytest.raises(PluginError, match="backend-routed execution"):
+            register_optimizer("hyperband", MockOptimizer)
+
+        assert "hyperband" not in list_optimizers()
+
+    def test_hyperband_local_execution_still_fails_when_backend_flag_enabled(self):
+        """The backend capability flag must not register a local Hyperband runner."""
+        _register_builtin_optimizers()
+
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            with pytest.raises(OptimizationError) as exc_info:
+                get_optimizer("hyperband", {"x": [1]}, ["accuracy"])
+
+        message = str(exc_info.value)
+        assert "backend-routed" in message
+        assert "local SDK" in message
+        assert "grid" in message
+        assert "random" in message
 
     def test_registry_state_isolation(self):
         """Test that registry state is properly isolated between tests."""

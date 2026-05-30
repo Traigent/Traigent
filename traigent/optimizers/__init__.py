@@ -30,6 +30,7 @@ from traigent.optimizers.pruners import (
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import (
     get_optimizer,
+    list_backend_routed_optimizers,
     list_optimizers,
     register_optimizer,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "get_optimizer",
     "register_optimizer",
     "list_optimizers",
+    "list_backend_routed_optimizers",
     # Pruners for early stopping
     "CeilingPruner",
     "CeilingPrunerConfig",

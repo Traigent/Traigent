@@ -232,6 +232,7 @@ Use both models in sequence:
 2. **Optimization Strategy**
    - Fast initial exploration locally
    - Cloud refinement for best results
+   - Backend-routed smart strategies such as Hyperband when explicitly enabled
    - Local validation before deployment
    - Cost-sensitive optimization
 

@@ -544,7 +544,7 @@ async def main() -> None:
             custom_evaluator=evaluation_function,
             max_trials=140,  # Moved here from decorator
             timeout=3000,  # 50 minutes in seconds (was timeout_minutes=50)
-            algorithm="random",  # Or "grid"; smart algorithms require opt-in/backend
+            algorithm="random",  # Or "grid"; Hyperband requires backend smart opt-in
         )
 
         # Display results

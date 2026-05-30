@@ -20,7 +20,7 @@ from traigent.config.parallel import (
     merge_parallel_configs,
 )
 from traigent.config.types import TraigentConfig
-from traigent.optimizers import list_optimizers
+from traigent.optimizers import list_backend_routed_optimizers, list_optimizers
 from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
 from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
@@ -722,8 +722,8 @@ def set_strategy(
 
     Args:
         algorithm: Optimization algorithm ("random", "grid", or a capability-gated
-            backend/local-advanced algorithm such as "tpe" or "bayesian").
-            Default is "random".
+            backend/local-advanced algorithm such as "tpe", "bayesian", or
+            backend-routed "hyperband"). Default is "random".
         algorithm_config: Algorithm-specific parameters
         parallel_workers: Number of parallel evaluation workers
         resource_limits: Memory, time, and compute constraints
@@ -740,6 +740,8 @@ def set_strategy(
         )
         results = my_agent.optimize(strategy=strategy)
     """
+    algorithm = str(algorithm).strip().lower()
+
     # Validate algorithm
     available_algorithms = get_available_strategies()
     if algorithm not in available_algorithms:
@@ -846,6 +848,42 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "best_for": "Custom use cases",
             }
 
+    for algorithm in list_backend_routed_optimizers():
+        if algorithm == "hyperband":
+            strategies[algorithm] = {
+                "name": "Hyperband",
+                "description": (
+                    "Backend-routed multi-fidelity optimization with early "
+                    "stopping of low-performing configurations"
+                ),
+                "supports_continuous": True,
+                "supports_categorical": True,
+                "deterministic": False,
+                "backend_routed": True,
+                "local_execution": False,
+                "parameters": {
+                    "max_resource": "Maximum resource budget per configuration",
+                    "min_resource": "Minimum resource budget for first rung",
+                    "reduction_factor": "Downsampling factor between rungs",
+                },
+                "best_for": (
+                    "Large search spaces where partial evaluations can identify "
+                    "poor configurations early"
+                ),
+            }
+        else:
+            strategies[algorithm] = {
+                "name": algorithm.title(),
+                "description": "Backend-routed optimization algorithm",
+                "supports_continuous": True,
+                "supports_categorical": True,
+                "deterministic": False,
+                "backend_routed": True,
+                "local_execution": False,
+                "parameters": {},
+                "best_for": "Managed backend optimization",
+            }
+
     return strategies
 
 
@@ -885,6 +923,7 @@ def get_version_info() -> dict[str, Any]:
             algorithms = list_optimizers()
         except Exception:
             algorithms = []
+    backend_routed_algorithms = list_backend_routed_optimizers()
 
     # Query plugin registry for available features
     from traigent.plugins import (
@@ -902,6 +941,7 @@ def get_version_info() -> dict[str, Any]:
         "python_version": sys.version,
         "platform": platform.platform(),
         "algorithms": algorithms,
+        "backend_routed_algorithms": backend_routed_algorithms,
         "features": {
             # Base features (always available)
             "grid_search": True,
@@ -909,6 +949,7 @@ def get_version_info() -> dict[str, Any]:
             "tpe_optimization": any(
                 algorithm in algorithms for algorithm in ("tpe", "optuna", "optuna_tpe")
             ),
+            "hyperband_optimization": "hyperband" in backend_routed_algorithms,
             "constraint_handling": True,
             "async_evaluation": True,
             "result_persistence": True,

@@ -17,6 +17,7 @@ from traigent.api.functions import (
     get_version_info,
     override_config,
 )
+from traigent.config.feature_flags import FlagNames, flag_registry
 from traigent.config.types import TraigentConfig
 from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
 
@@ -452,6 +453,36 @@ class TestGetAvailableStrategies:
         assert len(strategies) == 3
         assert all(algo in strategies for algo in ["grid", "random", "bayesian"])
 
+    @patch("traigent.api.functions.list_optimizers")
+    def test_get_available_strategies_excludes_hyperband_by_default(
+        self, mock_list_optimizers
+    ):
+        """Hyperband is not part of the default local strategy surface."""
+        mock_list_optimizers.return_value = ["grid", "random"]
+        flag_registry.reset()
+
+        strategies = get_available_strategies()
+
+        assert set(strategies) == {"grid", "random"}
+
+    @patch("traigent.api.functions.list_optimizers")
+    def test_get_available_strategies_includes_backend_hyperband_when_enabled(
+        self, mock_list_optimizers
+    ):
+        """Hyperband is exposed as an explicit backend-routed smart strategy."""
+        mock_list_optimizers.return_value = ["grid", "random"]
+
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            strategies = get_available_strategies()
+
+        assert "hyperband" in strategies
+        hyperband_info = strategies["hyperband"]
+        assert hyperband_info["name"] == "Hyperband"
+        assert hyperband_info["backend_routed"] is True
+        assert hyperband_info["local_execution"] is False
+        assert hyperband_info["deterministic"] is False
+        assert "max_resource" in hyperband_info["parameters"]
+
 
 class TestGetVersionInfo:
     """Test the get_version_info function."""
@@ -483,6 +514,7 @@ class TestGetVersionInfo:
         assert features["grid_search"] is True
         assert features["random_search"] is True
         assert features["tpe_optimization"] is False
+        assert features["hyperband_optimization"] is False
         assert features["bayesian_optimization"] is True
         assert features["multi_objective"] is True
         assert features["constraint_handling"] is True
@@ -498,6 +530,23 @@ class TestGetVersionInfo:
         # Check global config is a copy
         assert info["global_config"] == _GLOBAL_CONFIG
         assert info["global_config"] is not _GLOBAL_CONFIG
+
+    @patch("traigent.api.functions.list_optimizers")
+    @patch("platform.platform")
+    @patch("sys.version", "3.9.0")
+    def test_get_version_info_reports_backend_hyperband_when_enabled(
+        self, mock_platform, mock_list_optimizers
+    ):
+        """Version info separates local algorithms from backend-routed Hyperband."""
+        mock_platform.return_value = "Linux-5.10.0"
+        mock_list_optimizers.return_value = ["grid", "random"]
+
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            info = get_version_info()
+
+        assert info["algorithms"] == ["grid", "random"]
+        assert info["backend_routed_algorithms"] == ["hyperband"]
+        assert info["features"]["hyperband_optimization"] is True
 
 
 class TestIntegration:
