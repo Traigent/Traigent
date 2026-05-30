@@ -196,4 +196,4 @@ https://github.com/Traigent/Traigent/issues
 ---
 
 *Last updated: May 2026*
-*Licensed under GNU Affero General Public License v3.0 (AGPL-3.0-only) - See [LICENSE](LICENSE) for full terms*
+*Dual-licensed: GNU Affero General Public License v3.0 only (AGPL-3.0-only) - see [LICENSE](LICENSE) - or a Traigent commercial license under separate agreement (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)).*
