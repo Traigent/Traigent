@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Traigent-Commercial
+# Copyright (c) 2024-2026 Traigent Ltd. Dual-licensed: AGPL-3.0 or commercial.
 """Traigent SDK - Open-source LLM optimization toolkit.
 
 Traigent makes it effortless to optimize your LLM applications with a simple decorator.

@@ -1,16 +1,18 @@
 Traigent SDK
-Copyright 2024-2026 Traigent
+Copyright 2024-2026 Traigent Ltd
 
-Open-source releases of this repository are licensed under the GNU Affero
-General Public License v3.0 only. Commercial licenses are also available from
-Traigent under separate written agreement.
+This software is dual-licensed: GNU Affero General Public License v3.0 only
+(AGPL-3.0-only) OR a Traigent commercial license under separate written
+agreement. SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial.
+See LICENSE and COMMERCIAL-LICENSE.md.
 
 This NOTICE file is provided for attribution and third-party notice purposes
 only. It does not modify the applicable license terms.
 
 ================================================================================
 
-This project includes code from the following third-party libraries:
+This project depends on the following notable third-party libraries
+(not vendored; each retains its own license):
 
 - Optuna (MIT License) - https://github.com/optuna/optuna
 - LangChain (MIT License) - https://github.com/langchain-ai/langchain
