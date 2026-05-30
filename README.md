@@ -385,7 +385,7 @@ We welcome bug reports and feature requests via [GitHub Issues](https://github.c
 
 ## 📄 License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only) - see the [LICENSE](LICENSE) file for details.
+This project is **dual-licensed**: the GNU Affero General Public License v3.0 only (AGPL-3.0-only) - see [LICENSE](LICENSE) - **or** a Traigent commercial license under a separate written agreement (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). SPDX: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`. Commercial inquiries: legal@traigent.ai.
 
 ---
 
