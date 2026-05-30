@@ -20,6 +20,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`langgraph-checkpoint` 3.x → 4.x:** the 4.0 release drops default deserialization of payloads serialized with the legacy `"json"` serde mode. Users running `langgraph` with a persistent checkpoint saver (SQLite, Postgres, Redis, etc.) whose stored state contains JSON-format blobs will see deserialization failures unless they configure `serde` with an explicit `allowed_json_modules` list. Traigent does not bind `langgraph-checkpoint` directly — it arrives transitively through the `langgraph` dependency — so this only affects projects that also use `langgraph` checkpointers in their own code. See [CVE-2026-27794](https://github.com/langchain-ai/langgraph/security/advisories) for the underlying RCE that motivated removing the default.
 
 ### Changed
+- **Dual-licensed** under `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`: declared the SPDX
+  license expression in package metadata (PEP 639 via `setuptools>=77`), added `license-files`,
+  per-module SPDX headers, and `COMMERCIAL-LICENSE.md`; aligned `NOTICE`, `README`, and
+  `DISCLAIMER`. Commercial terms remain available under separate agreement; see
+  `COMMERCIAL-LICENSE.md` and `CONTRIBUTOR-LICENSING.md`. No version bump in this change.
 - Agent platform helpers now distinguish executable platforms from configuration-mapping-only platforms: `get_supported_platforms()` reports only executor-backed platforms, while `get_mapping_platforms()` returns all registered mappings.
 - Agent executors without real cost-estimation support now raise `NotImplementedError` instead of returning an authoritative-looking zero-cost estimate.
 - Langfuse trace metrics now include an `observations_partial` numeric flag in `to_measures_dict()` when observation pagination returns incomplete metrics.

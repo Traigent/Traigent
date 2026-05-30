@@ -10,6 +10,6 @@ intended deployment or distribution model.
 Commercial rights are not granted by default through this repository. They are
 available only under a separate written agreement with Traigent.
 
-To discuss commercial licensing, contact: `sales@traigent.ai`
+To discuss commercial licensing, contact: `legal@traigent.ai`
 
 For the open-source license terms, see [LICENSE](LICENSE).
