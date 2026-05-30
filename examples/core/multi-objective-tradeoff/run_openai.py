@@ -539,7 +539,7 @@ async def main() -> None:
     print("Crunching math expressions while balancing accuracy and cost…")
 
     trials = args.max_trials if args.max_trials is not None else (10 if not MOCK else 4)
-    r = await answer.optimize(algorithm="bayesian", max_trials=trials)
+    r = await answer.optimize(algorithm="random", max_trials=trials)
 
     print({"best_config": r.best_config, "best_score": r.best_score})
     _print_results(r)

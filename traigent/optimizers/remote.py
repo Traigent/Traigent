@@ -176,5 +176,11 @@ class MockRemoteSuggestionClient:
         }
 
 
-# Register under the name "remote" for easy selection
-register_optimizer("remote", RemoteOptimizer)
+def register_remote_optimizer() -> None:
+    """Register the experimental remote optimizer explicitly.
+
+    The base SDK does not auto-register remote guidance because the default
+    algorithm surface is intentionally limited to local grid/random search.
+    """
+
+    register_optimizer("remote", RemoteOptimizer)

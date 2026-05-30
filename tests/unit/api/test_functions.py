@@ -482,6 +482,7 @@ class TestGetVersionInfo:
         features = info["features"]
         assert features["grid_search"] is True
         assert features["random_search"] is True
+        assert features["tpe_optimization"] is False
         assert features["bayesian_optimization"] is True
         assert features["multi_objective"] is True
         assert features["constraint_handling"] is True

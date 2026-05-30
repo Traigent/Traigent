@@ -1,12 +1,15 @@
 """Comprehensive tests for optimizer registry."""
 
+import ast
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
 
 from traigent.api.types import TrialResult
-from traigent.config.feature_flags import flag_registry
+from traigent.config.feature_flags import FlagNames, flag_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.registry import (
     _OPTIMIZER_REGISTRY,
@@ -16,6 +19,7 @@ from traigent.optimizers.registry import (
     get_optimizer_info,
     list_optimizers,
     register_optimizer,
+    register_optuna_optimizers,
 )
 from traigent.utils.exceptions import OptimizationError, PluginError
 
@@ -56,8 +60,9 @@ class NotAnOptimizer:
 def reset_optuna_flag(monkeypatch):
     """Reset Optuna flag state for registry tests.
 
-    Optuna is enabled by default, so we just ensure consistent state.
+    Smart local optimizers are default-off, so tests must opt in explicitly.
     """
+    monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
     flag_registry.reset()
     yield
@@ -258,14 +263,47 @@ class TestOptimizerRegistry:
         assert "grid" in calls
         assert "random" in calls
 
+    def test_register_builtin_optimizers_only_basic_by_default(self):
+        """Default local optimizer surface is limited to grid and random."""
+        _register_builtin_optimizers()
+
+        assert sorted(list_optimizers()) == ["grid", "random"]
+
+    def test_package_import_default_surface_is_basic(self):
+        """Package-level optimizer imports must not auto-register extra algorithms."""
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from traigent.optimizers import list_optimizers; "
+                "print(sorted(list_optimizers()))",
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        optimizer_names = ast.literal_eval(completed.stdout.strip().splitlines()[-1])
+        assert optimizer_names == ["grid", "random"]
+
     @patch("traigent.optimizers.registry.logger")
-    def test_register_builtin_optimizers_bayesian_available(self, mock_logger):
-        """Test registering Bayesian optimizer when available."""
+    def test_register_builtin_optimizers_bayesian_requires_advanced_flag(
+        self, mock_logger
+    ):
+        """Test registering Bayesian optimizer only when explicitly enabled."""
         mock_bayesian = Mock(spec=BaseOptimizer)
 
         with patch("traigent.optimizers.bayesian.BayesianOptimizer", mock_bayesian):
             _register_builtin_optimizers()
 
+        assert "bayesian" not in list_optimizers()
+
+        with flag_registry.override(FlagNames.LOCAL_ADVANCED_OPTIMIZERS, True):
+            with patch("traigent.optimizers.bayesian.BayesianOptimizer", mock_bayesian):
+                _register_builtin_optimizers()
+
+        assert "bayesian" in list_optimizers()
         # Should log successful registration
         assert any(
             "Registered Bayesian optimizer" in str(call)
@@ -290,7 +328,8 @@ class TestOptimizerRegistry:
         sys.modules["traigent.optimizers.bayesian"] = ImportErrorModule()
 
         try:
-            _register_builtin_optimizers()
+            with flag_registry.override(FlagNames.LOCAL_ADVANCED_OPTIMIZERS, True):
+                _register_builtin_optimizers()
         finally:
             # Restore original modules
             sys.modules.clear()
@@ -301,6 +340,60 @@ class TestOptimizerRegistry:
         assert any(
             "Bayesian optimizer not available" in call for call in debug_calls
         ), f"Debug calls: {debug_calls}"
+
+    def test_register_optuna_optimizers_requires_explicit_flag(self):
+        """Optuna aliases are not public unless local Optuna is enabled."""
+        _register_builtin_optimizers()
+
+        register_optuna_optimizers()
+        assert "optuna" not in list_optimizers()
+        assert "tpe" not in list_optimizers()
+        assert "optuna_tpe" not in list_optimizers()
+
+        with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, True):
+            register_optuna_optimizers()
+
+        assert "optuna" in list_optimizers()
+        assert "tpe" in list_optimizers()
+        assert "optuna_tpe" in list_optimizers()
+
+    def test_get_optimizer_lazily_registers_after_optuna_flag_enabled(self):
+        """Optuna local opt-in works even when enabled after package import."""
+        pytest.importorskip("optuna")
+        _register_builtin_optimizers()
+
+        assert "tpe" not in list_optimizers()
+
+        with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, True):
+            optimizer = get_optimizer("tpe", {"x": [1, 2]}, ["accuracy"])
+
+        assert optimizer.__class__.__name__ == "OptunaTPEOptimizer"
+        assert "tpe" in list_optimizers()
+
+    @pytest.mark.parametrize("algorithm", ["bayesian", "tpe", "optuna", "optuna_tpe"])
+    def test_smart_optimizer_failure_is_actionable_by_default(self, algorithm):
+        """Default local requests for smart optimizers fail with a clear opt-in path."""
+        _register_builtin_optimizers()
+
+        with pytest.raises(OptimizationError) as exc_info:
+            get_optimizer(algorithm, {"x": [1]}, ["accuracy"])
+
+        message = str(exc_info.value)
+        assert "not enabled or unavailable for local execution" in message
+        assert "backend" in message
+        assert "grid" in message
+        assert "random" in message
+
+    def test_hyperband_is_not_supported_locally(self):
+        """Hyperband is reserved for backend capability routing, not local fallback."""
+        _register_builtin_optimizers()
+
+        with pytest.raises(OptimizationError) as exc_info:
+            get_optimizer("hyperband", {"x": [1]}, ["accuracy"])
+
+        message = str(exc_info.value)
+        assert "Hyperband is not supported by the local SDK" in message
+        assert "backend" in message
 
     def test_registry_state_isolation(self):
         """Test that registry state is properly isolated between tests."""

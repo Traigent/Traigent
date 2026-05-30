@@ -113,6 +113,12 @@ def configure(
         result = Validators.validate_type(feature_flags, dict, "feature_flags")
         validate_or_raise(result)
         flag_registry.apply_config(feature_flags)
+        try:
+            from traigent.optimizers.registry import refresh_enabled_optimizers
+
+            refresh_enabled_optimizers()
+        except Exception as exc:
+            logger.debug("Could not refresh feature-flagged optimizers: %s", exc)
 
     _apply_parallel_config(parallel_config, parallel_workers=parallel_workers)
     _apply_objectives(objectives)
@@ -707,7 +713,7 @@ def configure_for_budget(
 
 
 def set_strategy(
-    algorithm: str = "tpe",
+    algorithm: str = "random",
     algorithm_config: dict[str, Any] | None = None,
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
@@ -715,10 +721,9 @@ def set_strategy(
     """Configure optimization strategy and execution parameters.
 
     Args:
-        algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
-            Default is "tpe" (Tree-structured Parzen Estimator) which is always
-            available with Optuna. "bayesian" (Gaussian Process) requires
-            the traigent-advanced-algorithms plugin.
+        algorithm: Optimization algorithm ("random", "grid", or a capability-gated
+            backend/local-advanced algorithm such as "tpe" or "bayesian").
+            Default is "random".
         algorithm_config: Algorithm-specific parameters
         parallel_workers: Number of parallel evaluation workers
         resource_limits: Memory, time, and compute constraints
@@ -729,11 +734,8 @@ def set_strategy(
     Example::
 
         strategy = traigent.set_strategy(
-            algorithm="tpe",
-            algorithm_config={
-                "n_startup_trials": 10,
-                "multivariate": True
-            },
+            algorithm="random",
+            algorithm_config={"random_seed": 42},
             parallel_workers=4
         )
         results = my_agent.optimize(strategy=strategy)
@@ -889,9 +891,6 @@ def get_version_info() -> dict[str, Any]:
         FEATURE_ADVANCED_ALGORITHMS,
         FEATURE_ANALYTICS,
         FEATURE_CLOUD,
-        FEATURE_MULTI_OBJECTIVE,
-        FEATURE_PARALLEL,
-        FEATURE_SEAMLESS,
         FEATURE_TRACING,
         get_plugin_registry,
     )
@@ -907,7 +906,9 @@ def get_version_info() -> dict[str, Any]:
             # Base features (always available)
             "grid_search": True,
             "random_search": True,
-            "tpe_optimization": True,  # TPE is default, always available with Optuna
+            "tpe_optimization": any(
+                algorithm in algorithms for algorithm in ("tpe", "optuna", "optuna_tpe")
+            ),
             "constraint_handling": True,
             "async_evaluation": True,
             "result_persistence": True,
@@ -916,9 +917,9 @@ def get_version_info() -> dict[str, Any]:
                 registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
                 or "bayesian" in algorithms  # Fallback: check if registered
             ),
-            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE) or True,
-            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL) or True,
-            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS) or True,
+            "multi_objective": True,
+            "parallel_evaluation": True,
+            "seamless_injection": True,
             "cloud_execution": registry.has_feature(FEATURE_CLOUD),
             "tracing": registry.has_feature(FEATURE_TRACING),
             "analytics": registry.has_feature(FEATURE_ANALYTICS),

@@ -633,16 +633,29 @@ class TestSetStrategy:
         _GLOBAL_CONFIG.clear()
         _GLOBAL_CONFIG.update(self.original_config)
 
-    def test_set_strategy_bayesian(self):
-        """Test set_strategy with bayesian algorithm."""
+    def test_set_strategy_defaults_to_random(self):
+        """Test set_strategy default algorithm uses the basic local surface."""
+        strategy = set_strategy()
+
+        assert strategy.algorithm == "random"
+        assert isinstance(strategy.algorithm_config, dict)
+        assert strategy.parallel_workers == 1
+
+    @patch("traigent.api.functions.get_available_strategies")
+    def test_set_strategy_bayesian_when_available(self, mock_get_strategies):
+        """Test set_strategy with bayesian algorithm when capability-gated in."""
+        mock_get_strategies.return_value = {"bayesian": {}}
+
         strategy = set_strategy(algorithm="bayesian")
 
         assert strategy.algorithm == "bayesian"
         assert isinstance(strategy.algorithm_config, dict)
         assert strategy.parallel_workers == 1  # Default from global config
 
-    def test_set_strategy_with_config(self):
+    @patch("traigent.api.functions.get_available_strategies")
+    def test_set_strategy_with_config(self, mock_get_strategies):
         """Test set_strategy with algorithm config."""
+        mock_get_strategies.return_value = {"bayesian": {}}
         config = {"acquisition_function": "ei", "initial_random_samples": 10}
         strategy = set_strategy(algorithm="bayesian", algorithm_config=config)
 

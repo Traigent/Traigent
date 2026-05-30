@@ -39,7 +39,7 @@ dataset = Dataset(
 # Optimize with dataset
 results = my_llm_function.optimize(
     dataset=dataset,
-    algorithm="bayesian",
+    algorithm="random",
     metrics=["accuracy", "f1_score"]
 )
 ```
@@ -165,7 +165,7 @@ results_2 = function.optimize(
         "top_p": np.linspace(0.5, 1, 5)
     },
     num_trials=20,
-    algorithm="bayesian"
+    algorithm="random"
 )
 ```
 
@@ -302,11 +302,12 @@ results = await function.optimize(
 )
 ```
 
-### Bayesian Optimization
-Smart exploration for expensive evaluations.
+### Smart Optimization
+Backend-routed or explicitly enabled local smart exploration for expensive evaluations.
 ```python
+traigent.configure(feature_flags={"optimizers": {"optuna": {"enabled": True}}})
 results = await function.optimize(
-    algorithm="bayesian",
+    algorithm="optuna",
     acquisition_function="expected_improvement",
     initial_random_samples=10,
 )

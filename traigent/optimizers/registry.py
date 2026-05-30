@@ -16,6 +16,40 @@ logger = get_logger(__name__)
 # Global registry of optimization algorithms
 _OPTIMIZER_REGISTRY: dict[str, type[BaseOptimizer]] = {}
 
+_SMART_LOCAL_OPTIMIZERS = frozenset(
+    {
+        "bayesian",
+        "tpe",
+        "optuna",
+        "optuna_tpe",
+        "optuna_random",
+        "optuna_grid",
+        "optuna_cmaes",
+        "optuna_nsga2",
+        "nsga2",
+    }
+)
+_BACKEND_ONLY_OPTIMIZERS = frozenset({"hyperband"})
+
+
+def refresh_enabled_optimizers(name: str | None = None) -> None:
+    """Register optimizers enabled by the current feature-flag state."""
+
+    normalized_name = name.strip().lower() if isinstance(name, str) else name
+    if normalized_name in (None, "bayesian"):
+        _register_builtin_optimizers()
+    if normalized_name is None or normalized_name in {
+        "tpe",
+        "optuna",
+        "optuna_tpe",
+        "optuna_random",
+        "optuna_grid",
+        "optuna_cmaes",
+        "optuna_nsga2",
+        "nsga2",
+    }:
+        register_optuna_optimizers()
+
 
 def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     """Register an optimization algorithm.
@@ -68,6 +102,25 @@ def get_optimizer(
         OptimizationError: If optimizer name not found
     """
     if name not in _OPTIMIZER_REGISTRY:
+        normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
+        if normalized_name in _SMART_LOCAL_OPTIMIZERS:
+            refresh_enabled_optimizers(normalized_name)
+
+    if name not in _OPTIMIZER_REGISTRY:
+        normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
+        if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
+            raise OptimizationError(
+                "Hyperband is not supported by the local SDK. Configure a Traigent "
+                "backend with Hyperband capability, or use local 'grid' or 'random'."
+            )
+        if normalized_name in _SMART_LOCAL_OPTIMIZERS:
+            raise OptimizationError(
+                f"Optimizer '{name}' is not enabled or unavailable for local execution. Local "
+                "optimization defaults to 'grid' and 'random'. Configure a Traigent "
+                "backend for smart algorithms, set "
+                "TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED=1 for local Bayesian, "
+                "or set TRAIGENT_OPTUNA_ENABLED=1 for local Optuna aliases."
+            )
         available = list(_OPTIMIZER_REGISTRY.keys())
         raise OptimizationError(
             f"Unknown optimizer '{name}'. Available optimizers: {available}"
@@ -132,6 +185,14 @@ def _register_builtin_optimizers() -> None:
     register_optimizer("grid", GridSearchOptimizer)
     register_optimizer("random", RandomSearchOptimizer)
 
+    if not flag_registry.is_enabled(FlagNames.LOCAL_ADVANCED_OPTIMIZERS):
+        logger.debug(
+            "Local advanced optimizers disabled via feature flag '%s'",
+            FlagNames.LOCAL_ADVANCED_OPTIMIZERS,
+        )
+        logger.debug("Registered built-in optimizers")
+        return
+
     # Try to register Bayesian optimizer (requires scikit-learn)
     try:
         from traigent.optimizers.bayesian import BayesianOptimizer
@@ -170,7 +231,7 @@ def register_optuna_optimizers(force: bool = False) -> None:
         logger.debug("Optuna optimizers not available (requires Optuna)")
         return
 
-    # Base package optimizers (always available with Optuna)
+    # Local Optuna optimizers are registered only when explicitly enabled.
     register_optimizer("optuna_tpe", OptunaTPEOptimizer)
     register_optimizer("optuna_random", OptunaRandomOptimizer)
     register_optimizer("optuna_grid", OptunaGridOptimizer)

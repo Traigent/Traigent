@@ -756,7 +756,7 @@ def _invoke_model(
     execution_mode="edge_analytics",
     injection_mode="seamless",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
-    algorithm="bayesian",
+    algorithm="random",
     max_trials=20,
 )
 def answer(

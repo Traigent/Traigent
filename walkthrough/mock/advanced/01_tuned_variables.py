@@ -129,7 +129,7 @@ async def main() -> None:
     # Use optuna algorithm which handles all parameter types correctly
     print("\nRunning optimization...")
     results = await creative_writer.optimize(
-        algorithm="optuna", max_trials=12, random_seed=42
+        algorithm="random", max_trials=12, random_seed=42
     )
 
     print("\nBest Configuration Found:")

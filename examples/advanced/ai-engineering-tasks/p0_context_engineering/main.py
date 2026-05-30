@@ -544,7 +544,7 @@ async def main() -> None:
             custom_evaluator=evaluation_function,
             max_trials=100,  # Moved here from decorator
             timeout=1800,  # 30 minutes in seconds (was timeout_minutes=30)
-            algorithm="bayesian",  # Or "grid", "random"
+            algorithm="random",  # Or "grid"; smart algorithms require opt-in/backend
         )
 
         # Display results

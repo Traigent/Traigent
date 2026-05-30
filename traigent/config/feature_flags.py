@@ -170,6 +170,7 @@ class FlagRegistry:
 class FlagNames:
     """Canonical flag identifiers used across the codebase."""
 
+    LOCAL_ADVANCED_OPTIMIZERS = "optimizers.advanced_local.enabled"
     OPTUNA_ROLLOUT = "optimizers.optuna.enabled"
 
 
@@ -180,12 +181,27 @@ flag_registry = FlagRegistry()
 flag_registry.register(
     Flag(
         name=FlagNames.OPTUNA_ROLLOUT,
-        default=True,
+        default=False,
         env_var="TRAIGENT_OPTUNA_ENABLED",
-        description="Toggle Optuna-backed optimizers globally.",
+        description="Toggle local Optuna-backed optimizers.",
         config_path="optimizers.optuna.enabled",
     )
 )
+flag_registry.register(
+    Flag(
+        name=FlagNames.LOCAL_ADVANCED_OPTIMIZERS,
+        default=False,
+        env_var="TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED",
+        description="Toggle local advanced optimizers such as Bayesian search.",
+        config_path="optimizers.advanced_local.enabled",
+    )
+)
+
+
+def is_local_advanced_optimizers_enabled() -> bool:
+    """Convenience accessor for the local advanced optimizer flag."""
+
+    return flag_registry.is_enabled(FlagNames.LOCAL_ADVANCED_OPTIMIZERS)
 
 
 def is_optuna_enabled() -> bool:
@@ -199,5 +215,6 @@ __all__ = [
     "FlagNames",
     "FlagRegistry",
     "flag_registry",
+    "is_local_advanced_optimizers_enabled",
     "is_optuna_enabled",
 ]

@@ -545,7 +545,7 @@ The `**runtime_overrides` parameter accepts additional settings:
 
 ```python
 @traigent.optimize(
-    algorithm="optuna",  # "grid", "random", "bayesian", "optuna"
+    algorithm="random",  # local default; smart algorithms require backend/local opt-in
     max_trials=50,
     timeout=3600,  # seconds
     ...
