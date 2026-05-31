@@ -39,26 +39,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# ruff: noqa: E402
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WALKTHROUGH_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(WALKTHROUGH_ROOT))
-
-from utils.helpers import (
-    print_cost_estimate,
-    print_optimization_config,
-    print_results_table,
-    sanitize_traigent_api_key,
-)
-from utils.mock_answers import (
-    ANSWERS,
-    DEFAULT_MOCK_MODEL,
-    get_mock_accuracy,
-    get_mock_latency,
-    normalize_text,
-    set_mock_model,
-)
-from utils.scoring import token_match_score
 
 import traigent
 from traigent import TraigentConfig
@@ -70,6 +57,21 @@ from traigent.observability import (
     observe,
     set_default_observability_client,
 )
+from walkthrough.utils.helpers import (
+    print_cost_estimate,
+    print_optimization_config,
+    print_results_table,
+    sanitize_traigent_api_key,
+)
+from walkthrough.utils.mock_answers import (
+    ANSWERS,
+    DEFAULT_MOCK_MODEL,
+    get_mock_accuracy,
+    get_mock_latency,
+    normalize_text,
+    set_mock_model,
+)
+from walkthrough.utils.scoring import token_match_score
 
 DATASETS = Path(__file__).resolve().parent.parent / "datasets"
 DEFAULT_DATASET_PATH = DATASETS / "simple_questions.jsonl"
@@ -724,4 +726,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None
