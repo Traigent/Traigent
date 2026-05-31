@@ -552,7 +552,7 @@ Compound expressions (`AndCondition`, `OrCondition`, `NotCondition`) need to sha
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              Optimization Backend                           │
-│  (Optuna, ConfigSpace, etc.)                               │
+│  (local grid/random or managed smart strategies)            │
 └─────────────────────────────────────────────────────────────┘
 ```
 

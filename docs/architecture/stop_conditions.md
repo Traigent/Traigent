@@ -239,8 +239,8 @@ to observe green test results.)*
    emit structured telemetry for dashboards. Instrumenting condition triggers
    will improve observability.
 4. **Acceptance tests** – Unit coverage exercises synthetic scenarios. Adding
-   higher-level integration tests (e.g. Optuna + plateau + budget in combination)
-   would provide extra assurance under real workloads.
+   higher-level integration tests (e.g. backend smart routing + plateau + budget
+   in combination) would provide extra assurance under real workloads.
 
 Despite these items, the current implementation delivers consistent, reusable
 termination logic across all algorithms, injection modes, and execution styles

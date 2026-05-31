@@ -16,9 +16,11 @@ logger = get_logger(__name__)
 # Global registry of optimization algorithms
 _OPTIMIZER_REGISTRY: dict[str, type[BaseOptimizer]] = {}
 
-_SMART_LOCAL_OPTIMIZERS = frozenset(
+_RESERVED_SMART_OPTIMIZERS = frozenset(
     {
         "bayesian",
+        "frontier_scout",
+        "hyperband",
         "tpe",
         "optuna",
         "optuna_tpe",
@@ -27,28 +29,20 @@ _SMART_LOCAL_OPTIMIZERS = frozenset(
         "optuna_cmaes",
         "optuna_nsga2",
         "nsga2",
+        "smartopt",
     }
 )
-_BACKEND_ONLY_OPTIMIZERS = frozenset({"hyperband"})
+_BACKEND_ROUTED_OPTIMIZERS = frozenset(
+    {"bayesian", "frontier_scout", "hyperband", "tpe"}
+)
 
 
 def refresh_enabled_optimizers(name: str | None = None) -> None:
     """Register optimizers enabled by the current feature-flag state."""
 
     normalized_name = name.strip().lower() if isinstance(name, str) else name
-    if normalized_name in (None, "bayesian"):
+    if normalized_name is None or normalized_name not in _RESERVED_SMART_OPTIMIZERS:
         _register_builtin_optimizers()
-    if normalized_name is None or normalized_name in {
-        "tpe",
-        "optuna",
-        "optuna_tpe",
-        "optuna_random",
-        "optuna_grid",
-        "optuna_cmaes",
-        "optuna_nsga2",
-        "nsga2",
-    }:
-        register_optuna_optimizers()
 
 
 def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
@@ -64,7 +58,7 @@ def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     if not isinstance(name, str) or not name.strip():
         raise PluginError("Optimizer name must be a non-empty string")
     normalized_name = name.strip().lower()
-    if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
+    if normalized_name in _RESERVED_SMART_OPTIMIZERS:
         raise PluginError(
             f"Optimizer '{name}' is reserved for backend-routed execution and "
             "cannot be registered for local execution."
@@ -108,27 +102,13 @@ def get_optimizer(
         OptimizationError: If optimizer name not found
     """
     normalized_name = name.strip().lower() if isinstance(name, str) else str(name)
-    if normalized_name in _BACKEND_ONLY_OPTIMIZERS:
+    if normalized_name in _RESERVED_SMART_OPTIMIZERS:
         raise OptimizationError(
-            "Hyperband is not supported by the local SDK. It is a "
-            "backend-routed smart optimizer. Use traigent.set_strategy("
-            "algorithm='hyperband') with a Traigent backend that advertises "
-            "Hyperband capability, or use local 'grid' or 'random'."
+            f"Optimizer '{name}' is backend-routed and not available for local "
+            "execution. Configure a Traigent backend or use local 'grid' or 'random'."
         )
 
     if name not in _OPTIMIZER_REGISTRY:
-        if normalized_name in _SMART_LOCAL_OPTIMIZERS:
-            refresh_enabled_optimizers(normalized_name)
-
-    if name not in _OPTIMIZER_REGISTRY:
-        if normalized_name in _SMART_LOCAL_OPTIMIZERS:
-            raise OptimizationError(
-                f"Optimizer '{name}' is not enabled or unavailable for local execution. Local "
-                "optimization defaults to 'grid' and 'random'. Configure a Traigent "
-                "backend for smart algorithms, set "
-                "TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED=1 for local Bayesian, "
-                "or set TRAIGENT_OPTUNA_ENABLED=1 for local Optuna aliases."
-            )
         available = list(_OPTIMIZER_REGISTRY.keys())
         raise OptimizationError(
             f"Unknown optimizer '{name}'. Available optimizers: {available}"
@@ -156,7 +136,7 @@ def list_backend_routed_optimizers() -> list[str]:
 
     if not flag_registry.is_enabled(FlagNames.BACKEND_SMART_OPTIMIZERS):
         return []
-    return sorted(_BACKEND_ONLY_OPTIMIZERS)
+    return sorted(_BACKEND_ROUTED_OPTIMIZERS)
 
 
 def get_optimizer_info(name: str) -> dict[str, Any]:
@@ -201,72 +181,8 @@ def _register_builtin_optimizers() -> None:
     register_optimizer("grid", GridSearchOptimizer)
     register_optimizer("random", RandomSearchOptimizer)
 
-    if not flag_registry.is_enabled(FlagNames.LOCAL_ADVANCED_OPTIMIZERS):
-        logger.debug(
-            "Local advanced optimizers disabled via feature flag '%s'",
-            FlagNames.LOCAL_ADVANCED_OPTIMIZERS,
-        )
-        logger.debug("Registered built-in optimizers")
-        return
-
-    # Try to register Bayesian optimizer (requires scikit-learn)
-    try:
-        from traigent.optimizers.bayesian import BayesianOptimizer
-
-        register_optimizer("bayesian", BayesianOptimizer)
-        logger.debug("Registered Bayesian optimizer")
-    except ImportError:
-        logger.debug("Bayesian optimizer not available (requires scikit-learn)")
-
-    # Optuna optimizers will be registered after the function is defined
     logger.debug("Registered built-in optimizers")
-
-
-def register_optuna_optimizers(force: bool = False) -> None:
-    """Register Optuna-backed optimizers, honoring rollout feature flags."""
-
-    if not force and not flag_registry.is_enabled(FlagNames.OPTUNA_ROLLOUT):
-        logger.debug(
-            "Optuna optimizers disabled via feature flag '%s'",
-            FlagNames.OPTUNA_ROLLOUT,
-        )
-        return
-
-    try:
-        from traigent.optimizers.optuna_optimizer import (
-            OptunaCMAESOptimizer,
-            OptunaGridOptimizer,
-            OptunaNSGAIIOptimizer,
-            OptunaRandomOptimizer,
-            OptunaTPEOptimizer,
-        )
-    except OptimizationError as exc:
-        logger.debug("Optuna optimizers not registered: %s", exc)
-        return
-    except ImportError:
-        logger.debug("Optuna optimizers not available (requires Optuna)")
-        return
-
-    # Local Optuna optimizers are registered only when explicitly enabled.
-    register_optimizer("optuna_tpe", OptunaTPEOptimizer)
-    register_optimizer("optuna_random", OptunaRandomOptimizer)
-    register_optimizer("optuna_grid", OptunaGridOptimizer)
-
-    # Advanced optimizers (future: traigent-advanced-algorithms plugin)
-    # TODO: Gate these with plugin feature flag when extracted
-    register_optimizer("optuna_cmaes", OptunaCMAESOptimizer)
-    register_optimizer("optuna_nsga2", OptunaNSGAIIOptimizer)
-
-    # Backwards-compatible aliases (used by TVL strategy mapping and legacy configs)
-    register_optimizer("optuna", OptunaTPEOptimizer)
-    register_optimizer("tpe", OptunaTPEOptimizer)
-    register_optimizer(
-        "nsga2", OptunaNSGAIIOptimizer
-    )  # TODO: Gate with multi-obj plugin
-    logger.debug("Registered Optuna optimizers (force=%s)", force)
 
 
 # Register built-in optimizers on module import
 _register_builtin_optimizers()
-# Register Optuna optimizers after builtin ones
-register_optuna_optimizers()

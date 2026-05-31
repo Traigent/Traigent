@@ -30,7 +30,7 @@
 
 - id: FUNC-OPT-ALGORITHMS
   name: "Optimizer portfolio"
-  description: "Provide grid, random, Optuna-based, Bayesian, interactive, and remote-guided optimizers via a registry."
+  description: "Provide local grid/random optimizers, backend-routed smart strategies (bayesian, tpe, hyperband, frontier_scout), interactive flows, and remote-guided optimizers."
   requirements: [REQ-OPT-ALG-004]
   concepts: [CONC-Layer-Core]
   syncs: [SYNC-OptimizationFlow]

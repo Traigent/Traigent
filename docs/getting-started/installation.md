@@ -10,7 +10,7 @@ Release-ready, minimal install steps for the SDK and examples.
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, bayesian, visualization, hybrid, pydanticai
+pip install -e ".[recommended]"           # Recommended bundle: integrations, analytics, visualization, hybrid, pydanticai
 ```
 
 ### PyPI vs source installs
@@ -21,10 +21,10 @@ pip install -e ".[recommended]"           # Recommended bundle: integrations, an
 
 | Extra | What's included | Install example |
 | --- | --- | --- |
-| **`recommended`** | **All user-facing features (integrations + analytics + bayesian + visualization + hybrid + pydanticai)** | **`pip install -e ".[recommended]"`** |
+| **`recommended`** | **All user-facing local and hybrid features (integrations + analytics + visualization + hybrid + pydanticai)** | **`pip install -e ".[recommended]"`** |
 | `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
 | `analytics` | numpy, pandas, matplotlib | `pip install -e ".[analytics]"` |
-| `bayesian` | Optuna + sklearn/scipy | `pip install -e ".[bayesian]"` |
+| `ml` | Scientific utilities for analytics and parallel workloads | `pip install -e ".[ml]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
 | `hybrid` | HTTP/2 transport plus MCP-backed hybrid integrations | `pip install -e ".[hybrid]"` |
 | `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |

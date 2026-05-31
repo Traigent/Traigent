@@ -136,7 +136,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) |
 | **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
 | **Tunable Variable Language** | [TVL Guide](docs/user-guide/tuned_variables.md) |
-| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Smart Optimization](docs/user-guide/smart_optimization.md) · [JS Bridge](docs/guides/js-bridge.md) |
 | **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
 
 </details>
@@ -244,7 +244,7 @@ def multi_provider_agent(question: str) -> str:
 | Feature | Description |
 |---------|-------------|
 | **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
-| **Multi-algorithm** | Random and Grid by default; Bayesian/Optuna and backend-routed smart strategies by explicit opt-in |
+| **Multi-algorithm** | Random and Grid locally by default; backend-routed `bayesian`, `tpe`, `hyperband`, and `frontier_scout` strategies by explicit opt-in |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
 | **Cost tracking** | Integrated tokencost library with 500+ model pricing |
@@ -266,10 +266,10 @@ Python 3.11+ on Linux, macOS, or Windows. For coordinated release validation, in
 
 | Feature Set | Description |
 |-------------|-------------|
-| `[recommended]` | All user-facing features (default) |
+| `[recommended]` | All user-facing local and hybrid features (default) |
 | `[integrations]` | LangChain, OpenAI, Anthropic adapters |
 | `[analytics]` | Visualization and analytics |
-| `[bayesian]` | Bayesian optimization (TPE, NSGA-II) |
+| `[ml]` | Scientific utilities for analytics and parallel workloads |
 | `[all]` | Everything |
 
 **[Full installation guide →](docs/getting-started/installation.md)**
@@ -311,8 +311,8 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 
 | Mode | Status | Privacy | Algorithm | Best For |
 |------|--------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random/Grid by default; Bayesian/Optuna behind local advanced flags | All use cases |
-| **Hybrid** | ✅ Available | ✅ Execution local | Random/Grid locally; backend-routed smart strategies such as Hyperband when enabled | Balanced approach |
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random/Grid only | All use cases |
+| **Hybrid** | ✅ Available | ✅ Execution local | Random/Grid locally; backend-routed `bayesian`, `tpe`, `hyperband`, and `frontier_scout` when enabled | Balanced approach |
 | **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Backend-advertised strategies | Production, teams |
 
 **[Execution modes guide →](docs/guides/execution-modes.md)** — mode comparisons, privacy details, migration path
@@ -324,7 +324,7 @@ Provide a JSONL dataset — Traigent scores outputs using semantic similarity by
 | `configuration_space` | `@traigent.optimize()` | Parameters to test (required) |
 | `objectives` | `@traigent.optimize()` | Metrics to optimize for |
 | `eval_dataset` | `@traigent.optimize()` | Dataset for evaluation |
-| `algorithm` | `.optimize()` call | `"random"`, `"grid"` locally by default; advanced strategies require explicit flags or backend routing |
+| `algorithm` | `.optimize()` call | `"random"` or `"grid"` locally; smart strategies are backend-routed (`"bayesian"`, `"tpe"`, `"hyperband"`, `"frontier_scout"`) |
 | `max_trials` | `.optimize()` call | Number of configurations to test |
 | `progress_bar` | `.optimize()` call | `True` / `False` / `None` (auto) — live progress bar |
 

@@ -172,7 +172,6 @@ class FlagNames:
 
     BACKEND_SMART_OPTIMIZERS = "optimizers.backend_smart.enabled"
     LOCAL_ADVANCED_OPTIMIZERS = "optimizers.advanced_local.enabled"
-    OPTUNA_ROLLOUT = "optimizers.optuna.enabled"
 
 
 # Global registry instance
@@ -190,20 +189,11 @@ flag_registry.register(
 )
 flag_registry.register(
     Flag(
-        name=FlagNames.OPTUNA_ROLLOUT,
-        default=False,
-        env_var="TRAIGENT_OPTUNA_ENABLED",
-        description="Toggle local Optuna-backed optimizers.",
-        config_path="optimizers.optuna.enabled",
-    )
-)
-flag_registry.register(
-    Flag(
         name=FlagNames.LOCAL_ADVANCED_OPTIMIZERS,
         default=False,
-        env_var="TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED",
-        description="Toggle local advanced optimizers such as Bayesian search.",
-        config_path="optimizers.advanced_local.enabled",
+        env_var=None,
+        description="Deprecated compatibility flag; local smart optimizers were removed.",
+        config_path=None,
     )
 )
 
@@ -215,15 +205,9 @@ def is_backend_smart_optimizers_enabled() -> bool:
 
 
 def is_local_advanced_optimizers_enabled() -> bool:
-    """Convenience accessor for the local advanced optimizer flag."""
+    """Deprecated accessor; local smart optimizers are no longer enabled in SDK."""
 
-    return flag_registry.is_enabled(FlagNames.LOCAL_ADVANCED_OPTIMIZERS)
-
-
-def is_optuna_enabled() -> bool:
-    """Convenience accessor for the Optuna rollout flag."""
-
-    return flag_registry.is_enabled(FlagNames.OPTUNA_ROLLOUT)
+    return False
 
 
 __all__ = [
@@ -233,5 +217,4 @@ __all__ = [
     "flag_registry",
     "is_backend_smart_optimizers_enabled",
     "is_local_advanced_optimizers_enabled",
-    "is_optuna_enabled",
 ]

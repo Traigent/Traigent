@@ -431,7 +431,7 @@ class TestGridSearchDeterminism:
 
 
 class TestOptunaSeedReproducibility:
-    """Tests for Optuna-based optimizer reproducibility."""
+    """Tests for legacy TPE optimizer reproducibility."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -116,9 +116,6 @@ clean:  ## Clean up generated files
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 
-optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
-	$(PYTHON) scripts/benchmarks/run_optuna_benchmarks.py
-
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint

@@ -65,8 +65,8 @@
     - "datasets/multi-objective-tradeoff/evaluation_set_100_examples.jsonl"
   docs: "../core/multi-objective-tradeoff/index.html"
   docs_sections:
-    - label: "Optuna Integration"
-      href: "../../docs/user-guide/optuna_integration.md"
+    - label: "Smart Optimization"
+      href: "../../docs/user-guide/smart_optimization.md"
 - slug: token-budget-summarization
   category: core
   title: "Token Budget Summarization"

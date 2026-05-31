@@ -3,8 +3,9 @@
 import ast
 import subprocess
 import sys
+import tomllib
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -20,7 +21,6 @@ from traigent.optimizers.registry import (
     list_backend_routed_optimizers,
     list_optimizers,
     register_optimizer,
-    register_optuna_optimizers,
 )
 from traigent.utils.exceptions import OptimizationError, PluginError
 
@@ -65,7 +65,6 @@ def reset_optuna_flag(monkeypatch):
     """
     monkeypatch.delenv("TRAIGENT_BACKEND_SMART_OPTIMIZERS_ENABLED", raising=False)
     monkeypatch.delenv("TRAIGENT_LOCAL_ADVANCED_OPTIMIZERS_ENABLED", raising=False)
-    monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
     flag_registry.reset()
     yield
     flag_registry.reset()
@@ -272,16 +271,23 @@ class TestOptimizerRegistry:
         assert sorted(list_optimizers()) == ["grid", "random"]
         assert list_backend_routed_optimizers() == []
 
-    def test_hyperband_is_backend_routed_only_when_explicitly_enabled(self):
-        """Hyperband is discoverable only as an opted-in backend capability."""
+    def test_smart_optimizers_are_backend_routed_only_when_explicitly_enabled(self):
+        """Smart optimizers are discoverable only as opted-in backend capabilities."""
         _register_builtin_optimizers()
 
         assert "hyperband" not in list_optimizers()
         assert list_backend_routed_optimizers() == []
 
         with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
-            assert list_backend_routed_optimizers() == ["hyperband"]
-            assert "hyperband" not in list_optimizers()
+            assert list_backend_routed_optimizers() == [
+                "bayesian",
+                "frontier_scout",
+                "hyperband",
+                "tpe",
+            ]
+            assert not {"bayesian", "frontier_scout", "hyperband", "tpe"} & set(
+                list_optimizers()
+            )
 
     def test_package_import_default_surface_is_basic(self):
         """Package-level optimizer imports must not auto-register extra algorithms."""
@@ -301,121 +307,83 @@ class TestOptimizerRegistry:
         optimizer_names = ast.literal_eval(completed.stdout.strip().splitlines()[-1])
         assert optimizer_names == ["grid", "random"]
 
-    @patch("traigent.optimizers.registry.logger")
-    def test_register_builtin_optimizers_bayesian_requires_advanced_flag(
-        self, mock_logger
-    ):
-        """Test registering Bayesian optimizer only when explicitly enabled."""
-        mock_bayesian = Mock(spec=BaseOptimizer)
+    def test_package_import_does_not_export_optuna_symbols(self):
+        """Public optimizer package no longer exports local Optuna classes."""
+        import traigent.optimizers as optimizers
 
-        with patch("traigent.optimizers.bayesian.BayesianOptimizer", mock_bayesian):
-            _register_builtin_optimizers()
+        assert not any(name.startswith("Optuna") for name in optimizers.__all__)
+        assert "OptunaAdapter" not in optimizers.__all__
+        assert "OptunaCoordinator" not in optimizers.__all__
 
-        assert "bayesian" not in list_optimizers()
+    def test_package_metadata_does_not_depend_on_optuna(self):
+        """Optuna must not be a core or optional SDK dependency."""
+        with open("pyproject.toml", "rb") as handle:
+            pyproject = tomllib.load(handle)
 
-        with flag_registry.override(FlagNames.LOCAL_ADVANCED_OPTIMIZERS, True):
-            with patch("traigent.optimizers.bayesian.BayesianOptimizer", mock_bayesian):
-                _register_builtin_optimizers()
-
-        assert "bayesian" in list_optimizers()
-        # Should log successful registration
-        assert any(
-            "Registered Bayesian optimizer" in str(call)
-            for call in mock_logger.debug.call_args_list
+        dependencies = pyproject["project"]["dependencies"]
+        optional = pyproject["project"].get("optional-dependencies", {})
+        assert not any("optuna" in dep.lower() for dep in dependencies)
+        assert "bayesian" not in optional
+        assert not any(
+            "optuna" in dep.lower()
+            for deps in optional.values()
+            for dep in deps
         )
 
-    @patch("traigent.optimizers.registry.logger")
-    def test_register_builtin_optimizers_bayesian_unavailable(self, mock_logger):
-        """Test handling when Bayesian optimizer is unavailable."""
-        import sys
+    def test_local_advanced_flags_do_not_enable_bayesian(self):
+        """Deprecated local-smart flags must not re-enable local Bayesian search."""
+        with flag_registry.override(FlagNames.LOCAL_ADVANCED_OPTIMIZERS, True):
+            _register_builtin_optimizers()
 
-        # Remove from cache if present and patch the import to fail
-        original_modules = sys.modules.copy()
-        if "traigent.optimizers.bayesian" in sys.modules:
-            del sys.modules["traigent.optimizers.bayesian"]
+        assert sorted(list_optimizers()) == ["grid", "random"]
 
-        # Temporarily add a module that raises ImportError when accessed
-        class ImportErrorModule:
-            def __getattr__(self, name):
-                raise ImportError("No module named 'sklearn'")
-
-        sys.modules["traigent.optimizers.bayesian"] = ImportErrorModule()
-
-        try:
-            with flag_registry.override(FlagNames.LOCAL_ADVANCED_OPTIMIZERS, True):
-                _register_builtin_optimizers()
-        finally:
-            # Restore original modules
-            sys.modules.clear()
-            sys.modules.update(original_modules)
-
-        # Should log that Bayesian is not available
-        debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
-        assert any(
-            "Bayesian optimizer not available" in call for call in debug_calls
-        ), f"Debug calls: {debug_calls}"
-
-    def test_register_optuna_optimizers_requires_explicit_flag(self):
-        """Optuna aliases are not public unless local Optuna is enabled."""
-        _register_builtin_optimizers()
-
-        register_optuna_optimizers()
-        assert "optuna" not in list_optimizers()
-        assert "tpe" not in list_optimizers()
-        assert "optuna_tpe" not in list_optimizers()
-
-        with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, True):
-            register_optuna_optimizers()
-
-        assert "optuna" in list_optimizers()
-        assert "tpe" in list_optimizers()
-        assert "optuna_tpe" in list_optimizers()
-
-    def test_get_optimizer_lazily_registers_after_optuna_flag_enabled(self):
-        """Optuna local opt-in works even when enabled after package import."""
-        pytest.importorskip("optuna")
+    def test_get_optimizer_does_not_lazily_register_after_backend_flag_enabled(self):
+        """Backend smart opt-in flags are not local optimizer registration flags."""
         _register_builtin_optimizers()
 
         assert "tpe" not in list_optimizers()
 
-        with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, True):
-            optimizer = get_optimizer("tpe", {"x": [1, 2]}, ["accuracy"])
+        with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
+            with pytest.raises(OptimizationError, match="backend-routed"):
+                get_optimizer("tpe", {"x": [1, 2]}, ["accuracy"])
 
-        assert optimizer.__class__.__name__ == "OptunaTPEOptimizer"
-        assert "tpe" in list_optimizers()
+        assert sorted(list_optimizers()) == ["grid", "random"]
 
-    @pytest.mark.parametrize("algorithm", ["bayesian", "tpe", "optuna", "optuna_tpe"])
+    @pytest.mark.parametrize(
+        "algorithm",
+        [
+            "bayesian",
+            "frontier_scout",
+            "hyperband",
+            "optuna",
+            "optuna_tpe",
+            "smartopt",
+            "tpe",
+        ],
+    )
     def test_smart_optimizer_failure_is_actionable_by_default(self, algorithm):
-        """Default local requests for smart optimizers fail with a clear opt-in path."""
+        """Default local requests for smart optimizers fail with backend guidance."""
         _register_builtin_optimizers()
 
         with pytest.raises(OptimizationError) as exc_info:
             get_optimizer(algorithm, {"x": [1]}, ["accuracy"])
 
         message = str(exc_info.value)
-        assert "not enabled or unavailable for local execution" in message
+        assert "backend-routed" in message
+        assert "not available for local execution" in message
         assert "backend" in message
         assert "grid" in message
         assert "random" in message
 
-    def test_hyperband_is_not_supported_locally(self):
-        """Hyperband is reserved for backend capability routing, not local fallback."""
-        _register_builtin_optimizers()
-
-        with pytest.raises(OptimizationError) as exc_info:
-            get_optimizer("hyperband", {"x": [1]}, ["accuracy"])
-
-        message = str(exc_info.value)
-        assert "Hyperband is not supported by the local SDK" in message
-        assert "backend-routed" in message
-        assert "set_strategy" in message
-
     def test_backend_only_optimizer_names_cannot_be_registered_locally(self):
         """Public plugin registration must not bypass backend-only policy."""
-        with pytest.raises(PluginError, match="backend-routed execution"):
-            register_optimizer("hyperband", MockOptimizer)
+        for algorithm in ("bayesian", "frontier_scout", "hyperband", "optuna", "tpe"):
+            with pytest.raises(PluginError, match="backend-routed execution"):
+                register_optimizer(algorithm, MockOptimizer)
 
-        assert "hyperband" not in list_optimizers()
+        assert not {"bayesian", "frontier_scout", "hyperband", "optuna", "tpe"} & set(
+            list_optimizers()
+        )
 
     def test_hyperband_local_execution_still_fails_when_backend_flag_enabled(self):
         """The backend capability flag must not register a local Hyperband runner."""
@@ -427,7 +395,7 @@ class TestOptimizerRegistry:
 
         message = str(exc_info.value)
         assert "backend-routed" in message
-        assert "local SDK" in message
+        assert "not available for local execution" in message
         assert "grid" in message
         assert "random" in message
 

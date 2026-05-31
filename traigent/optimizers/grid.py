@@ -145,8 +145,8 @@ class GridSearchOptimizer(BaseOptimizer):
                     f"with range {param_def}. Grid search requires discrete values to enumerate. "
                     f"Options: "
                     f"(1) Use a list of discrete values: {suggestion}, "
-                    f"(2) Use 'random' or 'optuna' optimizer instead for continuous ranges, "
-                    f"(3) Use traigent.optimizers.optuna_utils.discretize_for_grid() to auto-discretize"
+                    "(2) Use the 'random' optimizer for continuous ranges, "
+                    "(3) route smart continuous optimization through Traigent Backend"
                 )
             else:
                 # Single value (fixed parameter)

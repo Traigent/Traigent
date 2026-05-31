@@ -41,7 +41,7 @@ def answer_question(question: str) -> str:
 - **[Injection Modes](user-guide/injection_modes.md)** - Different ways to integrate Traigent
 - **[Interactive Optimization](user-guide/interactive_optimization.md)** - Real-time optimization workflows
 - **[Evaluation Guide](user-guide/evaluation_guide.md)** - Measure and improve performance
-- **[Optuna Integration](user-guide/optuna_integration.md)** - Optuna-backed optimizers, coordinator, and adapter
+- **[Smart Optimization](user-guide/smart_optimization.md)** - Backend-routed smart strategies and the local grid/random boundary
 
 ### 🧭 [Guides](guides/)
 - **[Execution Modes](guides/execution-modes.md)** - Local, hybrid, and cloud execution behavior

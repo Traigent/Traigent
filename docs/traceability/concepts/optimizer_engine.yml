@@ -7,7 +7,7 @@ state:
     description: "Registered optimizer implementations with metadata."
   - name: checkpoints
     type: "dict[str, Any]"
-    description: "Checkpoint state for Optuna/remote optimizers."
+    description: "Checkpoint state for remote or backend-routed optimizers."
 actions:
   - name: suggest_next
     inputs:
@@ -49,6 +49,6 @@ actions:
     description: "Expose built-in and plugin optimizers through a shared registry."
 operational_principle:
   - "Suggestions must respect objective directions and constraints expressed in config space."
-  - "Remote and Optuna-based optimizers should persist checkpoints when available."
+  - "Remote and backend-routed optimizers should persist checkpoints when available."
 version: 1
 status: active

@@ -36,14 +36,13 @@ Optimization summary:
 
 ## Key Concepts
 
-- **Bayesian optimization**: Smart parameter search
+- **Multi-objective optimization**: Balance accuracy, latency, and cost
 - **ObjectiveSchema**: Define weighted objectives
 - **Parallel execution**: Configurable concurrency
 
 ## Variants
 
-- `run_openai.py` - OpenAI models with Bayesian search
-- `run_openai_optuna.py` - Optuna integration
+- `run_openai.py` - OpenAI models with local random/grid search
 - `run_antropic.py` - Anthropic models
 - `run_many_providers.py` - Cross-provider comparison
 

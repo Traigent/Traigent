@@ -7,7 +7,7 @@ state:
     description: "Engines for meta-learning, predictive analysis, and cost optimization."
   - name: telemetry_sinks
     type: "list[str]"
-    description: "Enabled telemetry backends (Optuna, MLflow, W&B, local analytics)."
+    description: "Enabled telemetry backends (local analytics, MLflow, W&B, managed backend)."
 actions:
   - name: compute_insights
     inputs:
@@ -40,7 +40,7 @@ actions:
         fields:
           - name: sinks
             type: "list[str]"
-    description: "Send trial/session telemetry to Optuna hooks, trackers, and local analytics."
+    description: "Send trial/session telemetry to trackers, local analytics, and managed backends."
   - name: visualize_results
     inputs:
       - name: trials

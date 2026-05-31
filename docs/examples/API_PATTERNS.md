@@ -303,13 +303,15 @@ results = await function.optimize(
 ```
 
 ### Smart Optimization
-Backend-routed or explicitly enabled local smart exploration for expensive evaluations.
+Smart strategies are backend-routed. Local optimization stays on `grid` and `random`.
 ```python
-traigent.configure(feature_flags={"optimizers": {"optuna": {"enabled": True}}})
+traigent.configure(
+    feature_flags={"optimizers": {"backend_smart": {"enabled": True}}}
+)
 results = await function.optimize(
-    algorithm="optuna",
-    acquisition_function="expected_improvement",
-    initial_random_samples=10,
+    algorithm="hyperband",
+    max_resource=27,
+    reduction_factor=3,
 )
 ```
 

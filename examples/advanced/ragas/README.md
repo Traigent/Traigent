@@ -12,7 +12,7 @@ Three focused examples show how to evaluate retrieval-heavy pipelines with the R
 
 ```bash
 # Install optional dependencies if you haven't already
-pip install optuna ragas rapidfuzz langchain-openai
+pip install ragas rapidfuzz langchain-openai
 
 # Mock-friendly basics (no API keys required)
 python examples/advanced/ragas/basics/run.py

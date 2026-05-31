@@ -409,7 +409,7 @@ async def main():
     print()
 
     algorithms = ["random", "grid"]
-    # Note: Add "bayesian" if optuna is installed
+    # Backend-routed smart strategies are exercised separately from local tests.
 
     for algo in algorithms:
         func = create_optimizable_func(f"agent_{algo}")

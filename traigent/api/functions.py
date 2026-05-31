@@ -849,7 +849,35 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
             }
 
     for algorithm in list_backend_routed_optimizers():
-        if algorithm == "hyperband":
+        if algorithm == "bayesian":
+            strategies[algorithm] = {
+                "name": "Bayesian Optimization",
+                "description": "Backend-routed adaptive smart optimization",
+                "supports_continuous": True,
+                "supports_categorical": True,
+                "deterministic": False,
+                "backend_routed": True,
+                "local_execution": False,
+                "parameters": {
+                    "random_seed": "Random seed for backend sampler reproducibility",
+                },
+                "best_for": "Managed backend smart search for expensive evaluations",
+            }
+        elif algorithm == "tpe":
+            strategies[algorithm] = {
+                "name": "TPE",
+                "description": "Backend-routed tree-structured Parzen estimator optimization",
+                "supports_continuous": True,
+                "supports_categorical": True,
+                "deterministic": False,
+                "backend_routed": True,
+                "local_execution": False,
+                "parameters": {
+                    "random_seed": "Random seed for backend sampler reproducibility",
+                },
+                "best_for": "Managed backend smart search",
+            }
+        elif algorithm == "hyperband":
             strategies[algorithm] = {
                 "name": "Hyperband",
                 "description": (
@@ -870,6 +898,22 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                     "Large search spaces where partial evaluations can identify "
                     "poor configurations early"
                 ),
+            }
+        elif algorithm == "frontier_scout":
+            strategies[algorithm] = {
+                "name": "FrontierScout",
+                "description": "Backend-routed Traigent smart optimization over quality, cost, and latency",
+                "supports_continuous": True,
+                "supports_categorical": True,
+                "deterministic": False,
+                "backend_routed": True,
+                "local_execution": False,
+                "parameters": {
+                    "candidate_bank_size": "Maximum deterministic candidate bank size",
+                    "random_seed": "Seed for deterministic candidate-bank sampling",
+                    "budget_cap_usd": "Backend smart optimization budget cap",
+                },
+                "best_for": "Pareto-frontier optimization with task-level evidence",
             }
         else:
             strategies[algorithm] = {
@@ -946,17 +990,17 @@ def get_version_info() -> dict[str, Any]:
             # Base features (always available)
             "grid_search": True,
             "random_search": True,
-            "tpe_optimization": any(
-                algorithm in algorithms for algorithm in ("tpe", "optuna", "optuna_tpe")
-            ),
+            "tpe_optimization": "tpe" in backend_routed_algorithms,
             "hyperband_optimization": "hyperband" in backend_routed_algorithms,
+            "frontier_scout_optimization": "frontier_scout"
+            in backend_routed_algorithms,
             "constraint_handling": True,
             "async_evaluation": True,
             "result_persistence": True,
             # Plugin-provided features (query registry)
             "bayesian_optimization": (
-                registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
-                or "bayesian" in algorithms  # Fallback: check if registered
+                "bayesian" in backend_routed_algorithms
+                or registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
             ),
             "multi_objective": True,
             "parallel_evaluation": True,

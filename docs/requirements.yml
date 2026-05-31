@@ -49,11 +49,13 @@
   name: "Optimizer portfolio"
   title: "Multiple optimization strategies available and discoverable"
   description: >
-    Offer grid, random, Optuna-based (TPE, CMA-ES, NSGA-II, grid), Bayesian, interactive,
-    and remote-guided optimizers with a registry for lookup and plugin extension.
+    Offer local grid and random optimizers, backend-routed smart strategies
+    (bayesian, tpe, hyperband, frontier_scout), interactive flows, and
+    remote-guided optimizers with lookup and plugin extension.
   acceptance_criteria:
     - Optimizers expose suggest/record interfaces compatible with orchestrator.
-    - Registry lists/loads built-in and plugin optimizers by name.
+    - Registry lists/loads local built-in and plugin optimizers by name.
+    - Backend-routed smart strategies are discoverable without local registration.
     - Remote/hybrid optimizers handle checkpointing and rate limiting when available.
   tags: [optimizers, registry, extensibility]
   priority: high
@@ -158,7 +160,7 @@
     plus telemetry emitters and visualization helpers for optimization results.
   acceptance_criteria:
     - Analytics modules can score runs, forecast costs, and detect regressions.
-    - Telemetry/observability components emit metrics for Optuna and trackers.
+    - Telemetry/observability components emit metrics for optimization runs and trackers.
     - Visualization helpers produce plots or analysis summaries from stored results.
   tags: [analytics, telemetry, visualization]
   priority: medium

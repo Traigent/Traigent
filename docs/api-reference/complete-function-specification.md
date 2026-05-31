@@ -179,7 +179,7 @@ async def optimize(
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `algorithm` | `str \| None` | Decorator default | Optimizer to use. Local defaults are `"grid"` and `"random"`; local Bayesian/Optuna strategies require their explicit feature flags, and `"hyperband"` is backend-routed only. |
+| `algorithm` | `str \| None` | Decorator default | Optimizer to use. Local execution supports `"grid"` and `"random"`. Smart strategies (`"bayesian"`, `"tpe"`, `"hyperband"`, `"frontier_scout"`) are backend-routed capabilities when enabled. |
 | `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |

@@ -11,7 +11,7 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 - **[Injection Modes](injection_modes.md)** - Different ways to integrate Traigent with your code
 - **[Interactive Optimization](interactive_optimization.md)** - Real-time optimization workflows and monitoring
 - **[Evaluation Guide](evaluation_guide.md)** - Measure and improve model performance
-- **[Optuna Integration](optuna_integration.md)** - Use the Optuna-backed optimizers and distributed coordinator
+- **[Smart Optimization](smart_optimization.md)** - Use backend-routed smart strategies while keeping local defaults simple
 - **[JS Bridge Guide](../guides/js-bridge.md)** - Orchestrate JavaScript/TypeScript agents from Python
 
 ## Learning Path
@@ -22,6 +22,6 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 
 **Tuned Variables**: Use [Tuned Variables](tuned_variables.md) to auto-detect parameters and discover callables
 
-**Advanced Users**: Explore [Agent Optimization](agent_optimization.md), [Interactive Optimization](interactive_optimization.md), and [Optuna Integration](optuna_integration.md)
+**Advanced Users**: Explore [Agent Optimization](agent_optimization.md), [Interactive Optimization](interactive_optimization.md), and [Smart Optimization](smart_optimization.md)
 
 **Evaluation**: Use [Evaluation Guide](evaluation_guide.md) to measure success

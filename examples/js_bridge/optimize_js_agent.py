@@ -5,7 +5,7 @@ Python-Orchestrated JS Agent Optimization Example
 This example demonstrates how to use Traigent's Python SDK to orchestrate
 optimization of a JavaScript agent. The Python SDK handles:
 
-- Configuration sampling (grid, random, bayesian, optuna)
+- Configuration sampling (local grid/random, plus backend-routed smart strategies when enabled)
 - Dataset management and subset selection
 - Parallel trial execution (via process pool)
 - Budget guardrails and early stopping

@@ -36,7 +36,7 @@ Core SDK source code, including:
 - `api/` public decorators and functions
 - `config/` configuration and injection providers
 - `core/` orchestration and optimized function
-- `optimizers/` algorithms (grid/random/optuna/interactive)
+- `optimizers/` algorithms and strategy plumbing (local grid/random, backend-routed smart metadata, interactive)
 - `evaluators/` dataset and evaluation
 - `integrations/` framework adapters (LangChain/OpenAI/Anthropic)
 - `cloud/` cloud client models (experimental)

@@ -6,12 +6,6 @@
     "issue_type": "IT-NA"
   },
   {
-    "file": "tests/unit/test_coverage_improvements.py",
-    "test_name": "test_optuna_emitter_unsubscribe_nonexistent",
-    "line": 152,
-    "issue_type": "IT-NA"
-  },
-  {
     "file": "tests/unit/api/test_types.py",
     "test_name": "test_plot_trade_offs",
     "line": 685,
@@ -33,12 +27,6 @@
     "file": "tests/unit/api/test_api_types.py",
     "test_name": "test_validate_valid_config",
     "line": 822,
-    "issue_type": "IT-NA"
-  },
-  {
-    "file": "tests/unit/scripts/test_migrate_optuna.py",
-    "test_name": "test_migration_dry_run",
-    "line": 10,
     "issue_type": "IT-NA"
   },
   {
@@ -129,18 +117,6 @@
     "file": "tests/unit/hooks/test_validator.py",
     "test_name": "test_validate_directory_accepts_path_object",
     "line": 874,
-    "issue_type": "IT-NA"
-  },
-  {
-    "file": "tests/unit/optimizers/test_pruners.py",
-    "test_name": "test_prune_with_cost_threshold_scalar_value_below_threshold",
-    "line": 228,
-    "issue_type": "IT-NA"
-  },
-  {
-    "file": "tests/unit/optimizers/test_pruners.py",
-    "test_name": "test_prune_with_cost_threshold_list_too_short",
-    "line": 335,
     "issue_type": "IT-NA"
   },
   {

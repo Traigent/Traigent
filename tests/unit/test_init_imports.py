@@ -13,8 +13,6 @@ import subprocess
 import sys
 import textwrap
 
-import pytest
-
 
 class TestTraigentInit:
     """Tests for traigent/__init__.py imports."""
@@ -339,8 +337,8 @@ class TestOptimizersInit:
 
         assert optimizers is not None
 
-    def test_pruners_available(self) -> None:
-        """Test that pruners are available."""
-        from traigent.optimizers import pruners
+    def test_local_smart_pruners_not_exported(self) -> None:
+        """Local smart-optimizer pruners are no longer part of the SDK surface."""
+        from traigent import optimizers
 
-        assert pruners is not None
+        assert not hasattr(optimizers, "pruners")

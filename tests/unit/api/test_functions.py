@@ -416,22 +416,6 @@ class TestGetAvailableStrategies:
         assert "random_seed" in random_info["parameters"]
 
     @patch("traigent.api.functions.list_optimizers")
-    def test_get_available_strategies_bayesian(self, mock_list_optimizers):
-        """Test Bayesian optimization strategy info."""
-        mock_list_optimizers.return_value = ["bayesian"]
-
-        strategies = get_available_strategies()
-
-        assert "bayesian" in strategies
-        bayesian_info = strategies["bayesian"]
-        assert bayesian_info["name"] == "Bayesian Optimization"
-        assert bayesian_info["supports_continuous"] is True
-        assert bayesian_info["supports_categorical"] is True
-        assert bayesian_info["deterministic"] is False
-        assert "acquisition_function" in bayesian_info["parameters"]
-        assert "initial_random_samples" in bayesian_info["parameters"]
-
-    @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_custom(self, mock_list_optimizers):
         """Test custom strategy info."""
         mock_list_optimizers.return_value = ["custom_algo"]
@@ -446,12 +430,12 @@ class TestGetAvailableStrategies:
     @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_multiple(self, mock_list_optimizers):
         """Test multiple strategies."""
-        mock_list_optimizers.return_value = ["grid", "random", "bayesian"]
+        mock_list_optimizers.return_value = ["grid", "random"]
 
         strategies = get_available_strategies()
 
-        assert len(strategies) == 3
-        assert all(algo in strategies for algo in ["grid", "random", "bayesian"])
+        assert len(strategies) == 2
+        assert all(algo in strategies for algo in ["grid", "random"])
 
     @patch("traigent.api.functions.list_optimizers")
     def test_get_available_strategies_excludes_hyperband_by_default(
@@ -466,15 +450,17 @@ class TestGetAvailableStrategies:
         assert set(strategies) == {"grid", "random"}
 
     @patch("traigent.api.functions.list_optimizers")
-    def test_get_available_strategies_includes_backend_hyperband_when_enabled(
+    def test_get_available_strategies_includes_backend_smart_algorithms_when_enabled(
         self, mock_list_optimizers
     ):
-        """Hyperband is exposed as an explicit backend-routed smart strategy."""
+        """Smart algorithms are exposed as explicit backend-routed strategies."""
         mock_list_optimizers.return_value = ["grid", "random"]
 
         with flag_registry.override(FlagNames.BACKEND_SMART_OPTIMIZERS, True):
             strategies = get_available_strategies()
 
+        assert {"bayesian", "frontier_scout", "hyperband", "tpe"} <= set(strategies)
+        assert "optuna" not in strategies
         assert "hyperband" in strategies
         hyperband_info = strategies["hyperband"]
         assert hyperband_info["name"] == "Hyperband"
@@ -482,6 +468,10 @@ class TestGetAvailableStrategies:
         assert hyperband_info["local_execution"] is False
         assert hyperband_info["deterministic"] is False
         assert "max_resource" in hyperband_info["parameters"]
+        frontier_info = strategies["frontier_scout"]
+        assert frontier_info["name"] == "FrontierScout"
+        assert frontier_info["backend_routed"] is True
+        assert "candidate_bank_size" in frontier_info["parameters"]
 
 
 class TestGetVersionInfo:
@@ -493,7 +483,7 @@ class TestGetVersionInfo:
     def test_get_version_info(self, mock_platform, mock_list_optimizers):
         """Test version info retrieval."""
         mock_platform.return_value = "Linux-5.10.0"
-        mock_list_optimizers.return_value = ["grid", "random", "bayesian"]
+        mock_list_optimizers.return_value = ["grid", "random"]
 
         info = get_version_info()
 
@@ -507,7 +497,7 @@ class TestGetVersionInfo:
         assert "global_config" in info
 
         # Check algorithms
-        assert info["algorithms"] == ["grid", "random", "bayesian"]
+        assert info["algorithms"] == ["grid", "random"]
 
         # Check features
         features = info["features"]
@@ -515,7 +505,8 @@ class TestGetVersionInfo:
         assert features["random_search"] is True
         assert features["tpe_optimization"] is False
         assert features["hyperband_optimization"] is False
-        assert features["bayesian_optimization"] is True
+        assert features["frontier_scout_optimization"] is False
+        assert features["bayesian_optimization"] is False
         assert features["multi_objective"] is True
         assert features["constraint_handling"] is True
         assert features["async_evaluation"] is True
@@ -534,10 +525,10 @@ class TestGetVersionInfo:
     @patch("traigent.api.functions.list_optimizers")
     @patch("platform.platform")
     @patch("sys.version", "3.9.0")
-    def test_get_version_info_reports_backend_hyperband_when_enabled(
+    def test_get_version_info_reports_backend_smart_algorithms_when_enabled(
         self, mock_platform, mock_list_optimizers
     ):
-        """Version info separates local algorithms from backend-routed Hyperband."""
+        """Version info separates local algorithms from backend-routed smart modes."""
         mock_platform.return_value = "Linux-5.10.0"
         mock_list_optimizers.return_value = ["grid", "random"]
 
@@ -545,7 +536,14 @@ class TestGetVersionInfo:
             info = get_version_info()
 
         assert info["algorithms"] == ["grid", "random"]
-        assert info["backend_routed_algorithms"] == ["hyperband"]
+        assert info["backend_routed_algorithms"] == [
+            "bayesian",
+            "frontier_scout",
+            "hyperband",
+            "tpe",
+        ]
+        assert info["features"]["bayesian_optimization"] is True
+        assert info["features"]["frontier_scout_optimization"] is True
         assert info["features"]["hyperband_optimization"] is True
 
 
