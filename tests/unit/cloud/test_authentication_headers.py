@@ -982,3 +982,19 @@ class TestIntegrationScenarios:
         mock_session.get.assert_called_once()
         call_kwargs = mock_session.get.call_args[1]
         assert "headers" in call_kwargs
+
+
+def test_api_key_headers_use_x_api_key_only_no_bearer(valid_api_key):
+    """API-key auth must send X-API-Key only, never Authorization: Bearer.
+
+    Regression for the SDK<->backend interop bug: emitting the API key as an
+    ``Authorization: Bearer`` token makes a backend that tries JWT auth first
+    parse the key as a JWT, fail, and reject the request before the valid
+    ``X-API-Key`` credential is considered.
+    """
+    manager = AuthManager(api_key=valid_api_key)
+
+    headers = manager._get_api_key_headers()
+
+    assert headers.get("X-API-Key") == valid_api_key
+    assert "Authorization" not in headers

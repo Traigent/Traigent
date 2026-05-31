@@ -810,12 +810,19 @@ class AuthManager:
         self._authenticated = False
 
     def _get_api_key_headers(self) -> dict[str, str]:
-        """Generate headers for API key authentication."""
+        """Generate headers for API key authentication.
+
+        Emit the API key ONLY via ``X-API-Key``. We intentionally do not also
+        set ``Authorization: Bearer <api_key>``: the ``Authorization`` scheme is
+        reserved for JWTs, and a backend that tries the Bearer credential first
+        parses the API key as a JWT, fails, and rejects the request before the
+        valid ``X-API-Key`` is considered. Sending one unambiguous credential
+        keeps API-key auth working across all routes.
+        """
         headers: dict[str, str] = {}
         api_key_value = self._get_api_key_for_internal_use()
         if api_key_value:
             headers["X-API-Key"] = api_key_value
-            headers["Authorization"] = f"Bearer {api_key_value}"
         return headers
 
     async def _get_jwt_headers(self) -> dict[str, str]:
