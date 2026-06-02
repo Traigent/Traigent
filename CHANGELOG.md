@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Content-logging opt-out for optimization logs** (#1069). `TRAIGENT_LOG_EXAMPLE_CONTENT=false`
+  (or `OptimizationLogger(..., log_example_content=False)`) keeps per-trial ids and metrics on
+  disk while omitting the per-example `query` / `response` / `expected` content — without having
+  to enable full privacy mode. Defaults to on for DX. The logger now also writes a `.gitignore`
+  (`*`) into the log root (`./.traigent/optimization_logs/` by default) so prompt/response
+  content isn't accidentally committed, and `docs/api-reference/telemetry.md` documents the
+  default location, what is persisted, and that on-disk redaction covers structured PII only.
+
 ### Removed
 - **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
 
