@@ -212,7 +212,7 @@ jobs:
 
       - name: Configure AWS credentials via OIDC
         if: inputs.environment != 'development' && vars.AWS_ROLE_TO_ASSUME != ''
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: github-actions-auto-tune-secure
@@ -404,7 +404,7 @@ jobs:
 
       - name: Create PR with improvements
         if: success() && inputs.apply_changes && steps.env.outputs.environment == 'staging' && !contains(github.ref, 'auto-tune/')
-        uses: peter-evans/create-pull-request@4e1beaa7521e8b457b572c090b25bd3db56bf1c5  # v5
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "feat: Apply auto-tuning improvements"
