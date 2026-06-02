@@ -470,6 +470,21 @@ def is_backend_offline() -> bool:
     return get_env_var("TRAIGENT_OFFLINE_MODE", "false").lower() == "true"
 
 
+def raise_if_backend_offline(operation: str = "This backend request") -> None:
+    """Fail closed when offline mode is enabled.
+
+    Standalone backend clients call this at their request boundary so that, with
+    ``TRAIGENT_OFFLINE_MODE=true``, a caller learns the request was deliberately
+    blocked (``OfflineModeError``) instead of silently leaking data off-box.
+    Evaluated per call so toggling the env var takes effect immediately.
+    """
+    if is_backend_offline():
+        # Imported lazily to avoid a module-level import cycle.
+        from traigent.utils.error_handler import OfflineModeError
+
+        raise OfflineModeError(operation)
+
+
 def is_development() -> bool:
     """Check if running in development mode."""
     return _get_environment_name() in {"dev", "development"}

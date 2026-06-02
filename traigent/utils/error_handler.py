@@ -79,6 +79,25 @@ class EvaluationError(TraigentError):
         )
 
 
+class OfflineModeError(TraigentError):
+    """Raised when a backend request is attempted while offline mode is enabled.
+
+    ``TRAIGENT_OFFLINE_MODE=true`` is an explicit "no backend egress" switch, so
+    standalone backend clients fail closed (raise) rather than silently sending
+    data off-box.
+    """
+
+    def __init__(self, operation: str = "This backend request") -> None:
+        super().__init__(
+            message=(
+                f"{operation} was blocked because TRAIGENT_OFFLINE_MODE is enabled "
+                "— no data is sent to the Traigent backend."
+            ),
+            fix="Unset TRAIGENT_OFFLINE_MODE (or set it to 'false') to allow backend communication.",
+            docs_link="https://github.com/Traigent/Traigent#offline-mode",
+        )
+
+
 class ErrorHandler:
     """Intelligent error handler that provides helpful fixes."""
 
