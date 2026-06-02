@@ -72,6 +72,22 @@ class StructuralConstraintSpec:
 
 
 @dataclass(frozen=True)
+class EvidenceRef:
+    """Reference to measured evidence supporting a recommendation."""
+
+    artifact_path: str
+    run_id: str
+    scope: str
+    metric: str
+    n: int
+    model: str
+    baseline: Any
+    candidate: Any
+    delta: float | None = None
+    limitations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TVarRecommendation:
     """A recommended additional TVAR the user may not have considered."""
 
@@ -81,6 +97,9 @@ class TVarRecommendation:
     category: str = ""  # "prompting" | "retrieval" | "model" | "evaluation"
     reasoning: str = ""
     impact_estimate: str = "medium"  # "high" | "medium" | "low"
+    entry_id: str = ""
+    evidence_refs: tuple[EvidenceRef, ...] = ()
+    apply_guidance: str = ""
 
     def to_range_code(self) -> str:
         """Generate Python code for the recommended range."""
