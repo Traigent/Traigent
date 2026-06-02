@@ -8,6 +8,11 @@ from io import StringIO
 from unittest.mock import MagicMock
 
 from traigent.config_generator.agent_classifier import ClassificationResult
+from traigent.config_generator.catalog import (
+    catalog_entries,
+    entry_to_recommendation,
+    load_catalog,
+)
 from traigent.config_generator.llm_backend import BudgetExhausted
 from traigent.config_generator.subsystems.tvar_recommendations import (
     generate_recommendations,
@@ -26,6 +31,17 @@ _READY_MADE_RECS = {
 }
 
 _CODE_GEN_STRUCTURAL_RECS = _READY_MADE_RECS - {"retrieval_k"}
+
+_CATALOG_ENTRY_KINDS = {
+    "rag.retrieval_k.v1": "cardinality",
+    "code_gen.schema_context.v1": "topology",
+    "code_gen.evidence_usage.v1": "topology",
+    "code_gen.fewshot_selector.v1": "topology",
+    "code_gen.generation_path.v1": "topology",
+    "code_gen.fewshot_k.v1": "cardinality",
+    "code_gen.candidate_count.v1": "cardinality",
+    "code_gen.repair_policy.v1": "topology",
+}
 
 
 def _make_tvar(name: str) -> TVarSpec:
@@ -207,6 +223,95 @@ class TestGenerateRecommendations:
             for ref in generation_path.evidence_refs
         )
         assert generation_path.impact_estimate == "low"
+
+    def test_catalog_backed_recommendation_lists_are_stable(self) -> None:
+        rag_classification = ClassificationResult(
+            agent_type="rag", confidence=0.9, source="heuristic", reasoning="test"
+        )
+        code_gen_classification = ClassificationResult(
+            agent_type="code_gen", confidence=0.9, source="heuristic", reasoning="test"
+        )
+
+        assert [
+            rec.name
+            for rec in generate_recommendations([], classification=rag_classification)
+        ] == [
+            "prompting_strategy",
+            "retriever",
+            "retrieval_k",
+            "chunk_size",
+            "reranker",
+            "context_format",
+        ]
+        assert [
+            rec.name
+            for rec in generate_recommendations(
+                [], classification=code_gen_classification
+            )
+        ] == [
+            "prompting_strategy",
+            "schema_context",
+            "evidence_usage",
+            "fewshot_selector",
+            "generation_path",
+            "fewshot_k",
+            "candidate_count",
+            "repair_policy",
+        ]
+
+
+class TestTVarCatalog:
+    def test_catalog_loads_and_validates_all_ready_made_entries(self) -> None:
+        entries = load_catalog()
+
+        assert len(entries) == 8
+        assert {entry["entry_id"] for entry in entries} == set(_CATALOG_ENTRY_KINDS)
+        for entry in entries:
+            assert entry["kind"] == _CATALOG_ENTRY_KINDS[entry["entry_id"]]
+            assert entry["effectuation_status"] == "manual_guidance"
+            assert entry["status"] == "active"
+            assert entry["schema_version"] == "1.0.0"
+            assert entry["version"] == "1.0.0"
+            assert entry["evidence_refs"]
+            assert entry["apply_guidance"].strip()
+
+    def test_catalog_filters_by_agent_type(self) -> None:
+        assert [entry["entry_id"] for entry in catalog_entries("rag")] == [
+            "rag.retrieval_k.v1"
+        ]
+        assert {entry["entry_id"] for entry in catalog_entries("code_gen")} == (
+            set(_CATALOG_ENTRY_KINDS) - {"rag.retrieval_k.v1"}
+        )
+
+    def test_entry_to_recommendation_round_trips_catalog_fields(self) -> None:
+        entry = next(
+            entry
+            for entry in load_catalog()
+            if entry["entry_id"] == "code_gen.schema_context.v1"
+        )
+
+        rec = entry_to_recommendation(entry)
+
+        assert rec.entry_id == entry["entry_id"]
+        assert rec.name == entry["name"]
+        assert rec.category == entry["category"]
+        assert rec.reasoning == entry["reasoning"]
+        assert rec.impact_estimate == entry["impact_estimate"]
+        assert rec.apply_guidance == entry["apply_guidance"]
+        assert len(rec.evidence_refs) == len(entry["evidence_refs"])
+        assert rec.evidence_refs[0].artifact_path == entry["evidence_refs"][0][
+            "artifact_path"
+        ]
+
+    def test_count_evidence_values_keep_public_types(self) -> None:
+        entry = next(
+            entry for entry in load_catalog() if entry["entry_id"] == "rag.retrieval_k.v1"
+        )
+
+        rec = entry_to_recommendation(entry)
+
+        assert rec.evidence_refs[0].baseline == 1
+        assert rec.evidence_refs[0].candidate == 5
 
 
 class TestCLIJsonRecommendationStability:

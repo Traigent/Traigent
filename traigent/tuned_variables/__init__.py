@@ -30,6 +30,7 @@ from .discovery import (
     discover_callables_by_decorator,
     filter_by_signature,
 )
+from .observation import build_tvar_observation, merge_tvar_observation_metadata
 
 __all__ = [
     # Callable discovery (existing)
@@ -37,6 +38,8 @@ __all__ = [
     "discover_callables",
     "discover_callables_by_decorator",
     "filter_by_signature",
+    "build_tvar_observation",
+    "merge_tvar_observation_metadata",
     # Tuned variable detection (new)
     "DataFlowDetectionStrategy",
     "ASTDetectionStrategy",

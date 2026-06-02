@@ -9,9 +9,10 @@ from __future__ import annotations
 from typing import Any
 
 from traigent.config_generator.agent_classifier import ClassificationResult
+from traigent.config_generator.catalog import catalog_entries, entry_to_recommendation
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.range_presets import get_preset_range
-from traigent.config_generator.types import EvidenceRef, TVarRecommendation, TVarSpec
+from traigent.config_generator.types import TVarRecommendation, TVarSpec
 from traigent.utils.llm_response_parsing import extract_json_array_text
 
 
@@ -58,25 +59,7 @@ def generate_recommendations(
 # Preset recommendation catalog
 # ---------------------------------------------------------------------------
 
-_DEMO_MODEL = "bedrock/us.anthropic.claude-haiku-4-5"
-_BIRD_ISOLATION = (
-    "TraigentDemo/examples/use-cases/bird-sql-optimizer/artifacts/isolation"
-)
-_TEXT2SQL_ISOLATION = (
-    "TraigentDemo/examples/use-cases/text2sql-sota-optimizer/artifacts/isolation"
-)
-_TEXT2SQL_SIGNIFICANCE = (
-    "TraigentDemo/examples/use-cases/text2sql-sota-optimizer/artifacts/significance"
-)
-_HOTPOTQA_ISOLATION = (
-    "TraigentDemo/examples/use-cases/hotpotqa-rag-optimizer/artifacts/isolation"
-)
-_SINGLE_SLICE_LIMITATIONS = ("single_slice", "not_sota")
-_LOW_JOINT_LIMITATIONS = ("low_or_zero_in_isolation", "gains_are_joint")
-_OBSERVATIONAL_LIMITATIONS = ("observational_not_causal",)
-
-
-_RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
+_LEGACY_RECOMMENDATION_TEMPLATES: dict[str, list[dict[str, Any]]] = {
     "rag": [
         {
             "name": "prompting_strategy",
@@ -89,34 +72,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "category": "retrieval",
             "reasoning": "Different retrieval methods (similarity, MMR, BM25, hybrid) affect answer quality",
             "impact": "high",
-        },
-        {
-            "name": "retrieval_k",
-            "category": "retrieval",
-            "reasoning": "Measured HotpotQA demo isolation showed answer EM improved when retrieving more context, but the slice is small.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_HOTPOTQA_ISOLATION}/retrieval_k.json",
-                    run_id="hotpotqa-rag-300-naive",
-                    scope="isolation",
-                    metric="answer_em",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=1,
-                    candidate=5,
-                    delta=0.10,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['retrieval_k'] and pass it into your retriever's top-k "
-                "or limit argument for each query. Keep the existing baseline "
-                "value covered and add eval cases across the 1..5 range. "
-                "NOTE: apply_config() only inserts the decorator + imports; "
-                "it does not change retriever calls."
-            ),
         },
         {
             "name": "chunk_size",
@@ -158,257 +113,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "reasoning": "Chain-of-thought and self-consistency improve code generation accuracy",
             "impact": "high",
         },
-        {
-            "name": "schema_context",
-            "category": "structural",
-            "reasoning": "Measured BIRD and Spider demo isolation runs showed schema context can materially improve SQL execution accuracy.",
-            "impact": "high",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/schema_context.json",
-                    run_id="bird-minidev-300-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="none",
-                    candidate="linked_top6",
-                    delta=0.40,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/schema_context.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="none",
-                    candidate="full_ddl_fk",
-                    delta=0.30,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['schema_context']: 'none' sends no schema; "
-                "'full_ddl_fk' injects full DDL+FK text; "
-                "'linked_top6'/'linked_top10' inject the top-k schema-linked "
-                "lines. Add eval coverage for the baseline and each branch. "
-                "NOTE: apply_config() only inserts the @traigent.optimize "
-                "decorator + imports; it does NOT wire this runtime branch - "
-                "you do."
-            ),
-        },
-        {
-            "name": "evidence_usage",
-            "category": "structural",
-            "reasoning": "Measured BIRD demo isolation showed appended evidence hints can improve execution accuracy on a small slice.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/evidence_usage.json",
-                    run_id="bird-minidev-300-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="hint_appended",
-                    delta=0.10,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['evidence_usage']: 'off' leaves the prompt unchanged; "
-                "'hint_appended' appends retrieved schema or value evidence as "
-                "a hint section before generation. Add eval coverage for off "
-                "and hint_appended. NOTE: apply_config() only inserts the "
-                "decorator + imports; runtime prompt wiring remains your code."
-            ),
-        },
-        {
-            "name": "fewshot_selector",
-            "category": "prompting",
-            "reasoning": "Spider significance data indicates few-shot selection matters, but this signal is observational rather than causal.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_SIGNIFICANCE}/importance.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="significance",
-                    metric="importance",
-                    n=200,
-                    model=_DEMO_MODEL,
-                    baseline="observational",
-                    candidate="fewshot_selector",
-                    delta=None,
-                    limitations=_OBSERVATIONAL_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['fewshot_selector']: 'random' samples examples "
-                "uniformly, 'masked_question_similarity' selects nearest "
-                "masked-question examples, and 'dail_selection' uses the DAIL "
-                "selection path. Add eval coverage for each selector because "
-                "this evidence is observational, not causal. NOTE: "
-                "apply_config() only inserts the decorator + imports; selector "
-                "implementation remains your code."
-            ),
-        },
-        {
-            "name": "generation_path",
-            "category": "prompting",
-            "reasoning": "Generation path had low or zero isolated lift in demos, but can contribute when combined with schema, examples, and repair.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/generation_path.json",
-                    run_id="bird-minidev-300-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="direct_dail",
-                    candidate="query_plan_cot",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/generation_path.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="direct_dail",
-                    candidate="query_plan_cot",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['generation_path']: 'direct_dail' uses direct SQL "
-                "generation, 'query_plan_cot' prompts for a plan before SQL, "
-                "and 'divide_conquer_cot' decomposes the question before "
-                "composing SQL. Add eval coverage for each path and interpret "
-                "isolated wins cautiously. NOTE: apply_config() only inserts "
-                "the decorator + imports; generation control flow remains "
-                "your code."
-            ),
-        },
-        {
-            "name": "fewshot_k",
-            "category": "prompting",
-            "reasoning": "Few-shot count had low or zero isolated lift in demos, but can matter jointly with selector and schema context.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/fewshot_k.json",
-                    run_id="bird-minidev-300-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=0,
-                    candidate=3,
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/fewshot_k.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=0,
-                    candidate=3,
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['fewshot_k'] and use it as the number of few-shot "
-                "examples emitted by whichever selector is active; 0 means no "
-                "examples. Add eval coverage for 0 and the upper range. NOTE: "
-                "apply_config() only inserts the decorator + imports; example "
-                "selection remains your code."
-            ),
-        },
-        {
-            "name": "candidate_count",
-            "category": "generation",
-            "reasoning": "Spider significance data indicates candidate count matters, but this signal is observational rather than causal.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_SIGNIFICANCE}/importance.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="significance",
-                    metric="importance",
-                    n=200,
-                    model=_DEMO_MODEL,
-                    baseline="observational",
-                    candidate="candidate_count",
-                    delta=None,
-                    limitations=_OBSERVATIONAL_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['candidate_count'] and generate that many candidate SQL "
-                "or program outputs before your selection or execution step; "
-                "1 preserves single-sample behavior. Add eval coverage for "
-                "1..3. NOTE: apply_config() only inserts the decorator + "
-                "imports; multi-candidate generation remains your code."
-            ),
-        },
-        {
-            "name": "repair_policy",
-            "category": "repair",
-            "reasoning": "Repair policy had low or zero isolated lift in demos, but retry behavior can help when combined with candidate generation and schema context.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/repair_policy.json",
-                    run_id="bird-minidev-300-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="sqlite_error_or_empty_once",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/repair_policy.json",
-                    run_id="text2sql-spider-200-naive",
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="sqlite_error_or_empty_once",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['repair_policy']: 'off' returns the first generation, "
-                "'sqlite_error_once' retries once when SQLite reports an "
-                "error, and 'sqlite_error_or_empty_once' retries once on "
-                "error or empty result. Add eval coverage for each policy. "
-                "NOTE: apply_config() only inserts the decorator + imports; "
-                "retry handling remains your code."
-            ),
-        },
     ],
     "summarization": [
         {
@@ -448,13 +152,80 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
+_RECOMMENDATION_ORDER: dict[str, tuple[str, ...]] = {
+    "rag": (
+        "prompting_strategy",
+        "retriever",
+        "retrieval_k",
+        "chunk_size",
+        "reranker",
+        "context_format",
+    ),
+    "chat": ("prompting_strategy", "context_format"),
+    "code_gen": (
+        "prompting_strategy",
+        "schema_context",
+        "evidence_usage",
+        "fewshot_selector",
+        "generation_path",
+        "fewshot_k",
+        "candidate_count",
+        "repair_policy",
+    ),
+    "summarization": ("prompting_strategy", "context_format"),
+    "classification": ("few_shot_count", "prompting_strategy"),
+    "general_llm": ("prompting_strategy",),
+}
+
+
+def _catalog_recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+    templates: list[dict[str, Any]] = []
+    for entry in catalog_entries(agent_type):
+        rec = entry_to_recommendation(entry)
+        templates.append(
+            {
+                "name": rec.name,
+                "category": rec.category,
+                "reasoning": rec.reasoning,
+                "impact": rec.impact_estimate,
+                "entry_id": rec.entry_id,
+                "evidence_refs": rec.evidence_refs,
+                "apply_guidance": rec.apply_guidance,
+            }
+        )
+    return templates
+
+
+def _recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+    templates = [
+        dict(template)
+        for template in _LEGACY_RECOMMENDATION_TEMPLATES.get(agent_type, ())
+    ]
+    templates.extend(_catalog_recommendation_templates(agent_type))
+
+    order = _RECOMMENDATION_ORDER.get(agent_type, ())
+    if not order:
+        return templates
+
+    order_index = {name: index for index, name in enumerate(order)}
+    return sorted(
+        templates,
+        key=lambda template: order_index.get(str(template.get("name", "")), len(order)),
+    )
+
+
+_RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
+    agent_type: _recommendation_templates(agent_type)
+    for agent_type in _RECOMMENDATION_ORDER
+}
+
 
 def _preset_recommendations(
     agent_type: str,
     existing_names: set[str],
 ) -> list[TVarRecommendation]:
     """Generate recommendations from presets."""
-    templates = _RECOMMENDATIONS.get(agent_type, [])
+    templates = _recommendation_templates(agent_type)
     recs: list[TVarRecommendation] = []
 
     for tmpl in templates:
