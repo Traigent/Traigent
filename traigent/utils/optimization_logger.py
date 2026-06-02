@@ -185,8 +185,33 @@ def _extract_output_text(output: Any) -> str | None:
     return None
 
 
-def _serialize_example_result(ex: Any) -> dict[str, Any]:
-    """Serialize a per-example result (dataclass or dict) for jsonl logging."""
+ENV_LOG_EXAMPLE_CONTENT = "TRAIGENT_LOG_EXAMPLE_CONTENT"
+_CONTENT_LOGGING_DISABLED_VALUES = {"0", "false", "no", "off", ""}
+
+
+def _should_log_example_content() -> bool:
+    """Whether per-example query/response/expected content is persisted to disk.
+
+    Controlled by ``TRAIGENT_LOG_EXAMPLE_CONTENT`` and enabled by default (for
+    DX). Set it to a falsey value (``0`` / ``false`` / ``no`` / ``off``) to keep
+    ids and metrics on disk but omit prompt/response/expected content — without
+    having to enable full privacy mode. Note that even with content logging on,
+    on-disk redaction covers structured PII only (emails, cards, tokens), not
+    free-text bodies.
+    """
+    raw = os.getenv(ENV_LOG_EXAMPLE_CONTENT)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _CONTENT_LOGGING_DISABLED_VALUES
+
+
+def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str, Any]:
+    """Serialize a per-example result (dataclass or dict) for jsonl logging.
+
+    When ``log_content`` is False, the content-bearing ``query`` / ``response`` /
+    ``expected`` fields are emitted as ``None`` (ids and metrics are retained), so
+    no prompt/response/expected text is written to disk.
+    """
     if isinstance(ex, dict):
         metrics = ex.get("metrics", {})
         actual = ex.get("actual_output")
@@ -198,9 +223,13 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
         )
         return {
             "example_id": ex.get("example_id"),
-            "query": actual.get("query") if isinstance(actual, dict) else None,
-            "response": _extract_output_text(actual),
-            "expected": ex.get("expected_output"),
+            "query": (
+                (actual.get("query") if isinstance(actual, dict) else None)
+                if log_content
+                else None
+            ),
+            "response": _extract_output_text(actual) if log_content else None,
+            "expected": ex.get("expected_output") if log_content else None,
             "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
             "cost_usd": ex.get("cost_usd", 0.0),
             "latency_ms": ex.get("latency_ms", 0.0),
@@ -214,9 +243,13 @@ def _serialize_example_result(ex: Any) -> dict[str, Any]:
         error = getattr(ex, "error", None)
     return {
         "example_id": getattr(ex, "example_id", None),
-        "query": actual.get("query") if isinstance(actual, dict) else None,
-        "response": _extract_output_text(actual),
-        "expected": getattr(ex, "expected_output", None),
+        "query": (
+            (actual.get("query") if isinstance(actual, dict) else None)
+            if log_content
+            else None
+        ),
+        "response": _extract_output_text(actual) if log_content else None,
+        "expected": getattr(ex, "expected_output", None) if log_content else None,
         "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
         "cost_usd": getattr(ex, "cost_usd", 0.0),
         "latency_ms": getattr(ex, "latency_ms", 0.0),
@@ -236,6 +269,7 @@ class OptimizationLogger:
         execution_mode: ExecutionMode | str,
         base_path: Path | None = None,
         buffer_size: int = 10,
+        log_example_content: bool | None = None,
     ) -> None:
         self.experiment_name = self._sanitize_name(experiment_name)
         self.session_id = session_id
@@ -245,6 +279,13 @@ class OptimizationLogger:
             Path(base_path) if base_path else self._resolve_default_base_path()
         )
         self.buffer_size = buffer_size
+        # Persist per-example query/response/expected content to disk? Defaults to
+        # the TRAIGENT_LOG_EXAMPLE_CONTENT env switch (on unless explicitly disabled).
+        self.log_example_content = (
+            _should_log_example_content()
+            if log_example_content is None
+            else log_example_content
+        )
 
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         session_short = session_id[:8] if len(session_id) >= 8 else session_id
@@ -311,6 +352,24 @@ class OptimizationLogger:
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
+        self._write_log_dir_gitignore()
+
+    def _write_log_dir_gitignore(self) -> None:
+        """Drop a ``.gitignore`` into the log root so per-example content (which
+        may contain prompts/responses) isn't one stray ``git add .`` from being
+        committed. Best-effort; never fails a run."""
+        try:
+            self.base_path.mkdir(parents=True, exist_ok=True)
+            gitignore = self.base_path / ".gitignore"
+            if not gitignore.exists():
+                gitignore.write_text(
+                    "# Auto-generated by Traigent. Optimization logs may contain\n"
+                    "# per-example prompt/response content; keep them out of git.\n"
+                    "*\n",
+                    encoding="utf-8",
+                )
+        except OSError:
+            logger.debug("Could not write .gitignore to %s", self.base_path)
 
     @contextmanager
     def _file_lock(self, file_path: Path):
@@ -491,7 +550,8 @@ class OptimizationLogger:
             )
             if example_results:
                 serialized_examples = [
-                    _serialize_example_result(ex) for ex in example_results
+                    _serialize_example_result(ex, log_content=self.log_example_content)
+                    for ex in example_results
                 ]
                 trial_data["example_results"] = serialized_examples
             self._append_jsonl(trials_file, trial_data)
