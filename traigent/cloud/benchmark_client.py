@@ -15,6 +15,7 @@ from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -135,6 +136,7 @@ class BenchmarkClient:
     # ------------------------------------------------------------------
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise_if_backend_offline("BenchmarkClient request")
         full_url = f"{self.config.backend_origin}{self.config.api_path}{path}"
         encoded = json.dumps(payload).encode("utf-8")
         http_req = request.Request(

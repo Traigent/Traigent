@@ -30,6 +30,7 @@ from traigent.evaluation.dtos import (
     ScoreRecordDTO,
     ScoreRecordListResponse,
 )
+from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -597,6 +598,7 @@ class EvaluationClient:
     def _request_json_sync(
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        raise_if_backend_offline("EvaluationClient request")
         encoded_payload = None
         if payload is not None:
             encoded_payload = json.dumps(payload).encode("utf-8")
