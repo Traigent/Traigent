@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import MagicMock
 
+from traigent.cloud.client import PriorsBundle
 from traigent.config_generator.agent_classifier import ClassificationResult
 from traigent.config_generator.catalog import (
     catalog_entries,
@@ -46,6 +47,32 @@ _CATALOG_ENTRY_KINDS = {
 
 def _make_tvar(name: str) -> TVarSpec:
     return TVarSpec(name=name, range_type="Range", range_kwargs={"low": 0, "high": 1})
+
+
+def _classification(agent_type: str) -> ClassificationResult:
+    return ClassificationResult(
+        agent_type=agent_type,
+        confidence=0.9,
+        source="heuristic",
+        reasoning="test",
+    )
+
+
+def _value_prior_row(
+    tvar_name: str,
+    values: list[dict],
+    *,
+    support_n: int = 100,
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "schema_version": "1.0.0",
+        "tvar_name": tvar_name,
+        "metric": "accuracy",
+        "value_priors": values,
+        "support_n": support_n,
+        "confidence": confidence,
+    }
 
 
 class TestGenerateRecommendations:
@@ -260,6 +287,101 @@ class TestGenerateRecommendations:
         ]
 
 
+class TestLearnedPriorAugmentation:
+    def test_high_support_priors_reorder_and_annotate_recommended_values(
+        self,
+    ) -> None:
+        bundle = PriorsBundle(
+            value_priors=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "full_ddl_fk",
+                            "score": 0.52,
+                            "support_n": 75,
+                            "confidence": 0.82,
+                        },
+                        {
+                            "value": "linked_top10",
+                            "score": 0.91,
+                            "support_n": 91,
+                            "confidence": 0.87,
+                        },
+                    ],
+                ),
+            ),
+            correlations=(),
+        )
+
+        recs = generate_recommendations(
+            [],
+            classification=_classification("code_gen"),
+            priors_bundle=bundle,
+        )
+        rec = next(rec for rec in recs if rec.name == "schema_context")
+
+        assert rec.recommended_values == ("linked_top10", "full_ddl_fk")
+        assert rec.range_kwargs["values"] == [
+            "linked_top10",
+            "full_ddl_fk",
+            "none",
+            "linked_top6",
+        ]
+
+    def test_low_support_priors_are_ignored(self) -> None:
+        classification = _classification("code_gen")
+        baseline = generate_recommendations(
+            [],
+            classification=classification,
+            priors_bundle=PriorsBundle.empty(),
+        )
+        low_support_bundle = PriorsBundle(
+            value_priors=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "linked_top10",
+                            "score": 0.99,
+                            "support_n": 2,
+                            "confidence": 0.95,
+                        }
+                    ],
+                    support_n=2,
+                    confidence=0.95,
+                ),
+            ),
+            correlations=(),
+        )
+
+        recs = generate_recommendations(
+            [],
+            classification=classification,
+            priors_bundle=low_support_bundle,
+        )
+
+        assert recs == baseline
+        assert all(not rec.recommended_values for rec in recs)
+
+    def test_no_priors_keeps_phase_one_catalog_output(self) -> None:
+        recs = generate_recommendations(
+            [],
+            classification=_classification("rag"),
+            priors_bundle=PriorsBundle.empty(),
+        )
+
+        assert [rec.name for rec in recs] == [
+            "prompting_strategy",
+            "retriever",
+            "retrieval_k",
+            "chunk_size",
+            "reranker",
+            "context_format",
+        ]
+        assert all(not rec.recommended_values for rec in recs)
+
+
 class TestTVarCatalog:
     def test_catalog_loads_and_validates_all_ready_made_entries(self) -> None:
         entries = load_catalog()
@@ -343,6 +465,50 @@ class TestCLIJsonRecommendationStability:
         }
         assert "evidence_refs" not in data["recommendations"][0]
         assert "apply_guidance" not in data["recommendations"][0]
+
+    def test_recommendation_keys_unchanged_with_prior_hints(self) -> None:
+        from traigent.cli.generate_config_command import _output_json
+
+        bundle = PriorsBundle(
+            value_priors=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "linked_top10",
+                            "score": 0.91,
+                            "support_n": 91,
+                            "confidence": 0.87,
+                        }
+                    ],
+                ),
+            ),
+            correlations=(),
+        )
+        rec = next(
+            r
+            for r in generate_recommendations(
+                [],
+                classification=_classification("code_gen"),
+                priors_bundle=bundle,
+            )
+            if r.name == "schema_context"
+        )
+        assert rec.recommended_values == ("linked_top10",)
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            _output_json(AutoConfigResult(recommendations=(rec,)))
+
+        data = json.loads(buf.getvalue())
+        assert set(data["recommendations"][0]) == {
+            "name",
+            "range_code",
+            "category",
+            "impact",
+            "reasoning",
+        }
+        assert "recommended_values" not in data["recommendations"][0]
 
 
 class TestLLMEnrichment:

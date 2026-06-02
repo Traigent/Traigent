@@ -100,6 +100,7 @@ class TVarRecommendation:
     entry_id: str = ""
     evidence_refs: tuple[EvidenceRef, ...] = ()
     apply_guidance: str = ""
+    recommended_values: tuple[Any, ...] = ()
 
     def to_range_code(self) -> str:
         """Generate Python code for the recommended range."""
