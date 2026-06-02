@@ -24,6 +24,7 @@ from traigent.core_metrics.dtos import (
     ProjectPricingCatalogDTO,
     ProjectUsageDashboardDTO,
 )
+from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -300,6 +301,7 @@ class CoreMetricsClient:
     def _request_json_sync(
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        raise_if_backend_offline("CoreMetricsClient request")
         encoded_payload = None
         if payload is not None:
             encoded_payload = json.dumps(payload).encode("utf-8")
@@ -346,6 +348,7 @@ class CoreMetricsClient:
     def _request_text_sync(
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> tuple[str, dict[str, str]]:
+        raise_if_backend_offline("CoreMetricsClient request")
         encoded_payload = None
         if payload is not None:
             encoded_payload = json.dumps(payload).encode("utf-8")

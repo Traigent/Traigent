@@ -212,6 +212,33 @@ You can customize the storage location:
 )
 ```
 
+### Per-example content in optimization logs
+
+By default, optimization runs also write per-trial logs under
+`./.traigent/optimization_logs/` (the **project working directory**, unless
+`TRAIGENT_OPTIMIZATION_LOG_DIR` / `TRAIGENT_RESULTS_FOLDER` relocate it). Each
+example record includes the input **query**, the model **response**, and the
+**expected** output as free text, alongside ids and metrics.
+
+> ⚠️ On-disk redaction covers **structured PII only** (emails, Luhn-checked
+> cards, API keys / bearer tokens, etc.). Free-text content in prompts and
+> responses (names, addresses, proprietary data) is stored **verbatim**.
+
+To keep ids and metrics while omitting that content — without enabling full
+privacy mode — disable content logging:
+
+```bash
+export TRAIGENT_LOG_EXAMPLE_CONTENT=false   # also accepts 0 / no / off
+```
+
+or per-logger via `OptimizationLogger(..., log_example_content=False)`. With it
+disabled, trial jsonl retains `example_id`, `accuracy`, `cost_usd`, `latency_ms`
+and `error`, but `query` / `response` / `expected` are `null`.
+
+Traigent writes a `.gitignore` (`*`) into the log root so this content is not
+accidentally committed, but you should still keep `.traigent/` out of version
+control and CI artifact collection in privacy-sensitive projects.
+
 ## Telemetry Listeners
 
 You can subscribe to telemetry events for your own monitoring:

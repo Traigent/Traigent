@@ -17,6 +17,15 @@ from traigent.evaluation import (
 from traigent.utils.exceptions import AuthenticationError, TraigentConnectionError
 
 
+@pytest.fixture(autouse=True)
+def _online_backend(jwt_development_mode, monkeypatch):
+    """These tests exercise the online client request path, so they opt out of
+    the suite-wide TRAIGENT_OFFLINE_MODE=true default (#1068). The transport is
+    mocked, so no real egress occurs; depends on jwt_development_mode so this
+    override runs after it."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_evaluation_client_lists_and_mutates_evaluators():
     calls: list[tuple[str, str, dict | None]] = []
 
@@ -210,18 +219,18 @@ def test_evaluation_client_scores_polling_and_benchmark_helpers(monkeypatch):
                     "status": status,
                     "source": "evaluator",
                     "input_snapshot": {},
-                    "output_payload": {"numeric_value": 0.9}
-                    if status == "completed"
-                    else None,
+                    "output_payload": (
+                        {"numeric_value": 0.9} if status == "completed" else None
+                    ),
                     "score_record_ids": ["score_1"] if status == "completed" else [],
                     "input_tokens": 10,
                     "output_tokens": 5,
                     "total_tokens": 15,
                     "cost_usd": 0.002,
                     "latency_ms": 120,
-                    "observability_trace_id": "trace_evalrun_1"
-                    if status == "completed"
-                    else None,
+                    "observability_trace_id": (
+                        "trace_evalrun_1" if status == "completed" else None
+                    ),
                     "created_at": "2026-03-10T12:00:00+00:00",
                     "updated_at": "2026-03-10T12:01:00+00:00",
                 }

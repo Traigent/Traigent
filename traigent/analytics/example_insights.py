@@ -96,6 +96,11 @@ class ExampleInsightsClient:
         Returns:
             Configured httpx.AsyncClient instance
         """
+        # Every request method funnels through here, so this is the single
+        # chokepoint that fails closed when offline mode is enabled (#1068).
+        from traigent.utils.env_config import raise_if_backend_offline
+
+        raise_if_backend_offline("ExampleInsightsClient request")
         if self._client is None:
             headers = {}
             if self.api_key:
