@@ -18,6 +18,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 - **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
 
+### Fixed
+- **`BenchmarkClient` now attributes generation to the active project** (#1066). It read
+  `TRAIGENT_PROJECT_ID` but applied it to the bare `/api/v1` root, which `scope_api_path`
+  leaves unrewritten — so `generate_sync` posted to the unscoped `/api/v1/datasets/generate`
+  and the benchmark was not project-scoped (a tenancy / data-isolation gap for multi-project
+  tenants). With a project set it now targets the project-scoped backend route
+  `POST /api/v1beta/projects/{id}/benchmarks/generate` (the `/datasets/generate` alias is not
+  project-scoped on the backend; the project-scoped generate route is registered under
+  `benchmarks`). With no project set, behavior is unchanged.
+
 ### Security
 - **Standalone backend clients now honor `TRAIGENT_OFFLINE_MODE`** (#1068). Seven publicly-exported clients — `EvaluationClient`, `PromptManagementClient`, `EnterpriseAdminClient`, `ProjectManagementClient`, `CoreMetricsClient`, `BenchmarkClient`, `ExampleInsightsClient` — previously ignored offline mode and performed outbound HTTP (carrying evaluator definitions, prompt text, tenant/admin records, per-example features) even with `TRAIGENT_OFFLINE_MODE=true`, breaking the documented air-gapped guarantee. They now **fail closed** at the request boundary with a clear `OfflineModeError` (new, `traigent.utils.error_handler`) via the shared `raise_if_backend_offline()` guard — so a caller learns the request was deliberately blocked instead of silently leaking off-box. Behavior is unchanged when offline mode is off.
 - SDK auth and security policy checks now use `treat_as_production_policy()`, which treats unset or unknown environment names as production-safe by default. Local development JWT validation and mock password auth now require an explicit non-production environment such as `ENVIRONMENT=development` or `TRAIGENT_ENV=development`.
