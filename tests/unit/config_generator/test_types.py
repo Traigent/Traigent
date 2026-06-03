@@ -7,6 +7,7 @@ import pytest
 from traigent.config_generator.types import (
     AutoConfigResult,
     BenchmarkSpec,
+    EvidenceRef,
     ObjectiveSpec,
     SafetySpec,
     StructuralConstraintSpec,
@@ -112,6 +113,36 @@ class TestStructuralConstraintSpec:
         assert sc.source == "template"
 
 
+class TestEvidenceRef:
+    def test_creation_defaults(self) -> None:
+        ref = EvidenceRef(
+            artifact_path="artifacts/isolation/schema_context.json",
+            run_id="run-1",
+            scope="isolation",
+            metric="execution_accuracy",
+            n=10,
+            model="bedrock/us.anthropic.claude-haiku-4-5",
+            baseline="none",
+            candidate="linked_top6",
+        )
+        assert ref.delta is None
+        assert ref.limitations == ()
+
+    def test_frozen(self) -> None:
+        ref = EvidenceRef(
+            artifact_path="artifacts/isolation/schema_context.json",
+            run_id="run-1",
+            scope="isolation",
+            metric="execution_accuracy",
+            n=10,
+            model="model",
+            baseline="none",
+            candidate="linked_top6",
+        )
+        with pytest.raises(AttributeError):
+            ref.metric = "other"  # type: ignore[misc]
+
+
 class TestTVarRecommendation:
     def test_to_range_code(self) -> None:
         rec = TVarRecommendation(
@@ -128,6 +159,31 @@ class TestTVarRecommendation:
         rec = TVarRecommendation(name="x", range_type="Range")
         assert rec.impact_estimate == "medium"
         assert rec.category == ""
+        assert rec.entry_id == ""
+        assert rec.evidence_refs == ()
+        assert rec.apply_guidance == ""
+
+    def test_with_evidence_and_guidance(self) -> None:
+        ref = EvidenceRef(
+            artifact_path="artifacts/isolation/schema_context.json",
+            run_id="run-1",
+            scope="isolation",
+            metric="execution_accuracy",
+            n=10,
+            model="model",
+            baseline="none",
+            candidate="linked_top6",
+            delta=0.4,
+            limitations=("single_slice", "not_sota"),
+        )
+        rec = TVarRecommendation(
+            name="schema_context",
+            range_type="Choices",
+            evidence_refs=(ref,),
+            apply_guidance="Manual wiring required.",
+        )
+        assert rec.evidence_refs == (ref,)
+        assert rec.apply_guidance == "Manual wiring required."
 
 
 class TestAutoConfigResult:

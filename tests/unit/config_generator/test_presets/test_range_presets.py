@@ -38,11 +38,43 @@ class TestGetPresetRange:
         assert preset is not None
         assert preset["range_type"] == "IntRange"
 
+    def test_retrieval_k(self) -> None:
+        preset = get_preset_range("retrieval_k")
+        assert preset is not None
+        assert preset["range_type"] == "IntRange"
+        assert preset["kwargs"] == {"low": 1, "high": 5}
+
     def test_prompting_strategy(self) -> None:
         preset = get_preset_range("prompting_strategy")
         assert preset is not None
         assert preset["range_type"] == "Choices"
         assert "direct" in preset["kwargs"]["values"]
+
+    def test_structural_recommendation_presets(self) -> None:
+        schema = get_preset_range("schema_context")
+        assert schema is not None
+        assert schema["range_type"] == "Choices"
+        assert schema["kwargs"]["values"] == [
+            "none",
+            "full_ddl_fk",
+            "linked_top6",
+            "linked_top10",
+        ]
+
+        fewshot = get_preset_range("fewshot_k")
+        assert fewshot is not None
+        assert fewshot["range_type"] == "IntRange"
+        assert fewshot["kwargs"]["low"] == 0
+        assert fewshot["kwargs"]["high"] == 10
+
+        candidates = get_preset_range("candidate_count")
+        assert candidates is not None
+        assert candidates["range_type"] == "IntRange"
+        assert candidates["kwargs"] == {"low": 1, "high": 3}
+
+    def test_retriever_reranker_aliases(self) -> None:
+        assert get_preset_range("retriever") == get_preset_range("retriever_type")
+        assert get_preset_range("reranker") == get_preset_range("reranker_model")
 
     def test_unknown_returns_none(self) -> None:
         assert get_preset_range("unknown_variable") is None
@@ -59,9 +91,11 @@ class TestGetPresetRange:
             "chunk_overlap_ratio",
             "max_tokens",
             "k",
+            "retrieval_k",
             "chunk_size",
             "chunk_overlap",
             "few_shot_count",
+            "fewshot_k",
             "batch_size",
             "n",
             "seed",
@@ -69,8 +103,16 @@ class TestGetPresetRange:
             "model",
             "prompting_strategy",
             "context_format",
+            "schema_context",
+            "evidence_usage",
+            "fewshot_selector",
+            "generation_path",
+            "candidate_count",
+            "repair_policy",
+            "retriever",
             "retriever_type",
             "embedding_model",
+            "reranker",
             "reranker_model",
         ],
     )
@@ -86,6 +128,8 @@ class TestHasPreset:
     def test_known(self) -> None:
         assert has_preset("temperature") is True
         assert has_preset("model") is True
+        assert has_preset("retriever") is True
+        assert has_preset("reranker") is True
 
     def test_unknown(self) -> None:
         assert has_preset("nonexistent") is False
