@@ -7,45 +7,55 @@
   "definitions": {
     "RangeType": {
       "type": "string",
-      "enum": ["Range", "IntRange", "LogRange", "Choices"],
+      "enum": [
+        "Range",
+        "IntRange",
+        "LogRange",
+        "Choices"
+      ],
       "description": "Supported tuned-variable range constructor."
     },
     "CatalogKind": {
       "type": "string",
-      "enum": ["value", "cardinality", "topology", "policy"],
+      "enum": [
+        "value",
+        "cardinality",
+        "topology",
+        "policy"
+      ],
       "description": "Kind of recommendation represented by this catalog entry."
     },
     "EffectuationStatus": {
       "type": "string",
-      "enum": ["executable", "manual_guidance", "advisory"],
+      "enum": [
+        "executable",
+        "manual_guidance",
+        "advisory"
+      ],
       "description": "Whether the recommendation can be applied automatically."
     },
     "ImpactEstimate": {
       "type": "string",
-      "enum": ["high", "medium", "low"],
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
       "description": "Qualitative impact estimate from the supporting evidence."
     },
     "CatalogStatus": {
       "type": "string",
-      "enum": ["active", "deprecated", "experimental"],
+      "enum": [
+        "active",
+        "deprecated",
+        "experimental"
+      ],
       "description": "Lifecycle status for this catalog entry."
     },
     "EvidenceRef": {
       "type": "object",
-      "description": "Reference to supporting aggregate evidence for the recommendation.",
+      "description": "Reference to supporting aggregate evidence for the recommendation. Public-safe provenance only: scope/metric/n/model/baseline/candidate/delta/limitations. Internal artifact paths and run IDs are intentionally excluded from this public contract.",
       "properties": {
-        "artifact_path": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1024,
-          "description": "Path or URI for the evidence artifact."
-        },
-        "run_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256,
-          "description": "Run identifier that produced the evidence."
-        },
         "scope": {
           "type": "string",
           "minLength": 1,
@@ -82,7 +92,10 @@
           "description": "Candidate configuration or value summarized by the evidence."
         },
         "delta": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "description": "Observed candidate-baseline delta for the referenced metric."
         },
         "limitations": {
@@ -95,8 +108,6 @@
         }
       },
       "required": [
-        "artifact_path",
-        "run_id",
         "scope",
         "metric",
         "n",
@@ -202,7 +213,9 @@
   "allOf": [
     {
       "if": {
-        "required": ["effectuation_strategy"]
+        "required": [
+          "effectuation_strategy"
+        ]
       },
       "then": {
         "properties": {

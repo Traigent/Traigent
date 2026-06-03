@@ -22,8 +22,9 @@ from traigent.utils.llm_response_parsing import extract_json_array_text
 if TYPE_CHECKING:
     from traigent.cloud.client import PriorsBundle
 
-_MIN_PRIOR_SUPPORT_N = 30
-_MIN_PRIOR_CONFIDENCE = 0.60
+# The backend returns priors already gated (support/confidence) AND ordered by
+# score; the SDK consumes them as-is and never embeds gating policy/thresholds
+# or re-sorts (keeps the decision policy server-side, avoids client/server drift).
 _PRIORS_FETCH_TIMEOUT_SECONDS = 2.0
 _RECOMMENDATION_PRIORS_CACHE: dict[tuple[str, tuple[str, ...]], PriorsBundle] = {}
 
@@ -318,42 +319,28 @@ def _gated_value_priors_by_tvar(
 ) -> dict[str, tuple[tuple[Any, float], ...]]:
     priors_by_name: dict[str, tuple[tuple[Any, float], ...]] = {}
     for row in rows:
-        if not _passes_prior_gate(row):
-            continue
-
         tvar_name = str(row.get("tvar_name") or "").strip()
         value_priors = row.get("value_priors")
         if not tvar_name or not isinstance(value_priors, Sequence):
             continue
 
-        gated: list[tuple[Any, float]] = []
+        # The backend already gated + ordered these; consume in server order,
+        # keeping only well-formed (value+score) items. No thresholds, no resort.
+        usable: list[tuple[Any, float]] = []
         for item in value_priors:
-            if not isinstance(item, Mapping) or not _passes_prior_gate(item):
-                continue
-            if "value" not in item:
+            if not isinstance(item, Mapping) or "value" not in item:
                 continue
             try:
                 score = float(item["score"])
             except (TypeError, ValueError):
                 continue
-            gated.append((item["value"], score))
+            usable.append((item["value"], score))
 
-        ordered = _dedupe_prior_values(
-            sorted(gated, key=lambda item: item[1], reverse=True)
-        )
+        ordered = _dedupe_prior_values(usable)
         if ordered:
             priors_by_name[tvar_name] = tuple(ordered)
 
     return priors_by_name
-
-
-def _passes_prior_gate(item: Mapping[str, Any]) -> bool:
-    try:
-        support_n = int(item.get("support_n", 0))
-        confidence = float(item.get("confidence", 0.0))
-    except (TypeError, ValueError):
-        return False
-    return support_n >= _MIN_PRIOR_SUPPORT_N and confidence >= _MIN_PRIOR_CONFIDENCE
 
 
 def _dedupe_prior_values(
