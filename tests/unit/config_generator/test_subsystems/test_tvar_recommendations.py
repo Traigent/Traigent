@@ -288,8 +288,7 @@ class TestLearnedPriorAugmentation:
     def test_high_support_priors_reorder_and_annotate_recommended_values(
         self,
     ) -> None:
-        # Backend returns value_priors already gated AND ordered by score desc;
-        # the SDK consumes them in that server order without re-sorting.
+        # Priors are consumed in the order provided (not re-ranked by the SDK).
         bundle = PriorsBundle(
             value_priors=(
                 _value_prior_row(
@@ -328,11 +327,8 @@ class TestLearnedPriorAugmentation:
             "linked_top6",
         ]
 
-    def test_sdk_consumes_server_gated_priors_without_regating(self) -> None:
-        # Gating is server-side now: the SDK does NOT apply its own
-        # support/confidence thresholds. Whatever the backend returns (already
-        # gated) is consumed as-is. A backend that returned only this row means
-        # it passed the backend gate, so the SDK applies it.
+    def test_provided_priors_are_applied_as_is(self) -> None:
+        # The SDK applies the priors it is given without re-ranking or filtering.
         classification = _classification("code_gen")
         server_bundle = PriorsBundle(
             value_priors=(
@@ -359,7 +355,6 @@ class TestLearnedPriorAugmentation:
             priors_bundle=server_bundle,
         )
         rec = next(rec for rec in recs if rec.name == "schema_context")
-        # SDK trusts the server's gating decision; the value is applied.
         assert rec.recommended_values == ("linked_top10",)
 
     def test_no_priors_keeps_phase_one_catalog_output(self) -> None:

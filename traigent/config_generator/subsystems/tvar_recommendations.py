@@ -22,9 +22,8 @@ from traigent.utils.llm_response_parsing import extract_json_array_text
 if TYPE_CHECKING:
     from traigent.cloud.client import PriorsBundle
 
-# The backend returns priors already gated (support/confidence) AND ordered by
-# score; the SDK consumes them as-is and never embeds gating policy/thresholds
-# or re-sorts (keeps the decision policy server-side, avoids client/server drift).
+# Priors returned by the optimization service are consumed as provided; the SDK
+# does not rank or filter them.
 _PRIORS_FETCH_TIMEOUT_SECONDS = 2.0
 _RECOMMENDATION_PRIORS_CACHE: dict[tuple[str, tuple[str, ...]], PriorsBundle] = {}
 
@@ -324,8 +323,7 @@ def _gated_value_priors_by_tvar(
         if not tvar_name or not isinstance(value_priors, Sequence):
             continue
 
-        # The backend already gated + ordered these; consume in server order,
-        # keeping only well-formed (value+score) items. No thresholds, no resort.
+        # Consume priors as provided, keeping only well-formed (value+score) items.
         usable: list[tuple[Any, float]] = []
         for item in value_priors:
             if not isinstance(item, Mapping) or "value" not in item:
