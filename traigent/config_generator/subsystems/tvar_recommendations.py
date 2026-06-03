@@ -59,18 +59,6 @@ def generate_recommendations(
 # ---------------------------------------------------------------------------
 
 _DEMO_MODEL = "bedrock/us.anthropic.claude-haiku-4-5"
-_BIRD_ISOLATION = (
-    "TraigentDemo/examples/use-cases/bird-sql-optimizer/artifacts/isolation"
-)
-_TEXT2SQL_ISOLATION = (
-    "TraigentDemo/examples/use-cases/text2sql-sota-optimizer/artifacts/isolation"
-)
-_TEXT2SQL_SIGNIFICANCE = (
-    "TraigentDemo/examples/use-cases/text2sql-sota-optimizer/artifacts/significance"
-)
-_HOTPOTQA_ISOLATION = (
-    "TraigentDemo/examples/use-cases/hotpotqa-rag-optimizer/artifacts/isolation"
-)
 _SINGLE_SLICE_LIMITATIONS = ("single_slice", "not_sota")
 _LOW_JOINT_LIMITATIONS = ("low_or_zero_in_isolation", "gains_are_joint")
 _OBSERVATIONAL_LIMITATIONS = ("observational_not_causal",)
@@ -97,8 +85,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "medium",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_HOTPOTQA_ISOLATION}/retrieval_k.json",
-                    run_id="hotpotqa-rag-300-naive",
                     scope="isolation",
                     metric="answer_em",
                     n=10,
@@ -165,8 +151,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "high",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/schema_context.json",
-                    run_id="bird-minidev-300-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -177,8 +161,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
                     limitations=_SINGLE_SLICE_LIMITATIONS,
                 ),
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/schema_context.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -207,8 +189,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "medium",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/evidence_usage.json",
-                    run_id="bird-minidev-300-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -235,8 +215,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "medium",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_SIGNIFICANCE}/importance.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="significance",
                     metric="importance",
                     n=200,
@@ -265,8 +243,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "low",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/generation_path.json",
-                    run_id="bird-minidev-300-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -277,8 +253,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
                     limitations=_LOW_JOINT_LIMITATIONS,
                 ),
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/generation_path.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -307,8 +281,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "low",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/fewshot_k.json",
-                    run_id="bird-minidev-300-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -319,8 +291,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
                     limitations=_LOW_JOINT_LIMITATIONS,
                 ),
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/fewshot_k.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -347,8 +317,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "low",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_SIGNIFICANCE}/importance.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="significance",
                     metric="importance",
                     n=200,
@@ -375,8 +343,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "impact": "low",
             "evidence_refs": (
                 EvidenceRef(
-                    artifact_path=f"{_BIRD_ISOLATION}/repair_policy.json",
-                    run_id="bird-minidev-300-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
@@ -387,8 +353,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
                     limitations=_LOW_JOINT_LIMITATIONS,
                 ),
                 EvidenceRef(
-                    artifact_path=f"{_TEXT2SQL_ISOLATION}/repair_policy.json",
-                    run_id="text2sql-spider-200-naive",
                     scope="isolation",
                     metric="execution_accuracy",
                     n=10,
