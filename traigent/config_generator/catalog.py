@@ -51,8 +51,6 @@ def entry_to_recommendation(entry: dict[str, Any]) -> TVarRecommendation:
     """Project a catalog entry back into the public TVarRecommendation shape."""
     evidence_refs = tuple(
         EvidenceRef(
-            artifact_path=str(ref["artifact_path"]),
-            run_id=str(ref["run_id"]),
             scope=str(ref["scope"]),
             metric=str(ref["metric"]),
             n=int(ref["n"]),

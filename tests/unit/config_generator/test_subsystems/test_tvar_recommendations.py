@@ -191,19 +191,16 @@ class TestGenerateRecommendations:
 
         schema_context = recs_by_name["schema_context"]
         assert len(schema_context.evidence_refs) == 2
-        assert schema_context.evidence_refs[0].artifact_path == (
-            "TraigentDemo/examples/use-cases/bird-sql-optimizer/artifacts/"
-            "isolation/schema_context.json"
-        )
+        # Public-safe provenance only: no internal artifact paths / run IDs.
+        assert not hasattr(schema_context.evidence_refs[0], "artifact_path")
+        assert not hasattr(schema_context.evidence_refs[0], "run_id")
+        assert schema_context.evidence_refs[0].scope == "isolation"
         assert schema_context.evidence_refs[0].delta == 0.40
         assert schema_context.evidence_refs[1].candidate == "full_ddl_fk"
         assert schema_context.impact_estimate == "high"
 
         retrieval_k = recs_by_name["retrieval_k"]
-        assert retrieval_k.evidence_refs[0].artifact_path == (
-            "TraigentDemo/examples/use-cases/hotpotqa-rag-optimizer/artifacts/"
-            "isolation/retrieval_k.json"
-        )
+        assert retrieval_k.evidence_refs[0].scope == "isolation"
         assert retrieval_k.evidence_refs[0].metric == "answer_em"
         assert retrieval_k.evidence_refs[0].baseline == 1
         assert retrieval_k.evidence_refs[0].candidate == 5
@@ -299,9 +296,9 @@ class TestTVarCatalog:
         assert rec.impact_estimate == entry["impact_estimate"]
         assert rec.apply_guidance == entry["apply_guidance"]
         assert len(rec.evidence_refs) == len(entry["evidence_refs"])
-        assert rec.evidence_refs[0].artifact_path == entry["evidence_refs"][0][
-            "artifact_path"
-        ]
+        # Public-safe provenance only (no internal artifact_path / run_id).
+        assert not hasattr(rec.evidence_refs[0], "artifact_path")
+        assert rec.evidence_refs[0].scope == entry["evidence_refs"][0]["scope"]
 
     def test_count_evidence_values_keep_public_types(self) -> None:
         entry = next(
