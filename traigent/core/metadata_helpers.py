@@ -241,12 +241,77 @@ def _add_aggregation_summary(
         logger.debug("Failed to add aggregation summary (trial): %s", exc)
 
 
+def _metadata_string_sequence(metadata: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = metadata.get(key)
+    if not isinstance(value, (list, tuple, set)):
+        return ()
+    return tuple(str(item) for item in value if item)
+
+
+def _observation_comparability(trial_metadata: dict[str, Any]) -> dict[str, Any]:
+    payload = trial_metadata.get("comparability")
+    n = 0
+    if isinstance(payload, dict):
+        for key in ("n", "examples_with_primary_metric", "total_examples"):
+            try:
+                n = int(payload.get(key, 0))
+            except (TypeError, ValueError):
+                n = 0
+            if n:
+                break
+    return {"scope": "trial", "n": max(0, n)}
+
+
+def _add_tvar_observation(
+    trial_metadata: dict[str, Any],
+    trial_result: TrialResult,
+    primary_objective: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    effective_session_id = session_id or trial_metadata.get("session_id")
+    if not effective_session_id:
+        return trial_metadata
+
+    try:
+        source_metadata = getattr(trial_result, "metadata", {}) or {}
+        if not isinstance(source_metadata, dict):
+            source_metadata = {}
+        from traigent.tuned_variables.observation import (
+            build_tvar_observation,
+            merge_tvar_observation_metadata,
+        )
+
+        observation = build_tvar_observation(
+            session_id=str(effective_session_id),
+            trial_id=str(trial_result.trial_id),
+            config=getattr(trial_result, "config", {}) or {},
+            metrics=trial_result.metrics or {},
+            primary_metric=primary_objective,
+            comparability=_observation_comparability(trial_metadata),
+            catalog_entry_ids=_metadata_string_sequence(
+                source_metadata, "catalog_entry_ids"
+            ),
+            agent_type=source_metadata.get("agent_type"),
+            config_space_id=source_metadata.get("config_space_id"),
+            effectuation_events=source_metadata.get("effectuation_events"),
+        )
+        return merge_tvar_observation_metadata(trial_metadata, observation)
+    except Exception as exc:
+        logger.debug(
+            "Skipping TVAR observation metadata for trial %s: %s",
+            getattr(trial_result, "trial_id", "<unknown>"),
+            exc,
+        )
+        return trial_metadata
+
+
 def build_backend_metadata(
     trial_result: TrialResult,
     primary_objective: str,
     traigent_config: TraigentConfig,
     dataset_name: str = "dataset",
     content_scores: dict[str, dict[int, float]] | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Build metadata dictionary for backend trial submission.
 
@@ -264,6 +329,7 @@ def build_backend_metadata(
         dataset_name: Name of the dataset (used for stable example ID generation)
         content_scores: Deprecated and ignored. Content analytics are uploaded
             once per run via the dedicated feature-upload path.
+        session_id: Optional backend session identifier for TVAR observation emission.
 
     Returns:
         Metadata dict ready for backend submission
@@ -314,7 +380,12 @@ def build_backend_metadata(
     if privacy_on and "example_results" in trial_metadata:
         trial_metadata.pop("example_results", None)
 
-    return trial_metadata
+    return _add_tvar_observation(
+        trial_metadata,
+        trial_result,
+        primary_objective,
+        session_id,
+    )
 
 
 def _extract_score_from_metrics(

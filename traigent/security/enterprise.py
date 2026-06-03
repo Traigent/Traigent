@@ -731,7 +731,7 @@ class EnterpriseDeploymentManager:
     def perform_health_check(self) -> dict[str, Any]:
         """Perform comprehensive health check.
 
-        Honest-status contract (SDK#918 fix): the per-service probes
+        Honest-status contract: the per-service probes
         for `database` and `external_services` were previously
         hardcoded to `"healthy"` (the source comments said `(mock)`).
         Operators integrating with this method got a green light even
@@ -830,7 +830,7 @@ class EnterpriseDeploymentManager:
     def create_backup(self) -> dict[str, Any]:
         """Create system backup.
 
-        Honest-status contract (SDK#918 fix): this method previously
+        Honest-status contract: this method previously
         returned `status="completed"` with a fabricated `backup_id`,
         a fake `size_bytes=100MB`, and a fake `retention_until` —
         without doing any actual backup work. Source comments said
@@ -855,7 +855,7 @@ class EnterpriseDeploymentManager:
         logger.error(
             "EnterpriseManager.create_backup called but no backup executor "
             "is configured. Returning status='unsupported'; no data was "
-            "persisted. See SDK#918 for the migration path."
+            "persisted. See regression for the migration path."
         )
         return {
             "status": "unsupported",

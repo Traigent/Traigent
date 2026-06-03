@@ -140,7 +140,7 @@ class MCPResponse:
     synthetic local placeholders, not real backend resources. Callers MUST
     check ``is_fallback`` before treating IDs as durable backend references
     (e.g. before quoting them in user-facing UI or backend reconciliation).
-    See issue #898.
+
     """
 
     success: bool
@@ -507,7 +507,7 @@ class ProductionMCPClient:
             agent_id: Optional backend agent ID returned by ``create_agent``.
                 When provided, this ID is sent to the backend instead of the
                 bridge-generated agent_id, so the experiment is linked to the
-                real backend agent resource (issue #899).
+                real backend agent resource (the tracked fix).
             example_set_id: Optional backend example-set ID returned by
                 ``upload_dataset``. When provided, this ID is sent to the
                 backend instead of the bridge-generated example_set_id.
@@ -675,11 +675,11 @@ class ProductionMCPClient:
         # backend MCP ``create_agent`` schema (``agent_type_id``,
         # ``agent_platform``, ``prompt_template``, ``model_parameters``,
         # etc.), so we forward it as-is rather than re-mapping to field
-        # names that the bridge does not produce. See issue #900.
+        # names that the bridge does not produce.
         #
         # ``agent_id`` is intentionally NOT forwarded: the backend MCP
         # ``create_agent`` tool does not accept it (see
-        # ``TraigentBackend/src/mcp/tools/agent_tools.create_agent`` — its
+        # ``backend/src/mcp/tools/agent_tools.create_agent`` — its
         # payload is built from a fixed key set and ``**kwargs`` is dropped),
         # so the backend always allocates the id. Forwarding the SDK-side id
         # would also be ambiguous because ``AgentSpecification.__post_init__``
@@ -813,7 +813,7 @@ class ProductionMCPClient:
             example_set_id = (dataset_data or {}).get("example_set_id")
 
             # Step 3: Create experiment, threading through the real backend
-            # IDs returned by create_agent / upload_dataset (issue #899).
+            # IDs returned by create_agent / upload_dataset (the tracked fix).
             # Passing them as explicit parameters ensures the bridge-generated
             # placeholder IDs do not silently win over the live resources.
             experiment_response = await self.create_experiment(
@@ -871,7 +871,7 @@ class ProductionMCPClient:
         synthetic local IDs (``fallback_exp_*`` etc.) from real backend IDs.
         Per workspace ``Traigent/CLAUDE.md`` rule #2, fallback responses MUST
         be distinguishable from real backend responses on the public surface
-        — see issue #898.
+        — see the tracked fix.
         """
         logger.warning(
             "MCP server unavailable; using fallback for tool %r. "

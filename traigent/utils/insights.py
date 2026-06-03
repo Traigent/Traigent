@@ -207,7 +207,7 @@ def _analyze_parameter_importance(
             best_idx = param_scores.index(max(param_scores))
             best_value = param_values[best_idx]
 
-            # Calculate performance impact (correlation-like measure)
+            # Calculate performance impact (association-style measure)
             performance_impact = _calculate_parameter_impact(param_values, param_scores)
 
             parameter_analysis[param] = {
@@ -342,7 +342,7 @@ def _calculate_parameter_impact(values: list[Any], scores: list[float]) -> float
         # Calculate coefficient of variation between groups
         return statistics.stdev(group_means) / overall_mean if overall_mean > 0 else 0.0
 
-    # For numeric parameters, use correlation approximation
+    # For numeric parameters, use a statistical association approximation
     try:
         numeric_values = [float(v) for v in values]
         return abs(_simple_correlation(numeric_values, scores))
@@ -351,7 +351,7 @@ def _calculate_parameter_impact(values: list[Any], scores: list[float]) -> float
 
 
 def _simple_correlation(x: list[float], y: list[float]) -> float:
-    """Simple correlation calculation."""
+    """Simple association calculation."""
     if len(x) != len(y) or len(x) < 2:
         return 0.0
 

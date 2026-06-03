@@ -119,6 +119,8 @@ class InjectionOptions(BaseModel):
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
         framework_targets: List of framework names to target.
+        effectuation: Opt-in executable TVAR effectuation. Defaults to False,
+            preserving existing trial-call behavior.
 
     Note:
         ATTRIBUTE mode was removed in v2.x due to thread-safety issues.
@@ -133,6 +135,7 @@ class InjectionOptions(BaseModel):
     # Set to True explicitly when using framework integrations
     auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
+    effectuation: bool = False
 
     @field_validator("injection_mode", mode="before")
     @classmethod
@@ -215,7 +218,7 @@ class ExecutionOptions(BaseModel):
     def _reject_non_default_reps_per_trial(cls, v: int) -> int:
         # Per-configuration repetition is enterprise-gated; fail at the contract
         # boundary (construction) instead of late at runtime so callers see the
-        # gate before the @optimize decorator is applied. See issue #931.
+        # gate before the @optimize decorator is applied.
         if v != 1:
             raise ValueError(
                 "reps_per_trial != 1 is not available in this version. "
@@ -259,7 +262,7 @@ class MockModeOptions(BaseModel):
         of the SDK runtime behavior.
 
         This deprecation is doc-only. The fields will be removed in a
-        future major version. See issue #874.
+        future major version.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -386,6 +389,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "config_param": None,
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
+    "effectuation": False,
     "execution_mode": "edge_analytics",
     "hybrid_api_endpoint": None,
     "tunable_id": None,
@@ -498,6 +502,7 @@ class LegacyOptimizeArgs:
     config_param: str | None = None
     auto_override_frameworks: bool | None = None
     framework_targets: list[str] | None = None
+    effectuation: bool | None = None
     execution_mode: str | None = None
     hybrid_api_endpoint: str | None = None
     tunable_id: str | None = None
@@ -586,6 +591,7 @@ class LegacyOptimizeArgs:
             ("config_param", self.config_param),
             ("auto_override_frameworks", self.auto_override_frameworks),
             ("framework_targets", self.framework_targets),
+            ("effectuation", self.effectuation),
             ("execution_mode", self.execution_mode),
             ("hybrid_api_endpoint", self.hybrid_api_endpoint),
             ("tunable_id", self.tunable_id),
@@ -942,8 +948,9 @@ def _resolve_injection_bundle_options(
     config_param: Any,
     auto_override_frameworks: Any,
     framework_targets: Any,
+    effectuation: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any]:
     """Resolve injection options from bundle."""
     if injection_bundle is None:
         return (
@@ -951,6 +958,7 @@ def _resolve_injection_bundle_options(
             config_param,
             auto_override_frameworks,
             framework_targets,
+            effectuation,
         )
 
     return (
@@ -971,6 +979,9 @@ def _resolve_injection_bundle_options(
             framework_targets,
             injection_bundle.framework_targets,
             defaults,
+        ),
+        _resolve_option(
+            "effectuation", effectuation, injection_bundle.effectuation, defaults
         ),
     )
 
@@ -1009,7 +1020,7 @@ def _resolve_execution_bundle_options(
 
     Enterprise-gated fields (``reps_per_trial``, ``reps_aggregation``) are
     rejected at ``ExecutionOptions`` construction time via field validators
-    (see issue #931), so this resolver only handles option merging.
+    (see the tracked fix), so this resolver only handles option merging.
     """
     if execution_bundle is None:
         return base_options
@@ -1599,6 +1610,7 @@ def optimize(  # NOSONAR(S107)
     tvl: TVLOptions | dict[str, Any] | None = None,
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
+    effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
     # Multi-agent configuration
@@ -1689,6 +1701,7 @@ def optimize(  # NOSONAR(S107)
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
             framework_targets: Explicit list of framework classes to override.
+            effectuation: Opt-in executable TVAR effectuation. Defaults to False.
 
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
@@ -1720,7 +1733,7 @@ def optimize(  # NOSONAR(S107)
                 production for shell fixtures but emits ``DeprecationWarning``
                 when users set it directly. The parameter is retained for
                 config round-trip;
-                see issue #874.
+                see the tracked fix.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
@@ -1885,6 +1898,7 @@ def optimize(  # NOSONAR(S107)
         "tvl": tvl,
         "evaluation": evaluation,
         "injection": injection,
+        "effectuation": effectuation,
         "execution": execution,
         "mock": mock,
         "agents": agents,
@@ -1949,6 +1963,7 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    effectuation = combined_settings["effectuation"]
     execution_mode = combined_settings["execution_mode"]
     hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
     tunable_id = combined_settings["tunable_id"]
@@ -2053,12 +2068,14 @@ def optimize(  # NOSONAR(S107)
         config_param,
         auto_override_frameworks,
         framework_targets,
+        effectuation,
     ) = _resolve_injection_bundle_options(
         injection_bundle,
         injection_mode,
         config_param,
         auto_override_frameworks,
         framework_targets,
+        effectuation,
         defaults,
     )
 
@@ -2242,6 +2259,7 @@ def optimize(  # NOSONAR(S107)
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
+            effectuation=bool(effectuation),
             execution_mode=execution_mode_enum,
             hybrid_api_endpoint=hybrid_api_endpoint,
             tunable_id=tunable_id,

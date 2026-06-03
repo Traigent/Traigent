@@ -973,6 +973,7 @@ class BackendIntegratedClient:
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool | None:
         """Submit trial results via the Traigent session endpoint.
         Delegates to trial_operations module.
@@ -981,8 +982,25 @@ class BackendIntegratedClient:
             True if submission succeeded, False if it failed,
             None if the operation was skipped (e.g. offline mode).
         """
+        if metadata is None:
+            return await self._trial_ops.submit_trial_result_via_session(
+                session_id,
+                trial_id,
+                config,
+                metrics,
+                status,
+                error_message,
+                execution_mode,
+            )
         return await self._trial_ops.submit_trial_result_via_session(
-            session_id, trial_id, config, metrics, status, error_message, execution_mode
+            session_id,
+            trial_id,
+            config,
+            metrics,
+            status,
+            error_message,
+            execution_mode,
+            metadata=metadata,
         )
 
     async def _submit_summary_stats(

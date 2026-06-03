@@ -45,10 +45,19 @@ import click
     "--output",
     "-o",
     "output_format",
-    type=click.Choice(["table", "python", "json", "tvl"], case_sensitive=False),
+    type=click.Choice(
+        ["table", "python", "json", "json-detailed", "tvl"],
+        case_sensitive=False,
+    ),
     default="table",
     show_default=True,
     help="Output format.",
+)
+@click.option(
+    "--json-detailed",
+    is_flag=True,
+    default=False,
+    help="Emit detailed machine-readable JSON including recommendation metadata.",
 )
 @click.option(
     "--only",
@@ -76,6 +85,7 @@ def generate_config(
     model: str,
     budget: float,
     output_format: str,
+    json_detailed: bool,
     subsystems_str: str | None,
     apply_decorator: bool,
     no_backup: bool,
@@ -148,10 +158,15 @@ def generate_config(
         return
 
     # Format and display
+    if json_detailed:
+        output_format = "json-detailed"
+
     if output_format == "python":
         _output_python(result)
     elif output_format == "json":
         _output_json(result)
+    elif output_format == "json-detailed":
+        _output_json(result, detailed=True)
     elif output_format == "tvl":
         _output_tvl(result, path)
     else:
@@ -163,7 +178,7 @@ def _output_python(result):
     click.echo(result.to_python_code())
 
 
-def _output_json(result):
+def _output_json(result, *, detailed: bool = False):
     """Print machine-readable JSON output."""
     data = {
         "agent_type": result.agent_type,
@@ -204,13 +219,7 @@ def _output_json(result):
             {"name": b.name, "description": b.description} for b in result.benchmarks
         ],
         "recommendations": [
-            {
-                "name": r.name,
-                "range_code": r.to_range_code(),
-                "category": r.category,
-                "impact": r.impact_estimate,
-                "reasoning": r.reasoning,
-            }
+            _recommendation_to_json(r, detailed=detailed)
             for r in result.recommendations
         ],
         "warnings": list(result.warnings),
@@ -218,6 +227,31 @@ def _output_json(result):
         "llm_cost_usd": result.llm_cost_usd,
     }
     click.echo(json.dumps(data, indent=2))
+
+
+def _recommendation_to_json(recommendation, *, detailed: bool) -> dict[str, object]:
+    data: dict[str, object] = {
+        "name": recommendation.name,
+        "range_code": recommendation.to_range_code(),
+        "category": recommendation.category,
+        "impact": recommendation.impact_estimate,
+        "reasoning": recommendation.reasoning,
+    }
+    if not detailed:
+        return data
+
+    data.update(
+        {
+            "kind": recommendation.kind,
+            "catalog_entry_id": recommendation.catalog_entry_id
+            or recommendation.entry_id,
+            "effectuation_status": recommendation.effectuation_status,
+            "effectuation_strategy": recommendation.effectuation_strategy,
+            "recommended_values": list(recommendation.recommended_values),
+            "apply_guidance": recommendation.apply_guidance,
+        }
+    )
+    return data
 
 
 def _output_tvl(result, path: Path):

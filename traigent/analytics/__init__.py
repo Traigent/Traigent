@@ -20,7 +20,7 @@ _PLUGIN_AVAILABLE = False
 
 # Try to import from the plugin first
 try:
-    from traigent_analytics import (  # Anomaly detection; Cost optimization; Meta-learning; Predictive analytics; Scheduling
+    from traigent_analytics import (  # Anomaly detection; Cost optimization; Historical analytics; Predictive analytics; Scheduling
         AlertManager,
         AlertSeverity,
         AlgorithmSelector,
@@ -31,6 +31,7 @@ try:
         CostForecaster,
         CostOptimizationAction,
         CostOptimizationAI,
+        HistoricalAnalyticsEngine,
         JobPriority,
         MetaLearningEngine,
         OptimizationHistory,
@@ -84,9 +85,10 @@ except ImportError:
     # Main AI intelligence
     from .intelligence import CostOptimizationAI
 
-    # Meta-learning
+    # Historical analytics
     from .meta_learning import (
         AlgorithmSelector,
+        HistoricalAnalyticsEngine,
         MetaLearningEngine,
         OptimizationHistory,
         PerformancePredictor,
@@ -133,7 +135,8 @@ def is_plugin_installed() -> bool:
 __all__ = [
     # Example Insights
     "ExampleInsightsClient",
-    # Meta-learning
+    # Historical analytics
+    "HistoricalAnalyticsEngine",
     "MetaLearningEngine",
     "OptimizationHistory",
     "AlgorithmSelector",

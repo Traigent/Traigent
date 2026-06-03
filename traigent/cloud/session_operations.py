@@ -782,7 +782,7 @@ class SessionOperations:
         # Build finalization response. When the backend returned a summary
         # payload, preserve its fields verbatim. Otherwise mark the summary
         # as unavailable so callers don't treat empty best_config/best_metrics
-        # as an authoritative "empty optimization" result (per issue #890).
+        # as an authoritative "empty optimization" result (per the tracked fix).
         backend_summary = backend_payload or {}
 
         backend_best_config = backend_summary.get("best_config")
@@ -912,7 +912,7 @@ class SessionOperations:
             Parsed backend response payload (may be ``{}`` if the backend
             returned 2xx with an empty body) when finalization succeeded;
             ``None`` when the endpoint was unavailable, returned a non-2xx
-            status, or failed locally. Per issue #890, callers use this
+            status, or failed locally. Per the tracked fix, callers use this
             return shape to distinguish "backend gave us a summary" from
             "backend just accepted the finalize call with no payload".
         """

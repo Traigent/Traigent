@@ -86,7 +86,7 @@ class SecureCredentialStorage:
         env_password = os.environ.get("TRAIGENT_ENCRYPTION_KEY")
         # Defer to the shared classifier so __init__ and the factory can
         # never disagree on environment normalization (Codex Q3 P2 of
-        # PR #964 caught a `.strip()` drift between the two).
+        # review caught a `.strip()` drift between the two).
         is_non_prod = _is_non_production_environment()
 
         if password:
@@ -505,7 +505,7 @@ _credential_storage_lock = threading.Lock()
 def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStorage:
     """Get appropriate credential storage implementation (thread-safe).
 
-    Production safety contract (SDK#896 fix):
+    Production safety contract:
       * In production (no `TRAIGENT_ENV*` flag set, or set to anything
         other than dev/test/local), the SDK MUST use real AES-256
         encryption. If `cryptography` is unavailable OR
@@ -514,7 +514,7 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
         `RuntimeError` rather than silently returning the base64-only
         `FallbackCredentialStorage`. Silent fallback was the
         production-credential-storage fail-open Codex review of the
-        2026-05-13 audit pass identified as SDK#896.
+        2026-05-13 audit pass identified as regression.
       * In non-production (`TRAIGENT_ENV=development|dev|test|local`),
         the previous fallback behavior is preserved so local
         development without `cryptography` installed still works.
@@ -536,7 +536,7 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
                         raise RuntimeError(
                             "cryptography library is required in production for "
                             "credential storage. The base64 fallback is dev-only "
-                            "(SDK#896). Install with: pip install cryptography, or "
+                            "(regression). Install with: pip install cryptography, or "
                             "set TRAIGENT_ENV=development to opt into the local "
                             "fallback for development."
                         )
@@ -548,7 +548,7 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
                         # SecureCredentialStorage already raised the production-
                         # safety RuntimeError (e.g. TRAIGENT_ENCRYPTION_KEY
                         # missing). DO NOT swallow it in production — that was
-                        # the SDK#896 fail-open. Only fall back when the caller
+                        # the regression fail-open. Only fall back when the caller
                         # has explicitly opted into a non-production environment.
                         if not non_prod:
                             raise
@@ -558,7 +558,7 @@ def get_credential_storage() -> SecureCredentialStorage | FallbackCredentialStor
         raise RuntimeError(
             "Credential storage initialization failed without selecting a secure "
             "or explicitly non-production storage backend. Refusing to fall back "
-            "silently (SDK#896)."
+            "silently (regression)."
         )
     return _credential_storage_instance
 

@@ -166,7 +166,7 @@ class TrialLifecycle:
             )
         except TVLConstraintError as e:
             # Constraint failed - skip this config without consuming a trial slot
-            # (Fix for issue #27: constraint-rejected configs should not reduce actual evaluations)
+            # (Fix for the tracked fix: constraint-rejected configs should not reduce actual evaluations)
             logger.info(
                 "Pre-constraint failed for config %s: %s (not counting toward max_trials)",
                 config_for_run,
@@ -377,6 +377,7 @@ class TrialLifecycle:
                 optuna_trial_id=optuna_trial_id,
             )
             self._apply_budget_metadata(result, closure, budget_exhausted)
+            self._apply_effectuation_metadata(result, func)
 
             # Record success in tracing span
             record_trial_result(
@@ -402,6 +403,7 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
+            self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="pruned", error=str(prune_error))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -417,6 +419,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
+            self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(constraint_error))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -460,6 +463,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            self._apply_effectuation_metadata(result, func)
             record_trial_result(span, status="failed", error=str(exc))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -468,6 +472,36 @@ class TrialLifecycle:
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    def _apply_effectuation_metadata(
+        self,
+        result: TrialResult,
+        func: Callable[..., Any],
+    ) -> None:
+        events = self._effectuation_events(func)
+        if not events:
+            return
+        metadata = dict(result.metadata or {})
+        metadata["effectuation_events"] = events
+        result.metadata = metadata
+
+    def _effectuation_events(self, func: Callable[..., Any]) -> list[dict[str, Any]]:
+        try:
+            from traigent.effectuation import EFFECTUATION_EVENTS_ATTR
+
+            emitter = getattr(func, EFFECTUATION_EVENTS_ATTR, None)
+            if not callable(emitter):
+                return []
+            raw_events = emitter()
+        except Exception:
+            logger.debug("Failed to collect effectuation events", exc_info=True)
+            return []
+
+        events: list[dict[str, Any]] = []
+        for event in raw_events or ():
+            if isinstance(event, dict):
+                events.append(dict(event))
+        return events
 
     # =========================================================================
     # Trial ID Generation
