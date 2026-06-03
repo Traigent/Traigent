@@ -294,7 +294,8 @@
       "high": 3
     },
     "kind": "cardinality",
-    "effectuation_status": "manual_guidance",
+    "effectuation_status": "executable",
+    "effectuation_strategy": "self_consistency",
     "category": "generation",
     "reasoning": "Spider significance data indicates candidate count matters, but this signal is observational rather than causal.",
     "impact_estimate": "low",
@@ -317,7 +318,7 @@
         ]
       }
     ],
-    "apply_guidance": "Manual wiring: after `cfg = traigent.get_config()`, read cfg['candidate_count'] and generate that many candidate SQL or program outputs before your selection or execution step; 1 preserves single-sample behavior. Add eval coverage for 1..3. NOTE: apply_config() only inserts the decorator + imports; multi-candidate generation remains your code.",
+    "apply_guidance": "Executable when effectuation is explicitly enabled: the self_consistency strategy reads cfg['candidate_count'] and runs the wrapped callable that many times before majority-vote aggregation; 1 preserves single-sample behavior. Add eval coverage for 1..3. NOTE: default optimize behavior is unchanged unless effectuation is enabled.",
     "status": "active",
     "version": "1.0.0"
   },

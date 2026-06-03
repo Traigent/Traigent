@@ -390,12 +390,26 @@ class TestTVarCatalog:
         assert {entry["entry_id"] for entry in entries} == set(_CATALOG_ENTRY_KINDS)
         for entry in entries:
             assert entry["kind"] == _CATALOG_ENTRY_KINDS[entry["entry_id"]]
-            assert entry["effectuation_status"] == "manual_guidance"
             assert entry["status"] == "active"
             assert entry["schema_version"] == "1.0.0"
             assert entry["version"] == "1.0.0"
             assert entry["evidence_refs"]
             assert entry["apply_guidance"].strip()
+
+        by_id = {entry["entry_id"]: entry for entry in entries}
+        assert (
+            by_id["code_gen.candidate_count.v1"]["effectuation_status"]
+            == "executable"
+        )
+        assert (
+            by_id["code_gen.candidate_count.v1"]["effectuation_strategy"]
+            == "self_consistency"
+        )
+        assert {
+            entry["entry_id"]
+            for entry in entries
+            if entry["effectuation_status"] == "manual_guidance"
+        } == set(_CATALOG_ENTRY_KINDS) - {"code_gen.candidate_count.v1"}
 
     def test_catalog_filters_by_agent_type(self) -> None:
         assert [entry["entry_id"] for entry in catalog_entries("rag")] == [
