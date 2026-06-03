@@ -73,10 +73,14 @@ class StructuralConstraintSpec:
 
 @dataclass(frozen=True)
 class EvidenceRef:
-    """Reference to measured evidence supporting a recommendation."""
+    """Public-safe reference to measured evidence supporting a recommendation.
 
-    artifact_path: str
-    run_id: str
+    Carries only publishable provenance (scope/metric/n/model/baseline/candidate/
+    delta/limitations). Internal artifact paths and run IDs are intentionally
+    excluded so this can ship in the public SDK; richer internal provenance, if
+    any, lives backend-side.
+    """
+
     scope: str
     metric: str
     n: int
