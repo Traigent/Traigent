@@ -218,19 +218,16 @@ class TestGenerateRecommendations:
 
         schema_context = recs_by_name["schema_context"]
         assert len(schema_context.evidence_refs) == 2
-        assert schema_context.evidence_refs[0].artifact_path == (
-            "TraigentDemo/examples/use-cases/bird-sql-optimizer/artifacts/"
-            "isolation/schema_context.json"
-        )
+        # Public-safe provenance only: no internal artifact paths / run IDs.
+        assert not hasattr(schema_context.evidence_refs[0], "artifact_path")
+        assert not hasattr(schema_context.evidence_refs[0], "run_id")
+        assert schema_context.evidence_refs[0].scope == "isolation"
         assert schema_context.evidence_refs[0].delta == 0.40
         assert schema_context.evidence_refs[1].candidate == "full_ddl_fk"
         assert schema_context.impact_estimate == "high"
 
         retrieval_k = recs_by_name["retrieval_k"]
-        assert retrieval_k.evidence_refs[0].artifact_path == (
-            "TraigentDemo/examples/use-cases/hotpotqa-rag-optimizer/artifacts/"
-            "isolation/retrieval_k.json"
-        )
+        assert retrieval_k.evidence_refs[0].scope == "isolation"
         assert retrieval_k.evidence_refs[0].metric == "answer_em"
         assert retrieval_k.evidence_refs[0].baseline == 1
         assert retrieval_k.evidence_refs[0].candidate == 5
@@ -291,22 +288,24 @@ class TestLearnedPriorAugmentation:
     def test_high_support_priors_reorder_and_annotate_recommended_values(
         self,
     ) -> None:
+        # Backend returns value_priors already gated AND ordered by score desc;
+        # the SDK consumes them in that server order without re-sorting.
         bundle = PriorsBundle(
             value_priors=(
                 _value_prior_row(
                     "schema_context",
                     [
                         {
-                            "value": "full_ddl_fk",
-                            "score": 0.52,
-                            "support_n": 75,
-                            "confidence": 0.82,
-                        },
-                        {
                             "value": "linked_top10",
                             "score": 0.91,
                             "support_n": 91,
                             "confidence": 0.87,
+                        },
+                        {
+                            "value": "full_ddl_fk",
+                            "score": 0.52,
+                            "support_n": 75,
+                            "confidence": 0.82,
                         },
                     ],
                 ),
@@ -329,14 +328,13 @@ class TestLearnedPriorAugmentation:
             "linked_top6",
         ]
 
-    def test_low_support_priors_are_ignored(self) -> None:
+    def test_sdk_consumes_server_gated_priors_without_regating(self) -> None:
+        # Gating is server-side now: the SDK does NOT apply its own
+        # support/confidence thresholds. Whatever the backend returns (already
+        # gated) is consumed as-is. A backend that returned only this row means
+        # it passed the backend gate, so the SDK applies it.
         classification = _classification("code_gen")
-        baseline = generate_recommendations(
-            [],
-            classification=classification,
-            priors_bundle=PriorsBundle.empty(),
-        )
-        low_support_bundle = PriorsBundle(
+        server_bundle = PriorsBundle(
             value_priors=(
                 _value_prior_row(
                     "schema_context",
@@ -358,11 +356,11 @@ class TestLearnedPriorAugmentation:
         recs = generate_recommendations(
             [],
             classification=classification,
-            priors_bundle=low_support_bundle,
+            priors_bundle=server_bundle,
         )
-
-        assert recs == baseline
-        assert all(not rec.recommended_values for rec in recs)
+        rec = next(rec for rec in recs if rec.name == "schema_context")
+        # SDK trusts the server's gating decision; the value is applied.
+        assert rec.recommended_values == ("linked_top10",)
 
     def test_no_priors_keeps_phase_one_catalog_output(self) -> None:
         recs = generate_recommendations(
@@ -421,9 +419,9 @@ class TestTVarCatalog:
         assert rec.impact_estimate == entry["impact_estimate"]
         assert rec.apply_guidance == entry["apply_guidance"]
         assert len(rec.evidence_refs) == len(entry["evidence_refs"])
-        assert rec.evidence_refs[0].artifact_path == entry["evidence_refs"][0][
-            "artifact_path"
-        ]
+        # Public-safe provenance only (no internal artifact_path / run_id).
+        assert not hasattr(rec.evidence_refs[0], "artifact_path")
+        assert rec.evidence_refs[0].scope == entry["evidence_refs"][0]["scope"]
 
     def test_count_evidence_values_keep_public_types(self) -> None:
         entry = next(

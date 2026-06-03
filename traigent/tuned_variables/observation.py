@@ -1,10 +1,19 @@
-"""Privacy-safe TVAR observation helpers."""
+"""Privacy-safe TVAR observation helpers.
+
+TVAR observations may be sent to the Traigent backend to power optimization.
+They include knob names, enum/scalar values, and numeric metrics only; set
+TRAIGENT_TVAR_OBSERVATION=off to disable them, or use the default hashed mode
+to hash free-form string values.
+"""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -18,6 +27,9 @@ _OBSERVATION_SCHEMA_PATH = (
 )
 _VALID_KINDS = frozenset({"value", "cardinality", "topology", "policy"})
 _VALID_SCOPES = frozenset({"opt_mini", "heldout", "isolation", "trial"})
+_OBSERVATION_MODES = frozenset({"off", "hashed", "full"})
+_ENUM_SAFE_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+_VARIABLE_VALUE_HASH_SALT = "traigent:tvar_observation:v1"
 _SENSITIVE_CONFIG_NAMES = frozenset(
     {
         "prompt",
@@ -61,14 +73,18 @@ def build_tvar_observation(
     agent_type: str | None = None,
     config_space_id: str | None = None,
     sdk_version: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Build a schema-valid, content-free TVAR observation payload."""
+    mode = _observation_mode()
+    if mode == "off":
+        return None
+
     observation: dict[str, Any] = {
         "schema_version": "1.0.0",
         "session_id": str(session_id),
         "trial_id": str(trial_id),
         "catalog_entry_ids": [str(entry_id) for entry_id in catalog_entry_ids],
-        "variables": _build_variables(config, catalog_entry_ids),
+        "variables": _build_variables(config, catalog_entry_ids, mode),
         "metrics": _numeric_metrics(metrics),
         "primary_metric": str(primary_metric),
         "comparability": _coerce_comparability(comparability),
@@ -86,17 +102,27 @@ def build_tvar_observation(
 
 def merge_tvar_observation_metadata(
     metadata: dict[str, Any] | None,
-    observation: dict[str, Any],
+    observation: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Attach a TVAR observation under metadata['tvar_observation_v1']."""
     merged = dict(metadata or {})
+    if observation is None:
+        return merged
     merged["tvar_observation_v1"] = copy.deepcopy(observation)
     return merged
+
+
+def _observation_mode() -> str:
+    mode = os.getenv("TRAIGENT_TVAR_OBSERVATION", "hashed").strip().lower()
+    if mode in _OBSERVATION_MODES:
+        return mode
+    return "hashed"
 
 
 def _build_variables(
     config: dict[str, Any],
     catalog_entry_ids: tuple[str, ...] | list[str],
+    mode: str,
 ) -> list[dict[str, Any]]:
     kind_by_name = _catalog_kind_by_name(catalog_entry_ids)
     variables: list[dict[str, Any]] = []
@@ -104,11 +130,15 @@ def _build_variables(
         variable_name = str(name)
         if _is_sensitive_config_name(variable_name):
             continue
-        safe_value = _safe_variable_value(raw_value)
+        kind = kind_by_name.get(variable_name)
+        safe_value = _safe_variable_value(
+            raw_value,
+            mode=mode,
+            catalog_known=kind in _VALID_KINDS,
+        )
         if safe_value is None:
             continue
         variable: dict[str, Any] = {"name": variable_name, "value": safe_value}
-        kind = kind_by_name.get(variable_name)
         if kind in _VALID_KINDS:
             variable["kind"] = kind
         variables.append(variable)
@@ -140,7 +170,12 @@ def _catalog_kind_by_name(
         return {}
 
 
-def _safe_variable_value(value: Any) -> str | int | float | bool | None:
+def _safe_variable_value(
+    value: Any,
+    *,
+    mode: str,
+    catalog_known: bool = False,
+) -> str | int | float | bool | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -148,8 +183,26 @@ def _safe_variable_value(value: Any) -> str | int | float | bool | None:
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, str) and len(value) <= 512:
-        return value
+        if mode == "full" or _is_enum_safe_string(value, catalog_known):
+            return value
+        return _hash_variable_value(value)
     return None
+
+
+def _is_enum_safe_string(value: str, catalog_known: bool) -> bool:
+    if len(value) > 64:
+        return False
+    if catalog_known:
+        return True
+    return bool(_ENUM_SAFE_VALUE_PATTERN.fullmatch(value))
+
+
+def _hash_variable_value(value: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(_VARIABLE_VALUE_HASH_SALT.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(value.encode("utf-8"))
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _numeric_metrics(metrics: dict[str, Any]) -> dict[str, float | int]:
