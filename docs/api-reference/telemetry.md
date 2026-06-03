@@ -26,6 +26,7 @@ During optimization runs, Traigent collects:
 - Total optimization duration
 - Execution mode (edge_analytics, cloud, etc.)
 - Stop conditions triggered
+- Content-free tuned-variable observations can include knob names, enum/scalar values, and numeric metrics for backend optimization; set `TRAIGENT_TVAR_OBSERVATION=off` to disable them, or use `TRAIGENT_TVAR_OBSERVATION=hashed` (default) to hash free-form string values.
 
 **Performance Metrics**:
 - LLM API response times
