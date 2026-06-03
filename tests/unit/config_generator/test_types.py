@@ -116,8 +116,6 @@ class TestStructuralConstraintSpec:
 class TestEvidenceRef:
     def test_creation_defaults(self) -> None:
         ref = EvidenceRef(
-            artifact_path="artifacts/isolation/schema_context.json",
-            run_id="run-1",
             scope="isolation",
             metric="execution_accuracy",
             n=10,
@@ -130,8 +128,6 @@ class TestEvidenceRef:
 
     def test_frozen(self) -> None:
         ref = EvidenceRef(
-            artifact_path="artifacts/isolation/schema_context.json",
-            run_id="run-1",
             scope="isolation",
             metric="execution_accuracy",
             n=10,
@@ -165,8 +161,6 @@ class TestTVarRecommendation:
 
     def test_with_evidence_and_guidance(self) -> None:
         ref = EvidenceRef(
-            artifact_path="artifacts/isolation/schema_context.json",
-            run_id="run-1",
             scope="isolation",
             metric="execution_accuracy",
             n=10,

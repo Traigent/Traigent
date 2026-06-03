@@ -75,8 +75,6 @@ class StructuralConstraintSpec:
 class EvidenceRef:
     """Reference to measured evidence supporting a recommendation."""
 
-    artifact_path: str
-    run_id: str
     scope: str
     metric: str
     n: int
