@@ -475,6 +475,7 @@ class BackendSessionManager:
             primary_objective,
             self._traigent_config,
             dataset_name,
+            session_id=session_id,
         )
 
         await self._log_trial_to_backend(
@@ -639,6 +640,7 @@ class BackendSessionManager:
                 status=status,
                 error_message=trial_result.error_message,
                 execution_mode=self._traigent_config.execution_mode,
+                metadata=metadata_payload,
             )
             submitted = (
                 await submitted_result

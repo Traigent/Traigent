@@ -577,7 +577,7 @@ class TestBillingManager:
         asyncio.run(run_test())
 
     def test_upgrade_plan_rejects_local_upgrade_to_paid_tier(self):
-        """SDK#924: post-fix, locally upgrading from `free` to a paid
+        """Regression: locally upgrading from `free` to a paid
         tier (`standard`/`professional`/`enterprise`) must raise
         ConfigurationError. The SDK has no authority to grant itself
         a higher subscription tier — that has to be a backend/billing-
@@ -593,7 +593,7 @@ class TestBillingManager:
         manager = BillingManager(tracker)
 
         for upgrade_target in ("standard", "professional", "enterprise"):
-            with pytest.raises(ConfigurationError, match="SDK#924"):
+            with pytest.raises(ConfigurationError, match="Cannot upgrade billing plan locally"):
                 manager.upgrade_plan(upgrade_target)
             assert manager.current_plan == "free", (
                 f"upgrade_plan('{upgrade_target}') must not mutate "
@@ -601,7 +601,7 @@ class TestBillingManager:
             )
 
     def test_upgrade_plan_allows_downgrade(self):
-        """SDK#924: downgrades are allowed — a user can cap themselves
+        """Regression: downgrades are allowed because a user can cap themselves
         to a lower tier (uses LESS quota, never more)."""
         tracker = UsageTracker()
         manager = BillingManager(tracker)
@@ -616,7 +616,7 @@ class TestBillingManager:
             manager.current_plan = "professional"
 
     def test_upgrade_plan_no_op_same_tier_succeeds(self):
-        """SDK#924: same-tier set must succeed (idempotent reconcile)."""
+        """Regression: same-tier set must succeed as an idempotent reconcile."""
         tracker = UsageTracker()
         manager = BillingManager(tracker)
         result = manager.upgrade_plan("free")
@@ -624,7 +624,7 @@ class TestBillingManager:
         assert manager.current_plan == "free"
 
     def test_upgrade_plan_unknown_target_in_billing_plans_but_missing_tier_order_raises(self):
-        """Greptile P1 of PR #968: a plan registered in billing_plans
+        """Regression: a plan registered in billing_plans
         but absent from _TIER_ORDER must raise ConfigurationError.
         Pre-fix this fell back to index 0 (free) and silently allowed
         the change — re-opening the upgrade bypass for any future
@@ -648,7 +648,7 @@ class TestBillingManager:
             manager.upgrade_plan("super_secret_unlimited")
 
     def test_upgrade_plan_current_plan_not_in_tier_order_raises(self):
-        """Greptile P1 of PR #968 (symmetric case): if current_plan is
+        """Regression symmetric case: if current_plan is
         somehow set to a value missing from _TIER_ORDER (e.g., a
         legitimate plan added to billing_plans but not yet ordered),
         upgrade_plan must raise instead of misclassifying as free."""

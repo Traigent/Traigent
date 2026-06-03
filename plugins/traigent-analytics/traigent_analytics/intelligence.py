@@ -15,12 +15,12 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from ..core.constants import (
+from traigent.core.constants import (
     HISTORY_PRUNE_RATIO,
     MAX_OPTIMIZATION_HISTORY_SIZE,
     MAX_USAGE_HISTORY_SIZE,
 )
-from ..utils.logging import get_logger
+from traigent.utils.logging import get_logger
 
 # Import from split modules
 from .cost_optimization import (
@@ -32,10 +32,7 @@ from .cost_optimization import (
     ResourceUsage,
 )
 from .meta_learning import OptimizationHistory
-from .scheduling import (
-    ScheduleType,
-    SmartScheduler,
-)
+from .scheduling import ScheduleType, SmartScheduler
 
 logger = get_logger(__name__)
 

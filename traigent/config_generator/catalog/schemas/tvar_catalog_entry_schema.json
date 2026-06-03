@@ -1,0 +1,230 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "TVAR Catalog Entry Schema",
+  "description": "Defines a governed catalog entry for a ready-made tuned-variable recommendation.",
+  "version": "1.0.0",
+  "definitions": {
+    "RangeType": {
+      "type": "string",
+      "enum": [
+        "Range",
+        "IntRange",
+        "LogRange",
+        "Choices"
+      ],
+      "description": "Supported tuned-variable range constructor."
+    },
+    "CatalogKind": {
+      "type": "string",
+      "enum": [
+        "value",
+        "cardinality",
+        "topology",
+        "policy"
+      ],
+      "description": "Kind of recommendation represented by this catalog entry."
+    },
+    "EffectuationStatus": {
+      "type": "string",
+      "enum": [
+        "executable",
+        "manual_guidance",
+        "advisory"
+      ],
+      "description": "Whether the recommendation can be applied automatically."
+    },
+    "ImpactEstimate": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "description": "Qualitative impact estimate from the supporting evidence."
+    },
+    "CatalogStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "deprecated",
+        "experimental"
+      ],
+      "description": "Lifecycle status for this catalog entry."
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "description": "Reference to supporting aggregate evidence for the recommendation. Public-safe provenance only: scope/metric/n/model/baseline/candidate/delta/limitations. Internal artifact paths and run IDs are intentionally excluded from this public contract.",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Evaluation scope covered by the evidence."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Metric summarized by this evidence reference."
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of trials, examples, or observations behind the evidence."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Model or model family for which the evidence applies."
+        },
+        "baseline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Baseline configuration or value summarized by the evidence."
+        },
+        "candidate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Candidate configuration or value summarized by the evidence."
+        },
+        "delta": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Observed candidate-baseline delta for the referenced metric."
+        },
+        "limitations": {
+          "type": "array",
+          "description": "Known limitations of the evidence.",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      },
+      "required": [
+        "scope",
+        "metric",
+        "n",
+        "model",
+        "baseline",
+        "candidate",
+        "delta",
+        "limitations"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "entry_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Stable catalog entry identifier."
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this catalog entry contract."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Human-readable name for the recommendation."
+    },
+    "range_type": {
+      "$ref": "#/definitions/RangeType",
+      "description": "Range constructor used by range_kwargs."
+    },
+    "range_kwargs": {
+      "type": "object",
+      "description": "Keyword arguments for the selected range constructor.",
+      "additionalProperties": true
+    },
+    "kind": {
+      "$ref": "#/definitions/CatalogKind"
+    },
+    "effectuation_status": {
+      "$ref": "#/definitions/EffectuationStatus"
+    },
+    "effectuation_strategy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Strategy identifier used when effectuation_status is executable."
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Catalog category."
+    },
+    "reasoning": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Summary of why this recommendation exists."
+    },
+    "impact_estimate": {
+      "$ref": "#/definitions/ImpactEstimate"
+    },
+    "agent_types": {
+      "type": "array",
+      "description": "Agent types for which this recommendation is relevant.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "description": "Evidence artifacts supporting this recommendation.",
+      "items": {
+        "$ref": "#/definitions/EvidenceRef"
+      }
+    },
+    "apply_guidance": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Operational guidance for applying this recommendation."
+    },
+    "status": {
+      "$ref": "#/definitions/CatalogStatus",
+      "default": "active"
+    },
+    "version": {
+      "type": "string",
+      "description": "Catalog entry revision."
+    }
+  },
+  "required": [
+    "entry_id",
+    "schema_version",
+    "name",
+    "range_type",
+    "range_kwargs",
+    "kind",
+    "effectuation_status"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "effectuation_strategy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "effectuation_status": {
+            "const": "executable"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

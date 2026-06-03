@@ -6,13 +6,26 @@ based on agent type and what TVARs are already detected.
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import os
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 from traigent.config_generator.agent_classifier import ClassificationResult
+from traigent.config_generator.catalog import catalog_entries, entry_to_recommendation
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.range_presets import get_preset_range
-from traigent.config_generator.types import EvidenceRef, TVarRecommendation, TVarSpec
+from traigent.config_generator.types import TVarRecommendation, TVarSpec
 from traigent.utils.llm_response_parsing import extract_json_array_text
+
+if TYPE_CHECKING:
+    from traigent.cloud.client import RecommendationBundle
+
+# Recommendation hints returned by the optimization service are consumed as
+# provided; the SDK does not rank or filter them.
+_RECOMMENDATIONS_FETCH_TIMEOUT_SECONDS = 2.0
+_RECOMMENDATIONS_CACHE: dict[tuple[str, tuple[str, ...]], RecommendationBundle] = {}
 
 
 def generate_recommendations(
@@ -21,6 +34,7 @@ def generate_recommendations(
     llm: ConfigGenLLM | None = None,
     source_code: str = "",
     classification: ClassificationResult | None = None,
+    recommendation_bundle: RecommendationBundle | None = None,
 ) -> list[TVarRecommendation]:
     """Generate TVAR recommendations.
 
@@ -34,12 +48,23 @@ def generate_recommendations(
         Original source code.
     classification:
         Pre-computed agent classification.
+    recommendation_bundle:
+        Optional recommendation bundle. ``None`` means try the backend when
+        configured; an empty bundle keeps catalog output unchanged.
     """
     existing_names = {t.name for t in tvars}
     agent_type = classification.agent_type if classification else "general_llm"
 
     # Preset recommendations
     recs = _preset_recommendations(agent_type, existing_names)
+    recs = _augment_recommendations_with_value_hints(
+        recs,
+        (
+            recommendation_bundle
+            if recommendation_bundle is not None
+            else _fetch_backend_recommendations(agent_type, [rec.name for rec in recs])
+        ),
+    )
 
     # LLM enrichment
     if llm is not None:
@@ -58,13 +83,7 @@ def generate_recommendations(
 # Preset recommendation catalog
 # ---------------------------------------------------------------------------
 
-_DEMO_MODEL = "bedrock/us.anthropic.claude-haiku-4-5"
-_SINGLE_SLICE_LIMITATIONS = ("single_slice", "not_sota")
-_LOW_JOINT_LIMITATIONS = ("low_or_zero_in_isolation", "gains_are_joint")
-_OBSERVATIONAL_LIMITATIONS = ("observational_not_causal",)
-
-
-_RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
+_LEGACY_RECOMMENDATION_TEMPLATES: dict[str, list[dict[str, Any]]] = {
     "rag": [
         {
             "name": "prompting_strategy",
@@ -77,32 +96,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "category": "retrieval",
             "reasoning": "Different retrieval methods (similarity, MMR, BM25, hybrid) affect answer quality",
             "impact": "high",
-        },
-        {
-            "name": "retrieval_k",
-            "category": "retrieval",
-            "reasoning": "Measured HotpotQA demo isolation showed answer EM improved when retrieving more context, but the slice is small.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="answer_em",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=1,
-                    candidate=5,
-                    delta=0.10,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['retrieval_k'] and pass it into your retriever's top-k "
-                "or limit argument for each query. Keep the existing baseline "
-                "value covered and add eval cases across the 1..5 range. "
-                "NOTE: apply_config() only inserts the decorator + imports; "
-                "it does not change retriever calls."
-            ),
         },
         {
             "name": "chunk_size",
@@ -144,235 +137,6 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
             "reasoning": "Chain-of-thought and self-consistency improve code generation accuracy",
             "impact": "high",
         },
-        {
-            "name": "schema_context",
-            "category": "structural",
-            "reasoning": "Measured BIRD and Spider demo isolation runs showed schema context can materially improve SQL execution accuracy.",
-            "impact": "high",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="none",
-                    candidate="linked_top6",
-                    delta=0.40,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="none",
-                    candidate="full_ddl_fk",
-                    delta=0.30,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['schema_context']: 'none' sends no schema; "
-                "'full_ddl_fk' injects full DDL+FK text; "
-                "'linked_top6'/'linked_top10' inject the top-k schema-linked "
-                "lines. Add eval coverage for the baseline and each branch. "
-                "NOTE: apply_config() only inserts the @traigent.optimize "
-                "decorator + imports; it does NOT wire this runtime branch - "
-                "you do."
-            ),
-        },
-        {
-            "name": "evidence_usage",
-            "category": "structural",
-            "reasoning": "Measured BIRD demo isolation showed appended evidence hints can improve execution accuracy on a small slice.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="hint_appended",
-                    delta=0.10,
-                    limitations=_SINGLE_SLICE_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['evidence_usage']: 'off' leaves the prompt unchanged; "
-                "'hint_appended' appends retrieved schema or value evidence as "
-                "a hint section before generation. Add eval coverage for off "
-                "and hint_appended. NOTE: apply_config() only inserts the "
-                "decorator + imports; runtime prompt wiring remains your code."
-            ),
-        },
-        {
-            "name": "fewshot_selector",
-            "category": "prompting",
-            "reasoning": "Spider significance data indicates few-shot selection matters, but this signal is observational rather than causal.",
-            "impact": "medium",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="significance",
-                    metric="importance",
-                    n=200,
-                    model=_DEMO_MODEL,
-                    baseline="observational",
-                    candidate="fewshot_selector",
-                    delta=None,
-                    limitations=_OBSERVATIONAL_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['fewshot_selector']: 'random' samples examples "
-                "uniformly, 'masked_question_similarity' selects nearest "
-                "masked-question examples, and 'dail_selection' uses the DAIL "
-                "selection path. Add eval coverage for each selector because "
-                "this evidence is observational, not causal. NOTE: "
-                "apply_config() only inserts the decorator + imports; selector "
-                "implementation remains your code."
-            ),
-        },
-        {
-            "name": "generation_path",
-            "category": "prompting",
-            "reasoning": "Generation path had low or zero isolated lift in demos, but can contribute when combined with schema, examples, and repair.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="direct_dail",
-                    candidate="query_plan_cot",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="direct_dail",
-                    candidate="query_plan_cot",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['generation_path']: 'direct_dail' uses direct SQL "
-                "generation, 'query_plan_cot' prompts for a plan before SQL, "
-                "and 'divide_conquer_cot' decomposes the question before "
-                "composing SQL. Add eval coverage for each path and interpret "
-                "isolated wins cautiously. NOTE: apply_config() only inserts "
-                "the decorator + imports; generation control flow remains "
-                "your code."
-            ),
-        },
-        {
-            "name": "fewshot_k",
-            "category": "prompting",
-            "reasoning": "Few-shot count had low or zero isolated lift in demos, but can matter jointly with selector and schema context.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=0,
-                    candidate=3,
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline=0,
-                    candidate=3,
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['fewshot_k'] and use it as the number of few-shot "
-                "examples emitted by whichever selector is active; 0 means no "
-                "examples. Add eval coverage for 0 and the upper range. NOTE: "
-                "apply_config() only inserts the decorator + imports; example "
-                "selection remains your code."
-            ),
-        },
-        {
-            "name": "candidate_count",
-            "category": "generation",
-            "reasoning": "Spider significance data indicates candidate count matters, but this signal is observational rather than causal.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="significance",
-                    metric="importance",
-                    n=200,
-                    model=_DEMO_MODEL,
-                    baseline="observational",
-                    candidate="candidate_count",
-                    delta=None,
-                    limitations=_OBSERVATIONAL_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, read "
-                "cfg['candidate_count'] and generate that many candidate SQL "
-                "or program outputs before your selection or execution step; "
-                "1 preserves single-sample behavior. Add eval coverage for "
-                "1..3. NOTE: apply_config() only inserts the decorator + "
-                "imports; multi-candidate generation remains your code."
-            ),
-        },
-        {
-            "name": "repair_policy",
-            "category": "repair",
-            "reasoning": "Repair policy had low or zero isolated lift in demos, but retry behavior can help when combined with candidate generation and schema context.",
-            "impact": "low",
-            "evidence_refs": (
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="sqlite_error_or_empty_once",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-                EvidenceRef(
-                    scope="isolation",
-                    metric="execution_accuracy",
-                    n=10,
-                    model=_DEMO_MODEL,
-                    baseline="off",
-                    candidate="sqlite_error_or_empty_once",
-                    delta=0.0,
-                    limitations=_LOW_JOINT_LIMITATIONS,
-                ),
-            ),
-            "apply_guidance": (
-                "Manual wiring: after `cfg = traigent.get_config()`, branch "
-                "on cfg['repair_policy']: 'off' returns the first generation, "
-                "'sqlite_error_once' retries once when SQLite reports an "
-                "error, and 'sqlite_error_or_empty_once' retries once on "
-                "error or empty result. Add eval coverage for each policy. "
-                "NOTE: apply_config() only inserts the decorator + imports; "
-                "retry handling remains your code."
-            ),
-        },
     ],
     "summarization": [
         {
@@ -412,13 +176,85 @@ _RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
+_RECOMMENDATION_ORDER: dict[str, tuple[str, ...]] = {
+    "rag": (
+        "prompting_strategy",
+        "retriever",
+        "retrieval_k",
+        "chunk_size",
+        "reranker",
+        "context_format",
+    ),
+    "chat": ("prompting_strategy", "context_format"),
+    "code_gen": (
+        "prompting_strategy",
+        "schema_context",
+        "evidence_usage",
+        "fewshot_selector",
+        "generation_path",
+        "fewshot_k",
+        "candidate_count",
+        "repair_policy",
+    ),
+    "summarization": ("prompting_strategy", "context_format"),
+    "classification": ("few_shot_count", "prompting_strategy"),
+    "general_llm": ("prompting_strategy",),
+}
+
+
+def _catalog_recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+    templates: list[dict[str, Any]] = []
+    for entry in catalog_entries(agent_type):
+        rec = entry_to_recommendation(entry)
+        templates.append(
+            {
+                "name": rec.name,
+                "category": rec.category,
+                "reasoning": rec.reasoning,
+                "impact": rec.impact_estimate,
+                "entry_id": rec.entry_id,
+                "catalog_entry_id": rec.catalog_entry_id,
+                "kind": rec.kind,
+                "effectuation_status": rec.effectuation_status,
+                "effectuation_strategy": rec.effectuation_strategy,
+                "evidence_refs": rec.evidence_refs,
+                "apply_guidance": rec.apply_guidance,
+                "recommended_values": rec.recommended_values,
+            }
+        )
+    return templates
+
+
+def _recommendation_templates(agent_type: str) -> list[dict[str, Any]]:
+    templates = [
+        dict(template)
+        for template in _LEGACY_RECOMMENDATION_TEMPLATES.get(agent_type, ())
+    ]
+    templates.extend(_catalog_recommendation_templates(agent_type))
+
+    order = _RECOMMENDATION_ORDER.get(agent_type, ())
+    if not order:
+        return templates
+
+    order_index = {name: index for index, name in enumerate(order)}
+    return sorted(
+        templates,
+        key=lambda template: order_index.get(str(template.get("name", "")), len(order)),
+    )
+
+
+_RECOMMENDATIONS: dict[str, list[dict[str, Any]]] = {
+    agent_type: _recommendation_templates(agent_type)
+    for agent_type in _RECOMMENDATION_ORDER
+}
+
 
 def _preset_recommendations(
     agent_type: str,
     existing_names: set[str],
 ) -> list[TVarRecommendation]:
     """Generate recommendations from presets."""
-    templates = _RECOMMENDATIONS.get(agent_type, [])
+    templates = _recommendation_templates(agent_type)
     recs: list[TVarRecommendation] = []
 
     for tmpl in templates:
@@ -439,12 +275,209 @@ def _preset_recommendations(
                 reasoning=tmpl["reasoning"],
                 impact_estimate=tmpl["impact"],
                 entry_id=tmpl.get("entry_id", ""),
+                catalog_entry_id=tmpl.get("catalog_entry_id", ""),
+                kind=tmpl.get("kind", ""),
+                effectuation_status=tmpl.get("effectuation_status", ""),
+                effectuation_strategy=tmpl.get("effectuation_strategy", ""),
                 evidence_refs=tuple(tmpl.get("evidence_refs", ())),
                 apply_guidance=tmpl.get("apply_guidance", ""),
+                recommended_values=tuple(tmpl.get("recommended_values", ())),
             )
         )
 
     return recs
+
+
+def _augment_recommendations_with_value_hints(
+    recs: list[TVarRecommendation],
+    recommendation_bundle: RecommendationBundle,
+) -> list[TVarRecommendation]:
+    if not recs or not getattr(recommendation_bundle, "value_recommendations", ()):
+        return recs
+
+    hints_by_name = _gated_value_recommendations_by_tvar(
+        recommendation_bundle.value_recommendations
+    )
+    if not hints_by_name:
+        return recs
+
+    augmented: list[TVarRecommendation] = []
+    for rec in recs:
+        hints = [
+            hint
+            for hint in hints_by_name.get(rec.name, ())
+            if _recommended_value_allowed(rec, hint[0])
+        ]
+        if not hints:
+            augmented.append(rec)
+            continue
+
+        updated_kwargs = _range_kwargs_with_hint_order(rec, hints)
+        recommended_values = tuple(value for value, _score in hints)
+        augmented.append(
+            replace(
+                rec,
+                range_kwargs=updated_kwargs,
+                recommended_values=recommended_values,
+            )
+        )
+
+    return augmented
+
+
+def _gated_value_recommendations_by_tvar(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, tuple[tuple[Any, float], ...]]:
+    hints_by_name: dict[str, tuple[tuple[Any, float], ...]] = {}
+    for row in rows:
+        tvar_name = str(row.get("tvar_name") or "").strip()
+        value_recommendations = row.get("value_recommendations")
+        if not tvar_name or not isinstance(value_recommendations, Sequence):
+            continue
+
+        # Consume hints as provided, keeping only well-formed value+score items.
+        usable: list[tuple[Any, float]] = []
+        for item in value_recommendations:
+            if not isinstance(item, Mapping) or "value" not in item:
+                continue
+            try:
+                score = float(item["score"])
+            except (TypeError, ValueError):
+                continue
+            usable.append((item["value"], score))
+
+        ordered = _dedupe_recommended_values(usable)
+        if ordered:
+            hints_by_name[tvar_name] = tuple(ordered)
+
+    return hints_by_name
+
+
+def _dedupe_recommended_values(
+    hints: Sequence[tuple[Any, float]],
+) -> tuple[tuple[Any, float], ...]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[tuple[Any, float]] = []
+    for value, score in hints:
+        key = (type(value).__name__, repr(value))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((value, score))
+    return tuple(deduped)
+
+
+def _range_kwargs_with_hint_order(
+    rec: TVarRecommendation,
+    hints: Sequence[tuple[Any, float]],
+) -> dict[str, Any]:
+    if rec.range_type != "Choices":
+        return dict(rec.range_kwargs)
+
+    current_values = rec.range_kwargs.get("values")
+    if not isinstance(current_values, Sequence) or isinstance(current_values, str):
+        return dict(rec.range_kwargs)
+
+    hinted_values = [value for value, _score in hints if value in current_values]
+    if not hinted_values:
+        return dict(rec.range_kwargs)
+
+    remaining_values = [value for value in current_values if value not in hinted_values]
+    return {**rec.range_kwargs, "values": [*hinted_values, *remaining_values]}
+
+
+def _recommended_value_allowed(rec: TVarRecommendation, value: Any) -> bool:
+    if rec.range_type == "Choices":
+        values = rec.range_kwargs.get("values")
+        return (
+            isinstance(values, Sequence)
+            and not isinstance(values, str)
+            and value in values
+        )
+
+    if rec.range_type == "IntRange":
+        return type(value) is int and _within_numeric_range(rec.range_kwargs, value)
+
+    if rec.range_type in {"Range", "LogRange"}:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return _within_numeric_range(rec.range_kwargs, float(value))
+
+    return False
+
+
+def _within_numeric_range(range_kwargs: Mapping[str, Any], value: float | int) -> bool:
+    low = range_kwargs.get("low")
+    high = range_kwargs.get("high")
+    if isinstance(low, (int, float)) and value < low:
+        return False
+    if isinstance(high, (int, float)) and value > high:
+        return False
+    return True
+
+
+def _fetch_backend_recommendations(
+    agent_type: str,
+    tvar_names: Sequence[str],
+) -> RecommendationBundle:
+    from traigent.cloud.client import RecommendationBundle, TraigentCloudClient
+
+    names = tuple(name for name in tvar_names if name)
+    if not names or not _should_fetch_backend_recommendations():
+        return RecommendationBundle.empty()
+
+    cache_key = (agent_type, names)
+    cached = _RECOMMENDATIONS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        return RecommendationBundle.empty()
+
+    async def _fetch() -> RecommendationBundle:
+        client = TraigentCloudClient(timeout=_RECOMMENDATIONS_FETCH_TIMEOUT_SECONDS)
+        try:
+            return await client.fetch_tvar_recommendations(
+                agent_type=agent_type,
+                tvar_names=names,
+            )
+        finally:
+            await client.close()
+
+    try:
+        bundle = asyncio.run(_fetch())
+    except Exception:
+        bundle = RecommendationBundle.empty()
+
+    _RECOMMENDATIONS_CACHE[cache_key] = bundle
+    return bundle
+
+
+def _should_fetch_backend_recommendations() -> bool:
+    from traigent.config.backend_config import BackendConfig
+    from traigent.utils.env_config import is_backend_offline
+
+    if is_backend_offline() or _edge_analytics_env_enabled():
+        return False
+
+    try:
+        if not BackendConfig.get_configured_backend_url():
+            return False
+        return BackendConfig.has_auth_credentials()
+    except Exception:
+        return False
+
+
+def _edge_analytics_env_enabled() -> bool:
+    values = {
+        os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
+        os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
+    }
+    return bool(values & {"true", "1", "yes", "edge_analytics"})
 
 
 _VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})

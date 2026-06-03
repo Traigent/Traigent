@@ -740,7 +740,7 @@ def set_strategy(
     Args:
         algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
             Default is "tpe" (Tree-structured Parzen Estimator) which is always
-            available with Optuna. "bayesian" (Gaussian Process) requires
+            available with Optuna. "bayesian" adaptive optimization requires
             the traigent-advanced-algorithms plugin.
         algorithm_config: Algorithm-specific parameters.
         parallel_workers: Number of parallel evaluation workers.
@@ -788,7 +788,7 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
     Example:
         >>> strategies = traigent.get_available_strategies()
         >>> strategies["bayesian"]["description"]
-        'Gaussian Process-based optimization with acquisition functions'
+        'Adaptive optimization for sample-efficient search'
     """
     algorithms = list_optimizers()
 
@@ -829,13 +829,13 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
         elif algorithm == "bayesian":
             strategies[algorithm] = {
                 "name": "Bayesian Optimization",
-                "description": "Gaussian Process-based optimization with acquisition functions",
+                "description": "Adaptive optimization for sample-efficient search",
                 "supports_continuous": True,
                 "supports_categorical": True,
                 "deterministic": False,
                 "parameters": {
                     "acquisition_function": "expected_improvement or upper_confidence_bound",
-                    "initial_random_samples": "Number of random trials before GP (default: 5)",
+                    "initial_random_samples": "Number of random trials before adaptive selection (default: 5)",
                     "xi": "Exploration parameter for EI (default: 0.01)",
                     "kappa": "Exploration parameter for UCB (default: 2.576)",
                     "random_seed": "Random seed for reproducibility",

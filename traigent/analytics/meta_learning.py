@@ -1,4 +1,4 @@
-"""Meta-learning engine for Traigent optimization history analysis."""
+"""Historical analytics engine for Traigent optimization history analysis."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Performance FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import statistics
 import threading
+import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -29,7 +30,7 @@ class OptimizationStatus(Enum):
 
 
 class AlgorithmType(Enum):
-    """Algorithm types for meta-learning."""
+    """Algorithm types for historical analytics."""
 
     GRID = "grid"
     RANDOM = "random"
@@ -640,15 +641,15 @@ class PerformancePredictor:
         }
 
 
-class MetaLearningEngine:
-    """Main meta-learning engine that coordinates all components."""
+class HistoricalAnalyticsEngine:
+    """Main historical analytics engine that coordinates all components."""
 
     def __init__(self, storage_path: str | None = None) -> None:
-        """Initialize meta-learning engine."""
+        """Initialize historical analytics engine."""
         self.history = OptimizationHistory(storage_path)
         self.algorithm_selector = AlgorithmSelector(self.history)
         self.performance_predictor = PerformancePredictor(self.history)
-        logger.info("MetaLearningEngine initialized")
+        logger.info("HistoricalAnalyticsEngine initialized")
 
     def record_optimization(
         self,
@@ -664,7 +665,7 @@ class MetaLearningEngine:
         status: str = "completed",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Record optimization result for meta-learning."""
+        """Record optimization result for historical analytics."""
 
         try:
             algorithm_enum = AlgorithmType(algorithm.lower())
@@ -812,3 +813,15 @@ class MetaLearningEngine:
             ),
             "functions_optimized": len({r.function_name for r in records}),
         }
+
+
+class MetaLearningEngine(HistoricalAnalyticsEngine):
+    """Deprecated compatibility alias for HistoricalAnalyticsEngine."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        warnings.warn(
+            "MetaLearningEngine is deprecated; use HistoricalAnalyticsEngine instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

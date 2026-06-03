@@ -1039,7 +1039,7 @@ Options:
         )
 
     def _maybe_warn_cold_start_estimate(self) -> None:
-        """Warn once when estimate stays at cold-start value after repeated unknown costs."""
+        """Warn once when estimate stays at its initial value after repeated unknown costs."""
 
         if self._cold_start_warning_emitted:
             return

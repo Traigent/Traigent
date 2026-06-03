@@ -302,7 +302,7 @@ class SDKBackendBridge:
         """Convert SDK AgentSpecification to backend agent data.
 
         The returned payload matches the Traigent backend's ``create_agent``
-        MCP tool / ``POST /agents`` schema (see ``TraigentBackend`` ``agent_dal.create_agent``
+        MCP tool / ``POST /agents`` schema (see ``backend`` ``agent_dal.create_agent``
         and ``src/mcp/tools/agent_tools.create_agent``): ``agent_type_id`` and
         ``agent_platform`` are the canonical field names (not ``agent_type`` /
         ``platform``). ``model_parameters`` is preserved so callers that forward

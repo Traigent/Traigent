@@ -270,7 +270,7 @@ class CostForecaster:
         if len(self.usage_history) < 5:
             return {"error": "Insufficient data for cost driver analysis"}
 
-        # Calculate correlations (simplified without scipy)
+        # Calculate association summaries (simplified without scipy)
         metrics = self.usage_history
 
         # Extract features
@@ -280,8 +280,8 @@ class CostForecaster:
         compute_costs = [m.compute_cost for m in metrics]
         users = [m.active_users for m in metrics]
 
-        # Simple correlation calculation
-        def simple_correlation(
+        # Simple association calculation
+        def simple_association(
             x: list[int] | list[float], y: list[int] | list[float]
         ) -> float:
             if len(x) != len(y) or len(x) < 2:
@@ -297,26 +297,26 @@ class CostForecaster:
             denominator = (sum_sq_x * sum_sq_y) ** 0.5
             return numerator / denominator if denominator > 0 else 0.0
 
-        correlations = {
-            "optimizations_vs_cost": simple_correlation(
+        association_summary = {
+            "optimizations_vs_cost": simple_association(
                 optimization_counts, compute_costs
             ),
-            "trials_vs_cost": simple_correlation(trial_counts, compute_costs),
-            "duration_vs_cost": simple_correlation(durations, compute_costs),
-            "users_vs_cost": simple_correlation(users, compute_costs),
+            "trials_vs_cost": simple_association(trial_counts, compute_costs),
+            "duration_vs_cost": simple_association(durations, compute_costs),
+            "users_vs_cost": simple_association(users, compute_costs),
         }
 
         # Find primary cost driver
-        primary_driver = max(correlations.items(), key=lambda x: abs(x[1]))
+        primary_driver = max(association_summary.items(), key=lambda x: abs(x[1]))
 
         return {
-            "correlations": correlations,
+            "association_summary": association_summary,
             "primary_cost_driver": {
                 "factor": primary_driver[0],
-                "correlation": primary_driver[1],
+                "association_score": primary_driver[1],
             },
             "cost_efficiency_trends": self._analyze_efficiency_trends(),
-            "recommendations": self._generate_cost_recommendations(correlations),
+            "recommendations": self._generate_cost_recommendations(association_summary),
         }
 
     def _forecast_metric(
@@ -460,24 +460,24 @@ class CostForecaster:
         }
 
     def _generate_cost_recommendations(
-        self, correlations: dict[str, float]
+        self, association_summary: dict[str, float]
     ) -> list[str]:
         """Generate cost optimization recommendations."""
 
         recommendations = []
 
-        # Analyze correlations and provide recommendations
-        if correlations.get("trials_vs_cost", 0) > 0.7:
+        # Analyze association summaries and provide recommendations
+        if association_summary.get("trials_vs_cost", 0) > 0.7:
             recommendations.append(
-                "High correlation between trial count and cost. Consider implementing early stopping criteria."
+                "High statistical association between trial count and cost. Consider implementing early stopping criteria."
             )
 
-        if correlations.get("duration_vs_cost", 0) > 0.8:
+        if association_summary.get("duration_vs_cost", 0) > 0.8:
             recommendations.append(
-                "Strong correlation between duration and cost. Optimize evaluation functions for faster execution."
+                "Strong statistical association between duration and cost. Optimize evaluation functions for faster execution."
             )
 
-        if correlations.get("users_vs_cost", 0) > 0.9:
+        if association_summary.get("users_vs_cost", 0) > 0.9:
             recommendations.append(
                 "Cost scales directly with users. Consider implementing user quotas or tiered pricing."
             )
@@ -1103,18 +1103,18 @@ class TrendAnalyzer:
         if not comparisons:
             return {"error": "No valid metrics for comparison"}
 
-        # Find correlations (simplified)
-        correlations = {}
+        # Find association summaries (simplified)
+        association_summary = {}
         metric_pairs = [(m1, m2) for m1 in comparisons for m2 in comparisons if m1 < m2]
 
         for m1, m2 in metric_pairs:
-            # This is a simplified correlation - in practice, you'd want proper time alignment
+            # This is a simplified association summary; production use should align time windows.
             corr_key = f"{m1}_vs_{m2}"
-            correlations[corr_key] = "analysis_needed"  # Placeholder
+            association_summary[corr_key] = "analysis_needed"  # Placeholder
 
         return {
             "individual_trends": comparisons,
-            "correlations": correlations,
+            "association_summary": association_summary,
             "summary": self._summarize_metric_comparison(comparisons),
         }
 

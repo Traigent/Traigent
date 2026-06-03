@@ -12,12 +12,12 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-from ..core.constants import (
+from traigent.core.constants import (
     HISTORY_PRUNE_RATIO,
     MAX_PERFORMANCE_HISTORY_SIZE,
     MAX_USAGE_HISTORY_SIZE,
 )
-from ..utils.logging import get_logger
+from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

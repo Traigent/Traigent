@@ -7,7 +7,13 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import MagicMock
 
+from traigent.cloud.client import RecommendationBundle
 from traigent.config_generator.agent_classifier import ClassificationResult
+from traigent.config_generator.catalog import (
+    catalog_entries,
+    entry_to_recommendation,
+    load_catalog,
+)
 from traigent.config_generator.llm_backend import BudgetExhausted
 from traigent.config_generator.subsystems.tvar_recommendations import (
     generate_recommendations,
@@ -27,9 +33,46 @@ _READY_MADE_RECS = {
 
 _CODE_GEN_STRUCTURAL_RECS = _READY_MADE_RECS - {"retrieval_k"}
 
+_CATALOG_ENTRY_KINDS = {
+    "rag.retrieval_k.v1": "cardinality",
+    "code_gen.schema_context.v1": "topology",
+    "code_gen.evidence_usage.v1": "topology",
+    "code_gen.fewshot_selector.v1": "topology",
+    "code_gen.generation_path.v1": "topology",
+    "code_gen.fewshot_k.v1": "cardinality",
+    "code_gen.candidate_count.v1": "cardinality",
+    "code_gen.repair_policy.v1": "topology",
+}
+
 
 def _make_tvar(name: str) -> TVarSpec:
     return TVarSpec(name=name, range_type="Range", range_kwargs={"low": 0, "high": 1})
+
+
+def _classification(agent_type: str) -> ClassificationResult:
+    return ClassificationResult(
+        agent_type=agent_type,
+        confidence=0.9,
+        source="heuristic",
+        reasoning="test",
+    )
+
+
+def _value_prior_row(
+    tvar_name: str,
+    values: list[dict],
+    *,
+    support_n: int = 100,
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "schema_version": "1.0.0",
+        "tvar_name": tvar_name,
+        "metric": "accuracy",
+        "value_recommendations": values,
+        "support_n": support_n,
+        "confidence": confidence,
+    }
 
 
 class TestGenerateRecommendations:
@@ -175,16 +218,16 @@ class TestGenerateRecommendations:
 
         schema_context = recs_by_name["schema_context"]
         assert len(schema_context.evidence_refs) == 2
-        # Public-safe provenance only: no internal artifact_path / run_id.
+        # Public-safe provenance only: no internal artifact paths / run IDs.
         assert not hasattr(schema_context.evidence_refs[0], "artifact_path")
         assert not hasattr(schema_context.evidence_refs[0], "run_id")
+        assert schema_context.evidence_refs[0].scope == "isolation"
         assert schema_context.evidence_refs[0].delta == 0.40
         assert schema_context.evidence_refs[1].candidate == "full_ddl_fk"
         assert schema_context.impact_estimate == "high"
 
         retrieval_k = recs_by_name["retrieval_k"]
-        assert not hasattr(retrieval_k.evidence_refs[0], "artifact_path")
-        assert not hasattr(retrieval_k.evidence_refs[0], "run_id")
+        assert retrieval_k.evidence_refs[0].scope == "isolation"
         assert retrieval_k.evidence_refs[0].metric == "answer_em"
         assert retrieval_k.evidence_refs[0].baseline == 1
         assert retrieval_k.evidence_refs[0].candidate == 5
@@ -204,6 +247,204 @@ class TestGenerateRecommendations:
             for ref in generation_path.evidence_refs
         )
         assert generation_path.impact_estimate == "low"
+
+    def test_catalog_backed_recommendation_lists_are_stable(self) -> None:
+        rag_classification = ClassificationResult(
+            agent_type="rag", confidence=0.9, source="heuristic", reasoning="test"
+        )
+        code_gen_classification = ClassificationResult(
+            agent_type="code_gen", confidence=0.9, source="heuristic", reasoning="test"
+        )
+
+        assert [
+            rec.name
+            for rec in generate_recommendations([], classification=rag_classification)
+        ] == [
+            "prompting_strategy",
+            "retriever",
+            "retrieval_k",
+            "chunk_size",
+            "reranker",
+            "context_format",
+        ]
+        assert [
+            rec.name
+            for rec in generate_recommendations(
+                [], classification=code_gen_classification
+            )
+        ] == [
+            "prompting_strategy",
+            "schema_context",
+            "evidence_usage",
+            "fewshot_selector",
+            "generation_path",
+            "fewshot_k",
+            "candidate_count",
+            "repair_policy",
+        ]
+
+
+class TestValueHintAugmentation:
+    def test_high_support_hints_reorder_and_annotate_recommended_values(
+        self,
+    ) -> None:
+        # Hints are consumed in the order provided (not re-ranked by the SDK).
+        bundle = RecommendationBundle(
+            value_recommendations=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "linked_top10",
+                            "score": 0.91,
+                            "support_n": 91,
+                            "confidence": 0.87,
+                        },
+                        {
+                            "value": "full_ddl_fk",
+                            "score": 0.52,
+                            "support_n": 75,
+                            "confidence": 0.82,
+                        },
+                    ],
+                ),
+            ),
+            correlations=(),
+        )
+
+        recs = generate_recommendations(
+            [],
+            classification=_classification("code_gen"),
+            recommendation_bundle=bundle,
+        )
+        rec = next(rec for rec in recs if rec.name == "schema_context")
+
+        assert rec.recommended_values == ("linked_top10", "full_ddl_fk")
+        assert rec.range_kwargs["values"] == [
+            "linked_top10",
+            "full_ddl_fk",
+            "none",
+            "linked_top6",
+        ]
+
+    def test_provided_hints_are_applied_as_is(self) -> None:
+        # The SDK applies the hints it is given without re-ranking or filtering.
+        classification = _classification("code_gen")
+        server_bundle = RecommendationBundle(
+            value_recommendations=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "linked_top10",
+                            "score": 0.99,
+                            "support_n": 2,
+                            "confidence": 0.95,
+                        }
+                    ],
+                    support_n=2,
+                    confidence=0.95,
+                ),
+            ),
+            correlations=(),
+        )
+
+        recs = generate_recommendations(
+            [],
+            classification=classification,
+            recommendation_bundle=server_bundle,
+        )
+        rec = next(rec for rec in recs if rec.name == "schema_context")
+        assert rec.recommended_values == ("linked_top10",)
+
+    def test_no_hints_keeps_phase_one_catalog_output(self) -> None:
+        recs = generate_recommendations(
+            [],
+            classification=_classification("rag"),
+            recommendation_bundle=RecommendationBundle.empty(),
+        )
+
+        assert [rec.name for rec in recs] == [
+            "prompting_strategy",
+            "retriever",
+            "retrieval_k",
+            "chunk_size",
+            "reranker",
+            "context_format",
+        ]
+        assert all(not rec.recommended_values for rec in recs)
+
+
+class TestTVarCatalog:
+    def test_catalog_loads_and_validates_all_ready_made_entries(self) -> None:
+        entries = load_catalog()
+
+        assert len(entries) == 8
+        assert {entry["entry_id"] for entry in entries} == set(_CATALOG_ENTRY_KINDS)
+        for entry in entries:
+            assert entry["kind"] == _CATALOG_ENTRY_KINDS[entry["entry_id"]]
+            assert entry["status"] == "active"
+            assert entry["schema_version"] == "1.0.0"
+            assert entry["version"] == "1.0.0"
+            assert entry["evidence_refs"]
+            assert entry["apply_guidance"].strip()
+
+        by_id = {entry["entry_id"]: entry for entry in entries}
+        assert (
+            by_id["code_gen.candidate_count.v1"]["effectuation_status"]
+            == "executable"
+        )
+        assert (
+            by_id["code_gen.candidate_count.v1"]["effectuation_strategy"]
+            == "self_consistency"
+        )
+        assert {
+            entry["entry_id"]
+            for entry in entries
+            if entry["effectuation_status"] == "manual_guidance"
+        } == set(_CATALOG_ENTRY_KINDS) - {"code_gen.candidate_count.v1"}
+
+    def test_catalog_filters_by_agent_type(self) -> None:
+        assert [entry["entry_id"] for entry in catalog_entries("rag")] == [
+            "rag.retrieval_k.v1"
+        ]
+        assert {entry["entry_id"] for entry in catalog_entries("code_gen")} == (
+            set(_CATALOG_ENTRY_KINDS) - {"rag.retrieval_k.v1"}
+        )
+
+    def test_entry_to_recommendation_round_trips_catalog_fields(self) -> None:
+        entry = next(
+            entry
+            for entry in load_catalog()
+            if entry["entry_id"] == "code_gen.schema_context.v1"
+        )
+
+        rec = entry_to_recommendation(entry)
+
+        assert rec.entry_id == entry["entry_id"]
+        assert rec.catalog_entry_id == entry["entry_id"]
+        assert rec.name == entry["name"]
+        assert rec.kind == entry["kind"]
+        assert rec.category == entry["category"]
+        assert rec.effectuation_status == entry["effectuation_status"]
+        assert rec.effectuation_strategy == entry.get("effectuation_strategy", "")
+        assert rec.reasoning == entry["reasoning"]
+        assert rec.impact_estimate == entry["impact_estimate"]
+        assert rec.apply_guidance == entry["apply_guidance"]
+        assert len(rec.evidence_refs) == len(entry["evidence_refs"])
+        # Public-safe provenance only (no internal artifact_path / run_id).
+        assert not hasattr(rec.evidence_refs[0], "artifact_path")
+        assert rec.evidence_refs[0].scope == entry["evidence_refs"][0]["scope"]
+
+    def test_count_evidence_values_keep_public_types(self) -> None:
+        entry = next(
+            entry for entry in load_catalog() if entry["entry_id"] == "rag.retrieval_k.v1"
+        )
+
+        rec = entry_to_recommendation(entry)
+
+        assert rec.evidence_refs[0].baseline == 1
+        assert rec.evidence_refs[0].candidate == 5
 
 
 class TestCLIJsonRecommendationStability:
@@ -235,6 +476,74 @@ class TestCLIJsonRecommendationStability:
         }
         assert "evidence_refs" not in data["recommendations"][0]
         assert "apply_guidance" not in data["recommendations"][0]
+
+    def test_json_detailed_recommendation_includes_actionable_fields(self) -> None:
+        from traigent.cli.generate_config_command import _output_json
+
+        classification = ClassificationResult(
+            agent_type="code_gen", confidence=0.9, source="heuristic", reasoning="test"
+        )
+        rec = next(
+            r
+            for r in generate_recommendations([], classification=classification)
+            if r.name == "candidate_count"
+        )
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            _output_json(AutoConfigResult(recommendations=(rec,)), detailed=True)
+
+        detailed = json.loads(buf.getvalue())["recommendations"][0]
+        assert detailed["kind"] == "cardinality"
+        assert detailed["catalog_entry_id"] == "code_gen.candidate_count.v1"
+        assert detailed["effectuation_status"] == "executable"
+        assert detailed["effectuation_strategy"] == "self_consistency"
+        assert detailed["recommended_values"] == []
+        assert detailed["apply_guidance"]
+
+    def test_recommendation_keys_unchanged_with_recommendation_hints(self) -> None:
+        from traigent.cli.generate_config_command import _output_json
+
+        bundle = RecommendationBundle(
+            value_recommendations=(
+                _value_prior_row(
+                    "schema_context",
+                    [
+                        {
+                            "value": "linked_top10",
+                            "score": 0.91,
+                            "support_n": 91,
+                            "confidence": 0.87,
+                        }
+                    ],
+                ),
+            ),
+            correlations=(),
+        )
+        rec = next(
+            r
+            for r in generate_recommendations(
+                [],
+                classification=_classification("code_gen"),
+                recommendation_bundle=bundle,
+            )
+            if r.name == "schema_context"
+        )
+        assert rec.recommended_values == ("linked_top10",)
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            _output_json(AutoConfigResult(recommendations=(rec,)))
+
+        data = json.loads(buf.getvalue())
+        assert set(data["recommendations"][0]) == {
+            "name",
+            "range_code",
+            "category",
+            "impact",
+            "reasoning",
+        }
+        assert "recommended_values" not in data["recommendations"][0]
 
 
 class TestLLMEnrichment:

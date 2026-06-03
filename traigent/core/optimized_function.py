@@ -256,6 +256,7 @@ class OptimizedFunction:
         custom_evaluator: Callable[..., Any] | None = None,
         scoring_function: Callable[..., Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
+        effectuation: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -277,6 +278,7 @@ class OptimizedFunction:
             custom_evaluator: Custom evaluation function for advanced use cases
             scoring_function: Simple scoring function that returns a score or dict of scores
             metric_functions: Dict of metric name to scoring function
+            effectuation: Opt-in executable TVAR effectuation.
             **kwargs: Additional configuration
         """
         # Extract decorator-provided metadata before core storage
@@ -312,6 +314,7 @@ class OptimizedFunction:
             custom_evaluator,
             scoring_function,
             metric_functions,
+            effectuation,
         )
 
         # Handle configuration space with backward compatibility
@@ -350,6 +353,7 @@ class OptimizedFunction:
         custom_evaluator,
         scoring_function,
         metric_functions,
+        effectuation,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
@@ -391,6 +395,7 @@ class OptimizedFunction:
         self.custom_evaluator = custom_evaluator
         self.scoring_function = scoring_function
         self.metric_functions = metric_functions
+        self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
         """Return True when configured for managed cloud execution."""
@@ -866,6 +871,22 @@ class OptimizedFunction:
                 return wrapped_func(*args, **kwargs)
         else:
             return wrapped_func(*args, **kwargs)
+
+    def _trial_callable_for_config_space(
+        self,
+        effective_config_space: dict[str, Any],
+    ) -> Callable[..., Any]:
+        if not getattr(self, "effectuation", False):
+            return self._wrapped_func
+
+        from traigent.effectuation import compile_effectuation
+
+        application = compile_effectuation(
+            self._wrapped_func,
+            effective_config_space,
+            enabled=True,
+        )
+        return application.wrapped_callable
 
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
@@ -1570,6 +1591,8 @@ class OptimizedFunction:
         """Run optimization with context managers and finalize results."""
         from traigent.config.context import ConfigurationSpaceContext
 
+        trial_func = self._trial_callable_for_config_space(effective_config_space)
+
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
 
@@ -1578,12 +1601,12 @@ class OptimizedFunction:
                 if self.auto_override_frameworks and self.framework_targets:
                     with override_context(self.framework_targets):
                         result = await orchestrator.optimize(
-                            func=self._wrapped_func,
+                            func=trial_func,
                             dataset=dataset,
                         )
                 else:
                     result = await orchestrator.optimize(
-                        func=self._wrapped_func,
+                        func=trial_func,
                         dataset=dataset,
                     )
 

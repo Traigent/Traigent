@@ -433,7 +433,7 @@ class TraigentAuthCLI:
         # We'll need to extract it from the initial auth response
         user_info: dict[str, str] = {}
 
-        # SDK#908 fix: do NOT fabricate `refresh_token = jwt_token`. The
+        # regression fix: do NOT fabricate `refresh_token = jwt_token`. The
         # backend's auth response did not return a real refresh token,
         # so storing the JWT under that key was misleading — downstream
         # callers (e.g. `auth_commands.py:_perform_token_refresh`) would
