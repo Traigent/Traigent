@@ -441,3 +441,21 @@ class TestReviewRoundTwoCoverage:
         orchestrator.knob_resolver = _happy_resolver()
         baseline = orchestrator._apply_knob_resolution({"model": "a"})
         assert baseline == {"model": "a", "k": 4, "theta": 0.5}
+
+
+def test_unverifiable_optional_certificate_is_ignored_not_fallbacked():
+    """Round-2 new finding: with NO context, staleness is not established —
+    a non-governed CVAR's optional certificate is ignored and the calibrated
+    value stands (no fallback consumption)."""
+    space = _space(governed=False, fallback=Fixed(value=0.42))
+    ctx = _ctx()
+    cert = issue_certificate("theta", "float", 0.5, ctx)
+    resolver = KnobResolver(
+        space,
+        calibrated_inputs={
+            "theta": CalibratedInput(value=0.5, certificate=cert, context=None)
+        },
+    )
+    result = resolver.resolve({"model": "a"})
+    assert result.config["theta"] == 0.5
+    assert result.used_fallbacks == ()

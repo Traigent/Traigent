@@ -292,15 +292,22 @@ class KnobResolver:
                     "current context",
                 )
                 return
-        elif binding.fallback is not None and provided.certificate is not None:
-            # non-governed CVAR whose OPTIONAL certificate turned stale: the
-            # §3.5 carve-out — declared fallback MAY be used, always recorded
-            if provided.context is None or not provided.certificate.valid_for(
+        elif (
+            binding.fallback is not None
+            and provided.certificate is not None
+            and provided.context is not None
+            and not provided.certificate.valid_for(
                 name, binding.value_type, provided.value, provided.context
-            ):
-                values[name] = binding.fallback.value
-                used_fallbacks.append(name)
-                return
+            )
+        ):
+            # non-governed CVAR whose optional certificate is PROVEN stale
+            # against a live context: the §3.5 carve-out — declared fallback
+            # MAY be used, always recorded. With NO context, staleness is
+            # not established: the unverifiable certificate is ignored and
+            # the calibrated value stands (non-governed acceptance).
+            values[name] = binding.fallback.value
+            used_fallbacks.append(name)
+            return
 
         values[name] = provided.value
 
