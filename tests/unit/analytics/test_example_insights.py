@@ -217,16 +217,8 @@ class TestGetExampleScores:
         # Use MagicMock for response since httpx Response.json() is synchronous
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "example_1": {
-                "content_uniqueness": 0.8,
-                "content_novelty": 0.6,
-                "composite_score": 0.7,
-            },
-            "example_2": {
-                "content_uniqueness": 0.9,
-                "content_novelty": 0.7,
-                "composite_score": 0.8,
-            },
+            "example_1": {"example_id": "example_1", "sample_count": 5, "scored": True},
+            "example_2": {"example_id": "example_2", "sample_count": 5, "scored": True},
         }
         mock_response.raise_for_status = MagicMock()
 
@@ -238,7 +230,7 @@ class TestGetExampleScores:
 
         assert "example_1" in result
         assert "example_2" in result
-        assert result["example_1"]["content_uniqueness"] == 0.8
+        assert result["example_1"]["scored"] is True
         mock_http.get.assert_called_once()
 
     @pytest.mark.asyncio
@@ -251,7 +243,7 @@ class TestGetExampleScores:
         # Use MagicMock for response since httpx Response.json() is synchronous
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "example_1": {"composite_score": 0.7},
+            "example_1": {"example_id": "example_1", "scored": True},
         }
         mock_response.raise_for_status = MagicMock()
 
@@ -282,7 +274,7 @@ class TestGetExampleScores:
 
         # Use MagicMock for response since httpx Response.json() is synchronous
         mock_success_response = MagicMock()
-        mock_success_response.json.return_value = {"example_1": {"score": 0.9}}
+        mock_success_response.json.return_value = {"example_1": {"scored": True}}
         mock_success_response.raise_for_status = MagicMock()
 
         # Use side_effect to simulate 404 then success
@@ -376,12 +368,9 @@ class TestGetDatasetQuality:
         # Use MagicMock for response since httpx Response.json() is synchronous
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "dataset_quality": 0.85,
-            "coverage_score": 0.9,
-            "diversity_score": 0.8,
-            "efficiency_score": 0.85,
-            "top_informative_ids": ["ex_1", "ex_2"],
-            "recommendations": ["Add more diverse examples"],
+            "experiment_run_id": "run_123",
+            "algorithm_version": "1.0.0",
+            "scored": True,
         }
         mock_response.raise_for_status = MagicMock()
 
@@ -391,8 +380,8 @@ class TestGetDatasetQuality:
 
         result = await client.get_dataset_quality(experiment_run_id="run_123")
 
-        assert result["dataset_quality"] == 0.85
-        assert result["coverage_score"] == 0.9
+        assert result["scored"] is True
+        assert result["algorithm_version"] == "1.0.0"
         mock_http.get.assert_called_once()
 
     @pytest.mark.asyncio
@@ -407,7 +396,7 @@ class TestGetDatasetQuality:
 
         # Use MagicMock for response since httpx Response.json() is synchronous
         mock_success_response = MagicMock()
-        mock_success_response.json.return_value = {"dataset_quality": 0.85}
+        mock_success_response.json.return_value = {"scored": True}
         mock_success_response.raise_for_status = MagicMock()
 
         call_count = 0
@@ -432,7 +421,7 @@ class TestGetDatasetQuality:
             poll_interval=0.01,
         )
 
-        assert result["dataset_quality"] == 0.85
+        assert result["scored"] is True
         assert call_count == 2
 
     @pytest.mark.asyncio
@@ -545,3 +534,39 @@ class TestExampleInsightsModuleFlags:
     def test_httpx_availability_flag(self) -> None:
         """Test HTTPX_AVAILABLE flag matches actual availability."""
         assert ei_module.HTTPX_AVAILABLE == HTTPX_AVAILABLE
+
+
+class TestNoSignalTaxonomyInSource:
+    """Canary: the SDK insights client must not republish the tuning-signal taxonomy.
+
+    Proprietary signals are redacted server-side; the SDK client must not document
+    or enumerate them. If this fails, a signal name leaked back into the module
+    (docstrings or code) — scrub it, do not relax the assertion.
+    """
+
+    def test_signal_names_absent_from_source(self) -> None:
+        import inspect
+
+        source = inspect.getsource(ei_module)
+        forbidden = [
+            "informativeness",
+            "discriminative_power",
+            "statistical_uniqueness",
+            "predictive_value",
+            "error_sensitivity",
+            "cost_efficiency",
+            "content_uniqueness",
+            "content_novelty",
+            "composite_score",
+            "ambiguity",
+            "coverage_score",
+            "diversity_score",
+            "efficiency_score",
+            "top_informative_ids",
+            "top_difficult_ids",
+            "low_value_ids",
+            "redundant_pairs",
+            "score_distributions",
+        ]
+        leaked = [name for name in forbidden if name in source]
+        assert not leaked, f"Signal taxonomy leaked into example_insights source: {leaked}"
