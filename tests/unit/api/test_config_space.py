@@ -983,19 +983,18 @@ class TestTvarToDomain:
     """Tests for ConfigSpace._tvar_to_domain."""
 
     def test_choices_domain(self) -> None:
-        """Test Choices becomes enum domain."""
+        """Choices becomes the CANONICAL literal-array enum domain."""
         tvar = Choices(["a", "b", "c"])
         domain = ConfigSpace._tvar_to_domain(tvar)
 
-        assert domain["kind"] == "enum"
-        assert domain["values"] == ["a", "b", "c"]
+        assert domain == ["a", "b", "c"]
 
     def test_range_domain(self) -> None:
-        """Test Range becomes range domain."""
+        """Range becomes the CANONICAL kind-less range domain."""
         tvar = Range(0.0, 1.0)
         domain = ConfigSpace._tvar_to_domain(tvar)
 
-        assert domain["kind"] == "range"
+        assert "kind" not in domain
         assert domain["range"] == [0.0, 1.0]
 
     def test_range_domain_with_step(self) -> None:
@@ -1013,11 +1012,11 @@ class TestTvarToDomain:
         assert domain["log"] is True
 
     def test_int_range_domain(self) -> None:
-        """Test IntRange becomes range domain."""
+        """IntRange becomes the CANONICAL kind-less range domain."""
         tvar = IntRange(0, 100)
         domain = ConfigSpace._tvar_to_domain(tvar)
 
-        assert domain["kind"] == "range"
+        assert "kind" not in domain
         assert domain["range"] == [0, 100]
 
     def test_int_range_domain_with_step(self) -> None:
@@ -1035,11 +1034,11 @@ class TestTvarToDomain:
         assert domain["log"] is True
 
     def test_log_range_domain(self) -> None:
-        """Test LogRange becomes range domain with log=True."""
+        """LogRange becomes the CANONICAL range domain with log=True."""
         tvar = LogRange(1e-5, 1e-1)
         domain = ConfigSpace._tvar_to_domain(tvar)
 
-        assert domain["kind"] == "range"
+        assert "kind" not in domain
         assert domain["log"] is True
 
 

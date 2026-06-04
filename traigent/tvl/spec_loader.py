@@ -806,6 +806,17 @@ def compile_constraint_expression(
             "any": any,
             "all": all,
         }
+        # Canonical TVL atoms reference tvars by BARE name (`zero_shot`) and
+        # treat dotted names as FLAT keys (`retriever.k` is one name). Bind
+        # each config-key root into the context — reserved names always win.
+        for key, value in (config or {}).items():
+            root = key.split(".", 1)[0]
+            if root in context:
+                continue
+            if root == key:
+                context[root] = _AttributeView.wrap_value(value)
+            elif root not in (config or {}):
+                context[root] = _DottedPrefixView(config or {}, root)
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
@@ -1944,7 +1955,46 @@ def _translate_expression(expression: str) -> str:
     translated = re.sub(r"\btrue\b", "True", translated, flags=re.IGNORECASE)
     translated = re.sub(r"\bfalse\b", "False", translated, flags=re.IGNORECASE)
     translated = re.sub(r"\bnull\b", "None", translated, flags=re.IGNORECASE)
+    translated = _rewrite_single_equals(translated)
     return translated
+
+
+def _rewrite_single_equals(expression: str) -> str:
+    """Rewrite canonical TVL `=` equality to Python `==`.
+
+    Canonical TVL structural atoms use `=` (tvl.ebnf: ``equality_atom = ident,
+    ("=" | "!="), value``); the SDK dialect uses `==`. The rewrite runs LAST
+    in the translation pipeline, skips quoted string spans (so values like
+    "k=v-style" survive), and is idempotent on `==`, `!=`, `<=`, `>=`.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(expression)
+    quote: str | None = None
+    while i < n:
+        ch = expression[i]
+        if quote is not None:
+            out.append(ch)
+            if ch == quote and (i == 0 or expression[i - 1] != "\\"):
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if (
+            ch == "="
+            and (i + 1 >= n or expression[i + 1] != "=")
+            and (i == 0 or expression[i - 1] not in "=!<>")
+        ):
+            out.append("==")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 _ALLOWED_AST_NODES = (
@@ -2076,7 +2126,13 @@ def _validate_expression_ast(node: ast.AST, source: str) -> None:
 
 
 class _AttributeView:
-    """Proxy that exposes dictionary keys as attributes."""
+    """Proxy that exposes dictionary keys as attributes.
+
+    Dotted tvar names are FLAT keys in canonical TVL (`retriever.k` is one
+    name), so a missing attribute falls back to a dotted-prefix view that
+    resolves attribute chains against the flat key set. Genuinely nested
+    mappings keep their attribute-chain semantics (checked first).
+    """
 
     __slots__ = ("_data",)
 
@@ -2086,6 +2142,9 @@ class _AttributeView:
     def __getattr__(self, item: str) -> Any:
         if item in self._data:
             return self._wrap(self._data[item])
+        prefix = item + "."
+        if any(isinstance(key, str) and key.startswith(prefix) for key in self._data):
+            return _DottedPrefixView(self._data, item)
         return None
 
     def __getitem__(self, key: str) -> Any:
@@ -2099,3 +2158,27 @@ class _AttributeView:
         if isinstance(value, dict):
             return _AttributeView(value)
         return value
+
+    @staticmethod
+    def wrap_value(value: Any) -> Any:
+        """Public wrapper used when binding bare config roots."""
+        return _AttributeView._wrap(value)
+
+
+class _DottedPrefixView:
+    """Resolves attribute chains against FLAT dotted keys (`a.b.c`)."""
+
+    __slots__ = ("_data", "_prefix")
+
+    def __init__(self, data: dict[str, Any], prefix: str):
+        self._data = data
+        self._prefix = prefix
+
+    def __getattr__(self, item: str) -> Any:
+        full = f"{self._prefix}.{item}"
+        if full in self._data:
+            return _AttributeView.wrap_value(self._data[full])
+        deeper = full + "."
+        if any(isinstance(key, str) and key.startswith(deeper) for key in self._data):
+            return _DottedPrefixView(self._data, full)
+        return None
