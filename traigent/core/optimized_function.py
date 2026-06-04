@@ -1072,6 +1072,14 @@ class OptimizedFunction:
 
         from traigent.tvl.promotion_gate import PromotionGate
 
+        # Normalize discovered dict payloads into the typed PromotionPolicy —
+        # a raw dict would read as NON-strict in _is_strict_evidence_mode and
+        # then fail OPEN on gate exceptions (FR-SDK-FAIL-CLOSED-PROMOTION-V1).
+        if isinstance(promotion_policy, dict):
+            from traigent.tvl.models import PromotionPolicy
+
+            promotion_policy = PromotionPolicy.from_dict(promotion_policy)
+
         state["promotion_gate"] = getattr(self, "promotion_gate", None)
         self.promotion_gate = PromotionGate.from_policy(
             promotion_policy=promotion_policy,
