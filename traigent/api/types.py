@@ -610,11 +610,12 @@ class OptimizationResult:
     def best_metrics(self) -> dict[str, float]:
         """Get best metrics from the best trial.
 
-        A result with no winner (empty ``best_config`` — e.g. a strict
-        evidence run that returned NO_CERTIFIED_SELECTION) makes no
-        winner-metric claims either.
+        A result with NO WINNER — empty ``best_config`` AND ``best_score``
+        of ``None``, the NO_CERTIFIED_SELECTION shape from strict evidence
+        runs — makes no winner-metric claims. A valid winner whose config
+        happens to be empty still carries a score and keeps its metrics.
         """
-        if not self.best_config:
+        if not self.best_config and self.best_score is None:
             return {}
         if not self.trials:
             return {}
@@ -1317,7 +1318,11 @@ class OptimizationResult:
         )
 
         return {
-            "best_weighted_config": (best_weighted_config if self.best_config else {}),
+            **(
+                {"best_weighted_config": best_weighted_config}
+                if (self.best_config or self.best_score is not None)
+                else {}
+            ),
             "best_weighted_score": best_weighted_score,
             "weighted_scores": weighted_scores,
             "normalization_ranges": ranges,
