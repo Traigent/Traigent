@@ -277,14 +277,24 @@ class ConfigSpace:
                 if "range" in domain:
                     kind = "range"
                 elif "set" in domain:
+                    set_values = domain.get("set")
+                    if not isinstance(set_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' set domain must contain a list"
+                        )
                     spec_dict = {
-                        "values": list(domain.get("set", [])),
+                        "values": list(set_values),
                         "default": entry.get("default"),
                     }
                     kind = "enum_resolved"
                 elif "values" in domain:
+                    enum_values = domain.get("values")
+                    if not isinstance(enum_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' values domain must contain a list"
+                        )
                     spec_dict = {
-                        "values": list(domain.get("values", [])),
+                        "values": list(enum_values),
                         "default": entry.get("default"),
                     }
                     kind = "enum_resolved"

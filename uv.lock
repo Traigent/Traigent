@@ -2785,7 +2785,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.84.0rc1"
+version = "1.87.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2801,9 +2801,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/a4/8fbde1bd5aef090f70248b4a32eb50cae5d9f32a95a43b484ffb1639c56a/litellm-1.84.0rc1.tar.gz", hash = "sha256:7429008717f5453c824c3c05c1526011fe6169ad74ff4dc3895d616f7c730661", size = 15096879, upload-time = "2026-05-05T23:28:30.05Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/e5/d0ac1c8f55e2c8d8799589e831bef0d450e69e02ecb511901ffc8de054d9/litellm-1.87.1.tar.gz", hash = "sha256:70ac9d6b25f56ad30de6ff95d26fac3b3fc697a95da582b6072d25d8dc73d493", size = 15455709, upload-time = "2026-06-04T16:23:23.339Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/18/3240aea66a94811c8a4423de375ccda40bf8cf5c2f31465144f791f763b0/litellm-1.84.0rc1-py3-none-any.whl", hash = "sha256:a4a729a9e1583464062bf23976fe51e7d7726053ac15fe27c8c54d2ab0ba20cf", size = 16728186, upload-time = "2026-05-05T23:28:26.739Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/18/8275c95ef09e81ab0c01a162c7b780ce3fbc49066b5d532c6b6ab3dc0118/litellm-1.87.1-py3-none-any.whl", hash = "sha256:dd4e00278cdb846d52e99a09d732575a897273540b54eb044247ecbc0d98f67c", size = 17105482, upload-time = "2026-06-04T16:23:20.769Z" },
 ]
 
 [[package]]
@@ -6364,7 +6364,7 @@ requires-dist = [
     { name = "langchain-google-genai", marker = "extra == 'integrations'", specifier = ">=2.1.4" },
     { name = "langchain-openai", marker = "extra == 'integrations'", specifier = ">=1.1.14" },
     { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=0.3.8" },
-    { name = "litellm", specifier = "==1.84.0rc1" },
+    { name = "litellm", specifier = "==1.87.1" },
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
     { name = "mcp", marker = "extra == 'hybrid'", specifier = ">=1.27.0" },

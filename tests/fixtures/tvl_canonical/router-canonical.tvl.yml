@@ -1,4 +1,4 @@
-# Vendored canonical surface: string `=` equality + mixed >= operator in the
+# Vendored canonical surface (tvl repo main @ fe169b4): string `=` equality + mixed >= operator in the
 # consequent, plus a string value CONTAINING '=' (regression guard for the
 # translation step).
 tvl:

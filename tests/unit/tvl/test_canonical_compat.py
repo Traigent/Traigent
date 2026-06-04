@@ -193,3 +193,54 @@ class TestConfigSpaceCanonicalRoundTrip:
         assert isinstance(space.tvars["k"], Choices)
         assert space.tvars["temp"].step == pytest.approx(0.05)
         assert isinstance(space.tvars["legacy"], (Range, IntRange))
+
+
+class TestReviewRegressionCoverage:
+    """Round-1 codex review regressions (6-A convergence)."""
+
+    def test_escaped_backslash_before_closing_quote(self):
+        """BLOCKING fix: a quote preceded by an ESCAPED backslash (even
+        parity) closes the string; '=' after it must still rewrite."""
+        rule = compile_constraint_expression(
+            'params.x = "a\\\\" and params.y = 1', label="bs"
+        )
+        assert rule({"x": "a\\", "y": 1}, None) is True
+        assert rule({"x": "a\\", "y": 2}, None) is False
+
+    def test_quoted_keyword_literals_not_rewritten(self):
+        """'true'/'&&'/'null' INSIDE quotes pass through verbatim."""
+        rule = compile_constraint_expression('params.mode = "true"', label="qk")
+        assert rule({"mode": "true"}, None) is True
+        rule = compile_constraint_expression('params.op = "a && b"', label="qa")
+        assert rule({"op": "a && b"}, None) is True
+
+    def test_unquoted_keywords_still_rewritten(self):
+        rule = compile_constraint_expression(
+            "params.flag = true && params.other = null", label="uk"
+        )
+        assert rule({"flag": True, "other": None}, None) is True
+
+    def test_reserved_root_collision_documented_behavior(self):
+        """A config key whose root collides with a reserved name cannot be
+        referenced bare — reserved names always win (documented). The
+        params.<name> form remains available."""
+        rule = compile_constraint_expression("params.len == 3", label="rsv")
+        assert rule({"len": 3}, None) is True
+        bare = compile_constraint_expression("len = 3", label="rsv2")
+        assert bare({"len": 3}, None) is False  # compares builtin len to 3
+
+    def test_nested_wins_over_flat_dotted_key(self):
+        """Deterministic precedence: a genuine nested mapping shadows a flat
+        dotted key for the same path."""
+        rule = compile_constraint_expression("params.retriever.k == 1", label="prec")
+        assert rule({"retriever": {"k": 2}, "retriever.k": 1}, None) is False
+        assert rule({"retriever": {"k": 1}, "retriever.k": 2}, None) is True
+
+    def test_invalid_canonical_domain_payloads_rejected(self):
+        from traigent.api.config_space import ConfigSpace
+
+        for bad_domain in ({"set": "abc"}, {"values": 1}, {"set": 1}):
+            with pytest.raises(ValueError):
+                ConfigSpace.from_tvl_spec(
+                    {"tvars": [{"name": "x", "type": "int", "domain": bad_domain}]}
+                )

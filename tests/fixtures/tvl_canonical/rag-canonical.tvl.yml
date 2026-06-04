@@ -1,4 +1,4 @@
-# Vendored from tvl/spec/examples/rag-support-bot.tvl.yml (trimmed) — pins the
+# Vendored from tvl/spec/examples/rag-support-bot.tvl.yml @ fe169b4 (trimmed) — pins the
 # canonical TVL surface the SDK loader supports: bool `=` equality, dotted
 # tvar names as FLAT keys, when/then guard form.
 tvl:

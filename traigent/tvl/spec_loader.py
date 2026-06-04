@@ -767,8 +767,17 @@ def compile_constraint_expression(
     - Functions: `min`, `max`, `abs`, `len`, `sum`, `any`, `all`
 
     Note on Equality:
-    Constraint expressions are parsed as Python expressions, so equality must
-    be written as `==` (not `=`).
+    Both the SDK dialect (`==`) and canonical TVL (`=`) are accepted; the
+    translation step rewrites single `=` outside quoted strings.
+
+    Note on Names:
+    Canonical bare tvar names are bound from the config (dotted names are
+    FLAT keys). The reserved context names — `params`, `metrics`, `math`,
+    `len`, `min`, `max`, `sum`, `abs`, `any`, `all` — always win: a tvar
+    whose root collides with one of them cannot be referenced bare (use the
+    `params.<name>` form instead). When BOTH a nested mapping and a flat
+    dotted key exist for the same path, the nested mapping deterministically
+    wins (`_AttributeView` checks exact keys before the dotted fallback).
 
     Args:
         expression: The constraint expression string.
@@ -1948,52 +1957,57 @@ def _merge_inherited_constraints(
 
 
 def _translate_expression(expression: str) -> str:
-    translated = expression
-    translated = re.sub(r"&&", " and ", translated)
-    translated = re.sub(r"\|\|", " or ", translated)
-    translated = re.sub(r"(?<![=!<>])!(?![=])", " not ", translated)
-    translated = re.sub(r"\btrue\b", "True", translated, flags=re.IGNORECASE)
-    translated = re.sub(r"\bfalse\b", "False", translated, flags=re.IGNORECASE)
-    translated = re.sub(r"\bnull\b", "None", translated, flags=re.IGNORECASE)
-    translated = _rewrite_single_equals(translated)
-    return translated
+    """Translate canonical/CEL-like surface syntax to the Python dialect.
 
-
-def _rewrite_single_equals(expression: str) -> str:
-    """Rewrite canonical TVL `=` equality to Python `==`.
-
-    Canonical TVL structural atoms use `=` (tvl.ebnf: ``equality_atom = ident,
-    ("=" | "!="), value``); the SDK dialect uses `==`. The rewrite runs LAST
-    in the translation pipeline, skips quoted string spans (so values like
-    "k=v-style" survive), and is idempotent on `==`, `!=`, `<=`, `>=`.
+    ALL rewrites are quote-aware: quoted string spans pass through verbatim,
+    so values like "k=v-style", "a && b", or "true" are never corrupted.
+    Outside quotes the rewrites are: `&&`/`||`/`!` logicals, case-insensitive
+    `true`/`false`/`null` literals, and canonical TVL `=` equality -> `==`
+    (idempotent on `==`, `!=`, `<=`, `>=`).
     """
+
+    def _rewrite_segment(segment: str) -> str:
+        segment = re.sub(r"&&", " and ", segment)
+        segment = re.sub(r"\|\|", " or ", segment)
+        segment = re.sub(r"(?<![=!<>])!(?![=])", " not ", segment)
+        segment = re.sub(r"\btrue\b", "True", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"\bfalse\b", "False", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"\bnull\b", "None", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"(?<![=!<>])=(?!=)", "==", segment)
+        return segment
+
     out: list[str] = []
+    segment_start = 0
     i = 0
     n = len(expression)
     quote: str | None = None
     while i < n:
         ch = expression[i]
-        if quote is not None:
-            out.append(ch)
-            if ch == quote and (i == 0 or expression[i - 1] != "\\"):
+        if quote is None:
+            if ch in ("'", '"'):
+                out.append(_rewrite_segment(expression[segment_start:i]))
+                segment_start = i
+                quote = ch
+            i += 1
+            continue
+        # inside a quoted span: a quote closes it only if preceded by an
+        # EVEN number of backslashes (odd means the quote is escaped)
+        if ch == quote:
+            backslashes = 0
+            j = i - 1
+            while j >= 0 and expression[j] == "\\":
+                backslashes += 1
+                j -= 1
+            if backslashes % 2 == 0:
+                out.append(expression[segment_start : i + 1])
+                segment_start = i + 1
                 quote = None
-            i += 1
-            continue
-        if ch in ("'", '"'):
-            quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        if (
-            ch == "="
-            and (i + 1 >= n or expression[i + 1] != "=")
-            and (i == 0 or expression[i - 1] not in "=!<>")
-        ):
-            out.append("==")
-            i += 1
-            continue
-        out.append(ch)
         i += 1
+    out.append(
+        expression[segment_start:]
+        if quote is not None
+        else _rewrite_segment(expression[segment_start:])
+    )
     return "".join(out)
 
 
