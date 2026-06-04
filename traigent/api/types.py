@@ -1290,7 +1290,11 @@ class OptimizationResult:
         """
         if not self.successful_trials:
             return {
-                "best_weighted_config": self.best_config,
+                **(
+                    {"best_weighted_config": self.best_config}
+                    if (self.best_config or self.best_score is not None)
+                    else {}
+                ),
                 "best_weighted_score": 0.0,
                 "weighted_scores": [],
                 "normalization_ranges": {},

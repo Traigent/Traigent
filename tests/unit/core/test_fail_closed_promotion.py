@@ -347,3 +347,25 @@ class TestResultWinnerClaimGuards:
             objective_weights={"accuracy": 1.0}
         )
         assert "best_weighted_config" in scores
+
+
+    def test_weighted_scores_early_branch_also_omits_winner_key(self):
+        """Round-3 residual: the no-successful-trials early return must obey
+        the same omit-on-no-winner rule."""
+        from traigent.api.types import OptimizationResult
+
+        result = OptimizationResult(
+            best_config={},
+            best_score=None,
+            trials=[],  # no trials -> the early-return branch
+            total_cost=0.0,
+            duration=1.0,
+            objectives=["accuracy"],
+            optimization_id="opt-test",
+            convergence_info={},
+            status="completed",
+            algorithm="test",
+            timestamp=0.0,
+        )
+        scores = result.calculate_weighted_scores(objective_weights={"accuracy": 1.0})
+        assert "best_weighted_config" not in scores
