@@ -19,6 +19,8 @@ _VALID_USER_KWARGS = {
     "metadata": {},
 }
 
+_ROLE_FAIL_CLOSED_MESSAGE = "Invalid roles in User construction"
+
 
 class TestUserRoleValidation_SDK939:
     """Pin: User.__post_init__ does not silently demote invalid IdP
@@ -45,14 +47,18 @@ class TestUserRoleValidation_SDK939:
         silently demote to ['user']. Pre-fix this returned ['user']
         and quietly hid the upstream misconfiguration."""
         invalid_inputs = [
-            [123, 456],          # all non-strings
-            [None, None],        # all None
-            ["", "  "],          # all empty/whitespace
-            [{"role": "admin"}], # dict, not string
+            [123, 456],  # all non-strings
+            [None, None],  # all None
+            ["", "  "],  # all empty/whitespace
+            [{"role": "admin"}],  # dict, not string
         ]
         for invalid in invalid_inputs:
-            with pytest.raises(ValueError, match="SDK#939"):
+            with pytest.raises(
+                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
+            ) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
+            assert "fail-closed" in str(exc_info.value)
+            assert "sanitize_roles strict mode" in str(exc_info.value)
 
     def test_user_with_mixed_valid_and_invalid_roles_raises(self):
         """SDK#939 + Codex Q3 of PR #969 (defense-in-depth parity with
@@ -66,8 +72,12 @@ class TestUserRoleValidation_SDK939:
             ["valid", {"role": "x"}],
         ]
         for invalid in invalid_mixed:
-            with pytest.raises(ValueError, match="SDK#939"):
+            with pytest.raises(
+                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
+            ) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
+            assert "fail-closed" in str(exc_info.value)
+            assert "sanitize_roles strict mode" in str(exc_info.value)
 
     def test_user_with_string_role_not_list_coerced(self):
         """Backward-compat: a single string `roles="admin"` is coerced
@@ -82,13 +92,17 @@ class TestUserRoleValidation_SDK939:
         in sanitize_roles(strict=True). Now User delegates to the
         strict sanitizer so both paths agree."""
         for invalid in (["!!!hack!!!"], ["super admin"], ["role with spaces"]):
-            with pytest.raises(ValueError, match="SDK#939"):
+            with pytest.raises(
+                ValueError, match=_ROLE_FAIL_CLOSED_MESSAGE
+            ) as exc_info:
                 User(**_VALID_USER_KWARGS, roles=invalid)
+            assert "fail-closed" in str(exc_info.value)
+            assert "sanitize_roles strict mode" in str(exc_info.value)
 
     def test_user_with_role_too_long_truncated_per_sanitize_roles_contract(self):
-        """Note on Greptile P1 of PR #969: \`sanitize_roles(strict=True)\`
+        """Note on Greptile P1 of PR #969: `sanitize_roles(strict=True)`
         actually TRUNCATES overlong role strings via
-        \`sanitize_string(max_length=50)\` rather than rejecting them.
+        `sanitize_string(max_length=50)` rather than rejecting them.
         Since User now delegates to sanitize_roles, it inherits the
         truncation behavior. This test pins that behavior so anyone
         tightening sanitize_roles to reject (rather than truncate)

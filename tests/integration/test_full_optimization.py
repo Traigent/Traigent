@@ -53,6 +53,7 @@ class TestFullOptimizationWorkflow:
             dataset_path.unlink(missing_ok=True)
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_optimization_with_dataset_object(self, evaluation_dataset):
         """Test optimization using Dataset object."""
         from traigent.config.types import TraigentConfig
@@ -117,6 +118,7 @@ class TestFullOptimizationWorkflow:
         assert len(result.trials) > 0
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_random_search_optimization(self, evaluation_dataset):
         """Test optimization using random search algorithm."""
         current_config = {"base": 0, "multiplier": 1}

@@ -245,6 +245,7 @@ class TestMockModeMetrics:
             ), f"For text '{text}', expected {expected_tokens} tokens, got {actual_tokens}"
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_mock_mode_optimization_flow(
         self, sentiment_dataset, mock_environment
     ):
@@ -572,6 +573,7 @@ class TestMockModeIntegrationWithDemos:
         """Test integration similar to actual demo usage."""
         # Override mock mode for exact accuracy testing
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "true")
 
         # Simulate demo environment setup
         original_mock = os.environ.get("MOCK_MODE", "")

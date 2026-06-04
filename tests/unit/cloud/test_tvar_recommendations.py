@@ -77,11 +77,15 @@ async def test_fetch_tvar_recommendations_parses_contract(monkeypatch) -> None:
     session.get = Mock(return_value=_ResponseContext(response))
 
     client = TraigentCloudClient(
-        api_key="test-key",  # pragma: allowlist secret
+        api_key="tg_" + "a" * 61,  # pragma: allowlist secret
         base_url="https://backend.example.com",
     )
     client._aio_session = session
-    client.auth.get_headers = AsyncMock(return_value={"X-API-Key": "test-key"})
+    monkeypatch.setattr(
+        client, "_should_skip_tvar_recommendations_fetch", lambda: False
+    )
+    client.auth.has_api_key = Mock(return_value=True)
+    client.auth.get_headers = AsyncMock(return_value={"X-API-Key": "tg_" + "a" * 61})
 
     bundle = await client.fetch_tvar_recommendations(
         agent_type="rag",

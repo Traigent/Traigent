@@ -661,7 +661,8 @@ class TestComplianceReporter:
         """ComplianceReportUnavailableError inherits NotImplementedError for back-compat."""
         err = ComplianceReportUnavailableError()
         assert isinstance(err, NotImplementedError)
-        assert "876" in str(err)
+        assert COMPLIANCE_NOT_IMPLEMENTED in str(err)
+        assert "internal tracking" in str(err)
 
     def test_error_accepts_custom_message(self):
         """ComplianceReportUnavailableError.__init__ accepts a custom message
@@ -679,7 +680,8 @@ class TestComplianceReporter:
             raise ComplianceReportUnavailableError()
         except NotImplementedError as exc:
             caught = True
-            assert "876" in str(exc)
+            assert COMPLIANCE_NOT_IMPLEMENTED in str(exc)
+            assert "internal tracking" in str(exc)
         assert caught, "NotImplementedError handler did not catch the typed subclass"
 
     def test_compliance_reporter_still_importable_from_audit_module(self):

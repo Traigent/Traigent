@@ -711,7 +711,7 @@ class TestParameterImportanceAnalyzer:
         report = analyzer.generate_importance_report(opt_result)
 
         assert "Variance-based Analysis" in report
-        assert "Correlation-based Analysis" in report
+        assert "Association-based Analysis" in report
 
     def test_generate_importance_report_includes_permutation_when_sufficient_data(
         self, analyzer: ParameterImportanceAnalyzer
