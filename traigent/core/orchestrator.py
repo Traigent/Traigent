@@ -643,6 +643,7 @@ class OptimizationOrchestrator:
         # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
         self.knob_resolver: Any | None = None
         self._strict_withheld_promotions: list[str] = []
+        self._certified_promotions = 0
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
@@ -796,6 +797,19 @@ class OptimizationOrchestrator:
         policy = getattr(gate, "policy", None)
         if policy is None:
             return False
+        if isinstance(policy, dict):
+            # Defensive normalization: a raw dict policy must not silently
+            # read as non-strict (it would then fail OPEN on gate errors).
+            try:
+                from traigent.tvl.models import PromotionPolicy
+
+                policy = PromotionPolicy.from_dict(policy)
+            except Exception:
+                # Unparseable policy declaring strict keys ⇒ fail CLOSED.
+                return bool(
+                    policy.get("require_calibration")
+                    or policy.get("chance_constraints")
+                )
         require_calibration = getattr(policy, "require_calibration", None)
         if require_calibration is not None and getattr(
             require_calibration, "enabled", False
@@ -949,6 +963,11 @@ class OptimizationOrchestrator:
 
         # Evaluate if this trial should become the new best
         if self._evaluate_promotion(config_hash, trial_result):
+            if self._is_strict_evidence_mode():
+                # In strict mode a True here can only come from the gate's
+                # explicit "promote" (all other lanes withhold) — count it:
+                # only gate-certified promotions justify a certified winner.
+                self._certified_promotions += 1
             self._best_trial_cached = trial_result
             self._incumbent_config_hash = config_hash
 
@@ -1811,6 +1830,8 @@ class OptimizationOrchestrator:
         self._successful_trials = 0
         self._failed_trials = 0
         self._best_trial_cached = None
+        self._strict_withheld_promotions = []
+        self._certified_promotions = 0
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -2674,9 +2695,17 @@ class OptimizationOrchestrator:
         strict_mode = self._is_strict_evidence_mode()
         certified_config: dict[str, Any] | None = None
         certified_score: float | None = None
-        if strict_mode and self._best_trial_cached is not None:
-            # The gate-mediated incumbent chain IS the certified winner; the
-            # selector must never re-derive by raw score in strict modes.
+        if (
+            strict_mode
+            and self._best_trial_cached is not None
+            and self._certified_promotions > 0
+        ):
+            # Only an incumbent that won at least one explicit gate
+            # promotion is a certified winner. The FIRST trial seeds the
+            # incumbent as comparison initialization, NOT as certification —
+            # a strict run with zero gate promotions returns
+            # NO_CERTIFIED_SELECTION (review finding: first-incumbent
+            # overclaim).
             config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
             incumbent = self._best_trial_cached
             certified_config = {

@@ -197,3 +197,126 @@ class TestTerminalSelector:
             comparability_mode="legacy",
         )
         assert result.best_config.get("model") == "hot"
+
+
+class TestCertifiedPromotionChain:
+    """Review round-1 fixes: first-incumbent overclaim (B1), dict-policy
+    fail-open (B2), per-run state reset (NB4), and the winner-claim guards
+    on result surfaces (B3, scoped)."""
+
+    def _orchestrator_with_real_chain(self, policy):
+        orchestrator = _orchestrator(policy)
+        orchestrator._best_trial_cached = None
+        orchestrator._incumbent_config_hash = None
+        orchestrator._certified_promotions = 0
+        orchestrator._track_trial_metrics = lambda t: "hash-" + str(
+            t.config.get("model")
+        )
+        return orchestrator
+
+    def test_strict_zero_promotions_yields_no_certified_winner(self):
+        """B1: the FIRST trial seeds the incumbent as initialization, not
+        certification — a strict run with zero gate promotions must produce
+        certified_promotions == 0, driving NO_CERTIFIED_SELECTION."""
+        policy = STRICT_POLICIES["require_calibration"]
+        orchestrator = self._orchestrator_with_real_chain(policy)
+        orchestrator._update_best_trial_cache(_trial(0.9, config={"model": "a"}))
+        assert orchestrator._best_trial_cached is not None  # seeded
+        assert orchestrator._certified_promotions == 0  # NOT certified
+        # second trial: gate says no_decision -> withheld, still zero
+        orchestrator._has_sufficient_samples = MagicMock(return_value=True)
+        orchestrator._config_metrics_history = {
+            "hash-b": {"accuracy": [0.95]},
+            "hash-a": {"accuracy": [0.9]},
+        }
+        orchestrator._incumbent_config_hash = "hash-a"
+        orchestrator._promotion_gate.evaluate = MagicMock(
+            return_value=SimpleNamespace(decision="no_decision", reason="thin")
+        )
+        orchestrator._update_best_trial_cache(_trial(0.95, config={"model": "b"}))
+        assert orchestrator._certified_promotions == 0
+        assert orchestrator._best_trial_cached.config == {"model": "a"}
+
+    def test_strict_gate_promote_counts_as_certified(self):
+        policy = STRICT_POLICIES["require_calibration"]
+        orchestrator = self._orchestrator_with_real_chain(policy)
+        orchestrator._update_best_trial_cache(_trial(0.5, config={"model": "a"}))
+        orchestrator._has_sufficient_samples = MagicMock(return_value=True)
+        orchestrator._config_metrics_history = {
+            "hash-b": {"accuracy": [0.95]},
+            "hash-a": {"accuracy": [0.5]},
+        }
+        orchestrator._incumbent_config_hash = "hash-a"
+        orchestrator._promotion_gate.evaluate = MagicMock(
+            return_value=SimpleNamespace(decision="promote", reason="dominates")
+        )
+        orchestrator._update_best_trial_cache(_trial(0.95, config={"model": "b"}))
+        assert orchestrator._certified_promotions == 1
+        assert orchestrator._best_trial_cached.config == {"model": "b"}
+
+    def test_dict_policy_with_strict_keys_reads_strict(self):
+        """B2: a raw dict policy (discovered specs) must not silently read
+        as non-strict."""
+        orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator._promotion_gate = SimpleNamespace(
+            policy={
+                "dominance": "epsilon_pareto",
+                "require_calibration": {"enabled": True},
+            }
+        )
+        assert orchestrator._is_strict_evidence_mode() is True
+
+    def test_unparseable_dict_policy_with_strict_keys_fails_closed(self):
+        orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator._promotion_gate = SimpleNamespace(
+            policy={
+                "require_calibration": {"enabled": "not-a-bool"},  # from_dict raises
+            }
+        )
+        assert orchestrator._is_strict_evidence_mode() is True
+
+    def test_plain_dict_policy_without_strict_keys_is_not_strict(self):
+        orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator._promotion_gate = SimpleNamespace(
+            policy={"dominance": "epsilon_pareto", "alpha": 0.05}
+        )
+        assert orchestrator._is_strict_evidence_mode() is False
+
+
+class TestResultWinnerClaimGuards:
+    """B3 (scoped): a no-winner result makes no winner claims on its other
+    surfaces. Optimizer-internal best tracking and in-flight progress
+    callbacks are search guidance / observability, NOT promoted-winner
+    claims — recorded as a disposition in the feature trail."""
+
+    def _result(self, best_config):
+        from traigent.api.types import OptimizationResult
+
+        return OptimizationResult(
+            best_config=best_config,
+            best_score=None if not best_config else 0.9,
+            trials=[_trial(0.99, config={"model": "hot"})],
+            total_cost=0.0,
+            duration=1.0,
+            objectives=["accuracy"],
+            optimization_id="opt-test",
+            convergence_info={},
+            status="completed",
+            algorithm="test",
+            timestamp=0.0,
+        )
+
+    def test_best_metrics_empty_when_no_winner(self):
+        assert self._result({}).best_metrics == {}
+
+    def test_best_metrics_present_with_winner(self):
+        assert self._result({"model": "hot"}).best_metrics
+
+    def test_weighted_scores_omit_winner_claim_when_no_winner(self):
+        result = self._result({})
+        scores = result.calculate_weighted_scores(
+            objective_weights={"accuracy": 1.0}
+        )
+        assert scores["best_weighted_config"] == {}
+        # descriptive per-trial statistics are still computed
+        assert scores["weighted_scores"]
