@@ -642,6 +642,7 @@ class OptimizationOrchestrator:
         # values post-suggest, pre-validation. None => byte-identical legacy
         # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
         self.knob_resolver: Any | None = None
+        self._strict_withheld_promotions: list[str] = []
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
@@ -780,6 +781,38 @@ class OptimizationOrchestrator:
             for obj in objectives
         )
 
+    def _is_strict_evidence_mode(self) -> bool:
+        """RFC 0001 §3.6 strict(M): the declared strict evidence modes.
+
+        Detected from the promotion policy today: require_calibration enabled
+        or chance constraints present. The per-CVAR disjuncts (consumed
+        governed CVARs / certificate-backed targets via the knob resolver)
+        join this predicate when the knobs branches consolidate — tracked in
+        FR-SDK-FAIL-CLOSED-PROMOTION-V1's artifact trail.
+        """
+        gate = self._promotion_gate
+        if gate is None:
+            return False
+        policy = getattr(gate, "policy", None)
+        if policy is None:
+            return False
+        require_calibration = getattr(policy, "require_calibration", None)
+        if require_calibration is not None and getattr(
+            require_calibration, "enabled", False
+        ):
+            return True
+        return bool(getattr(policy, "chance_constraints", None))
+
+    def _withhold_promotion(self, reason: str) -> bool:
+        """Fail closed: record + log a strict-mode withheld promotion."""
+        self._strict_withheld_promotions.append(reason)
+        logger.warning(
+            "Strict evidence mode: promotion withheld (%s); "
+            "no winner-by-objective fallback",
+            reason,
+        )
+        return False
+
     def _handle_promotion_decision(
         self,
         decision: Any,
@@ -798,7 +831,11 @@ class OptimizationOrchestrator:
                 decision.reason,
             )
             return False
-        # "no_decision" - fall back to simple comparison
+        # "no_decision": strict evidence modes fail CLOSED — insufficient
+        # evidence never promotes and never falls back to simple comparison
+        # (RFC 0001 P7). Non-strict keeps the legacy simple comparison.
+        if self._is_strict_evidence_mode():
+            return self._withhold_promotion(f"gate no_decision: {decision.reason}")
         logger.debug(
             "PromotionGate: no decision, using simple comparison (reason: %s)",
             decision.reason,
@@ -835,6 +872,10 @@ class OptimizationOrchestrator:
         if not has_data or not self._has_sufficient_samples(
             candidate_metrics, incumbent_metrics
         ):
+            if self._is_strict_evidence_mode():
+                return self._withhold_promotion(
+                    "insufficient samples for statistical comparison"
+                )
             return self._simple_is_better(candidate_trial)
 
         # Use PromotionGate for statistical evaluation
@@ -847,6 +888,16 @@ class OptimizationOrchestrator:
             )
             return self._handle_promotion_decision(decision, candidate_trial)
         except Exception as e:
+            if self._is_strict_evidence_mode():
+                # Gate exception fails CLOSED in strict modes (Rule 1: a
+                # failing policy surface denies; it never silently degrades
+                # to the permissive simple comparison).
+                logger.error(
+                    "PromotionGate evaluation failed in strict evidence "
+                    "mode; promotion withheld: %s",
+                    e,
+                )
+                return self._withhold_promotion(f"gate exception: {e}")
             logger.warning(
                 "PromotionGate evaluation failed, using simple comparison: %s", e
             )
@@ -2620,6 +2671,27 @@ class OptimizationOrchestrator:
         Returns:
             OptimizationResult with all trial data
         """
+        strict_mode = self._is_strict_evidence_mode()
+        certified_config: dict[str, Any] | None = None
+        certified_score: float | None = None
+        if strict_mode and self._best_trial_cached is not None:
+            # The gate-mediated incumbent chain IS the certified winner; the
+            # selector must never re-derive by raw score in strict modes.
+            config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
+            incumbent = self._best_trial_cached
+            certified_config = {
+                key: value
+                for key, value in (incumbent.config or {}).items()
+                if not config_space_keys or key in config_space_keys
+            }
+            primary = (
+                self.optimizer.objectives[0] if self.optimizer.objectives else None
+            )
+            certified_score = (
+                incumbent.get_metric(primary)
+                if primary and hasattr(incumbent, "get_metric")
+                else None
+            )
         selection = select_best_configuration(
             trials=self._trials,
             primary_objective=self.optimizer.objectives[0],
@@ -2628,6 +2700,9 @@ class OptimizationOrchestrator:
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
             comparability_mode=self.traigent_config.get_comparability_mode(),
+            require_certified=strict_mode,
+            certified_config=certified_config,
+            certified_score=certified_score,
         )
         best_config = selection.best_config
         best_score = selection.best_score
