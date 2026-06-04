@@ -283,14 +283,16 @@ class TestRejections:
 
 
 class TestFallbacks:
-    def test_non_governed_no_decision_uses_fallback_recorded(self):
+    def test_bottom_never_falls_back_even_non_governed(self):
+        """Review fix (B1): Accept requires calibrator != ⊥ with NO fallback
+        carve-out — abstention is no_decision regardless of governance."""
         space = _space(governed=False, fallback=Fixed(value=0.42))
         resolver = KnobResolver(
             space, calibrated_inputs={"theta": CalibratedInput(value=None)}
         )
-        result = resolver.resolve({"model": "a"})
-        assert result.config["theta"] == 0.42
-        assert result.used_fallbacks == ("theta",)  # observable, never silent
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"model": "a"})
+        assert ResolutionRejection.NO_DECISION in excinfo.value.rejections
 
     def test_governed_no_decision_never_falls_back(self):
         space = _space(governed=True, fallback=Fixed(value=0.42))
@@ -299,6 +301,23 @@ class TestFallbacks:
         )
         with pytest.raises(ResolutionError):
             resolver.resolve({"model": "a"})
+
+    def test_stale_certificate_fallback_for_non_governed_recorded(self):
+        """The §3.5 carve-out: a NON-governed CVAR whose optional certificate
+        went stale MAY use its declared fallback — always recorded."""
+        space = _space(governed=False, fallback=Fixed(value=0.42))
+        ctx_a = _ctx(parents=(("model", "a"),))
+        cert = issue_certificate("theta", "float", 0.5, ctx_a)
+        ctx_b = dataclasses.replace(ctx_a, tuned_parent_values=(("model", "b"),))
+        resolver = KnobResolver(
+            space,
+            calibrated_inputs={
+                "theta": CalibratedInput(value=0.5, certificate=cert, context=ctx_b)
+            },
+        )
+        result = resolver.resolve({"model": "b"})
+        assert result.config["theta"] == 0.42
+        assert result.used_fallbacks == ("theta",)  # observable, never silent
 
 
 class TestDeterminism:
@@ -351,3 +370,74 @@ class TestOrchestratorInjection:
         orchestrator.knob_resolver = KnobResolver(_space())  # unproduced CVAR
         with pytest.raises(ResolutionError):
             orchestrator._apply_knob_resolution({"model": "a"})
+
+
+class TestReviewRoundTwoCoverage:
+    def test_r8_epsilon_without_context_fails_closed(self):
+        """Review fix (B2): a declared epsilon with NO context is
+        unverifiable evidence — R8, not silent acceptance."""
+        space = _space(governed=False, epsilon=0.1)
+        resolver = KnobResolver(
+            space, calibrated_inputs={"theta": CalibratedInput(value=0.5)}
+        )
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"model": "a"})
+        assert ResolutionRejection.INSUFFICIENT_EVIDENCE in excinfo.value.rejections
+
+    def test_r1_cycle_via_deferred_cvar_parents(self):
+        """R1 machinery (forward-compat): two CVARs referencing each other
+        produce CYCLE alongside the v1 MISSING_REF kind errors."""
+        space = ConfigSpace(
+            knobs={
+                "c1": Knob(
+                    name="c1",
+                    binding=Calibrated(
+                        signal=_signal(), target=_target(),
+                        depends_on=(Ref(knob="c2"),),
+                    ),
+                ),
+                "c2": Knob(
+                    name="c2",
+                    binding=Calibrated(
+                        signal=_signal(), target=_target(),
+                        depends_on=(Ref(knob="c1"),),
+                    ),
+                ),
+            }
+        )
+        resolver = KnobResolver(
+            space,
+            calibrated_inputs={
+                "c1": CalibratedInput(value=0.1),
+                "c2": CalibratedInput(value=0.2),
+            },
+        )
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({})
+        assert ResolutionRejection.CYCLE in excinfo.value.rejections
+        assert ResolutionRejection.MISSING_REF in excinfo.value.rejections
+
+    def test_internal_resolver_errors_surface_typed_not_swallowed(self):
+        """Review fix (B5): internal ValueErrors wrap into ResolutionError so
+        the suggest-site except tuples can never silently break."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        class ExplodingResolver:
+            def resolve(self, suggestion):
+                raise ValueError("internal canonicalization failure")
+
+        orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator.knob_resolver = ExplodingResolver()
+        with pytest.raises(ResolutionError) as excinfo:
+            orchestrator._apply_knob_resolution({"model": "a"})
+        assert ResolutionRejection.INFEASIBLE_VALUE in excinfo.value.rejections
+
+    def test_baseline_config_paths_resolve_too(self):
+        """Review fix (B3): the default/baseline config goes through the same
+        chokepoint — Fixed and CVAR values are injected."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator.knob_resolver = _happy_resolver()
+        baseline = orchestrator._apply_knob_resolution({"model": "a"})
+        assert baseline == {"model": "a", "k": 4, "theta": 0.5}

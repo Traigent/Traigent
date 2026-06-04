@@ -206,10 +206,12 @@ class KnobResolver:
         used_fallbacks: list[str],
         reject: Any,
     ) -> None:
+        # Governance is DECLARED (on the binding/target), never inferred
+        # from runtime-presented evidence — presenting a certificate is
+        # evidence, not an opt-in to strictness.
         governed = (
             binding.require_calibration
             or binding.certificate is not None
-            or provided.certificate is not None
             or binding.target.mode in ("certificate_backed", "guaranteed_selection")
         )
 
@@ -235,26 +237,31 @@ class KnobResolver:
                 f"CVAR {name!r} calibration pool intersects the eval split items",
             )
 
-        # R8 insufficient evidence — closed-form conformal floor
-        if binding.target_epsilon is not None and provided.context is not None:
+        # R8 insufficient evidence — closed-form conformal floor. A declared
+        # epsilon with NO context means the floor is unverifiable: fail
+        # closed (unverifiable evidence IS insufficient evidence).
+        if binding.target_epsilon is not None:
             floor = conformal_evidence_floor(binding.target_epsilon)
-            if provided.context.evidence_n < floor:
+            if provided.context is None:
+                reject(
+                    ResolutionRejection.INSUFFICIENT_EVIDENCE,
+                    f"CVAR {name!r} declares epsilon={binding.target_epsilon} "
+                    "but no freshness context carries the evidence count",
+                )
+            elif provided.context.evidence_n < floor:
                 reject(
                     ResolutionRejection.INSUFFICIENT_EVIDENCE,
                     f"CVAR {name!r} has n={provided.context.evidence_n} < "
                     f"conformal floor {floor} for epsilon={binding.target_epsilon}",
                 )
 
-        # calibrator ⊥
+        # calibrator ⊥ — the Accept biconditional requires 𝒦 ≠ ⊥ with NO
+        # fallback carve-out (RFC §3.4); §3.5's non-strict fallback applies
+        # to STALE CERTIFICATES only, never to abstention.
         if provided.value is None:
-            if not governed and binding.fallback is not None:
-                values[name] = binding.fallback.value
-                used_fallbacks.append(name)
-                return
             reject(
                 ResolutionRejection.NO_DECISION,
-                f"calibrator for CVAR {name!r} abstained and no admissible "
-                "fallback exists",
+                f"calibrator for CVAR {name!r} abstained (⊥)",
             )
             return
 
@@ -284,6 +291,15 @@ class KnobResolver:
                     f"certificate for CVAR {name!r} is stale or invalid for the "
                     "current context",
                 )
+                return
+        elif binding.fallback is not None and provided.certificate is not None:
+            # non-governed CVAR whose OPTIONAL certificate turned stale: the
+            # §3.5 carve-out — declared fallback MAY be used, always recorded
+            if provided.context is None or not provided.certificate.valid_for(
+                name, binding.value_type, provided.value, provided.context
+            ):
+                values[name] = binding.fallback.value
+                used_fallbacks.append(name)
                 return
 
         values[name] = provided.value
