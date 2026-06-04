@@ -46,6 +46,11 @@ class Fixed(Generic[TValue]):
     value: TValue
 
 
+_IDENT_RE = __import__("re").compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Ref:
     """A namespace reference to another knob (a CVAR's tuned parent).
@@ -56,6 +61,10 @@ class Ref:
 
     knob: str
     field: str | None = None
+
+    def __post_init__(self) -> None:
+        if not _IDENT_RE.match(self.knob):
+            raise ValueError(f"Ref.knob is not a valid identifier: {self.knob!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,11 +98,17 @@ class Knob(Generic[TValue]):
     description: str | None = None
 
     def __post_init__(self) -> None:
+        if not _IDENT_RE.match(self.name):
+            raise ValueError(f"Knob.name is not a valid identifier: {self.name!r}")
         if not isinstance(self.binding, (Tuned, Fixed, Calibrated)):
             raise TypeError(
                 f"Knob binding must be Tuned, Fixed, or Calibrated; "
                 f"got {type(self.binding).__name__}"
             )
+        if isinstance(self.binding, Calibrated):
+            for ref in self.binding.depends_on:
+                if ref.knob == self.name:
+                    raise ValueError(f"Knob {self.name!r} cannot depend on itself")
 
     def is_tuned(self) -> bool:
         return isinstance(self.binding, Tuned)

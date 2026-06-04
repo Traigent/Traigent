@@ -116,8 +116,12 @@ class FreshnessContext:
     evidence_n: int
     calibration_split: str
     eval_split: str
-    target_hash: str
+    target: TargetProperty
     extensions: tuple[tuple[str, Any], ...] = field(default=())
+
+    def __post_init__(self) -> None:
+        if self.evidence_n < 0:
+            raise ValueError("evidence_n must be non-negative")
 
     def freshness_hash(self) -> str:
         """Canonical hash over the core + selected extensions.
@@ -155,7 +159,12 @@ class FreshnessContext:
                     "evidence_n": self.evidence_n,
                     "calibration_split": self.calibration_split,
                     "eval_split": self.eval_split,
-                    "target_hash": self.target_hash,
+                    "target": {
+                        "name": self.target.name,
+                        "mode": self.target.mode,
+                        "threshold": self.target.threshold,
+                        "confidence": self.target.confidence,
+                    },
                 },
                 "ext": sorted(
                     ([key, value] for key, value in self.extensions),
@@ -172,6 +181,10 @@ class EvidenceRef:
     n: int
     pool_hash: str
 
+    def __post_init__(self) -> None:
+        if self.n < 0:
+            raise ValueError("EvidenceRef.n must be non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class Certificate:
@@ -186,7 +199,7 @@ class Certificate:
     subject_cvar: str
     subject_type: str
     subject_value_hash: str
-    target_hash: str
+    target: TargetProperty
     issued_hash: str
     decision: CertificateDecision
     evidence: EvidenceRef
@@ -204,7 +217,7 @@ class Certificate:
             and self.subject_cvar == cvar_name
             and self.subject_type == cvar_type
             and self.subject_value_hash == canonical_hash(value)
-            and self.target_hash == ctx_now.target_hash
+            and self.target == ctx_now.target
             and self.evidence.n == ctx_now.evidence_n
             and self.evidence.pool_hash == ctx_now.dataset_hash
             and self.issued_hash == ctx_now.freshness_hash()
@@ -229,7 +242,7 @@ def issue_certificate(
         subject_cvar=cvar_name,
         subject_type=cvar_type,
         subject_value_hash=canonical_hash(value),
-        target_hash=ctx.target_hash,
+        target=ctx.target,
         issued_hash=ctx.freshness_hash(),
         decision=decision,
         evidence=EvidenceRef(n=ctx.evidence_n, pool_hash=ctx.dataset_hash),

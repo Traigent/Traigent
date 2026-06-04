@@ -13,8 +13,8 @@ from __future__ import annotations
 __all__ = ["KnobKind"]
 
 try:  # pragma: no cover - exercised only once effectuation merges
-    from traigent.effectuation import KnobKind  # type: ignore[no-redef]
-except Exception:  # pragma: no cover - fallback is the tested path today
+    from traigent.effectuation.contracts import KnobKind  # type: ignore[no-redef]
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - tested path today
     from enum import Enum
 
     class KnobKind(str, Enum):  # type: ignore[no-redef]

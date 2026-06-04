@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 __all__ = ["CTX_SCHEMA_VERSION", "CanonicalizationError", "canonical_hash"]
@@ -42,8 +42,10 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
             raise CanonicalizationError("non-finite numbers are rejected, never hashed")
-        if value == 0.0:
-            return 0.0  # fold -0.0
+        if value.is_integer():
+            # JCS/RFC 8785 number rule: integral floats serialize as the
+            # integer (1.0 -> "1"); this also folds -0.0 -> 0.
+            return int(value)
         return value
     if isinstance(value, Mapping):
         normalized: dict[str, Any] = {}
@@ -55,7 +57,9 @@ def _normalize(value: Any) -> Any:
                 raise CanonicalizationError(f"duplicate key after NFC: {norm_key!r}")
             normalized[norm_key] = _normalize(item)
         return normalized
-    if isinstance(value, Sequence):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raise CanonicalizationError("bytes-like values are outside the JSON profile")
+    if isinstance(value, (list, tuple)):
         return [_normalize(item) for item in value]
     raise CanonicalizationError(
         f"unsupported type for canonical hashing: {type(value).__name__}"

@@ -178,7 +178,7 @@ def _ctx(**overrides) -> FreshnessContext:
         evidence_n=20,
         calibration_split="cal",
         eval_split="eval",
-        target_hash=_target().property_hash(),
+        target=_target(),
         extensions=(),
     )
     base.update(overrides)
@@ -197,7 +197,7 @@ CORE_FLIPS = [
     ("evidence_n", 21),
     ("calibration_split", "cal2"),
     ("eval_split", "eval2"),
-    ("target_hash", canonical_hash("other-target")),
+    ("target", TargetProperty(name="other", mode="chance_constraint")),
 ]
 
 
@@ -239,7 +239,7 @@ def test_audit_copies_must_agree_with_live_context():
     ctx = _ctx()
     cert = issue_certificate("theta", "float", 0.5, ctx)
     for field_name, bad in [
-        ("target_hash", canonical_hash("forged")),
+        ("target", TargetProperty(name="forged", mode="chance_constraint")),
         ("evidence", dataclasses.replace(cert.evidence, n=999)),
         ("evidence", dataclasses.replace(cert.evidence, pool_hash="forged")),
     ]:
@@ -326,11 +326,11 @@ def test_certificate_closed_shape():
         "subject_cvar",
         "subject_type",
         "subject_value_hash",
-        "target_hash",
+        "target",
         "issued_hash",
         "decision",
         "evidence",
-    }  # no payload / metadata field
+    }  # no payload / metadata field; target is the closed TargetProperty
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +395,53 @@ def test_package_is_import_light():
                 if name.startswith("traigent.effectuation"):
                     # only the guarded kinds import may reference it
                     assert module_path.name == "kinds.py"
+
+
+def test_jcs_number_rule():
+    """RFC 8785: integral floats hash as the integer (1.0 == 1), while bool
+    stays DISTINCT from int (checked before int)."""
+    assert canonical_hash(1.0) == canonical_hash(1)
+    assert canonical_hash({"n": 20.0}) == canonical_hash({"n": 20})
+    assert canonical_hash(True) != canonical_hash(1)
+    assert canonical_hash(0.5) != canonical_hash(0)
+
+
+def test_bytes_like_rejected():
+    for value in (b"x", bytearray(b"x"), memoryview(b"x")):
+        with pytest.raises(CanonicalizationError):
+            canonical_hash(value)
+
+
+def test_ident_and_count_validation():
+    with pytest.raises(ValueError):
+        Knob(name="", binding=Fixed(value=1))
+    with pytest.raises(ValueError):
+        Knob(name="a..b", binding=Fixed(value=1))
+    with pytest.raises(ValueError):
+        Ref(knob="")
+    with pytest.raises(ValueError):
+        _ctx(evidence_n=-1)
+    from traigent.knobs import EvidenceRef
+
+    with pytest.raises(ValueError):
+        EvidenceRef(n=-1, pool_hash="p")
+
+
+def test_calibrated_self_ref_rejected():
+    with pytest.raises(ValueError, match="cannot depend on itself"):
+        Knob(
+            name="theta",
+            binding=Calibrated(
+                signal=_signal(), target=_target(), depends_on=(Ref(knob="theta"),)
+            ),
+        )
+
+
+def test_certificate_target_is_the_rfc_object():
+    """RFC §3.5 fidelity: the certificate carries the TargetProperty itself
+    (closed shape), and validity compares OBJECTS, not hashes."""
+    ctx = _ctx()
+    cert = issue_certificate("theta", "float", 0.5, ctx)
+    assert cert.target == _target()
+    other_target_ctx = _ctx(target=TargetProperty(name="x", mode="chance_constraint"))
+    assert not cert.valid_for("theta", "float", 0.5, other_target_ctx)
