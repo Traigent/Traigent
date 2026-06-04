@@ -638,6 +638,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # RFC 0001 (knob bindings): optional resolver injecting Fixed/CVAR
+        # values post-suggest, pre-validation. None => byte-identical legacy
+        # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
+        self.knob_resolver: Any | None = None
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
@@ -1201,6 +1205,7 @@ class OptimizationOrchestrator:
         for _ in range(count):
             try:
                 config = self.optimizer.suggest_next_trial(self._trials)
+                config = self._apply_knob_resolution(config)
             except OptimizationError:
                 break
             except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -1248,6 +1253,25 @@ class OptimizationOrchestrator:
             configs.extend(self._generate_sequential_configs(remaining))
 
         return configs, used_async_batch
+
+    def _apply_knob_resolution(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Resolve knob bindings for one suggestion (RFC 0001 §3.4).
+
+        With no resolver configured this is an exact passthrough (legacy
+        behavior byte-identical). With a resolver, Fixed and Calibrated
+        values are injected fail-closed: any rejection (stale certificate,
+        evidence leakage, missing producer, ...) raises ResolutionError —
+        there is no silent fallback. Recorded fallback use is logged.
+        """
+        if self.knob_resolver is None:
+            return config
+        resolved = self.knob_resolver.resolve(config)
+        if resolved.used_fallbacks:
+            logger.warning(
+                "Knob resolution used declared fallbacks for: %s",
+                ", ".join(resolved.used_fallbacks),
+            )
+        return dict(resolved.config)
 
     def _build_trial_descriptors(
         self,

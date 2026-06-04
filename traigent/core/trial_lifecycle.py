@@ -119,6 +119,7 @@ class TrialLifecycle:
         if config is None:
             try:
                 config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
+                config = orchestrator._apply_knob_resolution(config)
             except OptimizationError:
                 raise
             except (ValueError, TypeError, KeyError, AttributeError) as e:
