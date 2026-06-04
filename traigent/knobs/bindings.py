@@ -77,6 +77,7 @@ class Calibrated(Generic[TValue]):
 
     signal: SignalSpec
     target: TargetProperty
+    value_type: str = "float"  # declared CVAR type (R5/R6 conformance)
     depends_on: tuple[Ref, ...] = field(default=())
     fallback: Fixed[TValue] | None = None
     certificate: Certificate | None = None
