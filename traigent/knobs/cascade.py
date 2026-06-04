@@ -71,6 +71,11 @@ def vote_over(keys: Sequence[VoteKey], n: int) -> VoteStats:
     θ > 0). Tie-breaking for the representative key is deterministic
     (lexicographic over serialized keys) and never affects the margin.
     """
+    if n < len(keys) or (keys and n < 1):
+        raise ValueError(
+            f"vote_over denominator n={n} is smaller than the number of "
+            f"samples ({len(keys)}); margins would exceed 1"
+        )
     counts: Counter[VoteKey] = Counter(key for key in keys if key is not None)
     if not counts:
         return VoteStats(
@@ -106,6 +111,14 @@ class Gate:
             raise ValueError(
                 "Gate threshold is unset; calibrate the CVAR before routing."
             )
+        if threshold != threshold or threshold in (float("inf"), float("-inf")):
+            # NaN comparisons are always False — a NaN threshold would
+            # silently NEVER escalate (fail-open). Non-finite thresholds are
+            # a calibration defect: fail closed.
+            raise ValueError(
+                f"Gate threshold is non-finite ({threshold!r}); "
+                "re-calibrate the CVAR."
+            )
         return vote.margin < threshold
 
 
@@ -130,7 +143,12 @@ class StageSpec:
 
 @dataclass(frozen=True)
 class CascadeStep:
-    """The outcome of one cascade evaluation."""
+    """The outcome of one cascade evaluation.
+
+    ``stage_votes`` carries the vote statistics of EVERY evaluated stage (in
+    order), so escalated decisions remain fully observable — the terminal
+    stage's vote is also exposed as ``vote`` for convenience.
+    """
 
     stage_index: int
     stage_name: str
@@ -138,6 +156,7 @@ class CascadeStep:
     representative: Any
     vote: VoteStats | None
     escalations: int
+    stage_votes: tuple[VoteStats | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,8 +187,16 @@ class CascadePolicy:
         stage is a deterministic function of (votes, thresholds).
         """
         escalations = 0
+        stage_votes: list[VoteStats | None] = []
         for index, stage in enumerate(self.stages):
             samples = list(stage.run(item))
+            if len(samples) != stage.samples:
+                # samples is the stage's declared CARDINALITY knob value — a
+                # mismatch means the effectuation did not happen as declared.
+                raise ValueError(
+                    f"stage {stage.name!r} declared samples={stage.samples} "
+                    f"but produced {len(samples)}"
+                )
             is_last = index == len(self.stages) - 1
             if stage.key_fn is None:
                 vote = None
@@ -185,6 +212,7 @@ class CascadePolicy:
                     ),
                     samples[0] if samples else None,
                 )
+            stage_votes.append(vote)
             if is_last:
                 return CascadeStep(
                     stage_index=index,
@@ -193,6 +221,7 @@ class CascadePolicy:
                     representative=representative,
                     vote=vote,
                     escalations=escalations,
+                    stage_votes=tuple(stage_votes),
                 )
             gate = self.gates[index]
             if vote is None:
@@ -210,5 +239,6 @@ class CascadePolicy:
                 representative=representative,
                 vote=vote,
                 escalations=escalations,
+                stage_votes=tuple(stage_votes),
             )
         raise AssertionError("unreachable: the last stage always returns")
