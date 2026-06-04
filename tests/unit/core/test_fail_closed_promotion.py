@@ -317,6 +317,33 @@ class TestResultWinnerClaimGuards:
         scores = result.calculate_weighted_scores(
             objective_weights={"accuracy": 1.0}
         )
-        assert scores["best_weighted_config"] == {}
+        # the winner-claim KEY is omitted entirely on a no-winner result
+        assert "best_weighted_config" not in scores
         # descriptive per-trial statistics are still computed
         assert scores["weighted_scores"]
+
+    def test_valid_empty_config_winner_not_regressed(self):
+        """Round-2 blocker: a VALID winner whose config happens to be empty
+        (score present) keeps its winner surfaces — only the
+        NO_CERTIFIED_SELECTION shape (empty config AND None score) is a
+        no-winner."""
+        from traigent.api.types import OptimizationResult
+
+        result = OptimizationResult(
+            best_config={},
+            best_score=0.99,  # a real winner, degenerate empty config
+            trials=[_trial(0.99, config={})],
+            total_cost=0.0,
+            duration=1.0,
+            objectives=["accuracy"],
+            optimization_id="opt-test",
+            convergence_info={},
+            status="completed",
+            algorithm="test",
+            timestamp=0.0,
+        )
+        assert result.best_metrics  # winner metrics preserved
+        scores = result.calculate_weighted_scores(
+            objective_weights={"accuracy": 1.0}
+        )
+        assert "best_weighted_config" in scores
