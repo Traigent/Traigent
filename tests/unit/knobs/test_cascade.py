@@ -26,7 +26,7 @@ def _stage(name: str, outputs, key_fn=lambda x: x, samples=None):
         name=name,
         run=lambda _item: list(outputs),
         key_fn=key_fn,
-        samples=samples or max(len(outputs), 1),
+        samples=samples if samples is not None else max(len(outputs), 1),
     )
 
 
@@ -191,8 +191,59 @@ class TestBinaryRouterEquivalence:
         step = policy.decide("item")
         assert (step.stage_index == 1) == expected_escalated, (cheap, theta)
         assert step.output == expected_output
-        assert (step.vote.margin if step.stage_index == 0 else expected_margin) == (
-            expected_margin
-        )
+        # NON-VACUOUS: the cheap stage's margin is exposed via stage_votes
+        # for escalated AND non-escalated decisions alike
+        assert step.stage_votes[0].margin == expected_margin, (cheap, theta)
         if step.stage_index == 0:
             assert step.representative == expected_repr
+
+
+class TestReviewFixes:
+    def test_nan_threshold_fails_closed(self):
+        """B1: margin < NaN is always False — a NaN threshold would silently
+        never escalate (fail-open). It must raise instead."""
+        policy = _binary(["A", "B"], "S", {"theta": float("nan")})
+        with pytest.raises(ValueError, match="non-finite"):
+            policy.decide("item")
+        policy = _binary(["A", "B"], "S", {"theta": float("inf")})
+        with pytest.raises(ValueError, match="non-finite"):
+            policy.decide("item")
+
+    def test_declared_cardinality_enforced(self):
+        """NB3: samples is the declared cardinality knob value — a runtime
+        mismatch is an effectuation defect, not a silent re-normalization."""
+        policy = CascadePolicy(
+            stages=(
+                _stage("cheap", ["A", "A"], samples=5),  # declares 5, runs 2
+                _stage("strong", ["S"]),
+            ),
+            gates=(Gate(threshold_ref=lambda: 0.5),),
+        )
+        with pytest.raises(ValueError, match="declared samples=5"):
+            policy.decide("item")
+
+    def test_vote_over_rejects_invalid_denominator(self):
+        """NB4: a denominator smaller than the sample count would produce
+        margins above 1."""
+        with pytest.raises(ValueError, match="denominator"):
+            vote_over(["a", "a", "b"], 2)
+        with pytest.raises(ValueError, match="denominator"):
+            vote_over(["a"], 0)
+
+    def test_stage_votes_expose_every_evaluated_stage(self):
+        holder = {"theta": 0.9}
+        policy = CascadePolicy(
+            stages=(
+                _stage("s1", ["a", "b", "c"]),
+                _stage("s2", ["x", "x", "y"]),
+                _stage("s3", ["final"]),
+            ),
+            gates=(
+                Gate(threshold_ref=lambda: holder["theta"]),
+                Gate(threshold_ref=lambda: holder["theta"]),
+            ),
+        )
+        step = policy.decide("item")
+        assert len(step.stage_votes) == 3
+        assert step.stage_votes[0].margin == pytest.approx(1 / 3)
+        assert step.stage_votes[1].margin == pytest.approx(2 / 3)
