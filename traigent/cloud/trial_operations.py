@@ -389,17 +389,18 @@ class TrialOperations:
         clean_metrics: dict[str, Any],
         backend_status: str,
         mode: str,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build the trial result data dict."""
+        result_metadata = dict(metadata or {})
+        result_metadata["mode"] = mode
+        result_metadata["sdk_version"] = "2.0.0"
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
             "config": config,
             "metrics": clean_metrics if clean_metrics else {},
             "status": backend_status,
-            "metadata": {
-                "mode": mode,
-                "sdk_version": "2.0.0",
-            },
+            "metadata": result_metadata,
         }
         return result_data
 
@@ -514,6 +515,7 @@ class TrialOperations:
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool | None:
         """Submit trial results via the Traigent session endpoint.
 
@@ -525,6 +527,7 @@ class TrialOperations:
             status: Trial status
             error_message: Optional error message
             execution_mode: Optional execution mode
+            metadata: Optional additional metadata to merge into the result payload
 
         Returns:
             True if submission succeeded, False if it failed,
@@ -567,7 +570,12 @@ class TrialOperations:
 
             # Build result data
             result_data = self._build_trial_result_data(
-                trial_id, config, validated_metrics, backend_status, mode
+                trial_id,
+                config,
+                validated_metrics,
+                backend_status,
+                mode,
+                metadata=metadata,
             )
 
             # Add measures and summary_stats at the top level if present

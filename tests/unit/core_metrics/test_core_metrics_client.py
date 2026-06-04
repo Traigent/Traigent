@@ -13,6 +13,15 @@ from traigent.utils.exceptions import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _online_backend(jwt_development_mode, monkeypatch):
+    """These tests exercise the online client request path, so they opt out of
+    the suite-wide TRAIGENT_OFFLINE_MODE=true default (#1068). The transport is
+    mocked, so no real egress occurs; depends on jwt_development_mode so this
+    override runs after it."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_core_metrics_client_reads_overview_and_trend() -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -71,7 +80,12 @@ def test_core_metrics_client_reads_overview_and_trend() -> None:
     trend = client.get_experiment_trend("exp/123")
 
     assert calls[0] == ("GET", "/core-metrics/overview", None, "json")
-    assert calls[1] == ("GET", "/core-metrics/experiments/exp%2F123/trend", None, "json")
+    assert calls[1] == (
+        "GET",
+        "/core-metrics/experiments/exp%2F123/trend",
+        None,
+        "json",
+    )
     assert overview.tenant_id == "tenant_acme"
     assert overview.project_id == "project_alpha"
     assert overview.entities.experiments == 4
@@ -168,7 +182,11 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
                                     "input_price_per_1k_usd": 0.005,
                                     "output_price_per_1k_usd": 0.015,
                                     "context_window": 128000,
-                                    "available_tiers": ["standard", "premium", "enterprise"],
+                                    "available_tiers": [
+                                        "standard",
+                                        "premium",
+                                        "enterprise",
+                                    ],
                                     "supports_catalog_fallback": True,
                                 }
                             ],
@@ -497,11 +515,15 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
     dashboard = client.get_optimization_overview_dashboard(days=7, limit=3)
     evaluator_dashboard = client.get_evaluator_quality_dashboard(days=7, limit=2)
     usage_dashboard = client.get_project_usage_dashboard(days=7, limit=3)
-    observability_dashboard = client.get_observability_summary_dashboard(days=7, limit=3)
+    observability_dashboard = client.get_observability_summary_dashboard(
+        days=7, limit=3
+    )
     export_jobs = client.list_export_jobs(page=1, per_page=10)
     export_job = client.get_export_job("export_job_1")
     trend = client.get_run_volume_trend(experiment_id="exp_1", days=7, bucket="day")
-    distribution = client.get_measure_distribution("accuracy", experiment_id="exp_1", bins=5)
+    distribution = client.get_measure_distribution(
+        "accuracy", experiment_id="exp_1", bins=5
+    )
 
     assert calls[0] == ("GET", "/analytics/summary?days=7", None, "json")
     assert calls[1] == ("GET", "/analytics/pricing-catalog", None, "json")
@@ -529,7 +551,12 @@ def test_core_metrics_client_reads_project_analytics_shapes() -> None:
         None,
         "json",
     )
-    assert calls[6] == ("GET", "/analytics/export-jobs?page=1&per_page=10", None, "json")
+    assert calls[6] == (
+        "GET",
+        "/analytics/export-jobs?page=1&per_page=10",
+        None,
+        "json",
+    )
     assert calls[7] == ("GET", "/analytics/export-jobs/export_job_1", None, "json")
     assert calls[8] == (
         "GET",
@@ -694,7 +721,9 @@ def test_core_metrics_client_validates_custom_request_sender_shapes() -> None:
     with pytest.raises(ClientError):
         client.get_analytics_summary()
 
-    text_client = CoreMetricsClient(request_sender=lambda *args, **kwargs: {"bad": "shape"})
+    text_client = CoreMetricsClient(
+        request_sender=lambda *args, **kwargs: {"bad": "shape"}
+    )
 
     with pytest.raises(ClientError):
         text_client.export_fine_tuning_jsonl()
@@ -746,7 +775,9 @@ def test_core_metrics_client_surfaces_missing_required_fields() -> None:
         client.get_analytics_summary()
 
 
-def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_core_metrics_client_maps_auth_and_network_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = CoreMetricsClient(
         config=CoreMetricsConfig(
             backend_origin="https://backend.example",
@@ -755,6 +786,7 @@ def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.Mo
     )
 
     with pytest.raises(AuthenticationError):
+
         def _raise_auth(*args, **kwargs):
             raise error.HTTPError(
                 url="https://backend.example/api/v1beta/core-metrics/overview",
@@ -768,6 +800,7 @@ def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.Mo
         client.get_core_metrics_overview()
 
     with pytest.raises(TraigentConnectionError):
+
         def _raise_network(*args, **kwargs):
             raise error.URLError("offline")
 
@@ -775,7 +808,9 @@ def test_core_metrics_client_maps_auth_and_network_errors(monkeypatch: pytest.Mo
         client.get_core_metrics_overview()
 
 
-def test_core_metrics_client_maps_non_auth_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_core_metrics_client_maps_non_auth_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = CoreMetricsClient(
         config=CoreMetricsConfig(
             backend_origin="https://backend.example",
@@ -798,7 +833,9 @@ def test_core_metrics_client_maps_non_auth_http_errors(monkeypatch: pytest.Monke
         client.get_analytics_summary()
 
 
-def test_core_metrics_client_maps_text_request_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_core_metrics_client_maps_text_request_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = CoreMetricsClient(
         config=CoreMetricsConfig(
             backend_origin="https://backend.example",
@@ -819,7 +856,9 @@ def test_core_metrics_client_maps_text_request_paths(monkeypatch: pytest.MonkeyP
         def read(self) -> bytes:
             return b'{"messages":[{"role":"user","content":"hello"}]}'
 
-    monkeypatch.setattr(client_module.request, "urlopen", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(
+        client_module.request, "urlopen", lambda *args, **kwargs: _Response()
+    )
     export = client.export_fine_tuning_jsonl(limit=10)
 
     assert export.filename == "fallback.jsonl"
@@ -847,7 +886,9 @@ def test_core_metrics_client_maps_text_request_paths(monkeypatch: pytest.MonkeyP
 
 
 def test_core_metrics_client_validates_unwrapped_response_shape() -> None:
-    client = CoreMetricsClient(request_sender=lambda *args, **kwargs: {"meta": "missing-data"})
+    client = CoreMetricsClient(
+        request_sender=lambda *args, **kwargs: {"meta": "missing-data"}
+    )
 
     with pytest.raises(ClientError, match="Unexpected response structure"):
         client.get_pricing_catalog()

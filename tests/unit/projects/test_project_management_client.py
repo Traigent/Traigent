@@ -11,6 +11,15 @@ from traigent.projects.config import ProjectManagementConfig
 from traigent.utils.exceptions import AuthenticationError, ClientError
 
 
+@pytest.fixture(autouse=True)
+def _online_backend(jwt_development_mode, monkeypatch):
+    """These tests exercise the online client request path, so they opt out of
+    the suite-wide TRAIGENT_OFFLINE_MODE=true default (#1068). The transport is
+    mocked, so no real egress occurs; depends on jwt_development_mode so this
+    override runs after it."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_project_management_client_crud_and_list() -> None:
     calls: list[tuple[str, str, dict | None]] = []
 

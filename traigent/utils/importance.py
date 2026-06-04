@@ -169,7 +169,7 @@ class ParameterImportanceAnalyzer:
     def analyze_correlation_based(
         self, trials: list[TrialResult]
     ) -> dict[str, ImportanceResult]:
-        """Analyze parameter importance using correlation-based method.
+        """Analyze parameter importance using an association-based method.
 
         Args:
             trials: List of completed trials
@@ -209,7 +209,7 @@ class ParameterImportanceAnalyzer:
     def _calculate_parameter_correlation_importance(
         self, trials: list[TrialResult], parameter: str, objective_values: list[float]
     ) -> ImportanceResult | None:
-        """Calculate correlation-based importance for a single parameter."""
+        """Calculate association-based importance for a single parameter."""
         # Extract parameter values (handle categorical by encoding)
         param_values = []
         valid_indices = []
@@ -238,11 +238,11 @@ class ParameterImportanceAnalyzer:
         if len(param_values) < 10 or len(set(param_values)) < 2:
             return None
 
-        # Calculate correlation
+        # Calculate statistical association
         filtered_objectives = [objective_values[i] for i in valid_indices]
         correlation = self._calculate_correlation(param_values, filtered_objectives)
 
-        # Use absolute correlation as importance score
+        # Use absolute association strength as importance score
         importance_score = abs(correlation)
 
         # Simple confidence interval
@@ -262,7 +262,7 @@ class ParameterImportanceAnalyzer:
         )
 
     def _calculate_correlation(self, x: list[float], y: list[float]) -> float:
-        """Calculate Pearson correlation coefficient."""
+        """Calculate a Pearson association coefficient."""
         if len(x) != len(y) or len(x) < 2:
             return 0.0
 
@@ -433,7 +433,7 @@ class ParameterImportanceAnalyzer:
         # Run different analysis methods
         methods = [
             ("Variance-based", self.analyze_variance_based),
-            ("Correlation-based", self.analyze_correlation_based),
+            ("Association-based", self.analyze_correlation_based),
         ]
 
         # Only run permutation-based if we have enough data

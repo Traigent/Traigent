@@ -102,7 +102,7 @@ results = await func.optimize(max_trials=20, algorithm="random")
 
 ### Bayesian Optimization
 
-Uses a surrogate model to guide the search toward promising configurations. Backed by Optuna.
+Uses adaptive search to focus on promising configurations. Backed by Optuna.
 
 ```python
 results = await func.optimize(max_trials=30, algorithm="bayesian")

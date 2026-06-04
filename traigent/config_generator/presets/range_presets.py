@@ -79,6 +79,10 @@ _CANONICAL_PRESETS: dict[str, dict[str, Any]] = {
         "range_type": "IntRange",
         "kwargs": {"low": 1, "high": 10},
     },
+    "retrieval_k": {
+        "range_type": "IntRange",
+        "kwargs": {"low": 1, "high": 5},
+    },
     "chunk_size": {
         "range_type": "IntRange",
         "kwargs": {"low": 100, "high": 1000},
@@ -90,6 +94,10 @@ _CANONICAL_PRESETS: dict[str, dict[str, Any]] = {
     "few_shot_count": {
         "range_type": "IntRange",
         "kwargs": {"low": 0, "high": 10},
+    },
+    "fewshot_k": {
+        "range_type": "IntRange",
+        "kwargs": {"low": 0, "high": 10, "default": 3},
     },
     "batch_size": {
         "range_type": "IntRange",
@@ -126,6 +134,50 @@ _CANONICAL_PRESETS: dict[str, dict[str, Any]] = {
             "values": ["bullet", "numbered", "xml", "markdown", "json"],
         },
     },
+    "schema_context": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": ["none", "full_ddl_fk", "linked_top6", "linked_top10"],
+        },
+    },
+    "evidence_usage": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": ["off", "hint_appended"],
+        },
+    },
+    "fewshot_selector": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": ["random", "masked_question_similarity", "dail_selection"],
+        },
+    },
+    "generation_path": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": ["direct_dail", "query_plan_cot", "divide_conquer_cot"],
+        },
+    },
+    "candidate_count": {
+        "range_type": "IntRange",
+        "kwargs": {"low": 1, "high": 3},
+    },
+    "repair_policy": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": [
+                "off",
+                "sqlite_error_once",
+                "sqlite_error_or_empty_once",
+            ],
+        },
+    },
+    "retriever": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": ["similarity", "mmr", "bm25", "hybrid"],
+        },
+    },
     "retriever_type": {
         "range_type": "Choices",
         "kwargs": {
@@ -139,6 +191,17 @@ _CANONICAL_PRESETS: dict[str, dict[str, Any]] = {
                 "text-embedding-3-small",
                 "text-embedding-3-large",
                 "text-embedding-ada-002",
+            ],
+        },
+    },
+    "reranker": {
+        "range_type": "Choices",
+        "kwargs": {
+            "values": [
+                "none",
+                "cohere-rerank-v3",
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                "llm-rerank",
             ],
         },
     },

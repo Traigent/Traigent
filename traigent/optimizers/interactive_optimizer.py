@@ -97,6 +97,13 @@ def _is_completed_status(status: TrialStatusLike) -> bool:
     return getattr(status, "value", status) == "completed"
 
 
+def _string_sequence(value: Any) -> tuple[str, ...]:
+    """Return string tuple metadata only from sequence-like values."""
+    if not isinstance(value, (list, tuple, set)):
+        return ()
+    return tuple(str(item) for item in value if item)
+
+
 class RemoteGuidanceService(Protocol):
     """Protocol for remote guidance services."""
 
@@ -323,6 +330,11 @@ class InteractiveOptimizer(BaseOptimizer):
             raise OptimizationError("No active session.")
 
         try:
+            result_metadata = self._metadata_with_tvar_observation(
+                trial_id=trial_id,
+                metrics=metrics,
+                metadata=metadata,
+            )
             result = TrialResultSubmission(
                 session_id=self.session_id,
                 trial_id=trial_id,
@@ -331,7 +343,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 status=_coerce_trial_status(status),
                 outputs_sample=outputs_sample,
                 error_message=error_message,
-                metadata=metadata or {},
+                metadata=result_metadata,
             )
 
             await self.remote_service.submit_result(result)
@@ -472,3 +484,63 @@ class InteractiveOptimizer(BaseOptimizer):
             return current > best
 
         return False
+
+    def _metadata_with_tvar_observation(
+        self,
+        *,
+        trial_id: str,
+        metrics: dict[str, float],
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Attach a content-free TVAR observation when suggestion context exists."""
+        result_metadata = dict(metadata or {})
+        suggestion = self._pending_trials.get(trial_id)
+        if suggestion is None or not self.session_id:
+            return result_metadata
+
+        try:
+            from traigent.tuned_variables.observation import (
+                build_tvar_observation,
+                merge_tvar_observation_metadata,
+            )
+
+            suggestion_metadata = suggestion.metadata or {}
+            session_metadata = self.session.metadata if self.session else {}
+            catalog_entry_ids = _string_sequence(
+                suggestion_metadata.get("catalog_entry_ids")
+                or result_metadata.get("catalog_entry_ids")
+                or session_metadata.get("catalog_entry_ids")
+            )
+            primary_metric = self.objectives[0] if self.objectives else "score"
+            observation = build_tvar_observation(
+                session_id=self.session_id,
+                trial_id=trial_id,
+                config=suggestion.config,
+                metrics=metrics,
+                primary_metric=primary_metric,
+                comparability={
+                    "scope": "trial",
+                    "n": len(suggestion.dataset_subset.indices),
+                },
+                catalog_entry_ids=catalog_entry_ids,
+                agent_type=(
+                    suggestion_metadata.get("agent_type")
+                    or result_metadata.get("agent_type")
+                    or session_metadata.get("agent_type")
+                    or self.dataset_metadata.get("agent_type")
+                ),
+                config_space_id=(
+                    suggestion_metadata.get("config_space_id")
+                    or result_metadata.get("config_space_id")
+                    or session_metadata.get("config_space_id")
+                ),
+                effectuation_events=result_metadata.get("effectuation_events"),
+            )
+            return merge_tvar_observation_metadata(result_metadata, observation)
+        except Exception as exc:
+            logger.debug(
+                "Skipping TVAR observation metadata for trial %s: %s",
+                trial_id,
+                exc,
+            )
+            return result_metadata

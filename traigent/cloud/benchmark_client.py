@@ -10,11 +10,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 from urllib import error, request
+from urllib.parse import quote
 
 from traigent.config.backend_config import BackendConfig
-from traigent.config.project import read_optional_project_env, scope_api_path
+from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -32,7 +34,6 @@ class BenchmarkClientConfig:
         default_factory=lambda: read_optional_env(TENANT_ENV_VAR)
     )
     project_id: str | None = field(default_factory=read_optional_project_env)
-    api_path: str = "/api/v1"
     request_timeout: float = 120.0  # generation can be slow
 
     def __post_init__(self) -> None:
@@ -43,7 +44,21 @@ class BenchmarkClientConfig:
         self.project_id = (
             self.project_id.strip() or None if self.project_id is not None else None
         )
-        self.api_path = scope_api_path(self.api_path, self.project_id)
+
+    def generate_path(self) -> str:
+        """Origin-relative path for benchmark generation.
+
+        When a project is active, generation is attributed to it via the
+        project-scoped route. The ``/datasets/generate`` alias is NOT
+        project-scoped on the backend; the project-scoped generate route lives
+        under ``benchmarks`` (``POST /api/v1beta/projects/{id}/benchmarks/generate``),
+        registered via ``_register_project_scoped(benchmark_bp, "benchmarks")``.
+        With no project set, the unscoped alias is used unchanged.
+        """
+        if self.project_id:
+            project_segment = quote(self.project_id, safe="")
+            return f"/api/v1beta/projects/{project_segment}/benchmarks/generate"
+        return "/api/v1/datasets/generate"
 
     def build_headers(self) -> dict[str, str]:
         headers = {
@@ -127,7 +142,7 @@ class BenchmarkClient:
         if seed_examples:
             payload["seed_examples"] = seed_examples
 
-        response = self._post("/datasets/generate", payload)
+        response = self._post(self.config.generate_path(), payload)
         return self._response_to_dataset(response, description)
 
     # ------------------------------------------------------------------
@@ -135,7 +150,8 @@ class BenchmarkClient:
     # ------------------------------------------------------------------
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        full_url = f"{self.config.backend_origin}{self.config.api_path}{path}"
+        raise_if_backend_offline("BenchmarkClient request")
+        full_url = f"{self.config.backend_origin}{path}"
         encoded = json.dumps(payload).encode("utf-8")
         http_req = request.Request(
             full_url,

@@ -24,7 +24,7 @@ class User:
     def __post_init__(self) -> None:
         """Validate user data after initialization.
 
-        Role-validation contract (SDK#939):
+        Role-validation contract:
           * `roles=None`/`[]`/falsy → safe default `["user"]`. Use this
             for programmatic User construction without an IdP claim.
           * `roles=["admin", "operator"]` → preserved (lowercased+trimmed).
@@ -50,12 +50,12 @@ class User:
         if not self.email or not EMAIL_PATTERN.match(self.email):
             raise ValueError("Invalid email format")
 
-        # Role normalization (SDK#939 fail-closed):
+        # Role normalization:
         # Three cases (see method docstring above):
         #   1. Empty/falsy → safe default ["user"].
         #   2. Non-empty AND any item invalid → raise.
         #
-        # Greptile P1 of PR #969: previously this loop only checked
+        # A review finding noted that this loop previously only checked
         # `isinstance(r, str) and r.strip()`, which would silently
         # accept inputs like `["super admin"]` (space), `["!!!hack!!!"]`
         # (special chars), or `["a" * 100]` (overlong) — all of which
@@ -74,11 +74,11 @@ class User:
             try:
                 self.roles = sanitize_roles(self.roles, strict=True)
             except ValueError as exc:
-                # Re-raise with SDK#939 marker so test/anti-regression
-                # checks can pin the source of the fail-closed.
+                # Re-raise with context so regression checks can pin the
+                # source of the fail-closed behavior.
                 raise ValueError(
-                    f"Invalid roles in User construction (SDK#939 "
-                    f"fail-closed; via sanitize_roles strict mode): {exc}"
+                    f"Invalid roles in User construction "
+                    f"(fail-closed; via sanitize_roles strict mode): {exc}"
                 ) from exc
         else:
             # Case 1: nothing provided → safe default.

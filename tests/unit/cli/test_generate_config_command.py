@@ -62,6 +62,11 @@ def _make_result() -> AutoConfigResult:
                 category="prompting",
                 reasoning="Different strategies can improve output quality",
                 impact_estimate="medium",
+                catalog_entry_id="general.prompting_strategy.v1",
+                kind="policy",
+                effectuation_status="manual_guidance",
+                apply_guidance="Wire the prompt strategy manually.",
+                recommended_values=("direct",),
             ),
         ),
         agent_type="general_llm",
@@ -113,6 +118,32 @@ class TestGenerateConfigCLI:
             assert data["agent_type"] == "general_llm"
             assert len(data["tvars"]) == 1
             assert data["tvars"][0]["name"] == "temperature"
+            assert set(data["recommendations"][0]) == {
+                "name",
+                "range_code",
+                "category",
+                "impact",
+                "reasoning",
+            }
+
+    def test_json_detailed_output(self, tmp_path: Path) -> None:
+        source_file = tmp_path / "agent.py"
+        source_file.write_text(SAMPLE_SOURCE)
+
+        with patch(
+            "traigent.config_generator.generate_config",
+            return_value=_make_result(),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(generate_config, [str(source_file), "--json-detailed"])
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            detailed = data["recommendations"][0]
+            assert detailed["catalog_entry_id"] == "general.prompting_strategy.v1"
+            assert detailed["kind"] == "policy"
+            assert detailed["effectuation_status"] == "manual_guidance"
+            assert detailed["recommended_values"] == ["direct"]
+            assert detailed["apply_guidance"] == "Wire the prompt strategy manually."
 
     def test_invalid_subsystem(self, tmp_path: Path) -> None:
         source_file = tmp_path / "agent.py"

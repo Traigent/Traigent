@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 _COMPLIANCE_NOT_IMPLEMENTED = (
     "Compliance reporting is not yet implemented. "
-    "Track progress at https://github.com/Traigent/Traigent/issues/876"
+    "Track progress at internal tracking"
 )
 
 
@@ -534,7 +534,7 @@ class ComplianceReporter:
 
     This class is excluded from the public API (``traigent.security.__all__``).
     All report methods raise :class:`ComplianceReportUnavailableError`.
-    Implementation is tracked in https://github.com/Traigent/Traigent/issues/876.
+    Implementation is tracked in internal tracking.
     """
 
     def __init__(self, audit_logger: AuditLogger) -> None:

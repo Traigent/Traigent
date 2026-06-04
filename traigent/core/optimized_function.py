@@ -256,6 +256,7 @@ class OptimizedFunction:
         custom_evaluator: Callable[..., Any] | None = None,
         scoring_function: Callable[..., Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
+        effectuation: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -277,6 +278,7 @@ class OptimizedFunction:
             custom_evaluator: Custom evaluation function for advanced use cases
             scoring_function: Simple scoring function that returns a score or dict of scores
             metric_functions: Dict of metric name to scoring function
+            effectuation: Opt-in executable TVAR effectuation.
             **kwargs: Additional configuration
         """
         # Extract decorator-provided metadata before core storage
@@ -295,6 +297,10 @@ class OptimizedFunction:
             "best_config_stale_ok_ttl_seconds", None
         )
         self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
+        # Guided-generation defaults configured at decoration time; consumed by
+        # optimize_with_guidance when not overridden at the call site.
+        self.prompt_rewrite_options = kwargs.pop("prompt_rewrite", None)
+        self.grow_dataset_options = kwargs.pop("grow_dataset", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -312,6 +318,7 @@ class OptimizedFunction:
             custom_evaluator,
             scoring_function,
             metric_functions,
+            effectuation,
         )
 
         # Handle configuration space with backward compatibility
@@ -350,10 +357,14 @@ class OptimizedFunction:
         custom_evaluator,
         scoring_function,
         metric_functions,
+        effectuation,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
         self.eval_dataset = eval_dataset
+        # Guided generation may swap in a grown dataset that must persist across
+        # rounds (see set_eval_dataset_override / optimize_with_guidance).
+        self._dataset_override: Dataset | None = None
 
         # Handle ObjectiveSchema creation
         resolved_schema = normalize_objectives(objectives)
@@ -391,6 +402,7 @@ class OptimizedFunction:
         self.custom_evaluator = custom_evaluator
         self.scoring_function = scoring_function
         self.metric_functions = metric_functions
+        self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
         """Return True when configured for managed cloud execution."""
@@ -866,6 +878,22 @@ class OptimizedFunction:
                 return wrapped_func(*args, **kwargs)
         else:
             return wrapped_func(*args, **kwargs)
+
+    def _trial_callable_for_config_space(
+        self,
+        effective_config_space: dict[str, Any],
+    ) -> Callable[..., Any]:
+        if not getattr(self, "effectuation", False):
+            return self._wrapped_func
+
+        from traigent.effectuation import compile_effectuation
+
+        application = compile_effectuation(
+            self._wrapped_func,
+            effective_config_space,
+            enabled=True,
+        )
+        return application.wrapped_callable
 
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
@@ -1570,6 +1598,8 @@ class OptimizedFunction:
         """Run optimization with context managers and finalize results."""
         from traigent.config.context import ConfigurationSpaceContext
 
+        trial_func = self._trial_callable_for_config_space(effective_config_space)
+
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
 
@@ -1578,12 +1608,12 @@ class OptimizedFunction:
                 if self.auto_override_frameworks and self.framework_targets:
                     with override_context(self.framework_targets):
                         result = await orchestrator.optimize(
-                            func=self._wrapped_func,
+                            func=trial_func,
                             dataset=dataset,
                         )
                 else:
                     result = await orchestrator.optimize(
-                        func=self._wrapped_func,
+                        func=trial_func,
                         dataset=dataset,
                     )
 
@@ -2091,6 +2121,113 @@ class OptimizedFunction:
             },
         )
 
+    def set_eval_dataset_override(self, dataset: Dataset | None) -> None:
+        """Pin the dataset returned by ``_load_dataset``.
+
+        Used by guided generation so a grown dataset persists across
+        re-optimization rounds. Pass ``None`` to clear.
+        """
+        self._dataset_override = dataset
+
+    def optimize_with_guidance(
+        self,
+        provider: Any,
+        *,
+        plan_kind: Any = "benchmark_guide",
+        rewrite_llm: Any = None,
+        prompt_rewrite: Any = None,
+        grow_dataset: Any = None,
+        prompt_param: str | None = None,
+        weak_examples: Sequence[tuple[Any, Any, Any]] = (),
+        **optimize_kwargs: Any,
+    ) -> Any:
+        """Run guided generation: optimize, fetch an opaque backend GuidancePlan,
+        generate locally with the user's own LLM, and re-optimize across rounds.
+
+        ``provider`` supplies the GuidancePlan (a ``GuidancePlanProvider``);
+        generation runs on ``rewrite_llm`` (a callable ``fn(prompt) -> str`` or an
+        already-constructed client). Content never leaves the client. Returns the
+        best ``OptimizationResult`` across rounds.
+        """
+        from traigent.generation import (
+            DatasetGrowthOptions,
+            ExampleSynthesizer,
+            GuidanceLoop,
+            PromptRewriteOptions,
+            PromptRewriter,
+            resolve_rewrite_llm,
+        )
+        from traigent.generation.models import PlanKind
+        from traigent.utils.example_id import (
+            compute_dataset_hash,
+            generate_stable_example_id,
+        )
+
+        kind = plan_kind if isinstance(plan_kind, PlanKind) else PlanKind(plan_kind)
+        llm = resolve_rewrite_llm(rewrite_llm)
+
+        def _coerce(spec: Any, cls: type) -> Any:
+            if spec is None:
+                return cls()
+            if isinstance(spec, cls):
+                return spec
+            return cls(**spec)
+
+        prompt_opts = _coerce(
+            (
+                prompt_rewrite
+                if prompt_rewrite is not None
+                else self.prompt_rewrite_options
+            ),
+            PromptRewriteOptions,
+        )
+        growth_opts = _coerce(
+            grow_dataset if grow_dataset is not None else self.grow_dataset_options,
+            DatasetGrowthOptions,
+        )
+
+        config_space = dict(self.configuration_space or {})
+        dataset = self._load_dataset()
+
+        is_rewrite = kind is PlanKind.PROMPT_REWRITE
+        rewriter = PromptRewriter(llm, prompt_opts) if is_rewrite else None
+        synthesizer = ExampleSynthesizer(llm, growth_opts) if not is_rewrite else None
+
+        # Best-effort stable-id -> example map for resolving plan seeds locally.
+        ds_hash = compute_dataset_hash(getattr(dataset, "name", "dataset"))
+        id_to_example = {
+            generate_stable_example_id(ds_hash, i): ex
+            for i, ex in enumerate(getattr(dataset, "examples", []))
+        }
+
+        def _seed_resolver(seed_ref: str) -> Any:
+            return id_to_example.get(seed_ref)
+
+        def _optimize_round(cs: dict[str, Any], ds: Any) -> Any:
+            self.set_eval_dataset_override(ds)
+            return self.optimize_sync(configuration_space=cs, **optimize_kwargs)
+
+        loop = GuidanceLoop(
+            provider=provider,
+            rewriter=rewriter,
+            synthesizer=synthesizer,
+            prompt_options=prompt_opts,
+            growth_options=growth_opts,
+        )
+        try:
+            outcome = loop.run(
+                optimize_round=_optimize_round,
+                config_space=config_space,
+                dataset=dataset,
+                plan_kind=kind,
+                prompt_param=prompt_param,
+                seed_resolver=None if is_rewrite else _seed_resolver,
+                weak_examples=weak_examples,
+            )
+        finally:
+            self.set_eval_dataset_override(None)
+        return outcome.best_result
+
     def _load_dataset(self) -> Dataset:
         """Load evaluation dataset.
 
@@ -2100,6 +2237,11 @@ class OptimizedFunction:
         Raises:
             ConfigurationError: If dataset cannot be loaded
         """
+        # A guided-generation round may have grown the dataset; the override takes
+        # precedence so synthesized examples persist across re-optimization rounds.
+        if self._dataset_override is not None:
+            return self._dataset_override
+
         if isinstance(self.eval_dataset, Dataset):
             return self.eval_dataset
 

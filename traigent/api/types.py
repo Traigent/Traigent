@@ -1762,7 +1762,7 @@ class ParetoFront:
             "chart today, read the public fields (configurations, "
             "objective_values, objectives, is_maximized) and pass them to "
             "matplotlib/plotly directly. "
-            "Tracking: https://github.com/Traigent/Traigent/issues/893"
+            "Tracking: internal tracking"
         )
 
 
@@ -1843,7 +1843,7 @@ class OptimizationJob:
             "API that has not shipped yet. Use OptimizedFunction.optimize() "
             "for synchronous optimization, or query .status / .is_complete() "
             f"on this job handle for non-blocking state.{timeout_note} "
-            "Tracking: https://github.com/Traigent/Traigent/issues/875"
+            "Tracking: internal tracking"
         )
 
 

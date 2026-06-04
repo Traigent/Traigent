@@ -34,7 +34,7 @@ results = await func.optimize(
 )
 ```
 
-Lower values vary slowest (outer loop), higher values vary fastest (inner loop). This is useful when you want to group trials by model to minimize cold-start costs.
+Lower values vary slowest (outer loop), higher values vary fastest (inner loop). This is useful when you want to group trials by model to minimize repeated initial setup costs.
 
 ### When to Use
 
@@ -72,7 +72,7 @@ results = await func.optimize(max_trials=20, algorithm="random")
 
 ## Bayesian Optimization
 
-Uses a probabilistic surrogate model to predict which configurations are likely to perform well, then focuses trials on the most promising regions. Backed by Optuna's Tree-structured Parzen Estimator (TPE).
+Uses adaptive search to focus trials on promising regions. Backed by Optuna's Tree-structured Parzen Estimator (TPE).
 
 ```python
 results = await func.optimize(max_trials=30, algorithm="bayesian")
@@ -88,7 +88,7 @@ results = await func.optimize(max_trials=30, algorithm="bayesian")
 ### Behavior
 
 - First few trials are random (exploration phase)
-- Subsequent trials are guided by the surrogate model (exploitation)
+- Subsequent trials focus on promising regions (exploitation)
 - Balances exploration vs exploitation automatically
 - More sample-efficient than random search for smooth objective landscapes
 
@@ -125,7 +125,7 @@ results = await func.optimize(max_trials=50, algorithm="optuna")
 
 1. **Config space has < 50 combinations?** Use `"grid"` for complete coverage.
 2. **Limited budget, large space?** Use `"random"` for broad exploration.
-3. **Trials are expensive, want efficiency?** Use `"bayesian"` for guided search.
+3. **Trials are expensive, want efficiency?** Use `"bayesian"` for adaptive search.
 4. **Need advanced features?** Use `"optuna"` for full Optuna access.
 
 ### Budget Guidelines
