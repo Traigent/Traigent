@@ -1235,7 +1235,9 @@ class OptimizationOrchestrator:
 
         baseline_config = self._consume_default_config()
         if baseline_config is not None:
-            configs.append(baseline_config)
+            # baseline trials get the same Fixed/CVAR injection as suggested
+            # ones — no bypass of R3/R6/R8 (RFC 0001)
+            configs.append(self._apply_knob_resolution(baseline_config))
             remaining -= 1
             if remaining <= 0:
                 return configs, False
@@ -1245,7 +1247,10 @@ class OptimizationOrchestrator:
         if self.traigent_config.execution_mode_enum is ExecutionMode.HYBRID:
             async_configs = await self._try_hybrid_batch_generation(dataset, remaining)
             if async_configs:
-                configs.extend(async_configs)
+                configs.extend(
+                    self._apply_knob_resolution(async_config)
+                    for async_config in async_configs
+                )
                 used_async_batch = True
 
         # Fall back to sequential generation
@@ -1265,7 +1270,20 @@ class OptimizationOrchestrator:
         """
         if self.knob_resolver is None:
             return config
-        resolved = self.knob_resolver.resolve(config)
+        from traigent.knobs import ResolutionError, ResolutionRejection
+
+        try:
+            resolved = self.knob_resolver.resolve(config)
+        except ResolutionError:
+            raise
+        except Exception as exc:
+            # Internal resolver failures (ValueError, canonicalization, ...)
+            # MUST surface as the typed fail-closed error — the suggest-site
+            # except tuples catch ValueError and would silently break.
+            raise ResolutionError(
+                (ResolutionRejection.INFEASIBLE_VALUE,),
+                f"resolver internal failure: {exc}",
+            ) from exc
         if resolved.used_fallbacks:
             logger.warning(
                 "Knob resolution used declared fallbacks for: %s",
