@@ -445,3 +445,16 @@ def test_certificate_target_is_the_rfc_object():
     assert cert.target == _target()
     other_target_ctx = _ctx(target=TargetProperty(name="x", mode="chance_constraint"))
     assert not cert.valid_for("theta", "float", 0.5, other_target_ctx)
+
+
+def test_counts_are_natural_numbers():
+    """Round-2 finding: ℕ means strict non-negative INT — floats and bools
+    are rejected as counts."""
+    from traigent.knobs import EvidenceRef
+
+    for bad in (1.5, True, False, -1):
+        with pytest.raises(ValueError):
+            _ctx(evidence_n=bad)
+        with pytest.raises(ValueError):
+            EvidenceRef(n=bad, pool_hash="p")
+    EvidenceRef(n=0, pool_hash="p")  # zero is a natural number here

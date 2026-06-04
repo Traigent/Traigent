@@ -120,6 +120,8 @@ class FreshnessContext:
     extensions: tuple[tuple[str, Any], ...] = field(default=())
 
     def __post_init__(self) -> None:
+        if not isinstance(self.evidence_n, int) or isinstance(self.evidence_n, bool):
+            raise ValueError("evidence_n must be a natural number (int)")
         if self.evidence_n < 0:
             raise ValueError("evidence_n must be non-negative")
 
@@ -182,6 +184,8 @@ class EvidenceRef:
     pool_hash: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.n, int) or isinstance(self.n, bool):
+            raise ValueError("EvidenceRef.n must be a natural number (int)")
         if self.n < 0:
             raise ValueError("EvidenceRef.n must be non-negative")
 
@@ -191,7 +195,7 @@ class Certificate:
     """Validity object for one calibrated value of one CVAR.
 
     ``payload``-style open fields are deliberately ABSENT (P8). The audit
-    copies (``target_hash``, ``evidence``) duplicate context fields for
+    copies (``target``, ``evidence``) duplicate context fields for
     inspection; ``valid_for`` cross-checks them against the live context so
     a certificate cannot DISPLAY one context while HASHING another.
     """
