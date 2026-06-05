@@ -45,7 +45,7 @@ class RemoteOptimizer(BaseOptimizer):
     ``remote_enabled=True``; otherwise construction raises ``OptimizationError``.
     There is no longer a silent local-random-search fallback at construction
     time — that path masqueraded a local run as a remote one and was the
-    surface flagged by issue #872.
+    surface flagged by the tracked fix.
 
     - Async suggestion APIs are provided to align with remote access patterns.
     - Privacy: call sites can pass ``remote_context={"privacy_enabled": True}``
@@ -65,7 +65,7 @@ class RemoteOptimizer(BaseOptimizer):
         **kwargs: Any,
     ) -> None:
         # Fail closed: without a real remote_client, this optimizer cannot do
-        # what its name advertises. See module docstring and issue #872.
+        # what its name advertises. See module docstring and the tracked fix.
         # Keep .pop (not .get): the client is stored on self by BaseOptimizer
         # via algorithm_config; leaving it in kwargs propagates the remote
         # client into the local fallback path, which is not what we want when

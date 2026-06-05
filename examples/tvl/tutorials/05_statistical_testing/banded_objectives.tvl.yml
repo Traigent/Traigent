@@ -10,9 +10,9 @@
 # TVL 0.9 supports banded objectives with TOST (Two One-Sided Tests)
 # for statistical equivalence testing.
 
-spec:
-  id: banded-objectives-demo
-  version: "1.0"
+tvl:
+  module: examples.banded_objectives_demo
+tvl_version: "1.0"
 
 metadata:
   owner: team@example.com

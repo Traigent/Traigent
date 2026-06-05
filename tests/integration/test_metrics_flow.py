@@ -293,6 +293,7 @@ class TestEndToEndMetricsFlow:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_orchestrator_measures_array_creation(
         self, comprehensive_dataset, mock_environment
     ):
@@ -499,6 +500,7 @@ class TestEndToEndMetricsFlow:
         assert result.total_examples == len(comprehensive_dataset.examples)
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_random_search_metrics_flow(
         self, comprehensive_dataset, mock_environment
     ):

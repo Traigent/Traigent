@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvar_value_recommendation_schema.json",
+  "type": "object",
+  "title": "TVAR Value Recommendation Schema",
+  "description": "Defines a server-provided recommendation hint for a tuned variable. Consumers must treat low-support_n or low-confidence recommendations as hints only.",
+  "version": "1.0.0",
+  "definitions": {
+    "TvarValue": {
+      "description": "Compact scalar tuned-variable value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 512
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "ValueRecommendation": {
+      "type": "object",
+      "description": "Server-provided recommendation score for a candidate tuned-variable value.",
+      "properties": {
+        "value": {
+          "$ref": "#/definitions/TvarValue"
+        },
+        "score": {
+          "type": "number",
+          "description": "Higher scores are more promising for the target metric."
+        },
+        "support_n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sample size backing this candidate value."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["value", "score", "support_n", "confidence"],
+      "additionalProperties": false
+    },
+    "DerivedFrom": {
+      "type": "object",
+      "description": "Optional opaque source summary for this recommendation hint.",
+      "properties": {
+        "observation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "window": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": ["observation_count"],
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this hint contract."
+    },
+    "tvar_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "catalog_entry_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "agent_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "metric": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Objective metric this recommendation is for."
+    },
+    "objective_direction": {
+      "type": "string",
+      "enum": ["maximize", "minimize"]
+    },
+    "value_recommendations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ValueRecommendation"
+      }
+    },
+    "recommended_values": {
+      "type": "array",
+      "description": "Gated top picks from value_recommendations.",
+      "items": {
+        "$ref": "#/definitions/TvarValue"
+      }
+    },
+    "support_n": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sample size backing this hint."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "derived_from": {
+      "$ref": "#/definitions/DerivedFrom"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schema_version",
+    "tvar_name",
+    "metric",
+    "value_recommendations",
+    "support_n",
+    "confidence"
+  ],
+  "additionalProperties": false
+}

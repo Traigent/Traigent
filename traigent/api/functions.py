@@ -740,7 +740,7 @@ def set_strategy(
     Args:
         algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
             Default is "tpe" (Tree-structured Parzen Estimator) which is always
-            available with Optuna. "bayesian" (Gaussian Process) requires
+            available with Optuna. "bayesian" adaptive optimization requires
             the traigent-advanced-algorithms plugin.
         algorithm_config: Algorithm-specific parameters.
         parallel_workers: Number of parallel evaluation workers.
@@ -788,7 +788,7 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
     Example:
         >>> strategies = traigent.get_available_strategies()
         >>> strategies["bayesian"]["description"]
-        'Gaussian Process-based optimization with acquisition functions'
+        'Adaptive optimization for sample-efficient search'
     """
     algorithms = list_optimizers()
 
@@ -829,13 +829,13 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
         elif algorithm == "bayesian":
             strategies[algorithm] = {
                 "name": "Bayesian Optimization",
-                "description": "Gaussian Process-based optimization with acquisition functions",
+                "description": "Adaptive optimization for sample-efficient search",
                 "supports_continuous": True,
                 "supports_categorical": True,
                 "deterministic": False,
                 "parameters": {
                     "acquisition_function": "expected_improvement or upper_confidence_bound",
-                    "initial_random_samples": "Number of random trials before GP (default: 5)",
+                    "initial_random_samples": "Number of random trials before adaptive selection (default: 5)",
                     "xi": "Exploration parameter for EI (default: 0.01)",
                     "kappa": "Exploration parameter for UCB (default: 2.576)",
                     "random_seed": "Random seed for reproducibility",
@@ -891,6 +891,54 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
             }
 
     return strategies
+
+
+def list_recommendation_agent_types() -> tuple[str, ...]:
+    """Return valid agent/task types for TVAR recommendation queries."""
+    from traigent.config_generator.recommendations import (
+        list_recommendation_agent_types as _list_recommendation_agent_types,
+    )
+
+    return _list_recommendation_agent_types()
+
+
+def recommend_configuration_space(
+    agent_type: str,
+    *,
+    min_impact: str | None = None,
+    min_confidence: str | None = None,
+) -> dict[str, Any]:
+    """Return public TVAR recommendations for an agent/task type.
+
+    The result contains only catalog metadata: knob names, suggested ranges,
+    impact estimates, measured evidence notes, effectuation status, and apply
+    guidance. Impact estimates are task-dependent and were measured on specific
+    benchmark slices, models, and metrics; validate returned knobs on your own
+    eval set before relying on them.
+
+    Args:
+        agent_type: Catalog agent/task type. Use
+            ``list_recommendation_agent_types()`` to list valid values.
+        min_impact: Optional minimum impact estimate: ``"low"``, ``"medium"``,
+            or ``"high"``.
+        min_confidence: Optional minimum public evidence-strength label:
+            ``"low"``, ``"medium"``, or ``"high"``. This is derived from
+            catalog evidence metadata and is not a statistical confidence
+            interval.
+
+    Returns:
+        JSON-serializable dict with version metadata, a caveat,
+        ``configuration_space``, and recommendation rows.
+    """
+    from traigent.config_generator.recommendations import (
+        recommend_configuration_space as _recommend_configuration_space,
+    )
+
+    return _recommend_configuration_space(
+        agent_type,
+        min_impact=min_impact,
+        min_confidence=min_confidence,
+    )
 
 
 def _check_integration(module_path: str) -> bool:

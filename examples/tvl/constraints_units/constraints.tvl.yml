@@ -1,18 +1,20 @@
 # TVL 0.9 Example: Constraints and Units
 # Demonstrates structural constraints with units
 
-spec:
-  id: constraints-units-example
-  version: 0.1.0
+tvl:
+  module: examples.constraints_units_example
+tvl_version: "0.1.0"
 
 metadata:
   owner: "team@example.com"
   description: "Example demonstrating constraints and units"
+  # Unit declarations are documentational; validators read tvar/objective
+  # fields, not this registry.
+  units:
+    time: [milliseconds, seconds]
+    currency: [USD]
+    ratio: [dimensionless]
 
-units:
-  time: [milliseconds, seconds]
-  currency: [USD]
-  ratio: [dimensionless]
 
 # TVL 0.9 typed variables
 tvars:

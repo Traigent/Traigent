@@ -197,7 +197,7 @@ class HealthChecker:
     def check_service_health(self, service_name: str) -> HealthCheck:
         """Check health of a specific service.
 
-        Honest-status contract (SDK#918 fix): the previous body returned
+        Honest-status contract: the previous body returned
         hardcoded `HealthStatus.HEALTHY` for `database`, `api`, and
         `optimizer` with fabricated metric values (`connections: 45`,
         `active_requests: 23`, etc.). The source comment said
@@ -222,12 +222,12 @@ class HealthChecker:
                         f"No real health probe configured for "
                         f"'{service_name}'. Override "
                         f"HealthChecker.check_service_health in a subclass "
-                        f"to wire a real probe (SDK#918)."
+                        f"to wire a real probe (regression)."
                     ),
                 }
                 logger.warning(
                     "HealthChecker.check_service_health('%s') returned UNKNOWN "
-                    "because no real probe is configured (SDK#918).",
+                    "because no real probe is configured (regression).",
                     service_name,
                 )
             else:
@@ -295,7 +295,7 @@ class BackupManager:
     def create_backup(self, backup_type: str = "full") -> dict[str, Any]:
         """Create system backup.
 
-        Honest-status contract (SDK#918 fix): this method previously
+        Honest-status contract: this method previously
         returned `status="completed"` with a fabricated `backup_id`
         and a fake `size_gb=2.5` — without performing any backup work.
         Operators calling `create_backup()` got a "completed" status
@@ -316,7 +316,7 @@ class BackupManager:
         logger.error(
             "BackupManager.create_backup(%r) called but no backup executor "
             "is configured. Returning status='unsupported'; no data was "
-            "persisted. See SDK#918 for the migration path.",
+            "persisted. See regression for the migration path.",
             backup_type,
         )
         return {

@@ -143,6 +143,7 @@ class SyntheticCostEvaluator(BaseEvaluator):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("cost_preflight_approved")
 async def test_optuna_bayesian_pruning_and_early_stop(monkeypatch):
     config_space = {"model": ["good", "meh", "bad"]}
     # Use ThresholdPruner to trigger pruning when cost exceeds threshold.

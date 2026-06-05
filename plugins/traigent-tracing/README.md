@@ -22,7 +22,7 @@ pip install traigent-tracing[jaeger]
 
 ## Usage
 
-Once installed, tracing is automatically enabled. Configure via environment variables:
+Tracing is opt-in. Configure it via environment variables:
 
 ```bash
 # Enable tracing
@@ -34,6 +34,11 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 # Set service name
 export OTEL_SERVICE_NAME=my-optimization-service
 ```
+
+`TRAIGENT_TRACE_ENABLED` is the canonical tracing flag and defaults to
+`false`. The older plural spelling `TRAIGENT_TRACES_ENABLED` is still honored
+as a deprecated alias when the canonical flag is unset; if both are set,
+`TRAIGENT_TRACE_ENABLED` takes precedence.
 
 Or configure programmatically:
 

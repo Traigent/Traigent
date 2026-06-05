@@ -15,6 +15,7 @@ from traigent.projects.dtos import (
     ProjectRateLimitPolicyDTO,
     ProjectRetentionPolicyDTO,
 )
+from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -159,6 +160,7 @@ class ProjectManagementClient:
     def _request_json_sync(
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        raise_if_backend_offline("ProjectManagementClient request")
         encoded_payload = (
             json.dumps(payload).encode("utf-8") if payload is not None else None
         )

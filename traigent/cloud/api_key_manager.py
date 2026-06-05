@@ -428,7 +428,7 @@ class APIKeyManager:
                 name="default",
                 created_at=now,
                 expires_at=now + timedelta(days=365),
-                # SDK#937 fix: do not fabricate any permission grants
+                # regression fix: do not fabricate any permission grants
                 # locally. The SDK has no way to know what the backend
                 # actually granted this credential, so the APIKey default
                 # is an empty permission set and has_permission() fails
@@ -457,7 +457,7 @@ class APIKeyManager:
         api_key_value = self.get_key_for_internal_use()
 
         if api_key_value and self.validate_format(api_key_value):
-            # SDK#937 fix: report `permissions={}` for the env-key
+            # regression fix: report `permissions={}` for the env-key
             # path. Previously this fabricated `{optimize: True,
             # analytics: True}` even though the SDK has no way to
             # know what the backend actually granted this key.

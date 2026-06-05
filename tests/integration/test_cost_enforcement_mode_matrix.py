@@ -11,7 +11,7 @@ mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
    regardless of how configurations are injected (CONTEXT, PARAMETER, SEAMLESS)
-   or where optimization runs (EDGE_ANALYTICS, HYBRID, HYBRID_API).
+   or where optimization runs (EDGE_ANALYTICS, HYBRID, HYBRID_API, PRIVACY alias).
 
 2. **InjectionMode affects decorator → user function**, NOT orchestrator → CostEnforcer:
    - TraigentConfig has no injection_mode field
@@ -20,7 +20,7 @@ mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 3. **ExecutionMode affects where trials run**, NOT cost tracking logic:
    - The orchestrator passes execution_mode to TraigentConfig
-   - CostEnforcer applies the same invariants regardless of execution mode
+   - CostEnforcer applies the same invariants for supported execution modes
 
 WHY THESE TESTS MATTER
 ======================
@@ -64,6 +64,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.exceptions import ConfigurationError
 
 # Tolerance for floating point comparisons
 EPSILON = 1e-10
@@ -232,6 +233,17 @@ EXECUTION_MODES = [
     ExecutionMode.PRIVACY,
 ]
 
+UNSUPPORTED_EXECUTION_MODES = [
+    (
+        ExecutionMode.CLOUD,
+        "Cloud remote execution is not available yet",
+    ),
+    (
+        ExecutionMode.STANDARD,
+        "No such mode 'standard'",
+    ),
+]
+
 
 class TestCostEnforcerModeMatrix:
     """Verify CostEnforcer safety properties across all mode combinations."""
@@ -275,6 +287,16 @@ class TestCostEnforcerModeMatrix:
         assert (
             abs(status.reserved_cost_usd) < EPSILON
         ), f"[{context}] Unreleased reservation"
+
+    @pytest.mark.parametrize(
+        "execution_mode,expected_message", UNSUPPORTED_EXECUTION_MODES
+    )
+    def test_unsupported_execution_modes_are_rejected(
+        self, execution_mode: ExecutionMode, expected_message: str
+    ) -> None:
+        """Unsupported modes fail closed before cost-enforcer orchestration."""
+        with pytest.raises(ConfigurationError, match=expected_message):
+            TraigentConfig(execution_mode=execution_mode.value)
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
     @pytest.mark.asyncio

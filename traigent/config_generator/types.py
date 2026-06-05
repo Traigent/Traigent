@@ -72,6 +72,26 @@ class StructuralConstraintSpec:
 
 
 @dataclass(frozen=True)
+class EvidenceRef:
+    """Public-safe reference to measured evidence supporting a recommendation.
+
+    Carries only publishable provenance (scope/metric/n/model/baseline/candidate/
+    delta/limitations). Internal artifact paths and run IDs are intentionally
+    excluded so this can ship in the public SDK; richer internal provenance, if
+    any, lives backend-side.
+    """
+
+    scope: str
+    metric: str
+    n: int
+    model: str
+    baseline: Any
+    candidate: Any
+    delta: float | None = None
+    limitations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TVarRecommendation:
     """A recommended additional TVAR the user may not have considered."""
 
@@ -81,6 +101,14 @@ class TVarRecommendation:
     category: str = ""  # "prompting" | "retrieval" | "model" | "evaluation"
     reasoning: str = ""
     impact_estimate: str = "medium"  # "high" | "medium" | "low"
+    entry_id: str = ""
+    catalog_entry_id: str = ""
+    kind: str = ""  # "value" | "cardinality" | "topology" | "policy"
+    effectuation_status: str = ""  # "executable" | "manual_guidance" | "advisory"
+    effectuation_strategy: str = ""
+    evidence_refs: tuple[EvidenceRef, ...] = ()
+    apply_guidance: str = ""
+    recommended_values: tuple[Any, ...] = ()
 
     def to_range_code(self) -> str:
         """Generate Python code for the recommended range."""

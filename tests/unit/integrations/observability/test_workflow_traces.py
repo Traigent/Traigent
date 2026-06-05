@@ -686,6 +686,13 @@ class TestWorkflowTracesTracker:
     ) -> None:
         """Default tracker backend should be cloud-first, not localhost."""
         monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
+        # Isolate from stored CLI credentials (~/.traigent) so the test
+        # exercises the true no-env/no-credentials default branch.
+        from traigent.cloud.credential_manager import CredentialManager
+
+        monkeypatch.setattr(
+            CredentialManager, "get_stored_backend_url", staticmethod(lambda: None)
+        )
         monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
 
         tracker = WorkflowTracesTracker()

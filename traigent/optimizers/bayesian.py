@@ -1,4 +1,4 @@
-"""Bayesian optimization algorithm using Gaussian Process regression."""
+"""Bayesian adaptive optimization algorithm."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Reliability FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 SYNC-OptimizationFlow
 
@@ -29,16 +29,13 @@ except ImportError:
 
 
 class BayesianOptimizer(BaseOptimizer):
-    """Bayesian optimization using Gaussian Process regression.
-
-    This optimizer uses a Gaussian Process to model the objective function
-    and an acquisition function to choose the next trial configuration.
+    """Bayesian adaptive optimizer.
 
     Args:
         config_space: Configuration space to search
         objectives: List of objectives to optimize
-        acquisition_function: Acquisition function ("expected_improvement", "upper_confidence_bound")
-        initial_random_samples: Number of random samples before starting Bayesian optimization
+        acquisition_function: Selection strategy ("expected_improvement", "upper_confidence_bound")
+        initial_random_samples: Number of random samples before adaptive selection starts
         xi: Exploration parameter for Expected Improvement
         kappa: Exploration parameter for Upper Confidence Bound
         random_seed: Random seed for reproducibility
@@ -63,24 +60,24 @@ class BayesianOptimizer(BaseOptimizer):
         random_seed: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize Bayesian optimizer with Gaussian Process regression.
+        """Initialize Bayesian adaptive optimizer.
 
         Args:
             config_space: Dictionary defining parameter search space.
                 Supports continuous ranges (tuples), categorical (lists),
                 and fixed values.
             objectives: List of objective names to optimize. Currently uses
-                the first objective for GP modeling.
+                the first objective for adaptive scoring.
             acquisition_function: Strategy for selecting next trial.
                 "expected_improvement" (default): Balance exploration/exploitation.
                 "upper_confidence_bound": More exploration-focused.
             initial_random_samples: Number of random trials before starting
-                Bayesian optimization. Default 5.
+                adaptive selection. Default 5.
             xi: Exploration parameter for Expected Improvement. Higher values
                 encourage more exploration. Default 0.01.
             kappa: Exploration parameter for Upper Confidence Bound. Higher
                 values mean more exploration. Default 2.576 (99% CI).
-            random_seed: Seed for reproducibility of GP fitting and sampling.
+            random_seed: Seed for reproducibility of adaptive scoring and sampling.
             **kwargs: Additional arguments passed to BaseOptimizer.
 
         Raises:
@@ -102,7 +99,7 @@ class BayesianOptimizer(BaseOptimizer):
         logger.debug(f"Objectives: {objectives}")
         logger.debug(f"Initial random samples: {initial_random_samples}")
 
-        # Validate acquisition function
+        # Validate selection strategy
         valid_acquisition = ["expected_improvement", "upper_confidence_bound"]
         result = CoreValidators.validate_choices(
             acquisition_function, "acquisition_function", valid_acquisition
@@ -118,7 +115,7 @@ class BayesianOptimizer(BaseOptimizer):
         # Create a local RNG instance to avoid mutating NumPy's global RNG state
         self._rng = np.random.default_rng(random_seed)
 
-        # Initialize Gaussian Process
+        # Initialize adaptive scorer
         # Increased alpha (noise) to prevent overconfidence
         kernel = ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=1.0, nu=2.5)
         self.gp = GaussianProcessRegressor(
@@ -212,7 +209,7 @@ class BayesianOptimizer(BaseOptimizer):
         return {"continuous": continuous, "categorical": categorical, "fixed": fixed}
 
     def _config_to_array(self, config: dict[str, Any]) -> np.ndarray[Any, Any]:
-        """Convert configuration dictionary to array for GP."""
+        """Convert configuration dictionary to array for adaptive scoring."""
         array_values = []
 
         # Add continuous parameters
@@ -317,7 +314,7 @@ class BayesianOptimizer(BaseOptimizer):
     def _expected_improvement(
         self, X: np.ndarray[Any, Any], y_best: float
     ) -> np.ndarray[Any, Any]:
-        """Calculate Expected Improvement acquisition function."""
+        """Calculate Expected Improvement selection score."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mu, sigma = self.gp.predict(X.reshape(1, -1), return_std=True)
@@ -334,7 +331,7 @@ class BayesianOptimizer(BaseOptimizer):
         return cast(np.ndarray[Any, Any], ei.flatten())
 
     def _upper_confidence_bound(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
-        """Calculate Upper Confidence Bound acquisition function."""
+        """Calculate Upper Confidence Bound selection score."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mu, sigma = self.gp.predict(X.reshape(1, -1), return_std=True)
@@ -342,7 +339,7 @@ class BayesianOptimizer(BaseOptimizer):
         return cast(np.ndarray[Any, Any], mu + self.kappa * sigma)
 
     def _optimize_acquisition(self, y_best: float) -> np.ndarray[Any, Any]:
-        """Find the point that maximizes the acquisition function."""
+        """Find the point that maximizes the selection score."""
 
         def objective(x):
             if self.acquisition_function == "expected_improvement":
@@ -430,7 +427,7 @@ class BayesianOptimizer(BaseOptimizer):
             logger.warning("No successful trials found, using random sampling")
             return self._random_config()
 
-        # Prepare data for Gaussian Process
+        # Prepare data for adaptive scoring
         X = []
         y = []
 
@@ -461,16 +458,16 @@ class BayesianOptimizer(BaseOptimizer):
         y = np.array(y)
 
         if len(X) == 0 or len(y) == 0:
-            logger.warning("No valid data for GP, using random sampling")
+            logger.warning("No valid data for adaptive scoring, using random sampling")
             return self._random_config()
 
-        # Fit Gaussian Process
+        # Fit adaptive scorer
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 self.gp.fit(X, y)
         except Exception as e:
-            logger.warning(f"GP fitting failed: {e}, using random sampling")
+            logger.warning(f"Adaptive scoring failed: {e}, using random sampling")
             return self._random_config()
 
         # Find best observed value
@@ -480,10 +477,10 @@ class BayesianOptimizer(BaseOptimizer):
         y_best: float = float(np.max(y))
         logger.info(f"Best observed {primary_objective}: {y_best:.4f}")
 
-        # Evaluate acquisition function for all possible models (for categorical params)
+        # Evaluate selection scores for all possible models (for categorical params)
         if len(self._param_mapping["continuous"]) == 0:
             # For categorical-only spaces, evaluate all possibilities
-            logger.debug("Evaluating acquisition function for all models")
+            logger.debug("Evaluating selection scores for all models")
 
             # Get all unique models from config space
             if not self._param_mapping["categorical"]:
@@ -505,7 +502,7 @@ class BayesianOptimizer(BaseOptimizer):
                 test_config["model"] = model_val
                 test_x = self._config_to_array(test_config)
 
-                # Predict with GP
+                # Score this candidate
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     mu, sigma = self.gp.predict(test_x.reshape(1, -1), return_std=True)
@@ -533,19 +530,17 @@ class BayesianOptimizer(BaseOptimizer):
                     "sigma": sigma_scalar,
                 }
 
-            # Show which model has best acquisition
+            # Show which model has best selection score
             best_model = max(
                 candidate_info, key=lambda name: candidate_info[name]["score"]
             )
             best_score = candidate_info[best_model]["score"]
-            logger.info(
-                f"Best acquisition score: {best_model} (score={best_score:.6f})"
-            )
+            logger.info(f"Best selection score: {best_model} (score={best_score:.6f})")
 
-            # If all acquisition scores are essentially zero, we need more exploration
+            # If all selection scores are essentially zero, we need more exploration
             if best_score < 1e-6:
                 logger.warning(
-                    "All acquisition scores near zero - falling back to uncertainty-based selection"
+                    "All selection scores near zero - falling back to uncertainty-based selection"
                 )
                 best_model = max(
                     candidate_info, key=lambda name: candidate_info[name]["sigma"]
@@ -562,19 +557,17 @@ class BayesianOptimizer(BaseOptimizer):
             logger.info(f"Final selected configuration: {selected_config}")
             return selected_config
 
-        # Optimize acquisition function (for continuous or mixed spaces)
+        # Optimize selection score (for continuous or mixed spaces)
         try:
             best_x = self._optimize_acquisition(y_best)
             config = self._array_to_config(best_x)
 
-            logger.debug(f"Bayesian optimization suggested config: {config}")
+            logger.debug(f"Bayesian adaptive optimizer suggested config: {config}")
             logger.info(f"Final selected configuration: {config}")
             return config
 
         except Exception as e:
-            logger.warning(
-                f"Acquisition optimization failed: {e}, using random sampling"
-            )
+            logger.warning(f"Adaptive selection failed: {e}, using random sampling")
             return self._random_config()
 
     def _has_converged(self, history: list[TrialResult]) -> bool:

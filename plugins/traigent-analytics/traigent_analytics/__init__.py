@@ -45,6 +45,7 @@ from .intelligence import CostOptimizationAI
 # Meta-learning
 from .meta_learning import (
     AlgorithmSelector,
+    HistoricalAnalyticsEngine,
     MetaLearningEngine,
     OptimizationHistory,
     PerformancePredictor,
@@ -71,6 +72,7 @@ from .scheduling import (
 
 __all__ = [
     # Meta-learning
+    "HistoricalAnalyticsEngine",
     "MetaLearningEngine",
     "OptimizationHistory",
     "AlgorithmSelector",

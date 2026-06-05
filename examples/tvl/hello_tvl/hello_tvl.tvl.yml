@@ -1,12 +1,17 @@
 # TVL 0.9 Example: Hello TVL
 # A minimal example demonstrating basic TVL structure
 
-spec:
-  id: hello-tvl
-  version: 0.0.1
+tvl:
+  module: examples.hello_tvl
+tvl_version: "0.0.1"
 
 metadata:
   owner: "team@example.com"
+  # Legacy operational promotion hints (pre-0.9 'promotion:' block); the
+  # statistical gate lives in promotion_policy.
+  legacy_promotion:
+    gate: manual_review
+    reviewers: ["reviewer@example.com"]
   description: "Minimal TVL spec demonstrating basic structure"
 
 # TVL 0.9 typed variables
@@ -31,7 +36,3 @@ constraints:
     - expr: 'params.temperature <= 1.0'
       id: max-temperature
       error_message: "Temperature must be at most 1.0"
-
-promotion:
-  gate: manual_review
-  reviewers: ["reviewer@example.com"]

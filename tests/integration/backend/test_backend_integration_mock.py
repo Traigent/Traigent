@@ -34,8 +34,13 @@ class TestBackendIntegrationMocked:
             enable_fallback=True,
         )
         client.auth_manager.auth.get_headers = AsyncMock(
-            return_value={"Authorization": "Bearer test-token"}
+            return_value={
+                "Authorization": "Bearer test-token",
+                "X-API-Key": "tg_" + "a" * 61,
+            }
         )
+        client._update_config_run_status = AsyncMock(return_value=False)
+        client._update_config_run_measures = AsyncMock(return_value=True)
         return client
 
     @pytest.fixture
@@ -131,9 +136,9 @@ class TestBackendIntegrationMocked:
         self, backend_client, mock_aiohttp_session, monkeypatch
     ):
         """Test submitting trial results with mocked responses."""
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         mock_session_class, mock_response = mock_aiohttp_session
 
-        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         with (
             patch(
                 "traigent.cloud.backend_client.aiohttp.ClientSession",
@@ -152,16 +157,19 @@ class TestBackendIntegrationMocked:
             mock_response.status = 200
             mock_response.json.return_value = {"status": "success"}
             now = datetime.now(UTC)
-            backend_client._active_sessions["test_session_123"] = OptimizationSession(
-                session_id="test_session_123",
-                function_name="test_function",
-                configuration_space={"temperature": [0.7], "max_tokens": [150]},
-                objectives=["score"],
-                max_trials=1,
-                status=OptimizationSessionStatus.ACTIVE,
-                created_at=now,
-                updated_at=now,
-            )
+            with backend_client._active_sessions_lock:
+                backend_client._active_sessions["test_session_123"] = (
+                    OptimizationSession(
+                        session_id="test_session_123",
+                        function_name="test_function",
+                        configuration_space={"temperature": [0.7], "max_tokens": [150]},
+                        objectives=["score"],
+                        max_trials=1,
+                        status=OptimizationSessionStatus.ACTIVE,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
 
             # Should not raise exception
             result = await backend_client.submit_privacy_trial_results(

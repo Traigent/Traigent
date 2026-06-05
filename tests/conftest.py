@@ -42,6 +42,8 @@ pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
 # Increase recursion limit to handle complex test scenarios
 sys.setrecursionlimit(2000)
 
+_ORIGINAL_ASYNCIO_SLEEP = asyncio.sleep
+
 
 @pytest_asyncio.fixture(autouse=True)
 async def cleanup_lingering_asyncio_tasks():
@@ -55,7 +57,7 @@ async def cleanup_lingering_asyncio_tasks():
 
     yield
 
-    await asyncio.sleep(0)
+    await _ORIGINAL_ASYNCIO_SLEEP(0)
 
     current = asyncio.current_task()
     pending = [

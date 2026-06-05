@@ -62,6 +62,11 @@ from traigent.api.parameter_ranges import (
     is_inline_param_definition,
     normalize_configuration_space,
 )
+from traigent.api.strategy_presets import (
+    NormalizedStrategyPreset,
+    is_strategy_preset_name,
+    normalize_strategy_preset,
+)
 from traigent.api.types import AgentDefinition
 from traigent.config.parallel import (
     ParallelConfig,
@@ -119,6 +124,8 @@ class InjectionOptions(BaseModel):
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
         framework_targets: List of framework names to target.
+        effectuation: Opt-in executable TVAR effectuation. Defaults to False,
+            preserving existing trial-call behavior.
 
     Note:
         ATTRIBUTE mode was removed in v2.x due to thread-safety issues.
@@ -133,6 +140,7 @@ class InjectionOptions(BaseModel):
     # Set to True explicitly when using framework integrations
     auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
+    effectuation: bool = False
 
     @field_validator("injection_mode", mode="before")
     @classmethod
@@ -215,7 +223,7 @@ class ExecutionOptions(BaseModel):
     def _reject_non_default_reps_per_trial(cls, v: int) -> int:
         # Per-configuration repetition is enterprise-gated; fail at the contract
         # boundary (construction) instead of late at runtime so callers see the
-        # gate before the @optimize decorator is applied. See issue #931.
+        # gate before the @optimize decorator is applied.
         if v != 1:
             raise ValueError(
                 "reps_per_trial != 1 is not available in this version. "
@@ -259,7 +267,7 @@ class MockModeOptions(BaseModel):
         of the SDK runtime behavior.
 
         This deprecation is doc-only. The fields will be removed in a
-        future major version. See issue #874.
+        future major version.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -386,6 +394,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "config_param": None,
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
+    "effectuation": False,
     "execution_mode": "edge_analytics",
     "hybrid_api_endpoint": None,
     "tunable_id": None,
@@ -498,6 +507,7 @@ class LegacyOptimizeArgs:
     config_param: str | None = None
     auto_override_frameworks: bool | None = None
     framework_targets: list[str] | None = None
+    effectuation: bool | None = None
     execution_mode: str | None = None
     hybrid_api_endpoint: str | None = None
     tunable_id: str | None = None
@@ -586,6 +596,7 @@ class LegacyOptimizeArgs:
             ("config_param", self.config_param),
             ("auto_override_frameworks", self.auto_override_frameworks),
             ("framework_targets", self.framework_targets),
+            ("effectuation", self.effectuation),
             ("execution_mode", self.execution_mode),
             ("hybrid_api_endpoint", self.hybrid_api_endpoint),
             ("tunable_id", self.tunable_id),
@@ -820,6 +831,59 @@ def _normalize_runtime_override_aliases(
     return normalized
 
 
+def _resolve_strategy_argument(
+    *,
+    strategy: str | None,
+    strategy_params: Mapping[str, Any] | None,
+    runtime_overrides: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    """Split public ``strategy`` into preset selection or legacy algorithm alias."""
+    if strategy is None:
+        if strategy_params is not None:
+            normalize_strategy_preset(None, strategy_params)
+        return None, runtime_overrides
+
+    if is_strategy_preset_name(strategy) or strategy_params is not None:
+        return strategy, runtime_overrides
+
+    normalized_overrides = dict(runtime_overrides)
+    existing_algorithm = normalized_overrides.get("algorithm")
+    if existing_algorithm is not None and existing_algorithm != strategy:
+        raise TypeError(
+            "Conflicting optimization selector: received both "
+            f"'algorithm={existing_algorithm}' and 'strategy={strategy}'. "
+            "Use only 'algorithm'."
+        )
+
+    warnings.warn(
+        "'strategy' as an optimizer selector is deprecated; use 'algorithm' instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    normalized_overrides["algorithm"] = existing_algorithm or strategy
+    return None, normalized_overrides
+
+
+def _apply_strategy_preset_to_options(
+    *,
+    strategy_preset: NormalizedStrategyPreset | None,
+    objectives: list[str] | ObjectiveSchema | None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
+) -> tuple[
+    list[str] | ObjectiveSchema | None,
+    list[Constraint | BoolExpr | Callable[..., Any]] | None,
+]:
+    """Apply advisory preset objectives without adding search constraints."""
+    if strategy_preset is None:
+        return objectives, constraints
+    if objectives is not None:
+        raise ValueError(
+            "strategy presets are mutually exclusive with explicit objectives. "
+            "Use either strategy=... or objectives=..., not both."
+        )
+    return list(strategy_preset.objectives), constraints
+
+
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
     unknown_keys = (
@@ -942,8 +1006,9 @@ def _resolve_injection_bundle_options(
     config_param: Any,
     auto_override_frameworks: Any,
     framework_targets: Any,
+    effectuation: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any]:
     """Resolve injection options from bundle."""
     if injection_bundle is None:
         return (
@@ -951,6 +1016,7 @@ def _resolve_injection_bundle_options(
             config_param,
             auto_override_frameworks,
             framework_targets,
+            effectuation,
         )
 
     return (
@@ -971,6 +1037,9 @@ def _resolve_injection_bundle_options(
             framework_targets,
             injection_bundle.framework_targets,
             defaults,
+        ),
+        _resolve_option(
+            "effectuation", effectuation, injection_bundle.effectuation, defaults
         ),
     )
 
@@ -1009,7 +1078,7 @@ def _resolve_execution_bundle_options(
 
     Enterprise-gated fields (``reps_per_trial``, ``reps_aggregation``) are
     rejected at ``ExecutionOptions`` construction time via field validators
-    (see issue #931), so this resolver only handles option merging.
+    (see the tracked fix), so this resolver only handles option merging.
     """
     if execution_bundle is None:
         return base_options
@@ -1484,11 +1553,11 @@ def _coerce_auto_detect_tvars_min_confidence(value: Any) -> str:
     from traigent.tuned_variables.detection_types import DetectionConfidence
 
     if isinstance(value, DetectionConfidence):
-        return value.value
+        return str(value.value)
     if isinstance(value, str):
         normalized = value.strip().lower()
         try:
-            return DetectionConfidence(normalized).value
+            return str(DetectionConfidence(normalized).value)
         except ValueError as exc:
             raise TypeError(
                 "auto_detect_tvars_min_confidence must be one of "
@@ -1581,7 +1650,7 @@ def _suggest_detected_tvars(
                 func.__name__,
                 suggestions,
             )
-        return config_space
+        return cast("dict[str, Any]", config_space)
     except Exception:
         logger.debug("auto_detect_tvars: detection failed", exc_info=True)
         return None
@@ -1599,8 +1668,11 @@ def optimize(  # NOSONAR(S107)
     tvl: TVLOptions | dict[str, Any] | None = None,
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
+    effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    strategy: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
     # Multi-agent configuration
     agents: dict[str, AgentDefinition] | None = None,
     agent_prefixes: list[str] | None = None,
@@ -1616,6 +1688,9 @@ def optimize(  # NOSONAR(S107)
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
+    # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -1635,6 +1710,17 @@ def optimize(  # NOSONAR(S107)
             infers sensible orientations and equal weights) or an ObjectiveSchema
             for explicit weights, orientations, and metadata. Omitted values fall
             back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
+            Mutually exclusive with strategy presets; use one path so the
+            business-goal preset cannot silently override hand-set objectives.
+        strategy: Optional advisory strategy preset name. Supported preset names
+            are ``max_accuracy_then_cheapest_within_epsilon``,
+            ``quality_floor_min_cost``, and ``pareto_frontier``. Non-preset
+            values retain the deprecated optimizer-alias behavior.
+        strategy_params: Typed parameters for the selected strategy preset.
+            ``epsilon`` is required for
+            ``max_accuracy_then_cheapest_within_epsilon`` and must be > 0 and
+            <= 1. ``floor`` is required for ``quality_floor_min_cost`` and must
+            be between 0 and 1 inclusive. ``pareto_frontier`` accepts no params.
         configuration_space: Dictionary describing the search space. Keys are
             parameter names; values can be discrete lists, numeric tuples, or nested
             dicts for composite parameters.
@@ -1689,6 +1775,7 @@ def optimize(  # NOSONAR(S107)
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
             framework_targets: Explicit list of framework classes to override.
+            effectuation: Opt-in executable TVAR effectuation. Defaults to False.
 
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
@@ -1720,7 +1807,7 @@ def optimize(  # NOSONAR(S107)
                 production for shell fixtures but emits ``DeprecationWarning``
                 when users set it directly. The parameter is retained for
                 config round-trip;
-                see issue #874.
+                see the tracked fix.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
@@ -1874,6 +1961,17 @@ def optimize(  # NOSONAR(S107)
         for key, value in legacy_args.iter_known_values():
             record_option(key, value, "legacy arguments")
 
+    preset_strategy_name, runtime_overrides = _resolve_strategy_argument(
+        strategy=strategy,
+        strategy_params=strategy_params,
+        runtime_overrides=runtime_overrides,
+    )
+    strategy_preset = (
+        normalize_strategy_preset(preset_strategy_name, strategy_params)
+        if preset_strategy_name is not None
+        else None
+    )
+
     direct_inputs = {
         "objectives": objectives,
         "configuration_space": configuration_space,
@@ -1885,6 +1983,7 @@ def optimize(  # NOSONAR(S107)
         "tvl": tvl,
         "evaluation": evaluation,
         "injection": injection,
+        "effectuation": effectuation,
         "execution": execution,
         "mock": mock,
         "agents": agents,
@@ -1949,6 +2048,7 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    effectuation = combined_settings["effectuation"]
     execution_mode = combined_settings["execution_mode"]
     hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
     tunable_id = combined_settings["tunable_id"]
@@ -2053,12 +2153,14 @@ def optimize(  # NOSONAR(S107)
         config_param,
         auto_override_frameworks,
         framework_targets,
+        effectuation,
     ) = _resolve_injection_bundle_options(
         injection_bundle,
         injection_mode,
         config_param,
         auto_override_frameworks,
         framework_targets,
+        effectuation,
         defaults,
     )
 
@@ -2126,6 +2228,11 @@ def optimize(  # NOSONAR(S107)
         default_config,
         eval_dataset,
         combined_runtime_overrides,
+    )
+    objectives, constraints = _apply_strategy_preset_to_options(
+        strategy_preset=strategy_preset,
+        objectives=objectives,
+        constraints=constraints,
     )
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
@@ -2242,6 +2349,7 @@ def optimize(  # NOSONAR(S107)
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
+            effectuation=bool(effectuation),
             execution_mode=execution_mode_enum,
             hybrid_api_endpoint=hybrid_api_endpoint,
             tunable_id=tunable_id,
@@ -2283,8 +2391,13 @@ def optimize(  # NOSONAR(S107)
             enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
+            # Advisory strategy preset metadata/selection.
+            strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
+            # Guided-generation defaults (consumed by optimize_with_guidance)
+            prompt_rewrite=prompt_rewrite,
+            grow_dataset=grow_dataset,
             **combined_runtime_overrides,
         )
 

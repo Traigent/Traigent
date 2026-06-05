@@ -14,7 +14,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from ..api.types import OptimizationResult, OptimizationStatus, TrialResult
+from ..api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    PresetSelection,
+    TrialResult,
+)
 from ..utils.function_identity import sanitize_identifier
 from ..utils.secure_path import safe_open, validate_path
 
@@ -157,7 +162,7 @@ class PersistenceManager:
         self.base_dir.mkdir(exist_ok=True)
 
     def _resolve_path(self, path: Path, must_exist: bool = False) -> Path:
-        return validate_path(path, self.base_dir, must_exist=must_exist)
+        return cast(Path, validate_path(path, self.base_dir, must_exist=must_exist))
 
     def _atomic_write_json(self, file_path: Path, data: Any) -> None:
         """Write JSON data atomically using temp file + rename pattern.
@@ -256,6 +261,12 @@ class PersistenceManager:
             ),
             "best_score": _safe_json_value(result.best_score),
             "best_config": _safe_json_value(result.best_config),
+            "preset_selection": _safe_json_value(
+                result.preset_selection.to_dict()
+                if result.preset_selection is not None
+                else None
+            ),
+            "strategy_preset": _safe_json_value(result.metadata.get("strategy_preset")),
             "success_rate": _safe_json_value(result.success_rate),
             "duration": result.duration,
             "convergence_info": _safe_json_value(result.convergence_info),
@@ -421,7 +432,15 @@ class PersistenceManager:
             metadata={
                 "function_name": metadata["function_name"],
                 "configuration_space": metadata["configuration_space"],
+                **(
+                    {"strategy_preset": metadata["strategy_preset"]}
+                    if metadata.get("strategy_preset") is not None
+                    else {}
+                ),
             },
+            preset_selection=PresetSelection.from_dict(
+                metadata.get("preset_selection")
+            ),
         )
 
         return result

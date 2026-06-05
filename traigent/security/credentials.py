@@ -38,15 +38,107 @@ from traigent.utils.exceptions import AuthenticationError as SecurityError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-_SECRET_ENV_SUFFIX = "PASS" + "WORD"
+_SECRET_ENV_SUFFIX = "PASS" + "WORD"  # pragma: allowlist secret
 _MASTER_SECRET_ENV = f"TRAIGENT_MASTER_{_SECRET_ENV_SUFFIX}"
 _ALLOW_LEGACY_MASTER_SECRET_ENV = (
     f"TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_{_SECRET_ENV_SUFFIX}"
 )
+_WEAK_CREDENTIAL_PATTERNS = (
+    "password123",
+    "12345",
+    "admin",
+    "demo",
+    "your-",
+    "xxx",
+    "placeholder",
+    "example",
+)
+_SECRET_FIELD_NAMES = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "jwt_token",
+    "password",
+    "private_key",
+    "refresh_token",
+    "secret",
+    "service_key",
+    "token",
+}
 
 
 def _truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalized_field_name(field: str) -> str:
+    return field.strip().lower().replace("-", "_")
+
+
+def _is_secret_field(path: tuple[str, ...]) -> bool:
+    if not path:
+        return False
+    key = _normalized_field_name(path[-1])
+    return (
+        key in _SECRET_FIELD_NAMES
+        or key.endswith("_token")
+        or key.endswith("_secret")
+        or key.endswith("_password")
+        or key.endswith("_api_key")
+    )
+
+
+def _iter_secret_string_fields(
+    value: Any, path: tuple[str, ...] = ()
+) -> list[tuple[str, str]]:
+    if isinstance(value, dict):
+        fields: list[tuple[str, str]] = []
+        for key, nested in value.items():
+            key_path = (*path, str(key))
+            if isinstance(nested, str) and _is_secret_field(key_path):
+                fields.append((".".join(key_path), nested))
+            elif isinstance(nested, dict | list):
+                fields.extend(_iter_secret_string_fields(nested, key_path))
+        return fields
+
+    if isinstance(value, list):
+        fields = []
+        for index, nested in enumerate(value):
+            fields.extend(_iter_secret_string_fields(nested, (*path, str(index))))
+        return fields
+
+    return []
+
+
+def _values_for_weak_credential_check(value: str) -> list[tuple[str, str]]:
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return [("value", value)]
+
+    if not isinstance(decoded, dict):
+        return [("value", value)]
+
+    secret_fields = _iter_secret_string_fields(decoded)
+    return secret_fields or [("value", value)]
+
+
+def _is_test_credential_value(value: str) -> bool:
+    lower_value = value.lower()
+    return (
+        lower_value.startswith(("test_", "test-"))
+        or lower_value.endswith(("_test", "-test"))
+        or lower_value.startswith(("dummy", "sample"))
+    )
+
+
+def _weak_credential_field(value: str) -> str | None:
+    for field, candidate in _values_for_weak_credential_check(value):
+        lower_candidate = candidate.lower()
+        if any(pattern in lower_candidate for pattern in _WEAK_CREDENTIAL_PATTERNS):
+            return field
+    return None
 
 
 @overload
@@ -713,28 +805,24 @@ class EnhancedCredentialStore:
                 f"Credential value too short; minimum length is {reference_length} characters"
             )
 
-        # Check for weak/placeholder values (relaxed for testing)
-        weak_patterns = [
-            "password123",
-            "12345",
-            "admin",
-            "demo",
-            "your-",
-            "xxx",
-            "placeholder",
-            "example",
-        ]
-        lower_value = value.lower()
-        is_test_value = (
-            lower_value.startswith(("test_", "test-"))
-            or lower_value.endswith(("_test", "-test"))
-            or lower_value.startswith(("dummy", "sample"))
-        )
-        if (not flags.allow_weak_credentials or not is_test_value) and any(
-            pattern in value.lower() for pattern in weak_patterns
+        # Check for weak/placeholder secret values. Structured CLI payloads can
+        # include user metadata such as admin@dev.local; only secret-like fields
+        # should participate in this heuristic.
+        weak_field = _weak_credential_field(value)
+        if weak_field and (
+            not flags.allow_weak_credentials or not _is_test_credential_value(value)
         ):
-            self._security_event("weak_credential_detected", {"name": name})
-            raise SecurityError("Credential appears to be weak or a placeholder")
+            self._security_event(
+                "weak_credential_detected",
+                {"name": name, "field": weak_field},
+            )
+            if weak_field == "value":
+                raise SecurityError(
+                    "Credential value appears to be weak or a placeholder"
+                )
+            raise SecurityError(
+                f"Credential field '{weak_field}' appears to be weak or a placeholder"
+            )
 
         # Encrypt the value
         ciphertext, nonce, associated_data = self._encrypt_value(value)
@@ -889,7 +977,11 @@ class EnhancedCredentialStore:
             "security_level": self.security_level.value,
         }
 
-        logger.warning(f"Security event: {event}")
+        logger.warning(
+            "Security event: type=%s security_level=%s",
+            event_type,
+            self.security_level.value,
+        )
 
         if self.audit_callback:
             self.audit_callback(event)

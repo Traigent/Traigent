@@ -231,6 +231,7 @@ class TestCacheMetrics:
                 assert example_result.metrics["output_tokens"] > 0
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("cost_preflight_approved")
     async def test_mixed_cached_uncached_optimization(self, cache_dataset):
         """Test optimization flow with mixed cache hits and misses."""
 

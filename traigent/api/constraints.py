@@ -1259,7 +1259,7 @@ def check_constraints_conflict(
     # But only report if samples_exhaustive=True to avoid false positives
     if not samples_exhaustive:
         # Sparse samples: don't report conflict as valid configs may exist
-        # outside the sample set (fix for issue #38)
+        # outside the sample set (fix for the tracked fix)
         return None
 
     # Report the config with the most violations for best diagnostics

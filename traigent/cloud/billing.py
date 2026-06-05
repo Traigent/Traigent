@@ -570,7 +570,7 @@ class BillingManager:
             - current_month_stats["total_credits"],
         }
 
-    # Tier ordering for upgrade-direction enforcement (SDK#924). Higher
+    # Tier ordering for upgrade-direction enforcement (regression). Higher
     # index = higher quota. `upgrade_plan` rejects any change that
     # increases the index, since the SDK has no authority to grant
     # itself a higher tier — that has to be a backend/billing-portal
@@ -580,7 +580,7 @@ class BillingManager:
     def upgrade_plan(self, new_plan: str) -> bool:
         """Change to a different billing plan locally.
 
-        Honest semantics (SDK#924 fix):
+        Honest semantics:
           * Downgrades are allowed — a user can locally cap themselves
             to a lower tier (e.g. "use the free quota for this run
             even though I'm on professional"). Caps the user's own
@@ -613,7 +613,7 @@ class BillingManager:
                 represents an upgrade above the current tier, OR if
                 either current_plan or new_plan exists in
                 `billing_plans` but is missing from `_TIER_ORDER`
-                (Greptile P1 of PR #968: silent fallback to "free"
+                (Greptile P1 of review: silent fallback to "free"
                 index re-opened the bypass for any future tier added
                 without an _TIER_ORDER update).
         """
@@ -622,7 +622,7 @@ class BillingManager:
             return False
 
         old_plan = self.current_plan
-        # Greptile P1#1 of PR #968: do NOT fall back to free index for
+        # Greptile P1#1 of review: do NOT fall back to free index for
         # unknown tiers. Either tier missing from _TIER_ORDER is a
         # configuration error — fail-closed means raising, not
         # silently treating it as "free".
@@ -631,7 +631,7 @@ class BillingManager:
         except ValueError as exc:
             raise ConfigurationError(
                 f"Current plan '{old_plan}' is not in the known tier "
-                f"ordering (SDK#924). Cannot evaluate upgrade direction. "
+                f"ordering (regression). Cannot evaluate upgrade direction. "
                 f"Add '{old_plan}' to BillingManager._TIER_ORDER if it is "
                 f"a legitimate plan."
             ) from exc
@@ -640,7 +640,7 @@ class BillingManager:
         except ValueError as exc:
             raise ConfigurationError(
                 f"Target plan '{new_plan}' is in billing_plans but absent "
-                f"from BillingManager._TIER_ORDER (SDK#924). Update "
+                f"from BillingManager._TIER_ORDER (regression). Update "
                 f"_TIER_ORDER to include this plan in the correct position "
                 f"before allowing it to be applied — silently allowing "
                 f"unknown-position plans would re-open the upgrade bypass."
@@ -649,7 +649,7 @@ class BillingManager:
         if new_idx > old_idx:
             raise ConfigurationError(
                 f"Cannot upgrade billing plan locally: '{old_plan}' → "
-                f"'{new_plan}' (SDK#924). Plan upgrades must happen via "
+                f"'{new_plan}' (regression). Plan upgrades must happen via "
                 f"the backend billing portal and be reflected in the "
                 f"user's authenticated state — the SDK has no authority "
                 f"to grant itself a higher tier. Re-authenticate after "

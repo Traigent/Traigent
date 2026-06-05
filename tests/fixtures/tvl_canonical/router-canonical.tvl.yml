@@ -1,0 +1,38 @@
+# Vendored canonical surface (tvl repo main @ fe169b4): string `=` equality + mixed >= operator in the
+# consequent, plus a string value CONTAINING '=' (regression guard for the
+# translation step).
+tvl:
+  module: corp.fixtures.router_canonical
+
+environment:
+  snapshot_id: "2026-06-05T00:00:00Z"
+
+evaluation_set:
+  dataset: s3://datasets/fixtures/dev.parquet
+
+tvars:
+  - name: routing_model
+    type: enum[str]
+    domain: ["rules", "ml", "k=v-style"]
+  - name: fallback_threshold
+    type: float
+    domain:
+      range: [0.0, 1.0]
+      resolution: 0.05
+
+constraints:
+  structural:
+    - when: routing_model = "rules"
+      then: fallback_threshold >= 0.9
+    - when: routing_model = "k=v-style"
+      then: fallback_threshold >= 0.5
+
+objectives:
+  - name: quality
+    direction: maximize
+
+promotion_policy:
+  dominance: epsilon_pareto
+  alpha: 0.05
+  min_effect:
+    quality: 0.02
