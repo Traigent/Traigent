@@ -35,6 +35,7 @@ from .certificates import (
 )
 from .kinds import KnobKind
 from .resolution import ResolutionError, ResolutionNode, ResolutionRejection
+from .resolver import CalibratedInput, KnobResolver, ResolvedConfiguration
 from .signals import SignalObservation, SignalSpec
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "CTX_SCHEMA_VERSION",
     "Binding",
     "Calibrated",
+    "CalibratedInput",
     "CanonicalizationError",
     "Certificate",
     "CertificateDecision",
@@ -50,10 +52,12 @@ __all__ = [
     "FreshnessContext",
     "Knob",
     "KnobKind",
+    "KnobResolver",
     "Ref",
     "ResolutionError",
     "ResolutionNode",
     "ResolutionRejection",
+    "ResolvedConfiguration",
     "SignalObservation",
     "SignalSpec",
     "TargetProperty",

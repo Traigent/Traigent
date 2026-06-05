@@ -116,9 +116,13 @@ class TrialLifecycle:
             return trial_count, "break"
 
         config = orchestrator._consume_default_config()
+        if config is not None:
+            # baseline trials get the same Fixed/CVAR injection (RFC 0001)
+            config = orchestrator._apply_knob_resolution(config)
         if config is None:
             try:
                 config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
+                config = orchestrator._apply_knob_resolution(config)
             except OptimizationError:
                 raise
             except (ValueError, TypeError, KeyError, AttributeError) as e:

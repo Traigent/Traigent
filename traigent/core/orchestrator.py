@@ -638,6 +638,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # RFC 0001 (knob bindings): optional resolver injecting Fixed/CVAR
+        # values post-suggest, pre-validation. None => byte-identical legacy
+        # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
+        self.knob_resolver: Any | None = None
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
@@ -1201,6 +1205,7 @@ class OptimizationOrchestrator:
         for _ in range(count):
             try:
                 config = self.optimizer.suggest_next_trial(self._trials)
+                config = self._apply_knob_resolution(config)
             except OptimizationError:
                 break
             except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -1230,7 +1235,9 @@ class OptimizationOrchestrator:
 
         baseline_config = self._consume_default_config()
         if baseline_config is not None:
-            configs.append(baseline_config)
+            # baseline trials get the same Fixed/CVAR injection as suggested
+            # ones — no bypass of R3/R6/R8 (RFC 0001)
+            configs.append(self._apply_knob_resolution(baseline_config))
             remaining -= 1
             if remaining <= 0:
                 return configs, False
@@ -1240,7 +1247,10 @@ class OptimizationOrchestrator:
         if self.traigent_config.execution_mode_enum is ExecutionMode.HYBRID:
             async_configs = await self._try_hybrid_batch_generation(dataset, remaining)
             if async_configs:
-                configs.extend(async_configs)
+                configs.extend(
+                    self._apply_knob_resolution(async_config)
+                    for async_config in async_configs
+                )
                 used_async_batch = True
 
         # Fall back to sequential generation
@@ -1248,6 +1258,38 @@ class OptimizationOrchestrator:
             configs.extend(self._generate_sequential_configs(remaining))
 
         return configs, used_async_batch
+
+    def _apply_knob_resolution(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Resolve knob bindings for one suggestion (RFC 0001 §3.4).
+
+        With no resolver configured this is an exact passthrough (legacy
+        behavior byte-identical). With a resolver, Fixed and Calibrated
+        values are injected fail-closed: any rejection (stale certificate,
+        evidence leakage, missing producer, ...) raises ResolutionError —
+        there is no silent fallback. Recorded fallback use is logged.
+        """
+        if self.knob_resolver is None:
+            return config
+        from traigent.knobs import ResolutionError, ResolutionRejection
+
+        try:
+            resolved = self.knob_resolver.resolve(config)
+        except ResolutionError:
+            raise
+        except Exception as exc:
+            # Internal resolver failures (ValueError, canonicalization, ...)
+            # MUST surface as the typed fail-closed error — the suggest-site
+            # except tuples catch ValueError and would silently break.
+            raise ResolutionError(
+                (ResolutionRejection.INFEASIBLE_VALUE,),
+                f"resolver internal failure: {exc}",
+            ) from exc
+        if resolved.used_fallbacks:
+            logger.warning(
+                "Knob resolution used declared fallbacks for: %s",
+                ", ".join(resolved.used_fallbacks),
+            )
+        return dict(resolved.config)
 
     def _build_trial_descriptors(
         self,
