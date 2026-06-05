@@ -369,3 +369,114 @@ class TestResultWinnerClaimGuards:
         )
         scores = result.calculate_weighted_scores(objective_weights={"accuracy": 1.0})
         assert "best_weighted_config" not in scores
+
+
+class TestBestConfigRuntimeInterplay:
+    """FR-SDK-BEST-CONFIG-RUNTIME-V1 interplay: a strict run with no certified
+    winner produces NO snapshot/export/publish — the runtime keeps defaults.
+
+    Exercises the REAL finalize path (_run_and_finalize_optimization's
+    ``if result.best_config`` guard) and the REAL ConfigStateManager export
+    guard, not re-implementations of them.
+    """
+
+    @staticmethod
+    def _no_certified_result():
+        from traigent.api.types import OptimizationResult
+
+        return OptimizationResult(
+            best_config={},  # NO_CERTIFIED_SELECTION shape
+            best_score=None,
+            trials=[],
+            total_cost=0.0,
+            duration=1.0,
+            objectives=["accuracy"],
+            optimization_id="opt-no-certified",
+            convergence_info={},
+            status="completed",
+            algorithm="test",
+            timestamp=0.0,
+            metadata={"reason_code": NO_CERTIFIED_SELECTION},
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_certified_winner_yields_no_snapshot_or_export(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        from traigent.core.optimized_function import OptimizedFunction
+        from traigent.evaluators.base import Dataset, EvaluationExample
+        from traigent.utils.exceptions import ConfigurationError
+
+        def answer(text: str) -> str:
+            return text
+
+        fn = OptimizedFunction(
+            func=answer,
+            config_space={"model": ["a", "b"]},
+            default_config={"model": "a"},
+        )
+        fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
+        orchestrator = MagicMock()
+        orchestrator.optimize = AsyncMock(return_value=self._no_certified_result())
+        dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")
+
+        result = await fn._run_and_finalize_optimization(
+            orchestrator,
+            dataset,
+            {"model": ["a", "b"]},
+            save_to=None,
+        )
+
+        # the no-winner result flowed through the real finalize path
+        assert result.best_config == {}
+        # no winner was applied: snapshot stays DEFAULT, best config is None
+        assert fn.get_best_config() is None
+        assert fn.current_config == {"model": "a"}
+        assert fn.best_config_snapshot.source == "default"
+        # and the export/publish surface fails closed (config_state_manager guard)
+        with pytest.raises(ConfigurationError, match="No best configuration"):
+            fn.export_best_config(tmp_path / "best-configs")
+
+    @pytest.mark.asyncio
+    async def test_certified_winner_still_exports(self, tmp_path):
+        """Control: a result WITH a winner applies and exports — the guard
+        only bites the no-winner shape."""
+        from unittest.mock import AsyncMock
+
+        from traigent.api.types import OptimizationResult
+        from traigent.core.optimized_function import OptimizedFunction
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        def answer(text: str) -> str:
+            return text
+
+        winner = OptimizationResult(
+            best_config={"model": "b"},
+            best_score=0.9,
+            trials=[],
+            total_cost=0.0,
+            duration=1.0,
+            objectives=["accuracy"],
+            optimization_id="opt-certified",
+            convergence_info={},
+            status="completed",
+            algorithm="test",
+            timestamp=0.0,
+        )
+        fn = OptimizedFunction(
+            func=answer,
+            config_space={"model": ["a", "b"]},
+            default_config={"model": "a"},
+        )
+        fn.traigent_config = SimpleNamespace(is_edge_analytics_mode=lambda: False)
+        orchestrator = MagicMock()
+        orchestrator.optimize = AsyncMock(return_value=winner)
+        dataset = Dataset([EvaluationExample({"text": "x"}, "x")], name="d")
+
+        await fn._run_and_finalize_optimization(
+            orchestrator, dataset, {"model": ["a", "b"]}, save_to=None
+        )
+
+        assert fn.get_best_config() == {"model": "b"}
+        exported = fn.export_best_config(tmp_path / "best-configs")
+        assert exported.exists()
