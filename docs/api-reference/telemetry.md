@@ -65,6 +65,21 @@ Traigent will:
 
 Privacy mode does not disable telemetry; use `TRAIGENT_DISABLE_TELEMETRY=true` for a full opt-out.
 
+### OpenTelemetry Tracing
+
+OpenTelemetry tracing is opt-in and uses a separate flag from telemetry
+opt-out:
+
+```bash
+export TRAIGENT_TRACE_ENABLED=true
+```
+
+`TRAIGENT_TRACE_ENABLED` is the canonical tracing flag and defaults to
+`false`. It controls SDK span emission and workflow trace tracker creation.
+The older plural spelling `TRAIGENT_TRACES_ENABLED` remains as a deprecated
+alias when the canonical flag is unset; if both are set,
+`TRAIGENT_TRACE_ENABLED` takes precedence.
+
 ## How Telemetry is Used
 
 Telemetry data is used for:
