@@ -19,11 +19,15 @@ non-empty string ``"false"`` is truthy in Python. The fix tightens this to
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.cloud.auth import AuthManager
+
+_ENVIRONMENT_KEYS = ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+_INSECURE_BACKEND_ENV = "TRAIGENT_ALLOW_INSECURE_BACKEND"
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +101,11 @@ def _auth_manager_with_public_backend() -> AuthManager:
     manager = AuthManager()
     manager.config.backend_base_url = "https://backend.example.test"
     return manager
+
+
+def _clear_environment_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
 
 @pytest.mark.asyncio
@@ -225,16 +234,22 @@ async def test_validate_rejects_plaintext_backend_validation_url():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "backend_url",
+    ("backend_url", "expected_reason"),
     [
-        "http://169.254.169.254/latest/meta-data",
-        "https://10.0.0.1",
-        "http://127.0.0.1:5000",
-        "http://localhost:5000",
+        ("http://169.254.169.254/latest/meta-data", "backend validation URL host is not allowed"),
+        ("https://10.0.0.1", "backend validation URL host is not allowed"),
+        ("http://127.0.0.1:8006", "backend validation URL host is not allowed"),
+        ("http://localhost:8006", "backend validation URL host is not allowed"),
     ],
 )
-async def test_validate_rejects_non_global_backend_validation_hosts(backend_url):
+async def test_validate_rejects_non_global_backend_validation_hosts_by_default(
+    backend_url,
+    expected_reason,
+    monkeypatch,
+):
     """Backend key validation must not POST credentials to internal hosts."""
+    _clear_environment_name(monkeypatch)
+    monkeypatch.delenv(_INSECURE_BACKEND_ENV, raising=False)
     manager = AuthManager()
     manager.config.backend_base_url = backend_url
 
@@ -244,5 +259,120 @@ async def test_validate_rejects_non_global_backend_validation_hosts(backend_url)
     ):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
+    assert reason == expected_reason
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "http://localhost:8006",
+        "http://127.0.0.1:8006",
+        "http://10.0.0.1:8006",
+    ],
+)
+async def test_validate_allows_insecure_local_backend_with_non_prod_override(
+    backend_url,
+    monkeypatch,
+    caplog,
+):
+    """Explicit non-prod override permits local/private dev backends only."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv(_INSECURE_BACKEND_ENV, "true")
+    manager = AuthManager()
+    manager.config.backend_base_url = backend_url
+
+    with (
+        caplog.at_level(logging.WARNING, logger="traigent.cloud.auth"),
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch(
+            "requests.post",
+            return_value=_RequestsResponse(200, b'{"valid": true}'),
+        ) as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is None
+    post.assert_called_once()
+    assert any(
+        "insecure loopback/private backend allowed via "
+        "TRAIGENT_ALLOW_INSECURE_BACKEND - dev only" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("backend_url", "expected_reason"),
+    [
+        ("http://backend.example.test", "backend validation URL must use HTTPS"),
+        (
+            "http://169.254.169.254/latest/meta-data",
+            "backend validation URL host is not allowed",
+        ),
+    ],
+)
+async def test_validate_rejects_disallowed_hosts_with_insecure_backend_override(
+    backend_url,
+    expected_reason,
+    monkeypatch,
+):
+    """The dev override must not become a blanket public-HTTP or SSRF bypass."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv(_INSECURE_BACKEND_ENV, "true")
+    manager = AuthManager()
+    manager.config.backend_base_url = backend_url
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason == expected_reason
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_insecure_backend_override_in_production(
+    monkeypatch,
+    caplog,
+):
+    """Production detection wins even when the dev override env var is set."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv(_INSECURE_BACKEND_ENV, "true")
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://localhost:8006"
+
+    with (
+        caplog.at_level(logging.WARNING, logger="traigent.cloud.auth"),
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch("requests.post") as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
     assert reason == "backend validation URL host is not allowed"
     post.assert_not_called()
+    assert _INSECURE_BACKEND_ENV not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_validate_allows_non_prod_loopback_without_override(monkeypatch):
+    """Explicit non-production loopback remains usable for the documented dev flow."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.delenv(_INSECURE_BACKEND_ENV, raising=False)
+    manager = AuthManager()
+    manager.config.backend_base_url = "http://localhost:8006"
+
+    with (
+        patch("traigent.cloud.auth.AIOHTTP_AVAILABLE", False),
+        patch(
+            "requests.post",
+            return_value=_RequestsResponse(200, b'{"valid": true}'),
+        ) as post,
+    ):
+        reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
+
+    assert reason is None
+    post.assert_called_once()

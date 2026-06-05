@@ -42,6 +42,47 @@ TOKEN_REFRESH_THRESHOLD = 300  # Refresh 5 minutes before expiry
 MAX_TOKEN_AGE = 86400  # Maximum token age in seconds (24 hours)
 MIN_TOKEN_LENGTH = 20  # Minimum acceptable token length
 API_KEY_TOKEN_TTL = 31536000  # 365 days
+_INSECURE_BACKEND_ENV = "TRAIGENT_ALLOW_INSECURE_BACKEND"
+_LOOPBACK_OR_PRIVATE_BACKEND_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+    )
+)
+
+
+def _is_localhost_validation_host(hostname: str) -> bool:
+    normalized = hostname.rstrip(".")
+    return normalized == "localhost" or normalized.endswith(".localhost")
+
+
+def _is_loopback_or_private_backend_ip(
+    host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    candidate: ipaddress.IPv4Address | ipaddress.IPv6Address = host_ip
+    if isinstance(host_ip, ipaddress.IPv6Address) and host_ip.ipv4_mapped is not None:
+        candidate = host_ip.ipv4_mapped
+    return any(
+        candidate.version == network.version and candidate in network
+        for network in _LOOPBACK_OR_PRIVATE_BACKEND_NETWORKS
+    )
+
+
+def _warn_insecure_backend_allowed(*, via_override: bool) -> None:
+    if via_override:
+        logger.warning(
+            "insecure loopback/private backend allowed via %s - dev only",
+            _INSECURE_BACKEND_ENV,
+        )
+        return
+    logger.warning(
+        "insecure loopback backend allowed in non-production environment - dev only"
+    )
 
 
 class _AsyncBool:
@@ -452,7 +493,7 @@ class AuthManager:
     @property
     def _current_token(self) -> SecureToken | None:
         """Delegate to TokenManager for backward compatibility."""
-        return self._token_manager.current_token
+        return cast(SecureToken | None, self._token_manager.current_token)
 
     @_current_token.setter
     def _current_token(self, value: SecureToken | None) -> None:
@@ -462,7 +503,7 @@ class AuthManager:
     @property
     def _refresh_token_secure(self) -> SecureToken | None:
         """Delegate to TokenManager for backward compatibility."""
-        return self._token_manager.refresh_token_secure
+        return cast(SecureToken | None, self._token_manager.refresh_token_secure)
 
     @_refresh_token_secure.setter
     def _refresh_token_secure(self, value: SecureToken | None) -> None:
@@ -472,7 +513,7 @@ class AuthManager:
     @property
     def _refresh_task(self) -> asyncio.Task[Any] | None:
         """Delegate to TokenManager for backward compatibility."""
-        return self._token_manager.refresh_task
+        return cast(asyncio.Task[Any] | None, self._token_manager.refresh_task)
 
     @_refresh_task.setter
     def _refresh_task(self, value: asyncio.Task[Any] | None) -> None:
@@ -482,7 +523,7 @@ class AuthManager:
     @property
     def _last_refresh_attempt(self) -> float:
         """Delegate to TokenManager for backward compatibility."""
-        return self._token_manager.last_refresh_attempt
+        return cast(float, self._token_manager.last_refresh_attempt)
 
     @_last_refresh_attempt.setter
     def _last_refresh_attempt(self, value: float) -> None:
@@ -503,7 +544,7 @@ class AuthManager:
     @property
     def _api_key_token(self) -> SecureToken | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_token
+        return cast(SecureToken | None, self._api_key_manager.api_key_token)
 
     @_api_key_token.setter
     def _api_key_token(self, value: SecureToken | None) -> None:
@@ -513,7 +554,7 @@ class AuthManager:
     @property
     def _api_key_preview(self) -> str | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_preview
+        return cast(str | None, self._api_key_manager.api_key_preview)
 
     @_api_key_preview.setter
     def _api_key_preview(self, value: str | None) -> None:
@@ -523,7 +564,7 @@ class AuthManager:
     @property
     def _api_key_source(self) -> str | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_source
+        return cast(str | None, self._api_key_manager.api_key_source)
 
     @_api_key_source.setter
     def _api_key_source(self, value: str | None) -> None:
@@ -533,7 +574,7 @@ class AuthManager:
     @property
     def _api_key_expiry(self) -> datetime | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_expiry
+        return cast(datetime | None, self._api_key_manager.api_key_expiry)
 
     @_api_key_expiry.setter
     def _api_key_expiry(self, value: datetime | None) -> None:
@@ -543,7 +584,7 @@ class AuthManager:
     @property
     def _api_key_last_rotated(self) -> datetime | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key_last_rotated
+        return cast(datetime | None, self._api_key_manager.api_key_last_rotated)
 
     @_api_key_last_rotated.setter
     def _api_key_last_rotated(self, value: datetime | None) -> None:
@@ -553,7 +594,7 @@ class AuthManager:
     @property
     def _api_key(self) -> APIKey | None:
         """Delegate to APIKeyManager for backward compatibility."""
-        return self._api_key_manager.api_key
+        return cast(APIKey | None, self._api_key_manager.api_key)
 
     @_api_key.setter
     def _api_key(self, value: APIKey | None) -> None:
@@ -567,7 +608,7 @@ class AuthManager:
     @staticmethod
     def _mask_api_key(api_key: str) -> str:
         """Delegate to APIKeyManager.mask_key."""
-        return APIKeyManager.mask_key(api_key)
+        return cast(str, APIKeyManager.mask_key(api_key))
 
     def _set_api_key_token(
         self,
@@ -584,15 +625,15 @@ class AuthManager:
 
     def get_api_key_preview(self) -> str | None:
         """Return a masked preview of the currently configured API key."""
-        return self._api_key_manager.get_preview()
+        return cast(str | None, self._api_key_manager.get_preview())
 
     def has_api_key(self) -> bool:
         """Return True if an API key has been configured."""
-        return self._api_key_manager.has_key()
+        return cast(bool, self._api_key_manager.has_key())
 
     def _get_api_key_for_internal_use(self) -> str | None:
         """Delegate to APIKeyManager.get_key_for_internal_use."""
-        return self._api_key_manager.get_key_for_internal_use()
+        return cast(str | None, self._api_key_manager.get_key_for_internal_use())
 
     # Primary Authentication Interface
 
@@ -654,15 +695,15 @@ class AuthManager:
 
     def get_api_key_status(self) -> dict[str, Any]:
         """Return structured API key status for monitoring."""
-        return self._api_key_manager.get_status()
+        return cast(dict[str, Any], self._api_key_manager.get_status())
 
     def check_api_key_rotation(self) -> bool:
         """Log rotation guidance and return True when the key is healthy."""
-        return self._api_key_manager.check_rotation()
+        return cast(bool, self._api_key_manager.check_rotation())
 
     def _validate_key_format(self, key: str | None) -> bool:
         """Validate API key format."""
-        return self._api_key_manager.validate_format(key)
+        return cast(bool, self._api_key_manager.validate_format(key))
 
     def clear(self) -> None:
         """Clear authentication state synchronously."""
@@ -724,7 +765,10 @@ class AuthManager:
         mode: AuthMode | None,
     ) -> AuthCredentials | dict[str, Any] | None:
         """Delegate to CredentialResolver.resolve."""
-        return await self._credential_resolver.resolve(credentials, mode)
+        return cast(
+            AuthCredentials | dict[str, Any] | None,
+            await self._credential_resolver.resolve(credentials, mode),
+        )
 
     async def _authenticate_with_dict(
         self, credentials_dict: dict[str, Any]
@@ -949,7 +993,7 @@ class AuthManager:
 
     def get_api_key_info(self) -> dict[str, Any] | None:
         """Return non-sensitive API key metadata if available."""
-        return self._api_key_manager.get_info()
+        return cast(dict[str, Any] | None, self._api_key_manager.get_info())
 
     def get_owner_fingerprint(self) -> dict[str, Any]:
         """Return sanitized identifiers for the currently authenticated actor.
@@ -1490,6 +1534,8 @@ class AuthManager:
     @staticmethod
     def _validate_backend_validation_url(url: str) -> str | None:
         """Validate the configured backend URL before sending credentials to it."""
+        from traigent.utils.env_config import is_truthy, treat_as_production_policy
+
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return "backend validation URL is invalid"
@@ -1499,9 +1545,12 @@ class AuthManager:
         if not hostname:
             return "backend validation URL is invalid"
         normalized_host = hostname.strip("[]").lower()
-        if normalized_host in {"localhost", "localhost."} or normalized_host.endswith(
-            ".localhost"
-        ):
+        treat_as_production = treat_as_production_policy()
+        allow_insecure_backend = is_truthy(os.getenv(_INSECURE_BACKEND_ENV))
+        if _is_localhost_validation_host(normalized_host):
+            if not treat_as_production:
+                _warn_insecure_backend_allowed(via_override=allow_insecure_backend)
+                return None
             return "backend validation URL host is not allowed"
         try:
             host_ip = ipaddress.ip_address(normalized_host)
@@ -1511,6 +1560,15 @@ class AuthManager:
                 return "backend validation URL must use HTTPS"
             return None
         if not host_ip.is_global:
+            if not treat_as_production and (
+                host_ip.is_loopback
+                or (
+                    allow_insecure_backend
+                    and _is_loopback_or_private_backend_ip(host_ip)
+                )
+            ):
+                _warn_insecure_backend_allowed(via_override=allow_insecure_backend)
+                return None
             return "backend validation URL host is not allowed"
         # IP-literal global host: HTTPS still required.
         if parsed.scheme != "https":
@@ -1558,15 +1616,23 @@ class AuthManager:
         self, mode: AuthMode | None = None
     ) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_credentials."""
-        return await self._credential_resolver.load_credentials(mode)
+        return cast(
+            AuthCredentials | None,
+            await self._credential_resolver.load_credentials(mode),
+        )
 
     async def _load_cached_credentials(self) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_cached."""
-        return await self._credential_resolver.load_cached()
+        return cast(
+            AuthCredentials | None, await self._credential_resolver.load_cached()
+        )
 
     async def _load_env_credentials(self, mode: AuthMode) -> AuthCredentials | None:
         """Delegate to CredentialResolver.load_from_env."""
-        return await self._credential_resolver.load_from_env(mode)
+        return cast(
+            AuthCredentials | None,
+            await self._credential_resolver.load_from_env(mode),
+        )
 
     async def _cache_credentials(self, credentials: AuthCredentials) -> None:
         """Delegate to CredentialResolver.cache."""
@@ -1574,11 +1640,11 @@ class AuthManager:
 
     def _encrypt_credentials(self, credentials: AuthCredentials) -> dict[str, Any]:
         """Delegate to CredentialResolver.encrypt."""
-        return self._credential_resolver.encrypt(credentials)
+        return cast(dict[str, Any], self._credential_resolver.encrypt(credentials))
 
     def _decrypt_credentials(self, encrypted_data: dict[str, Any]) -> dict[str, Any]:
         """Delegate to CredentialResolver.decrypt."""
-        return self._credential_resolver.decrypt(encrypted_data)
+        return cast(dict[str, Any], self._credential_resolver.decrypt(encrypted_data))
 
     def _generate_service_signature(self, target: str) -> str:
         """Generate service-to-service authentication signature."""
@@ -1639,14 +1705,14 @@ class AuthManager:
         Delegates to TokenManager but tracks stats locally.
         """
         self._stats["token_refreshes"] += 1
-        return await self._token_manager.refresh_access_token()
+        return cast(AuthResult, await self._token_manager.refresh_access_token())
 
     async def _refresh_oauth2_token(self) -> AuthResult:
         """Refresh OAuth2 access token.
 
         Delegates to TokenManager.
         """
-        return await self._token_manager.refresh_oauth2()
+        return cast(AuthResult, await self._token_manager.refresh_oauth2())
 
     async def _authenticate_with_login_dict(
         self, credentials: dict[str, str]
@@ -1655,14 +1721,16 @@ class AuthManager:
 
         Delegates to PasswordAuthHandler.
         """
-        return await self._password_auth_handler.authenticate(credentials)
+        return cast(
+            AuthResult, await self._password_auth_handler.authenticate(credentials)
+        )
 
     def _should_rate_limit_login(self) -> bool:
         """Check if login attempts should be rate limited.
 
         Delegates to PasswordAuthHandler.
         """
-        return self._password_auth_handler._should_rate_limit()
+        return cast(bool, self._password_auth_handler._should_rate_limit())
 
     # Legacy compatibility wrappers -------------------------------------------------
 
@@ -1679,7 +1747,7 @@ class AuthManager:
 
         Delegates to PasswordAuthHandler.
         """
-        return self._password_auth_handler._get_rate_limit_wait()
+        return cast(float, self._password_auth_handler._get_rate_limit_wait())
 
     def _record_failure(self) -> None:
         """Record failed authentication attempt.
@@ -1693,7 +1761,7 @@ class AuthManager:
 
         Delegates to PasswordAuthHandler.
         """
-        return self._password_auth_handler._is_dev_mode_enabled()
+        return cast(bool, self._password_auth_handler._is_dev_mode_enabled())
 
     def _build_dev_token_payload(
         self, credentials: dict[str, str] | None = None
@@ -1702,7 +1770,10 @@ class AuthManager:
 
         Delegates to PasswordAuthHandler.
         """
-        return self._password_auth_handler._build_dev_token_payload(credentials)
+        return cast(
+            dict[str, Any],
+            self._password_auth_handler._build_dev_token_payload(credentials),
+        )
 
     def _reset_failure_tracking(self) -> None:
         """Reset failure tracking after successful login.
@@ -1716,20 +1787,28 @@ class AuthManager:
 
         Delegates to PasswordAuthHandler.
         """
-        return self._password_auth_handler._validate_credentials(credentials)
+        return cast(
+            bool, self._password_auth_handler._validate_credentials(credentials)
+        )
 
     async def _perform_password_authentication(
         self, credentials: dict[str, str]
     ) -> dict[str, Any] | None:
         """Perform backend authentication via the hardened password handler."""
-        return await self._password_auth_handler._perform_authentication(credentials)
+        return cast(
+            dict[str, Any] | None,
+            await self._password_auth_handler._perform_authentication(credentials),
+        )
 
     async def _refresh_jwt_token_secure(self, refresh_token_value: str) -> AuthResult:
         """Refresh JWT access token using secure stored refresh token.
 
         Delegates to TokenManager.
         """
-        return await self._token_manager.refresh_jwt_secure(refresh_token_value)
+        return cast(
+            AuthResult,
+            await self._token_manager.refresh_jwt_secure(refresh_token_value),
+        )
 
     def _build_credentials_from_token_data(
         self, token_data: dict[str, Any]
@@ -1738,7 +1817,10 @@ class AuthManager:
 
         Delegates to TokenManager, but also updates APIKey on AuthManager.
         """
-        credentials = self._token_manager.build_credentials_from_token_data(token_data)
+        credentials = cast(
+            AuthCredentials,
+            self._token_manager.build_credentials_from_token_data(token_data),
+        )
 
         # AuthManager-specific: update _api_key if present
         api_key = token_data.get("api_key") or token_data.get("apiKey")
@@ -1837,7 +1919,7 @@ def get_auth_headers() -> dict[str, str]:
     """
     from traigent.cloud.credential_manager import CredentialManager
 
-    return CredentialManager.get_auth_headers()
+    return cast(dict[str, str], CredentialManager.get_auth_headers())
 
 
 def get_auth_manager() -> AuthManager:
