@@ -806,6 +806,52 @@ class TestStatisticalSignificanceWiring:
         assert "statistical_significance" in inner_metadata
         assert inner_metadata["statistical_significance"] == sig_data
 
+    def test_aggregation_summary_uses_sdk_version_resolver(
+        self,
+        mock_backend_client,
+        mock_optimizer,
+        objective_schema,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Session aggregation summary metadata uses the SDK version resolver."""
+        monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "7.6.5")
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-version-wiring",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        manager.submit_session_aggregation(result, "test-session-id")
+
+        call_kwargs = mock_backend_client.submit_result.call_args
+        payload_metadata = call_kwargs.kwargs.get(
+            "metadata", call_kwargs[1].get("metadata", {})
+        )
+        summary_stats = payload_metadata.get("summary_stats", {})
+        inner_metadata = summary_stats.get("metadata", {})
+        assert inner_metadata["sdk_version"] == "7.6.5"
+
     def test_strategy_preset_metadata_included_in_aggregation_payload(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):

@@ -13,6 +13,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent._version import get_version
 from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
@@ -393,8 +394,9 @@ class TrialOperations:
     ) -> dict[str, Any]:
         """Build the trial result data dict."""
         result_metadata = dict(metadata or {})
+        result_metadata.pop("execution_mode", None)
         result_metadata["mode"] = mode
-        result_metadata["sdk_version"] = "2.0.0"
+        result_metadata["sdk_version"] = get_version()
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
             "config": config,
@@ -710,13 +712,11 @@ class TrialOperations:
 
             # Prepare metadata - REQUIRED by backend to avoid NoneType errors
             submission_metadata = {
-                "mode": "privacy",  # Explicitly set mode for summary stats
-                "sdk_version": "2.0.0",
-                "aggregation_method": "pandas.describe",
-                "execution_mode": "privacy",  # Use "privacy" not "edge_analytics"
-                "total_examples": summary_stats.get("total_examples", 0),
-                # Include summary_stats metadata
                 **summary_stats.get("metadata", {}),
+                "mode": "privacy",  # Explicitly set mode for summary stats
+                "sdk_version": get_version(),
+                "aggregation_method": "pandas.describe",
+                "total_examples": summary_stats.get("total_examples", 0),
             }
 
             # IMPORTANT: Backend always expects metrics field
