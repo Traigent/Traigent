@@ -117,6 +117,14 @@ jobs:
         TRAIGENT_MOCK_LLM: "true"
         TRAIGENT_OFFLINE_MODE: "true"
         TRAIGENT_COST_APPROVED: "true"
+        # 0.12.0 added a CI/CD run-approval gate (TRAIGENT_RUN_APPROVED); examples
+        # run in mock+offline mode (zero spend), so approve this controlled release smoke.
+        TRAIGENT_RUN_APPROVED: "1"
+        TRAIGENT_APPROVED_BY: "ci-release-smoke"
+        # examples load shared fixtures from examples/datasets/, outside each
+        # example dir; 0.12.0's dataset-path containment needs the root widened
+        # to the examples tree for the smoke.
+        TRAIGENT_DATASET_ROOT: "${{ github.workspace }}/examples"
         ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci" # pragma: allowlist secret
         OPENAI_API_KEY: "sk-openai-test-mock-key-for-ci" # pragma: allowlist secret
         TRAIGENT_API_KEY: "test-traigent-api-key-for-ci" # pragma: allowlist secret
