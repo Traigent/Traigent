@@ -871,6 +871,58 @@ class OptimizationOrchestrator:
             wire_governance = build_tvl_governance(space)
         return wire_policy, wire_governance
 
+    def _build_certified_selection_report(self) -> dict[str, Any] | None:
+        """Phase 8: the client-attested certified-selection finalize report.
+
+        Built ONLY when every condition holds (mirror of the server's
+        fail-closed rules so a 400 means a bug, not a flow): strict evidence
+        mode, a certified incumbent exists, the resolver's DECLARED governed
+        cvars are each backed by a CERTIFIED certificate with an issued
+        hash. Any gap ⇒ None ⇒ the honest no-winner finalize. The incumbent's
+        trial_id is the BACKEND id (trials are submitted under it), so the
+        server can bind the winner to its own record.
+        """
+        if not self._is_strict_evidence_mode():
+            return None
+        incumbent = self._best_trial_cached
+        if incumbent is None or not getattr(incumbent, "trial_id", None):
+            return None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is None:
+            return None
+
+        try:
+            from traigent.knobs.bindings import Calibrated, is_governed
+        except Exception:  # pragma: no cover - knobs is a hard dependency
+            return None
+
+        governed = [
+            name
+            for name, knob in dict(getattr(space, "knobs", {}) or {}).items()
+            if isinstance(getattr(knob, "binding", None), Calibrated)
+            and is_governed(knob.binding)
+        ]
+        if not governed:
+            return None
+
+        calibrated_inputs = getattr(resolver, "_calibrated_inputs", {}) or {}
+        certificates: dict[str, Any] = {}
+        for name in governed:
+            certificate = getattr(calibrated_inputs.get(name), "certificate", None)
+            if certificate is None:
+                logger.debug(
+                    "certified_selection withheld: governed cvar %s has no "
+                    "certificate at finalize",
+                    name,
+                )
+                return None
+            certificates[name] = certificate
+
+        from traigent.cloud.governance import build_certified_selection
+
+        return build_certified_selection(incumbent.trial_id, certificates)
+
     def _withhold_promotion(self, reason: str) -> bool:
         """Fail closed: record + log a strict-mode withheld promotion."""
         self._strict_withheld_promotions.append(reason)
@@ -2390,7 +2442,9 @@ class OptimizationOrchestrator:
         self.backend_session_manager.submit_session_aggregation(result, session_id)
 
         session_summary = self.backend_session_manager.finalize_session(
-            session_id, self._status
+            session_id,
+            self._status,
+            certified_selection=self._build_certified_selection_report(),
         )
         self.backend_session_manager.attach_session_metadata(
             result, session_id, session_summary

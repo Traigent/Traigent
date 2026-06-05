@@ -699,7 +699,10 @@ class SessionOperations:
             raise CloudServiceError(f"Network error: {e}") from None
 
     async def finalize_session(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -757,7 +760,9 @@ class SessionOperations:
         if mapping:
             try:
                 backend_payload = await self._finalize_session_via_api(
-                    session_id, mapping.experiment_run_id
+                    session_id,
+                    mapping.experiment_run_id,
+                    certified_selection=certified_selection,
                 )
             except CloudServiceError:
                 raise
@@ -909,7 +914,10 @@ class SessionOperations:
         return response
 
     async def _finalize_session_via_api(
-        self, session_id: str, experiment_run_id: str
+        self,
+        session_id: str,
+        experiment_run_id: str,
+        certified_selection: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -944,12 +952,18 @@ class SessionOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/finalize"
 
+                finalize_body: dict[str, Any] = {
+                    "reason": "sdk_explicit_finalization",
+                    "experiment_run_id": experiment_run_id,
+                }
+                if certified_selection is not None:
+                    # Phase 8: the client-attested, content-free certified-
+                    # selection report — TOP-LEVEL key only (the backend
+                    # rejects metadata-tunneled reports).
+                    finalize_body["certified_selection"] = certified_selection
                 async with session.post(
                     url,
-                    json={
-                        "reason": "sdk_explicit_finalization",
-                        "experiment_run_id": experiment_run_id,
-                    },
+                    json=finalize_body,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
@@ -1024,7 +1038,10 @@ class SessionOperations:
         return deleted
 
     def finalize_session_sync(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
@@ -1037,7 +1054,11 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.finalize_session(session_id, include_full_history)
+                    self.finalize_session(
+                        session_id,
+                        include_full_history,
+                        certified_selection=certified_selection,
+                    )
                 )
             finally:
                 new_loop.close()

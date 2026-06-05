@@ -694,12 +694,16 @@ class BackendIntegratedClient:
         )
 
     async def finalize_session(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
-        Delegates to session_operations module."""
+        Delegates to session_operations module. Phase 8: an optional
+        client-attested certified-selection report (content-free)."""
         return await self._session_ops.finalize_session(
-            session_id, include_full_history
+            session_id, include_full_history, certified_selection=certified_selection
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -708,11 +712,16 @@ class BackendIntegratedClient:
         return cast(bool, await self._session_ops.delete_session(session_id, cascade))
 
     def finalize_session_sync(
-        self, session_id: str, include_full_history: bool = False
+        self,
+        session_id: str,
+        include_full_history: bool = False,
+        certified_selection: dict[str, Any] | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
-        return self._session_ops.finalize_session_sync(session_id, include_full_history)
+        return self._session_ops.finalize_session_sync(
+            session_id, include_full_history, certified_selection=certified_selection
+        )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
         """Synchronous wrapper for delete_session.

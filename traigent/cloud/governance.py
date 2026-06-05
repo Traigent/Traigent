@@ -147,3 +147,52 @@ def build_tvl_governance(config_space: Any) -> dict[str, Any] | None:
     if not cvars:
         return None
     return {"cvars": cvars}
+
+
+def build_certified_selection(
+    trial_id: Any, certificates_by_cvar: Any
+) -> dict[str, Any] | None:
+    """Build the client-attested certified-selection finalize report.
+
+    Mirrors TraigentSchema ``certified_selection_schema.json`` AND the
+    server's coverage rule CLIENT-side: a report is built only when EVERY
+    entry is a CERTIFIED decision with an issued (freshness) hash — any gap
+    means NO report (the honest no-winner), never a partial one (the server
+    would 400 it; partial reports are bugs, not flows).
+
+    Content-free (RFC 0001 P8): cvar names, the decision enum value, and the
+    certificate's issued hash ONLY — never subject_value_hash (dictionary-
+    invertible on low-entropy calibrated values), evidence counts, pool
+    hashes, or target details.
+    """
+    if not trial_id or not certificates_by_cvar:
+        return None
+
+    entries: list[dict[str, Any]] = []
+    for name, certificate in dict(certificates_by_cvar).items():
+        decision = getattr(certificate, "decision", None)
+        decision_value = getattr(decision, "value", None) or (
+            str(decision) if decision is not None else ""
+        )
+        issued_hash = getattr(certificate, "issued_hash", None)
+        if decision_value != "CERTIFIED_SELECTION" or not issued_hash:
+            logger.debug(
+                "certified_selection withheld: cvar %s decision=%s issued=%s",
+                name,
+                decision_value or "<none>",
+                bool(issued_hash),
+            )
+            return None
+        entries.append(
+            {
+                "cvar_name": str(name),
+                "decision": "CERTIFIED_SELECTION",
+                "freshness_hash": str(issued_hash),
+            }
+        )
+
+    return {
+        "trial_id": str(trial_id),
+        "certificates": entries,
+        "attestation": "sdk_client_attested",
+    }

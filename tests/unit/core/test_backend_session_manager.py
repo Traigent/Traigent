@@ -448,7 +448,7 @@ class TestBackendSessionManagerFinalization:
 
         assert summary == {"status": "completed"}
         mock_backend_client.finalize_session_sync.assert_called_once_with(
-            "test-session-id", True
+            "test-session-id", True, certified_selection=None
         )
 
     def test_finalize_session_without_backend(
