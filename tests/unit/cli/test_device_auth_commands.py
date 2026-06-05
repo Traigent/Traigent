@@ -15,6 +15,8 @@ from traigent.security.credentials import CredentialType
 
 API_KEY = "sk_" + "a" * 43  # pragma: allowlist secret
 DEVICE_CODE = "A" * 43
+DEVICE_LOGIN_CLIENT_ID = "traigent-sdk-cli"
+DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 class _FakeSecureStore:
@@ -71,6 +73,14 @@ class _FakeSession:
         return False
 
     def post(self, url: str, **kwargs: Any) -> _FakeResponse:
+        if url.endswith("/auth/device/authorize"):
+            assert kwargs.get("json") == {"client_id": DEVICE_LOGIN_CLIENT_ID}
+        elif url.endswith("/auth/device/token"):
+            assert kwargs.get("json") == {
+                "grant_type": DEVICE_CODE_GRANT_TYPE,
+                "device_code": DEVICE_CODE,
+                "client_id": DEVICE_LOGIN_CLIENT_ID,
+            }
         self.post_calls.append({"url": url, **kwargs})
         if not self.responses:
             raise AssertionError(f"Unexpected POST: {url}")
@@ -206,8 +216,13 @@ def test_device_flow_happy_path_persists_credentials_secure_only_by_default(
     assert not (tmp_path / ".env").exists()
 
     assert session.post_calls[0]["url"].endswith("/auth/device/authorize")
+    assert session.post_calls[0]["json"] == {"client_id": DEVICE_LOGIN_CLIENT_ID}
     assert session.post_calls[1]["url"].endswith("/auth/device/token")
-    assert session.post_calls[1]["json"] == {"device_code": DEVICE_CODE}
+    assert session.post_calls[1]["json"] == {
+        "grant_type": DEVICE_CODE_GRANT_TYPE,
+        "device_code": DEVICE_CODE,
+        "client_id": DEVICE_LOGIN_CLIENT_ID,
+    }
     captured = capsys.readouterr()
     assert API_KEY not in captured.out
     assert API_KEY not in captured.err
@@ -447,6 +462,35 @@ def test_device_flow_malformed_success_fails_closed(
 
     assert result is False
     assert store.saved is None
+
+
+def test_device_authorize_error_reports_status_and_backend_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store, _session = _install_device_test_fakes(
+        monkeypatch,
+        tmp_path,
+        [
+            _FakeResponse(
+                400,
+                {
+                    "success": False,
+                    "message": "Validation error",
+                    "error": "client_id: Missing data for required field.",
+                },
+            ),
+        ],
+    )
+
+    result = asyncio.run(_make_cli().device_login(sleep=lambda _seconds: _noop_sleep()))
+
+    assert result is False
+    assert store.saved is None
+    output = capsys.readouterr().out
+    assert "HTTP 400" in output
+    assert "Validation error" in output
 
 
 async def _noop_sleep() -> None:

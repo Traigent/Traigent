@@ -76,6 +76,8 @@ _DEVICE_ERROR_NAMES = {
     "access_denied",
     "expired_token",
 }
+DEVICE_LOGIN_CLIENT_ID = "traigent-sdk-cli"
+DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _ENV_FILE_KEYS = (
     "TRAIGENT_API_KEY",
     TENANT_ENV_VAR,
@@ -104,6 +106,22 @@ async def _read_json_body(response: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise AuthenticationError("Backend response must be a JSON object")
     return data
+
+
+def _format_backend_error_message(
+    prefix: str, status_code: int, data: dict[str, Any]
+) -> str:
+    """Format a backend error envelope without losing HTTP status context."""
+    parts: list[str] = []
+    for field in ("message", "error", "error_code"):
+        value = data.get(field)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized and normalized not in parts:
+                parts.append(normalized)
+
+    suffix = f": {' - '.join(parts)}" if parts else ""
+    return f"{prefix} (HTTP {status_code}){suffix}"
 
 
 def _require_non_empty_str(data: dict[str, Any], field: str) -> str:
@@ -418,13 +436,16 @@ class TraigentAuthCLI:
         }
         async with session.post(
             url,
+            json={"client_id": DEVICE_LOGIN_CLIENT_ID},
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=30) if aiohttp else None,
         ) as response:
             data = await _read_json_body(response)
             if response.status != 200:
                 raise AuthenticationError(
-                    f"Device authorization failed (HTTP {response.status})"
+                    _format_backend_error_message(
+                        "Device authorization failed", response.status, data
+                    )
                 )
             return self._validate_device_authorize_payload(data)
 
@@ -506,7 +527,11 @@ class TraigentAuthCLI:
         }
         async with session.post(
             url,
-            json={"device_code": device_code},
+            json={
+                "grant_type": DEVICE_CODE_GRANT_TYPE,
+                "device_code": device_code,
+                "client_id": DEVICE_LOGIN_CLIENT_ID,
+            },
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=request_timeout) if aiohttp else None,
         ) as response:
@@ -520,7 +545,16 @@ class TraigentAuthCLI:
                 )
             return "success", self._validate_device_token_success(data), None
 
-        error_name, details = self._device_error_from_envelope(data)
+        try:
+            error_name, details = self._device_error_from_envelope(data)
+        except AuthenticationError as exc:
+            if status_code != 200:
+                raise AuthenticationError(
+                    _format_backend_error_message(
+                        "Device token request failed", status_code, data
+                    )
+                ) from exc
+            raise
         if error_name == "slow_down":
             new_interval = details.get("interval")
             if not isinstance(new_interval, int) or new_interval < 6:
