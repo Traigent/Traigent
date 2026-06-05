@@ -893,6 +893,54 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
     return strategies
 
 
+def list_recommendation_agent_types() -> tuple[str, ...]:
+    """Return valid agent/task types for TVAR recommendation queries."""
+    from traigent.config_generator.recommendations import (
+        list_recommendation_agent_types as _list_recommendation_agent_types,
+    )
+
+    return _list_recommendation_agent_types()
+
+
+def recommend_configuration_space(
+    agent_type: str,
+    *,
+    min_impact: str | None = None,
+    min_confidence: str | None = None,
+) -> dict[str, Any]:
+    """Return public TVAR recommendations for an agent/task type.
+
+    The result contains only catalog metadata: knob names, suggested ranges,
+    impact estimates, measured evidence notes, effectuation status, and apply
+    guidance. Impact estimates are task-dependent and were measured on specific
+    benchmark slices, models, and metrics; validate returned knobs on your own
+    eval set before relying on them.
+
+    Args:
+        agent_type: Catalog agent/task type. Use
+            ``list_recommendation_agent_types()`` to list valid values.
+        min_impact: Optional minimum impact estimate: ``"low"``, ``"medium"``,
+            or ``"high"``.
+        min_confidence: Optional minimum public evidence-strength label:
+            ``"low"``, ``"medium"``, or ``"high"``. This is derived from
+            catalog evidence metadata and is not a statistical confidence
+            interval.
+
+    Returns:
+        JSON-serializable dict with version metadata, a caveat,
+        ``configuration_space``, and recommendation rows.
+    """
+    from traigent.config_generator.recommendations import (
+        recommend_configuration_space as _recommend_configuration_space,
+    )
+
+    return _recommend_configuration_space(
+        agent_type,
+        min_impact=min_impact,
+        min_confidence=min_confidence,
+    )
+
+
 def _check_integration(module_path: str) -> bool:
     """Check if an integration module is available."""
     try:

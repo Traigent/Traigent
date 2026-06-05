@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -14,7 +14,11 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from traigent import get_version_info
-from traigent.api.functions import get_available_strategies
+from traigent.api.functions import (
+    get_available_strategies,
+    list_recommendation_agent_types,
+    recommend_configuration_space,
+)
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
@@ -51,10 +55,13 @@ def _resolve_workspace_path(
 ) -> Path:
     """Resolve a path and ensure it lives within the repository workspace."""
     try:
-        return validate_path(
-            path.expanduser(),
-            WORKSPACE_ROOT,
-            must_exist=must_exist,
+        return cast(
+            Path,
+            validate_path(
+                path.expanduser(),
+                WORKSPACE_ROOT,
+                must_exist=must_exist,
+            ),
         )
     except FileNotFoundError as exc:
         raise click.ClickException(f"{description} does not exist: {exc}") from exc
@@ -458,6 +465,135 @@ def algorithms() -> None:
                 console.print(f"    • {param}: {desc}")
 
         console.print()
+
+
+@cli.command("recommend")
+@click.argument("agent_type", required=False)
+@click.option(
+    "--list-types",
+    is_flag=True,
+    default=False,
+    help="List valid recommendation agent/task types.",
+)
+@click.option(
+    "--min-impact",
+    type=click.Choice(["low", "medium", "high"], case_sensitive=False),
+    default=None,
+    help="Minimum impact estimate to include.",
+)
+@click.option(
+    "--min-confidence",
+    type=click.Choice(["low", "medium", "high"], case_sensitive=False),
+    default=None,
+    help="Minimum public evidence-strength label to include.",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output recommendations as JSON for tooling integration.",
+)
+def recommend(
+    agent_type: str | None,
+    list_types: bool,
+    min_impact: str | None,
+    min_confidence: str | None,
+    output_json: bool,
+) -> None:
+    """Show evidence-backed TVAR recommendations for an agent/task type.
+
+    Examples:
+        traigent recommend rag
+        traigent recommend code_gen --min-impact medium
+        traigent recommend --list-types
+    """
+    valid_types = list_recommendation_agent_types()
+    if list_types:
+        if output_json:
+            click.echo(json.dumps({"valid_agent_types": list(valid_types)}, indent=2))
+            return
+        console.print(
+            "Valid recommendation agent types: "
+            + ", ".join(f"[cyan]{agent_type}[/cyan]" for agent_type in valid_types)
+        )
+        return
+
+    if agent_type is None:
+        raise click.ClickException(
+            "agent_type is required unless --list-types is provided. "
+            f"Valid types: {', '.join(valid_types)}"
+        )
+
+    try:
+        data = recommend_configuration_space(
+            agent_type,
+            min_impact=min_impact,
+            min_confidence=min_confidence,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if output_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    _print_recommendations_table(data)
+
+
+def _print_recommendations_table(data: dict[str, Any]) -> None:
+    recommendations = data["recommendations"]
+    console.print(
+        f"\n[bold blue]TVar Recommendations for {data['agent_type']}[/bold blue]"
+    )
+    console.print(f"[dim]{data['caveat']}[/dim]\n")
+
+    if not recommendations:
+        console.print(
+            "[yellow]No recommendations matched the requested filters.[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Knob", style="cyan", no_wrap=True)
+    table.add_column("Suggested Range", style="green", no_wrap=True)
+    table.add_column("Impact / Evidence", no_wrap=True)
+    table.add_column("Effectuation", no_wrap=True)
+
+    for row in recommendations:
+        table.add_row(
+            str(row["name"]),
+            _format_recommendation_range(row),
+            f"{row['impact']} / {row['confidence']}",
+            str(row["effectuation_status"]),
+        )
+
+    console.print(table)
+    console.print("\n[bold]Evidence Notes[/bold]")
+    for row in recommendations:
+        console.print(
+            f"[cyan]{row['name']}[/cyan]: "
+            f"{_truncate_text(str(row['evidence_note']), 300)}"
+        )
+    console.print("\n[bold]Apply Guidance[/bold]")
+    for row in recommendations:
+        console.print(
+            f"[cyan]{row['name']}[/cyan]: "
+            f"{_truncate_text(str(row['apply_guidance']), 300)}"
+        )
+
+
+def _format_recommendation_range(row: dict[str, Any]) -> str:
+    values = row.get("suggested_values") or []
+    if values:
+        return f"{row['range_code']}\nvalues: {values}"
+    return str(row["range_code"])
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
 
 
 @cli.command()

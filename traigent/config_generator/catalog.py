@@ -35,6 +35,22 @@ def load_catalog() -> list[dict[str, Any]]:
     return copy.deepcopy(list(_load_catalog_cached()))
 
 
+def catalog_version() -> str:
+    """Return the version declared by the catalog file's entries."""
+    versions = {
+        str(entry.get("version", "")).strip() for entry in _load_catalog_cached()
+    }
+    versions.discard("")
+    if not versions:
+        raise ValueError("TVAR catalog entries must declare a version")
+    if len(versions) > 1:
+        raise ValueError(
+            "TVAR catalog entries declare multiple versions: "
+            + ", ".join(sorted(versions))
+        )
+    return next(iter(versions))
+
+
 def catalog_entries(agent_type: str | None = None) -> list[dict[str, Any]]:
     """Return catalog entries, optionally filtered by agent type."""
     entries = load_catalog()
