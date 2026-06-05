@@ -29,6 +29,52 @@ if TYPE_CHECKING:
     from .tracing.capture import CapturedTrace
 
 
+_CANONICALIZED_MOCK_OPTIMIZER_KEYS = frozenset({"optimizer", "sampler", "random_seed"})
+
+
+def _resolve_mock_algorithm(mock_config: dict[str, Any] | None) -> str | None:
+    """Resolve legacy scenario optimizer keys to the canonical algorithm name."""
+    if not mock_config:
+        return None
+
+    optimizer = mock_config.get("optimizer")
+    sampler = mock_config.get("sampler")
+    if sampler is not None and (
+        optimizer is None or str(optimizer).strip().lower() == "optuna"
+    ):
+        sampler_name = str(sampler).strip().lower()
+        return f"optuna_{sampler_name}" if sampler_name else None
+
+    if optimizer is None:
+        return None
+
+    algorithm = str(optimizer).strip()
+    return algorithm or None
+
+
+def _resolve_mock_random_seed(scenario: TestScenario) -> int | None:
+    """Resolve the canonical runtime seed for optimizer-validation scenarios."""
+    mock_config = scenario.mock_mode_config or {}
+    if "random_seed" in mock_config:
+        return mock_config["random_seed"]
+
+    # Use a stable hash to avoid process-randomized Python hash() output.
+    seed_bytes = hashlib.sha256(scenario.name.encode("utf-8")).digest()
+    return int.from_bytes(seed_bytes[:8], "big") % (2**31)
+
+
+def _mock_payload_for_decorator(mock_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep non-optimizer mock payload keys after canonicalizing optimizer knobs."""
+    if not mock_config:
+        return {}
+
+    return {
+        key: value
+        for key, value in mock_config.items()
+        if key not in _CANONICALIZED_MOCK_OPTIMIZER_KEYS
+    }
+
+
 def _serialize_config_space(config_space: dict[str, Any]) -> dict[str, Any]:
     """Serialize config space with cardinality analysis for evidence JSON."""
     result = {}
@@ -358,14 +404,8 @@ def _resolve_gist_template(
     # injection_mode() - from scenario
     values["injection_mode"] = str(scenario.injection_mode)
 
-    # algorithm() - from mock_mode_config
-    if scenario.mock_mode_config:
-        algo = scenario.mock_mode_config.get("optimizer", "")
-        if not algo and scenario.mock_mode_config.get("sampler"):
-            algo = f"optuna_{scenario.mock_mode_config.get('sampler')}"
-        values["algorithm"] = algo or "--"
-    else:
-        values["algorithm"] = "--"
+    # algorithm() - from canonicalized legacy scenario optimizer keys
+    values["algorithm"] = _resolve_mock_algorithm(scenario.mock_mode_config) or "--"
 
     # expected_outcome() - what the test expects
     values["expected_outcome"] = scenario.expected.outcome.name
@@ -432,12 +472,8 @@ def emit_test_evidence(
     # Load dataset samples and get actual file size
     samples, actual_size = _load_dataset_info(actual_path)
 
-    # Extract algorithm from mock_mode_config if present
-    algorithm = None
-    if scenario.mock_mode_config:
-        algorithm = scenario.mock_mode_config.get("optimizer")
-        if not algorithm and scenario.mock_mode_config.get("sampler"):
-            algorithm = f"optuna_{scenario.mock_mode_config.get('sampler')}"
+    # Extract algorithm from the same canonical path used by run_scenario.
+    algorithm = _resolve_mock_algorithm(scenario.mock_mode_config)
 
     # Extract parallel mode
     parallel_mode = None
@@ -790,15 +826,11 @@ def scenario_runner(
         # Note: attribute mode + parallel trials is now unconditionally blocked.
         # Test scenarios should not use this combination - it will raise ValueError.
 
-        # Generate per-test seed for mock mode reproducibility
-        # Use scenario name to create deterministic seed unique to each test
-        mock_config = (
-            dict(scenario.mock_mode_config) if scenario.mock_mode_config else {}
-        )
-        if "random_seed" not in mock_config:
-            # Use a stable hash to avoid process-randomized Python hash() output.
-            seed_bytes = hashlib.sha256(scenario.name.encode("utf-8")).digest()
-            mock_config["random_seed"] = int.from_bytes(seed_bytes[:8], "big") % (2**31)
+        # Canonicalize legacy scenario optimizer keys before applying the decorator.
+        # The remaining mock payload is only for inert score/evaluator dry-run keys.
+        mock_config = _mock_payload_for_decorator(scenario.mock_mode_config)
+        algorithm = _resolve_mock_algorithm(scenario.mock_mode_config)
+        random_seed = _resolve_mock_random_seed(scenario)
 
         # Apply decorator
         try:
@@ -836,6 +868,9 @@ def scenario_runner(
                 "max_trials": scenario.max_trials,
                 "timeout": scenario.timeout,
             }
+            if algorithm is not None:
+                optimize_kwargs["algorithm"] = algorithm
+            optimize_kwargs["random_seed"] = random_seed
             if parallel_config is not None:
                 optimize_kwargs["parallel_config"] = parallel_config
 

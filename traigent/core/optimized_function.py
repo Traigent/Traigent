@@ -1918,6 +1918,20 @@ class OptimizedFunction:
         seed, so we now ignore it entirely. Real seeding should go through
         the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
         """
+        mock_config = self.mock_mode_config
+        if not isinstance(mock_config, Mapping):
+            return algorithm
+
+        inert_keys = sorted(
+            key for key in ("optimizer", "sampler", "random_seed") if key in mock_config
+        )
+        if inert_keys:
+            logger.warning(
+                "mock_mode_config keys %s are inert post-F5 and no longer select "
+                "optimizers or seed runs; pass algorithm/random_seed via "
+                "decorated.optimize(algorithm=..., random_seed=...) instead.",
+                ", ".join(inert_keys),
+            )
         return algorithm
 
     def _preflight_model_cost_coverage(

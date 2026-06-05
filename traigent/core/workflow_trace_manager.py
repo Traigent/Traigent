@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +74,20 @@ class WorkflowTraceManager:
         self._optimizer_class_name = optimizer_class_name
         self._optimization_id = optimization_id
         self._collected_spans: list[SpanPayload] = []
+        self._registered_nodes: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def is_enabled(self) -> bool:
+        """Return True when workflow trace collection has an active transport."""
+
+        return self._workflow_traces_tracker is not None
+
+    @staticmethod
+    def _display_name_from_node_id(node_id: str) -> str:
+        """Return a readable display name derived only from the node identifier."""
+
+        return node_id.replace("_", " ").replace("-", " ").title()
 
     def collect_span(self, span_data: SpanPayload) -> None:
         """Collect a workflow span for later submission to backend.
@@ -81,7 +96,61 @@ class WorkflowTraceManager:
             span_data: Span payload to collect
         """
         if self._workflow_traces_tracker is not None:
-            self._collected_spans.append(span_data)
+            with self._lock:
+                self._collected_spans.append(span_data)
+
+    def register_node(
+        self,
+        node_id: str,
+        *,
+        node_type: str = "agent",
+        display_name: str | None = None,
+        tunable_params: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Register a workflow graph node for collected spans.
+
+        Registration is intentionally independent from span collection: declared
+        agents can appear in the graph even if no span is emitted for them.
+        """
+
+        normalized_node_id = node_id.strip()
+        if not normalized_node_id or normalized_node_id in {
+            "__start__",
+            "optimization_run",
+            "__end__",
+        }:
+            return
+
+        with self._lock:
+            existing = self._registered_nodes.get(normalized_node_id)
+            if existing is None:
+                self._registered_nodes[normalized_node_id] = {
+                    "type": node_type or "agent",
+                    "display_name": (
+                        display_name
+                        or self._display_name_from_node_id(normalized_node_id)
+                    ),
+                    "tunable_params": list(tunable_params or []),
+                    "metadata": dict(metadata or {}),
+                }
+                return
+
+            if display_name and not existing.get("display_name"):
+                existing["display_name"] = display_name
+            if tunable_params:
+                merged = list(
+                    dict.fromkeys(existing["tunable_params"] + tunable_params)
+                )
+                existing["tunable_params"] = merged
+            if metadata:
+                existing["metadata"].update(metadata)
+
+    def registered_node_ids(self) -> list[str]:
+        """Return currently registered dynamic workflow node ids."""
+
+        with self._lock:
+            return list(self._registered_nodes)
 
     async def submit_traces(self, session_id: str | None = None) -> None:
         """Submit collected workflow spans and graph to backend.
@@ -98,7 +167,10 @@ class WorkflowTraceManager:
         if self._workflow_traces_tracker is None:
             return
 
-        if not self._collected_spans:
+        with self._lock:
+            collected_spans = list(self._collected_spans)
+
+        if not collected_spans:
             logger.debug("No workflow spans to submit")
             return
 
@@ -107,7 +179,8 @@ class WorkflowTraceManager:
         # in the backend database, so trace ingestion would fail with 404
         if is_backend_offline():
             logger.debug("Skipping workflow trace submission: backend is offline")
-            self._collected_spans = []
+            with self._lock:
+                self._collected_spans = []
             return
 
         # Check if session_id is a mock ID (created when backend was unavailable)
@@ -118,18 +191,19 @@ class WorkflowTraceManager:
             logger.debug(
                 f"Skipping workflow trace submission: mock session '{session_id}'"
             )
-            self._collected_spans = []
+            with self._lock:
+                self._collected_spans = []
             return
 
         try:
             # Get trace_id from first span (all spans share same trace)
-            trace_id = self._collected_spans[0].trace_id
+            trace_id = collected_spans[0].trace_id
 
             # Try to create workflow graph for visualization (only submit once)
             graph = self._create_optimization_workflow_graph(session_id)
 
             # Group spans by configuration_run_id so each trial gets trace_id in its metadata
-            spans_by_config_run = self._group_spans_by_config_run()
+            spans_by_config_run = self._group_spans_by_config_run(collected_spans)
 
             # Submit each group separately
             total_submitted = 0
@@ -174,12 +248,19 @@ class WorkflowTraceManager:
             logger.warning(f"Workflow trace submission failed: {exc}")
         finally:
             # Clear collected spans after submission attempt
-            self._collected_spans = []
+            with self._lock:
+                self._collected_spans = []
 
-    def _group_spans_by_config_run(self) -> dict[str, list]:
+    def _group_spans_by_config_run(
+        self, spans: list[SpanPayload] | None = None
+    ) -> dict[str, list]:
         """Group collected spans by configuration_run_id."""
         spans_by_config_run: dict[str, list] = defaultdict(list)
-        for span in self._collected_spans:
+        source_spans = spans
+        if source_spans is None:
+            with self._lock:
+                source_spans = list(self._collected_spans)
+        for span in source_spans:
             spans_by_config_run[span.configuration_run_id].append(span)
         return dict(spans_by_config_run)
 
@@ -229,6 +310,26 @@ class WorkflowTraceManager:
             else "optimization"
         )
 
+        with self._lock:
+            registered_nodes = {
+                node_id: dict(node_data)
+                for node_id, node_data in self._registered_nodes.items()
+            }
+
+        dynamic_nodes = [
+            WorkflowNode(
+                id=node_id,
+                type=str(node_data.get("type") or "agent"),
+                display_name=str(
+                    node_data.get("display_name")
+                    or self._display_name_from_node_id(node_id)
+                ),
+                tunable_params=list(node_data.get("tunable_params") or []),
+                metadata=dict(node_data.get("metadata") or {}),
+            )
+            for node_id, node_data in registered_nodes.items()
+        ]
+
         # Create nodes for the optimization workflow
         nodes = [
             WorkflowNode(
@@ -253,6 +354,7 @@ class WorkflowTraceManager:
                     "algorithm": self._optimizer_class_name,
                 },
             ),
+            *dynamic_nodes,
             WorkflowNode(
                 id="__end__",
                 type="exit",
@@ -266,6 +368,13 @@ class WorkflowTraceManager:
             WorkflowEdge(from_node="__start__", to_node="optimization_run"),
             WorkflowEdge(from_node="optimization_run", to_node="__end__"),
         ]
+        for node in dynamic_nodes:
+            edges.extend(
+                [
+                    WorkflowEdge(from_node="optimization_run", to_node=node.id),
+                    WorkflowEdge(from_node=node.id, to_node="__end__"),
+                ]
+            )
 
         return WorkflowGraphPayload(
             experiment_id=experiment_id,

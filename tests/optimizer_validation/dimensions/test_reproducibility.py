@@ -6,8 +6,8 @@ Tests that verify:
 - Grid search is inherently deterministic
 - Parallel execution reproducibility
 
-The random_seed from mock_mode_config is now properly propagated to optimizers,
-enabling reproducible test runs.
+Legacy scenario optimizer keys are canonicalized by the harness into
+decorated.optimize(algorithm=..., random_seed=...), enabling reproducible test runs.
 """
 
 from __future__ import annotations
