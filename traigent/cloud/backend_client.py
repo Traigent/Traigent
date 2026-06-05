@@ -643,11 +643,22 @@ class BackendIntegratedClient:
         search_space: dict[str, Any],
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
-        Delegates to session_operations module."""
+        Delegates to session_operations module. Phase 8: objectives are
+        METRIC names for the typed contract; promotion_policy/tvl_governance
+        are the content-free governance wire (RFC 0001 P8)."""
         return self._session_ops.create_session(
-            function_name, search_space, optimization_goal, metadata
+            function_name,
+            search_space,
+            optimization_goal,
+            metadata,
+            objectives=objectives,
+            promotion_policy=promotion_policy,
+            tvl_governance=tvl_governance,
         )
 
     async def create_hybrid_session(

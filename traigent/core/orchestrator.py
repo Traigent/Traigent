@@ -844,6 +844,33 @@ class OptimizationOrchestrator:
             return True
         return bool(getattr(policy, "chance_constraints", None))
 
+    def _build_wire_governance(
+        self,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Project the declared governance onto the wire (RFC 0001 P8).
+
+        promotion_policy: from the promotion gate's declared policy.
+        tvl_governance: cvar names/types/governed flags from the resolver's
+        DECLARED bindings (the same source _is_strict_evidence_mode trusts) —
+        never runtime or calibrated state. Both None for ungoverned sessions
+        so their wire payload stays byte-identical.
+        """
+        from traigent.cloud.governance import (
+            build_tvl_governance,
+            promotion_policy_to_wire,
+        )
+
+        gate = self._promotion_gate
+        policy = getattr(gate, "policy", None) if gate is not None else None
+        wire_policy = promotion_policy_to_wire(policy)
+
+        wire_governance = None
+        resolver = getattr(self, "knob_resolver", None)
+        space = getattr(resolver, "_space", None) if resolver is not None else None
+        if space is not None:
+            wire_governance = build_tvl_governance(space)
+        return wire_policy, wire_governance
+
     def _withhold_promotion(self, reason: str) -> bool:
         """Fail closed: record + log a strict-mode withheld promotion."""
         self._strict_withheld_promotions.append(reason)
@@ -1893,7 +1920,10 @@ class OptimizationOrchestrator:
                 descriptor.identifier,
             )
 
-        # Create backend session using manager
+        # Create backend session using manager. Governance crosses the wire
+        # content-free (Phase 8): the declared promotion policy and the
+        # cvar summary from DECLARED bindings — never values or evidence.
+        wire_policy, wire_governance = self._build_wire_governance()
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -1902,6 +1932,9 @@ class OptimizationOrchestrator:
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
             agent_configuration=self._agent_configuration,
+            objectives=list(self.optimizer.objectives or []),
+            promotion_policy=wire_policy,
+            tvl_governance=wire_governance,
         )
         session_id: str | None = session_context.session_id
 

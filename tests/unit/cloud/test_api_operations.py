@@ -291,14 +291,37 @@ class TestBuildSessionPayload:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_basic_payload(self):
-        """Test basic payload structure."""
+    def test_basic_payload_is_typed_since_phase8(self):
+        """The default contract is the TYPED shape (Phase 8) — the legacy
+        problem_statement/search_space shape survives only behind
+        TRAIGENT_SESSION_CONTRACT=legacy (see the legacy test below)."""
+        request = Mock()
+        request.function_name = "test_func"
+        request.metadata = None
+        request.dataset_metadata = {"size": 100}
+        request.configuration_space = {"param": [1, 2, 3]}
+        request.objectives = ["accuracy"]
+        request.promotion_policy = None
+        request.tvl_governance = None
+
+        payload = self.ops._build_session_payload(request, 10)
+
+        assert payload["function_name"] == "test_func"
+        assert payload["configuration_space"] == {"param": [1, 2, 3]}
+        assert payload["objectives"] == ["accuracy"]
+        assert payload["max_trials"] == 10
+        assert "problem_statement" not in payload
+
+    def test_legacy_payload_behind_contract_flag(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
         request = Mock()
         request.function_name = "test_func"
         request.metadata = None
         request.dataset_metadata = {"size": 100}
         request.configuration_space = {"param": [1, 2, 3]}
         request.objectives = ["maximize"]
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 10)
 
@@ -323,14 +346,17 @@ class TestBuildSessionPayload:
         assert payload["metadata"]["custom_key"] == "value"
         assert payload["metadata"]["function_name"] == "test_func"
 
-    def test_payload_empty_objectives(self):
-        """Test payload with empty objectives uses default."""
+    def test_payload_empty_objectives(self, monkeypatch):
+        """Legacy contract: empty objectives fall back to the maximize goal."""
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
         request = Mock()
         request.function_name = "test_func"
         request.metadata = None
         request.dataset_metadata = {}
         request.configuration_space = {}
         request.objectives = []
+        request.promotion_policy = None
+        request.tvl_governance = None
 
         payload = self.ops._build_session_payload(request, 10)
 

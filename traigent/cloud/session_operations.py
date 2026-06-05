@@ -247,6 +247,9 @@ class SessionOperations:
         search_space: dict[str, Any],
         optimization_goal: str = "maximize",
         metadata: dict[str, Any] | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -305,12 +308,18 @@ class SessionOperations:
             session_request = SessionCreationRequest(
                 function_name=function_name,
                 configuration_space=search_space,
-                objectives=[optimization_goal],
+                # Typed contract: objectives are METRIC names/objects. The
+                # legacy [optimization_goal] placeholder survives only as the
+                # fallback when the caller supplied none (legacy shape keeps
+                # reading objectives[0] as its optimization_goal).
+                objectives=list(objectives) if objectives else [optimization_goal],
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
                     "privacy_mode": True,
                 },
                 max_trials=max_trials_from_metadata,
+                promotion_policy=promotion_policy,
+                tvl_governance=tvl_governance,
                 optimization_strategy={"mode": "local_execution"},
                 user_id=None,  # Privacy preserving
                 billing_tier="privacy",

@@ -329,6 +329,9 @@ class BackendSessionManager:
         start_time: float,
         max_total_examples: int | None = None,
         agent_configuration: AgentConfiguration | None = None,
+        objectives: list[Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        tvl_governance: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -397,6 +400,9 @@ class BackendSessionManager:
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,
+                objectives=objectives,
+                promotion_policy=promotion_policy,
+                tvl_governance=tvl_governance,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(result)
