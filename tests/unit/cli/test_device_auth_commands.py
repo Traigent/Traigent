@@ -10,7 +10,11 @@ from typing import Any
 import pytest
 
 from traigent.cli import auth_commands
-from traigent.cli.auth_commands import SECURE_CLI_CREDENTIAL_NAME, TraigentAuthCLI
+from traigent.cli.auth_commands import (
+    SECURE_CLI_CREDENTIAL_NAME,
+    SECURE_CLI_PREFLIGHT_NAME,
+    TraigentAuthCLI,
+)
 from traigent.security.credentials import CredentialType
 
 API_KEY = "sk_" + "a" * 43  # pragma: allowlist secret
@@ -33,6 +37,10 @@ class _FakeSecureStore:
     def __init__(self, *, fail_on_set: bool = False) -> None:
         self.fail_on_set = fail_on_set
         self.saved: tuple[str, str, CredentialType, dict[str, str] | None] | None = None
+        self.set_calls: list[
+            tuple[str, str, CredentialType, dict[str, str] | None]
+        ] = []
+        self.deleted: list[str] = []
 
     def get(self, name: str, check_env: bool = True) -> str | None:
         assert name == SECURE_CLI_CREDENTIAL_NAME
@@ -48,10 +56,14 @@ class _FakeSecureStore:
     ) -> None:
         if self.fail_on_set:
             raise auth_commands.SecurityError("secure store unavailable")
+        self.set_calls.append((name, value, credential_type, metadata))
         self.saved = (name, value, credential_type, metadata)
 
     def delete_secure(self, name: str) -> bool:
-        assert name == SECURE_CLI_CREDENTIAL_NAME
+        assert name in {SECURE_CLI_CREDENTIAL_NAME, SECURE_CLI_PREFLIGHT_NAME}
+        self.deleted.append(name)
+        if self.saved and self.saved[0] == name:
+            self.saved = None
         return True
 
 
@@ -262,6 +274,8 @@ def test_device_flow_happy_path_persists_credentials_secure_only_by_default(
 
     assert result is True
     assert store.saved is not None
+    assert store.set_calls[0][0] == SECURE_CLI_PREFLIGHT_NAME
+    assert store.deleted == [SECURE_CLI_PREFLIGHT_NAME]
     name, serialized, credential_type, metadata = store.saved
     assert name == SECURE_CLI_CREDENTIAL_NAME
     assert credential_type is CredentialType.TOKEN
@@ -385,11 +399,12 @@ def test_device_flow_env_file_consent_writes_with_0600(
     assert "TRAIGENT_BACKEND_URL=https://backend.example.test" in env_text
 
 
-def test_device_flow_secure_store_failure_without_explicit_flag_skips_env_file(
+def test_device_flow_secure_store_failure_prevents_backend_authorization(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, _session = _install_device_test_fakes(
+    store, session = _install_device_test_fakes(
         monkeypatch,
         tmp_path,
         [
@@ -408,7 +423,9 @@ def test_device_flow_secure_store_failure_without_explicit_flag_skips_env_file(
 
     assert result is False
     assert store.saved is None
+    assert session.post_calls == []
     assert not (tmp_path / ".env").exists()
+    assert "Secure credential storage is not ready" in capsys.readouterr().out
 
 
 def test_env_file_rewrite_replaces_export_prefixed_api_key(
@@ -491,7 +508,9 @@ def test_device_poll_rate_limit_retry_after_continues_and_succeeds(
     assert result is True
     assert sleeps == [2]
     token_calls = [
-        call for call in session.post_calls if call["url"].endswith("/auth/device/token")
+        call
+        for call in session.post_calls
+        if call["url"].endswith("/auth/device/token")
     ]
     assert len(token_calls) == 2
 
@@ -520,14 +539,14 @@ def test_device_poll_rate_limit_retry_after_still_honors_expiry_deadline(
         sleeps.append(seconds)
         now += seconds
 
-    result = asyncio.run(
-        _make_cli().device_login(sleep=fake_sleep, clock=fake_clock)
-    )
+    result = asyncio.run(_make_cli().device_login(sleep=fake_sleep, clock=fake_clock))
 
     assert result is False
     assert sleeps == [3]
     token_calls = [
-        call for call in session.post_calls if call["url"].endswith("/auth/device/token")
+        call
+        for call in session.post_calls
+        if call["url"].endswith("/auth/device/token")
     ]
     assert len(token_calls) == 1
 
@@ -555,9 +574,7 @@ def test_device_poll_caps_sleep_and_timeout_to_expiry_deadline(
         sleeps.append(seconds)
         now += seconds
 
-    result = asyncio.run(
-        _make_cli().device_login(sleep=fake_sleep, clock=fake_clock)
-    )
+    result = asyncio.run(_make_cli().device_login(sleep=fake_sleep, clock=fake_clock))
 
     assert result is False
     assert sleeps == [3]
@@ -593,7 +610,9 @@ def test_device_poll_transport_error_retry_bound(
     assert store.saved is None
     assert sleeps == [1, 1]
     token_calls = [
-        call for call in session.post_calls if call["url"].endswith("/auth/device/token")
+        call
+        for call in session.post_calls
+        if call["url"].endswith("/auth/device/token")
     ]
     assert len(token_calls) == 3
     assert "failed after 3 consecutive transport errors" in capsys.readouterr().out
