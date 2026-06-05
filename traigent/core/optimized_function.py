@@ -296,6 +296,7 @@ class OptimizedFunction:
         self._best_config_stale_ok_ttl_seconds = kwargs.pop(
             "best_config_stale_ok_ttl_seconds", None
         )
+        self._best_config_environment = kwargs.pop("best_config_environment", None)
         self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
         # Guided-generation defaults configured at decoration time; consumed by
         # optimize_with_guidance when not overridden at the call site.
@@ -692,6 +693,7 @@ class OptimizedFunction:
             best_config_stale_ok_ttl_seconds=getattr(
                 self, "_best_config_stale_ok_ttl_seconds", None
             ),
+            best_config_environment=getattr(self, "_best_config_environment", None),
             enable_auto_load_dev_logs=getattr(self, "_enable_auto_load_dev_logs", None),
             optimization_history_limit=self.optimization_history_limit,
         )
@@ -2431,9 +2433,9 @@ class OptimizedFunction:
             directory, config_id=config_id, include_metadata=include_metadata
         )
 
-    def publish_best_config(self, *, target: str = "cloud") -> None:
+    def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
         """Publish the best config to a durable remote target when supported."""
-        self._csm.publish_best_config(target=target)
+        return self._csm.publish_best_config(target=target)
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""
