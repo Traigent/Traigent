@@ -161,8 +161,10 @@ def _install_device_test_fakes(
     return store, session
 
 
-def _make_cli() -> TraigentAuthCLI:
-    return TraigentAuthCLI(backend_url_override="https://backend.example.test")
+def _make_cli(
+    backend_url_override: str = "https://backend.example.test",
+) -> TraigentAuthCLI:
+    return TraigentAuthCLI(backend_url_override=backend_url_override)
 
 
 def test_device_token_success_schema_contract_pins_subscription_tier() -> None:
@@ -226,6 +228,41 @@ def test_device_flow_happy_path_persists_credentials_secure_only_by_default(
     captured = capsys.readouterr()
     assert API_KEY not in captured.out
     assert API_KEY not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("backend_url", "expected_api_base"),
+    [
+        ("http://localhost:5000", "http://localhost:5000/api/v1"),
+        ("http://localhost:5000/api/v1", "http://localhost:5000/api/v1"),
+    ],
+)
+def test_device_flow_composes_authorize_and_token_urls_from_api_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    backend_url: str,
+    expected_api_base: str,
+) -> None:
+    _store, session = _install_device_test_fakes(
+        monkeypatch,
+        tmp_path,
+        [
+            _FakeResponse(200, _authorize_payload()),
+            _FakeResponse(200, _success_payload()),
+        ],
+    )
+
+    result = asyncio.run(
+        _make_cli(backend_url_override=backend_url).device_login(
+            sleep=lambda _seconds: _noop_sleep()
+        )
+    )
+
+    assert result is True
+    assert [call["url"] for call in session.post_calls] == [
+        f"{expected_api_base}/auth/device/authorize",
+        f"{expected_api_base}/auth/device/token",
+    ]
 
 
 def test_device_flow_env_file_consent_writes_with_0600(

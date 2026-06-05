@@ -15,7 +15,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -124,6 +124,20 @@ def _format_backend_error_message(
     return f"{prefix} (HTTP {status_code}){suffix}"
 
 
+def _resolve_api_base_url(base_url: str) -> str:
+    """Return an API base URL with a version path, without duplicating it."""
+    origin, path = BackendConfig.split_api_url(base_url)
+    if not origin:
+        return cast(str, BackendConfig.build_api_base(base_url))
+    if path:
+        return f"{origin}{path.rstrip('/')}"
+    return cast(str, BackendConfig.build_api_base(origin))
+
+
+def _compose_api_url(base_url: str, path: str) -> str:
+    return f"{_resolve_api_base_url(base_url)}/{path.lstrip('/')}"
+
+
 def _require_non_empty_str(data: dict[str, Any], field: str) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value.strip():
@@ -180,6 +194,10 @@ class TraigentAuthCLI:
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def _api_url(self, path: str) -> str:
+        """Compose an API endpoint URL from the resolved API base."""
+        return _compose_api_url(self.backend_api_url, path)
 
     def _load_stored_credentials(self) -> dict[str, Any] | None:
         """Load stored credentials from local file.
@@ -359,7 +377,7 @@ class TraigentAuthCLI:
         """
         import aiohttp
 
-        url = f"{self.backend_api_url}/keys/validate"
+        url = self._api_url("keys/validate")
         headers = {"X-API-Key": api_key}
 
         if verbose:
@@ -428,7 +446,7 @@ class TraigentAuthCLI:
 
     async def _start_device_authorization(self, session: Any) -> dict[str, Any]:
         """Start the RFC 8628 device authorization flow."""
-        url = f"{self.backend_api_url}/auth/device/authorize"
+        url = self._api_url("auth/device/authorize")
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -519,7 +537,7 @@ class TraigentAuthCLI:
         self, session: Any, device_code: str, request_timeout: float
     ) -> tuple[str, dict[str, Any] | None, int | None]:
         """Poll the token endpoint once."""
-        url = f"{self.backend_api_url}/auth/device/token"
+        url = self._api_url("auth/device/token")
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -1665,7 +1683,7 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
         )
         return False
 
-    url = f"{backend_api_url}/keys/validate"
+    url = _compose_api_url(backend_api_url, "keys/validate")
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
