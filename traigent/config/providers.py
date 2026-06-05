@@ -276,7 +276,15 @@ class ParameterBasedProvider(ConfigurationProvider):
         # Create TraigentConfig from dict if needed
         config_obj = TraigentConfig.from_dict(config)
 
-        def _effective_config() -> TraigentConfig:
+        def _active_applied_config() -> TraigentConfig | dict[str, Any] | None:
+            try:
+                return applied_config_context.get()
+            except LookupError:
+                return None
+
+        def _parameter_config(
+            active: TraigentConfig | dict[str, Any] | None,
+        ) -> TraigentConfig:
             """Prefer an APPLIED configuration over the wrap-time snapshot.
 
             During optimization the evaluator wraps every trial call in
@@ -291,10 +299,6 @@ class ParameterBasedProvider(ConfigurationProvider):
             — a bare global ``set_config()`` does not, so direct calls keep
             the wrap-time default.
             """
-            try:
-                active = applied_config_context.get()
-            except LookupError:
-                active = None
             if active is None:
                 return config_obj
             if isinstance(active, TraigentConfig):
@@ -305,10 +309,13 @@ class ParameterBasedProvider(ConfigurationProvider):
 
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            effective = _effective_config()
+            active = _active_applied_config()
+            effective = _parameter_config(active)
             # Only inject configuration if not already provided
             if param_name not in kwargs:
                 kwargs[param_name] = effective
+            if active is not None:
+                return func(*args, **kwargs)
             with ConfigurationContext(effective):
                 return func(*args, **kwargs)
 
@@ -317,10 +324,13 @@ class ParameterBasedProvider(ConfigurationProvider):
 
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                effective = _effective_config()
+                active = _active_applied_config()
+                effective = _parameter_config(active)
                 # Only inject configuration if not already provided
                 if param_name not in kwargs:
                     kwargs[param_name] = effective
+                if active is not None:
+                    return await func(*args, **kwargs)
                 with ConfigurationContext(effective):
                     return await func(*args, **kwargs)
 
