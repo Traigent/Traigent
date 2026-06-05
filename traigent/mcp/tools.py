@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from traigent.api.functions import (
     list_recommendation_agent_types as public_list_recommendation_agent_types,
@@ -116,7 +117,16 @@ def _resolve_cwd_file(
 def _dataset_root() -> Path:
     configured = os.environ.get(DATASET_ROOT_ENV)
     if configured:
-        return Path(configured).expanduser().resolve(strict=True)
+        # resolve(strict=True) raises FileNotFoundError when the configured root
+        # is missing; surface it as a structured path_rejected failure instead of
+        # letting it crash the tool call.
+        try:
+            return Path(configured).expanduser().resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise ToolInputError(
+                f"{DATASET_ROOT_ENV} points at a directory that does not exist: "
+                f"{configured}"
+            ) from exc
     return Path.cwd().resolve()
 
 
@@ -129,14 +139,20 @@ def _resolve_dataset_path(path: str | Path) -> tuple[Path, Path]:
     except FileNotFoundError as exc:
         raise ToolInputError(str(exc)) from exc
 
+    # Resolve to the REAL path before the containment check. A lexical
+    # relative_to() on a possibly-unresolved path would let a symlink inside the
+    # dataset root point outside and pass. validate_path() resolves symlinks and
+    # re-checks containment against the resolved root.
     try:
-        resolved_path.relative_to(root)
-    except ValueError as exc:
+        contained = validate_path(resolved_path, root, must_exist=True)
+    except FileNotFoundError as exc:
+        raise ToolInputError(f"Dataset path does not exist: {resolved_path}") from exc
+    except PathTraversalError as exc:
         raise ToolInputError(
             f"Dataset path must stay under {DATASET_ROOT_ENV or 'cwd'} ({root}): "
             f"{resolved_path}"
         ) from exc
-    return resolved_path, root
+    return cast(Path, contained), root
 
 
 def _mask_api_key(api_key: str | None) -> dict[str, Any]:
@@ -147,6 +163,25 @@ def _mask_api_key(api_key: str | None) -> dict[str, Any]:
     last4 = api_key[-4:] if len(api_key) > 8 else None
     masked = f"{prefix}...{last4}" if last4 is not None else f"{prefix}..."
     return {"present": True, "prefix": prefix, "last4": last4, "masked": masked}
+
+
+def _sanitize_backend_url(url: str | None) -> str | None:
+    """Strip any userinfo (``user:pass@``) from a backend URL before returning it.
+
+    Credentials embedded in the URL must never leak into the MCP payload.
+    """
+    if not url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.username or parts.password:
+        host = parts.hostname or ""
+        if parts.port is not None:
+            host = f"{host}:{parts.port}"
+        parts = parts._replace(netloc=host)
+    return urlunsplit(parts)
 
 
 async def auth_status_tool(check: bool = False) -> dict[str, Any]:
@@ -175,15 +210,27 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                 "message": "No API key is available to validate.",
             }
         else:
-            from traigent.cli.auth_commands import TraigentAuthCLI
+            try:
+                from traigent.cli.auth_commands import TraigentAuthCLI
 
-            auth_cli = TraigentAuthCLI(backend_url_override=cast(str, backend_url))
-            metadata = await auth_cli._validate_api_key(api_key, verbose=False)
-            validity = {
-                "checked": True,
-                "valid": metadata is not None,
-                "source": "backend",
-            }
+                auth_cli = TraigentAuthCLI(backend_url_override=cast(str, backend_url))
+                metadata = await auth_cli._validate_api_key(api_key, verbose=False)
+            except Exception:
+                # Live validation must NEVER propagate an exception into the MCP
+                # payload — its message could embed response bodies or URLs.
+                # Return a structured failure with a generic message instead.
+                validity = {
+                    "checked": True,
+                    "valid": None,
+                    "source": "backend",
+                    "message": "Live validation could not be completed.",
+                }
+            else:
+                validity = {
+                    "checked": True,
+                    "valid": metadata is not None,
+                    "source": "backend",
+                }
 
     return {
         "ok": True,
@@ -197,7 +244,7 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
         ),
         "tenant_id": tenant_id,
         "project_id": project_id,
-        "backend_url": backend_url,
+        "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
         "validity": validity,
     }
 
@@ -557,6 +604,10 @@ def run_optimization_tool(
     effective_trials = max_trials or (4 if mode == "mock" else 10)
     effective_algorithm = algorithm or "random"
 
+    # v1 single-agent limitation: optimization runs synchronously below and
+    # blocks the MCP stdio event loop for the full duration of the run. No other
+    # tool requests are serviced until it returns. This is acceptable for the
+    # local single-client v1 server; concurrency is deferred to a later version.
     try:
         if mode == "mock":
             env = {
@@ -584,6 +635,20 @@ def run_optimization_tool(
     except Exception as exc:
         return _failure(str(exc), code="optimization_failed")
 
+    if mode == "real":
+        # Real runs touch live providers; captured stdout/stderr can contain
+        # prompts, completions, or other sensitive provider data. Scrub the tails
+        # rather than returning them. Mock mode output is canned and harmless.
+        stdout_payload = (
+            "<redacted: real-run stdout suppressed to avoid leaking provider data>"
+        )
+        stderr_payload = (
+            "<redacted: real-run stderr suppressed to avoid leaking provider data>"
+        )
+    else:
+        stdout_payload = stdout_text[-4000:]
+        stderr_payload = stderr_text[-4000:]
+
     return {
         "ok": True,
         "mode": mode,
@@ -592,8 +657,8 @@ def run_optimization_tool(
         "algorithm": effective_algorithm,
         "path_policy": "script_path must resolve under the current working directory.",
         "results": summaries,
-        "stdout": stdout_text[-4000:],
-        "stderr": stderr_text[-4000:],
+        "stdout": stdout_payload,
+        "stderr": stderr_payload,
     }
 
 

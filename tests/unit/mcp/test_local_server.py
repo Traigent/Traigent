@@ -88,8 +88,7 @@ async def test_tool_listing_matches_v1_set() -> None:
     assert "generate_examples" not in {tool.name for tool in result.tools}
 
 
-async def test_catalog_and_recommend_happy_path(
-) -> None:
+async def test_catalog_and_recommend_happy_path() -> None:
     async with mcp_session() as session:
         types_payload = await call_tool(session, "list_recommendation_agent_types")
         recommendation = await call_tool(
@@ -122,7 +121,9 @@ async def test_detect_validate_and_estimate_happy_paths(
             "detect_tvars",
             {"file_path": "agent.py", "function_name": "answer"},
         )
-        validation = await call_tool(session, "validate_dataset", {"path": "eval.jsonl"})
+        validation = await call_tool(
+            session, "validate_dataset", {"path": "eval.jsonl"}
+        )
         estimate = await call_tool(
             session,
             "estimate_cost",
@@ -271,3 +272,146 @@ async def test_path_containment_rejections(
 
     assert run["ok"] is False
     assert run["code"] == "path_rejected"
+
+
+async def test_auth_status_check_swallows_validator_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    full_key = "sk_live_supersecret_abcdefghijklmnop"
+    backend_url = "https://backend.example.test"
+    monkeypatch.setattr(
+        "traigent.mcp.tools.CredentialManager.get_credentials",
+        lambda: {
+            "api_key": full_key,
+            "backend_url": backend_url,
+            "source": "test",
+        },
+    )
+
+    leaky_url = "https://internal.secret.test/keys/validate"
+
+    async def _raise(self: Any, api_key: str, verbose: bool = False) -> Any:
+        raise RuntimeError(f"backend returned 500 for key {full_key} at {leaky_url}")
+
+    monkeypatch.setattr(
+        "traigent.cli.auth_commands.TraigentAuthCLI._validate_api_key",
+        _raise,
+    )
+
+    async with mcp_session() as session:
+        payload = await call_tool(session, "auth_status", {"check": True})
+    serialized = json.dumps(payload)
+
+    # Exception must not propagate; structured failure with a generic message.
+    assert payload["ok"] is True
+    assert payload["validity"]["checked"] is True
+    assert payload["validity"]["valid"] is None
+    assert payload["validity"]["source"] == "backend"
+    assert payload["validity"]["message"] == "Live validation could not be completed."
+    # Neither the full key nor the leaky URL may appear anywhere in the output.
+    assert full_key not in serialized
+    assert leaky_url not in serialized
+    assert "internal.secret.test" not in serialized
+
+
+async def test_auth_status_strips_userinfo_from_backend_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "traigent.mcp.tools.CredentialManager.get_credentials",
+        lambda: {
+            "api_key": "sk_test_1234567890",  # pragma: allowlist secret
+            "backend_url": "https://alice:hunter2@backend.example.test:8443/api",  # pragma: allowlist secret
+            "source": "test",
+        },
+    )
+
+    async with mcp_session() as session:
+        payload = await call_tool(session, "auth_status")
+    serialized = json.dumps(payload)
+
+    assert payload["backend_url"] == "https://backend.example.test:8443/api"
+    assert "hunter2" not in serialized
+    assert "alice" not in serialized
+    assert "alice:hunter2@" not in serialized
+
+
+async def test_validate_dataset_symlink_escape_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.jsonl"
+    secret.write_text('{"input": "x", "output": "y"}\n', encoding="utf-8")
+    # Symlink lives *inside* the dataset root but points outside it.
+    link = root / "linked.jsonl"
+    link.symlink_to(secret)
+
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(root))
+
+    async with mcp_session() as session:
+        validate = await call_tool(
+            session,
+            "validate_dataset",
+            {"path": "linked.jsonl"},
+        )
+
+    assert validate["ok"] is False
+    assert validate["code"] == "path_rejected"
+
+
+async def test_validate_dataset_missing_dataset_root_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing = tmp_path / "does_not_exist"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(missing))
+
+    async with mcp_session() as session:
+        validate = await call_tool(
+            session,
+            "validate_dataset",
+            {"path": "eval.jsonl"},
+        )
+
+    # A missing TRAIGENT_DATASET_ROOT must not crash the tool call.
+    assert validate["ok"] is False
+    assert validate["code"] == "path_rejected"
+
+
+async def test_run_optimization_real_refused_when_mock_mode_forced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent_file = tmp_path / "agent.py"
+    write_fixture_agent(agent_file)
+
+    from traigent.testing import enable_mock_mode_for_quickstart
+
+    # Force process-local mock mode on, then request a real run with a valid
+    # confirm + positive cost_limit. The server must honestly refuse rather than
+    # silently executing a mock run labeled as real.
+    enable_mock_mode_for_quickstart()
+
+    async with mcp_session() as session:
+        result = await call_tool(
+            session,
+            "run_optimization",
+            {
+                "script_path": "agent.py",
+                "mode": "real",
+                "confirm": True,
+                "cost_limit": 5.0,
+            },
+        )
+
+    assert result["ok"] is False
+    assert result["refused"] is True
+    assert "mock mode" in result["message"]
+    assert "results" not in result

@@ -124,7 +124,9 @@ def create_server() -> Any:
             "script. Defaults to mode='mock' dry-run. Real mode spends provider "
             "tokens/money and refuses unless confirm=true and cost_limit is set. "
             "Path security: script_path must resolve under the current working "
-            "directory."
+            "directory. Note: this runs synchronously and blocks the MCP stdio "
+            "loop for the full duration of the run (single-agent v1 limitation); "
+            "real-run stdout/stderr are redacted from the response."
         )
     )
     def run_optimization(
