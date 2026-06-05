@@ -20,7 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from traigent.config.context import TrialContext
+from traigent.config.context import TrialContext, WorkflowTraceContext
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -336,12 +336,23 @@ class TrialLifecycle:
             # Phase 3: Execute evaluation within TrialContext
             evaluate_kwargs = self._build_evaluate_kwargs(progress_callback, lease)
 
-            async with TrialContext(
-                trial_id=trial_id,
-                metadata={
-                    "config": evaluation_config,
-                    "optuna_trial_id": optuna_trial_id,
-                },
+            async with (
+                TrialContext(
+                    trial_id=trial_id,
+                    metadata={
+                        "config": evaluation_config,
+                        "optuna_trial_id": optuna_trial_id,
+                    },
+                ),
+                WorkflowTraceContext(
+                    {
+                        "configuration_run_id": trial_id,
+                        "workflow_trace_id": orchestrator._optimization_id,
+                        "workflow_trace_manager": getattr(
+                            orchestrator, "_workflow_trace_manager", None
+                        ),
+                    }
+                ),
             ):
                 eval_result = await orchestrator.evaluator.evaluate(
                     func, evaluation_config, dataset, **evaluate_kwargs

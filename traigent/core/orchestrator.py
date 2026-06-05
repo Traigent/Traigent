@@ -244,6 +244,7 @@ class OptimizationOrchestrator:
             optimizer_class_name=self.optimizer.__class__.__name__,
             optimization_id=self._optimization_id,
         )
+        self._register_declared_workflow_trace_nodes()
 
         self.backend_session_manager = BackendSessionManager(
             backend_client=self.backend_client,
@@ -390,6 +391,8 @@ class OptimizationOrchestrator:
         """Initialize multi-agent configuration from kwargs."""
         explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
         agent_prefixes: list[str] | None = kwargs.pop("agent_prefixes", None)
+        self._declared_trace_agents = dict(explicit_agents or {})
+        self._declared_trace_agent_prefixes = list(agent_prefixes or [])
         agent_measures: dict[str, list[str]] | None = kwargs.pop("agent_measures", None)
         global_measures: list[str] | None = kwargs.pop("global_measures", None)
         tvl_parameter_agents: dict[str, str] | None = kwargs.pop(
@@ -425,6 +428,48 @@ class OptimizationOrchestrator:
                 parameter_agents=parameter_agents,
             ),
         )
+
+    @staticmethod
+    def _workflow_node_type_for_agent(agent: AgentDefinition) -> str:
+        """Map public agent types to workflow graph node types."""
+
+        if agent.agent_type in {"llm", "retriever", "router", "tool"}:
+            return agent.agent_type
+        return "agent"
+
+    def _register_declared_workflow_trace_nodes(self) -> None:
+        """Register declared multi-agent nodes in the workflow trace graph."""
+
+        manager = getattr(self, "_workflow_trace_manager", None)
+        if manager is None:
+            return
+
+        registered: set[str] = set()
+        if self._agent_configuration is not None:
+            for agent_id, agent in self._agent_configuration.agents.items():
+                manager.register_node(
+                    agent_id,
+                    node_type=self._workflow_node_type_for_agent(agent),
+                    display_name=agent.display_name,
+                    tunable_params=list(agent.parameter_keys),
+                    metadata={
+                        "source": "declared_agent",
+                        "measure_ids": list(agent.measure_ids),
+                        "primary_model": agent.primary_model,
+                        "order": agent.order,
+                        "auto_inferred": self._agent_configuration.auto_inferred,
+                    },
+                )
+                registered.add(agent_id)
+
+        for prefix in getattr(self, "_declared_trace_agent_prefixes", []):
+            if prefix in registered:
+                continue
+            manager.register_node(
+                str(prefix),
+                node_type="agent",
+                metadata={"source": "agent_prefixes"},
+            )
 
     def _compute_band_target(self) -> float | None:
         """Derive band_target from objective_schema if available."""
