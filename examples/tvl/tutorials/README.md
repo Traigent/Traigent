@@ -85,9 +85,9 @@ python tost_demo.py
 ### TVL 0.9 Spec Structure
 
 ```yaml
-spec:
-  id: my-optimization
-  version: "1.0"
+tvl:
+  module: examples.my_optimization
+tvl_version: "1.0"
 
 metadata:
   owner: team@company.com

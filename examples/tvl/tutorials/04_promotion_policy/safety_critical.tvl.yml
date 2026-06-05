@@ -8,9 +8,9 @@
 # - Benjamini-Hochberg correction: Control false discovery rate
 # - Tie-breakers: Resolve equivalent candidates
 
-spec:
-  id: safety-critical-llm
-  version: "1.0"
+tvl:
+  module: examples.safety_critical_llm
+tvl_version: "1.0"
 
 metadata:
   owner: team@example.com

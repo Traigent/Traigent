@@ -1,9 +1,9 @@
 # TVL 0.9 Example: Complete Banded TOST
 # Full example of banded objectives with TOST equivalence testing
 
-spec:
-  id: banded-tost-complete
-  version: 0.1.0
+tvl:
+  module: examples.banded_tost_complete
+tvl_version: "0.1.0"
 
 metadata:
   owner: "team@example.com"
