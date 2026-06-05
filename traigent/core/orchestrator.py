@@ -796,15 +796,16 @@ class OptimizationOrchestrator:
         if isinstance(policy, dict):
             # Defensive normalization: a raw dict policy must not silently
             # read as non-strict (it would then fail OPEN on gate errors).
+            raw_policy = policy
             try:
                 from traigent.tvl.models import PromotionPolicy
 
-                policy = PromotionPolicy.from_dict(policy)
+                policy = PromotionPolicy.from_dict(raw_policy)
             except Exception:
                 # Unparseable policy declaring strict keys ⇒ fail CLOSED.
                 return bool(
-                    policy.get("require_calibration")
-                    or policy.get("chance_constraints")
+                    raw_policy.get("require_calibration")
+                    or raw_policy.get("chance_constraints")
                 )
         require_calibration = getattr(policy, "require_calibration", None)
         if require_calibration is not None and getattr(
