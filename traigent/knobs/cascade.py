@@ -31,7 +31,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 __all__ = [
@@ -47,7 +47,7 @@ __all__ = [
 VoteKey = Hashable | None
 
 
-class GateKind(str, Enum):
+class GateKind(StrEnum):
     """v1 gate registry (RFC 0001 §3.8)."""
 
     MARGIN_BELOW = "margin_below"
