@@ -185,7 +185,9 @@ def test_cloud_fetch_unimplemented_falls_back_with_warning(tmp_path, monkeypatch
 
     assert opt_func.current_config["temperature"] == 0.1
     assert opt_func.best_config_snapshot.source == BestConfigSource.DEFAULT.value
-    assert any("Cloud best-config fetch is not implemented" in item for item in warnings)
+    assert any(
+        "Cloud best-config fetch is not implemented" in item for item in warnings
+    )
 
 
 def test_invocation_does_not_re_resolve_repo(tmp_path, monkeypatch):
@@ -292,17 +294,17 @@ def test_decorator_passes_cloud_cache_ttl_options(tmp_path):
 
 def streaming_context_answer(text: str):
     config = traigent.get_config()
-    yield f"{text}:{config.get("temperature")}"
+    yield f"{text}:{config.get('temperature')}"
 
 
 async def async_context_answer(text: str):
     config = traigent.get_config()
-    return f"{text}:{config.get("temperature")}"
+    return f"{text}:{config.get('temperature')}"
 
 
 async def async_streaming_context_answer(text: str):
     config = traigent.get_config()
-    yield f"{text}:{config.get("temperature")}"
+    yield f"{text}:{config.get('temperature')}"
 
 
 def test_repo_best_config_source_survives_stream_iteration(tmp_path, monkeypatch):
@@ -419,7 +421,6 @@ async def test_optimization_completion_refreshes_best_config_snapshot():
 
     assert opt_func("hello") == "hello:0.9"
     assert (
-        opt_func.best_config_snapshot.source
-        == BestConfigSource.APPLY_BEST_CONFIG.value
+        opt_func.best_config_snapshot.source == BestConfigSource.APPLY_BEST_CONFIG.value
     )
     assert dict(opt_func.best_config_snapshot.config) == {"temperature": 0.9}
