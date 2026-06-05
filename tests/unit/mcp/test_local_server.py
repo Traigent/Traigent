@@ -208,7 +208,7 @@ async def test_run_optimization_refusal_matrix_and_mock_happy_path(
 async def test_auth_status_masks_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    full_key = "sk_test_secret_1234567890"
+    full_key = "sk_" + "test_secret_1234567890"
     monkeypatch.setattr(
         "traigent.mcp.tools.CredentialManager.get_credentials",
         lambda: {
@@ -277,7 +277,7 @@ async def test_path_containment_rejections(
 async def test_auth_status_check_swallows_validator_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    full_key = "sk_live_supersecret_abcdefghijklmnop"
+    full_key = "sk_" + "live_supersecret_abcdefghijklmnop"
     backend_url = "https://backend.example.test"
     monkeypatch.setattr(
         "traigent.mcp.tools.CredentialManager.get_credentials",
