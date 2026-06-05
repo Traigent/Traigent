@@ -33,11 +33,17 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+import warnings
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from traigent.api.strategy_presets import (
+    NormalizedStrategyPreset,
+    is_strategy_preset_name,
+    normalize_strategy_preset,
+)
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
@@ -256,6 +262,7 @@ class OptimizedFunction:
         custom_evaluator: Callable[..., Any] | None = None,
         scoring_function: Callable[..., Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
+        effectuation: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -277,6 +284,7 @@ class OptimizedFunction:
             custom_evaluator: Custom evaluation function for advanced use cases
             scoring_function: Simple scoring function that returns a score or dict of scores
             metric_functions: Dict of metric name to scoring function
+            effectuation: Opt-in executable TVAR effectuation.
             **kwargs: Additional configuration
         """
         # Extract decorator-provided metadata before core storage
@@ -294,7 +302,12 @@ class OptimizedFunction:
         self._best_config_stale_ok_ttl_seconds = kwargs.pop(
             "best_config_stale_ok_ttl_seconds", None
         )
+        self._best_config_environment = kwargs.pop("best_config_environment", None)
         self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
+        # Guided-generation defaults configured at decoration time; consumed by
+        # optimize_with_guidance when not overridden at the call site.
+        self.prompt_rewrite_options = kwargs.pop("prompt_rewrite", None)
+        self.grow_dataset_options = kwargs.pop("grow_dataset", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -312,6 +325,7 @@ class OptimizedFunction:
             custom_evaluator,
             scoring_function,
             metric_functions,
+            effectuation,
         )
 
         # Handle configuration space with backward compatibility
@@ -350,10 +364,14 @@ class OptimizedFunction:
         custom_evaluator,
         scoring_function,
         metric_functions,
+        effectuation,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
         self.eval_dataset = eval_dataset
+        # Guided generation may swap in a grown dataset that must persist across
+        # rounds (see set_eval_dataset_override / optimize_with_guidance).
+        self._dataset_override: Dataset | None = None
 
         # Handle ObjectiveSchema creation
         resolved_schema = normalize_objectives(objectives)
@@ -391,6 +409,7 @@ class OptimizedFunction:
         self.custom_evaluator = custom_evaluator
         self.scoring_function = scoring_function
         self.metric_functions = metric_functions
+        self.effectuation = bool(effectuation)
 
     def _is_cloud_execution_mode(self) -> bool:
         """Return True when configured for managed cloud execution."""
@@ -604,6 +623,11 @@ class OptimizedFunction:
             kwargs, sentinel, "promotion_gate", None
         )
 
+        # Advisory strategy preset for task-local selection metadata.
+        self.strategy_preset = self._store_optional_param(
+            kwargs, sentinel, "strategy_preset", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -627,6 +651,7 @@ class OptimizedFunction:
             "global_measures",
             # Safety constraints
             "safety_constraints",
+            "strategy_preset",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -680,6 +705,7 @@ class OptimizedFunction:
             best_config_stale_ok_ttl_seconds=getattr(
                 self, "_best_config_stale_ok_ttl_seconds", None
             ),
+            best_config_environment=getattr(self, "_best_config_environment", None),
             enable_auto_load_dev_logs=getattr(self, "_enable_auto_load_dev_logs", None),
             optimization_history_limit=self.optimization_history_limit,
         )
@@ -867,6 +893,22 @@ class OptimizedFunction:
         else:
             return wrapped_func(*args, **kwargs)
 
+    def _trial_callable_for_config_space(
+        self,
+        effective_config_space: dict[str, Any],
+    ) -> Callable[..., Any]:
+        if not getattr(self, "effectuation", False):
+            return cast(Callable[..., Any], self._wrapped_func)
+
+        from traigent.effectuation import compile_effectuation
+
+        application = compile_effectuation(
+            self._wrapped_func,
+            effective_config_space,
+            enabled=True,
+        )
+        return cast(Callable[..., Any], application.wrapped_callable)
+
     def _prepare_algorithm_kwargs(
         self, algorithm_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1044,6 +1086,14 @@ class OptimizedFunction:
 
         from traigent.tvl.promotion_gate import PromotionGate
 
+        # Normalize discovered dict payloads into the typed PromotionPolicy —
+        # a raw dict would read as NON-strict in _is_strict_evidence_mode and
+        # then fail OPEN on gate exceptions (FR-SDK-FAIL-CLOSED-PROMOTION-V1).
+        if isinstance(promotion_policy, dict):
+            from traigent.tvl.models import PromotionPolicy
+
+            promotion_policy = PromotionPolicy.from_dict(promotion_policy)
+
         state["promotion_gate"] = getattr(self, "promotion_gate", None)
         self.promotion_gate = PromotionGate.from_policy(
             promotion_policy=promotion_policy,
@@ -1177,6 +1227,75 @@ class OptimizedFunction:
         ):
             evaluator.metrics = state["evaluator_metrics"]
 
+    @staticmethod
+    def _resolve_runtime_strategy_argument(
+        *,
+        strategy: str | None,
+        strategy_params: Mapping[str, Any] | None,
+        algorithm: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Resolve runtime strategy into a preset name or deprecated algorithm alias."""
+        if strategy is None:
+            if strategy_params is not None:
+                normalize_strategy_preset(None, strategy_params)
+            return None, algorithm
+
+        if is_strategy_preset_name(strategy) or strategy_params is not None:
+            return strategy, algorithm
+
+        if algorithm is not None and algorithm != strategy:
+            raise TypeError(
+                "Conflicting optimization selector: received both "
+                f"'algorithm={algorithm}' and 'strategy={strategy}'. "
+                "Use only 'algorithm'."
+            )
+        warnings.warn(
+            "'strategy' as an optimizer selector is deprecated; "
+            "use 'algorithm' instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return None, strategy
+
+    @staticmethod
+    def _resolve_effective_strategy_preset(
+        *,
+        decorator_preset: NormalizedStrategyPreset | None,
+        runtime_strategy: str | None,
+        strategy_params: Mapping[str, Any] | None,
+    ) -> NormalizedStrategyPreset | None:
+        """Resolve runtime preset override against a decorator-level preset."""
+        if runtime_strategy is None:
+            return decorator_preset
+
+        if decorator_preset is not None:
+            raise ValueError("runtime strategy cannot override a decorator strategy.")
+
+        runtime_preset = normalize_strategy_preset(runtime_strategy, strategy_params)
+        return runtime_preset
+
+    def _apply_runtime_strategy_preset(
+        self,
+        preset: NormalizedStrategyPreset | None,
+        objectives: ObjectiveSchema | Sequence[str] | None,
+    ) -> tuple[
+        ObjectiveSchema | Sequence[str] | None,
+        list[Callable[..., bool]],
+        NormalizedStrategyPreset | None,
+    ]:
+        """Apply runtime preset objectives without adding search constraints."""
+        original_constraints = list(self.constraints or [])
+        original_preset = getattr(self, "strategy_preset", None)
+        if preset is None:
+            return objectives, original_constraints, original_preset
+        if objectives is not None:
+            raise ValueError(
+                "strategy presets are mutually exclusive with explicit objectives. "
+                "Use either strategy=... or objectives=..., not both."
+            )
+        self.strategy_preset = preset
+        return list(preset.objectives), original_constraints, original_preset
+
     async def optimize(
         self,
         algorithm: str | None = None,
@@ -1190,6 +1309,8 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        strategy: str | None = None,
+        strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
@@ -1210,6 +1331,9 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
+            strategy: Optional advisory strategy preset name. Non-preset values retain
+                the deprecated optimizer-alias behavior.
+            strategy_params: Typed parameters for the selected strategy preset.
             progress_bar: Controls the live progress bar during optimization.
                 ``True`` forces a progress bar even in non-interactive mode,
                 ``False`` suppresses it, ``None`` (default) auto-enables in
@@ -1230,6 +1354,11 @@ class OptimizedFunction:
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
+        runtime_strategy_name, algorithm = self._resolve_runtime_strategy_argument(
+            strategy=strategy,
+            strategy_params=strategy_params,
+            algorithm=algorithm,
+        )
         algorithm_kwargs = self._prepare_algorithm_kwargs(algorithm_kwargs)
         objectives, legacy_objectives = self._validate_objectives_input(
             objectives, algorithm_kwargs
@@ -1256,6 +1385,27 @@ class OptimizedFunction:
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
 
+        original_schema = self.objective_schema
+        strategy_original_constraints: list[Callable[..., bool]] | None = None
+        strategy_original_preset: NormalizedStrategyPreset | None = None
+        decorator_preset = getattr(self, "strategy_preset", None)
+        effective_preset = self._resolve_effective_strategy_preset(
+            decorator_preset=decorator_preset,
+            runtime_strategy=runtime_strategy_name,
+            strategy_params=strategy_params,
+        )
+        if decorator_preset is not None and objectives is not None:
+            raise ValueError(
+                "strategy presets are mutually exclusive with explicit objectives. "
+                "Use either strategy=... or objectives=..., not both."
+            )
+        if decorator_preset is None:
+            (
+                objectives,
+                strategy_original_constraints,
+                strategy_original_preset,
+            ) = self._apply_runtime_strategy_preset(effective_preset, objectives)
+
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )
@@ -1264,7 +1414,6 @@ class OptimizedFunction:
         except TypeError as exc:
             raise ValueError(str(exc)) from exc
 
-        original_schema = self.objective_schema
         if runtime_schema is not None:
             self.objective_schema = runtime_schema
 
@@ -1289,6 +1438,9 @@ class OptimizedFunction:
         finally:
             if runtime_schema is not None:
                 self.objective_schema = original_schema
+            if strategy_original_constraints is not None:
+                self.constraints = strategy_original_constraints
+                self.strategy_preset = strategy_original_preset
             self._restore_tvl_state(tvl_state)
 
         return result
@@ -1306,6 +1458,8 @@ class OptimizedFunction:
         tvl_spec: str | Path | None = None,
         tvl_environment: str | None = None,
         tvl: TVLOptions | dict[str, Any] | None = None,
+        strategy: str | None = None,
+        strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
@@ -1329,6 +1483,8 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
+            strategy: Optional advisory strategy preset name.
+            strategy_params: Typed parameters for the selected strategy preset.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
@@ -1361,6 +1517,8 @@ class OptimizedFunction:
             tvl_spec=tvl_spec,
             tvl_environment=tvl_environment,
             tvl=tvl,
+            strategy=strategy,
+            strategy_params=strategy_params,
             progress_bar=progress_bar,
             **algorithm_kwargs,
         )
@@ -1554,10 +1712,19 @@ class OptimizedFunction:
             objectives=self.objectives,
             objective_schema=self.objective_schema,
             workflow_traces_tracker=workflow_traces_tracker,
+            strategy_preset=getattr(self, "strategy_preset", None),
             **orchestrator_kwargs,
         )
 
         orchestrator.samples_include_pruned = samples_include_pruned_value
+        # RFC 0001 §3.4: forward the user-attached knob resolver so the
+        # public optimize() path resolves Fixed/CVAR bindings in-trial.
+        # Attribute seam (like promotion_gate): set
+        # ``wrapped.knob_resolver = KnobResolver(...)`` before optimizing;
+        # absent ⇒ byte-identical legacy behavior.
+        knob_resolver = getattr(self, "knob_resolver", None)
+        if knob_resolver is not None:
+            orchestrator.knob_resolver = knob_resolver
         return orchestrator
 
     async def _run_and_finalize_optimization(
@@ -1570,6 +1737,8 @@ class OptimizedFunction:
         """Run optimization with context managers and finalize results."""
         from traigent.config.context import ConfigurationSpaceContext
 
+        trial_func = self._trial_callable_for_config_space(effective_config_space)
+
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
 
@@ -1578,12 +1747,12 @@ class OptimizedFunction:
                 if self.auto_override_frameworks and self.framework_targets:
                     with override_context(self.framework_targets):
                         result = await orchestrator.optimize(
-                            func=self._wrapped_func,
+                            func=trial_func,
                             dataset=dataset,
                         )
                 else:
                     result = await orchestrator.optimize(
-                        func=self._wrapped_func,
+                        func=trial_func,
                         dataset=dataset,
                     )
 
@@ -1862,7 +2031,14 @@ class OptimizedFunction:
         except OptimizationError:
             raise
         except Exception as e:
+            from traigent.knobs import ResolutionError
+
             logger.error(f"Optimization failed: {e}")
+            if isinstance(e, ResolutionError):
+                # RFC 0001 §3.4: the typed fail-closed governance rejection
+                # IS the public contract — never dilute it into a generic
+                # OptimizationError.
+                raise
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
@@ -2091,6 +2267,113 @@ class OptimizedFunction:
             },
         )
 
+    def set_eval_dataset_override(self, dataset: Dataset | None) -> None:
+        """Pin the dataset returned by ``_load_dataset``.
+
+        Used by guided generation so a grown dataset persists across
+        re-optimization rounds. Pass ``None`` to clear.
+        """
+        self._dataset_override = dataset
+
+    def optimize_with_guidance(
+        self,
+        provider: Any,
+        *,
+        plan_kind: Any = "benchmark_guide",
+        rewrite_llm: Any = None,
+        prompt_rewrite: Any = None,
+        grow_dataset: Any = None,
+        prompt_param: str | None = None,
+        weak_examples: Sequence[tuple[Any, Any, Any]] = (),
+        **optimize_kwargs: Any,
+    ) -> Any:
+        """Run guided generation: optimize, fetch an opaque backend GuidancePlan,
+        generate locally with the user's own LLM, and re-optimize across rounds.
+
+        ``provider`` supplies the GuidancePlan (a ``GuidancePlanProvider``);
+        generation runs on ``rewrite_llm`` (a callable ``fn(prompt) -> str`` or an
+        already-constructed client). Content never leaves the client. Returns the
+        best ``OptimizationResult`` across rounds.
+        """
+        from traigent.generation import (
+            DatasetGrowthOptions,
+            ExampleSynthesizer,
+            GuidanceLoop,
+            PromptRewriteOptions,
+            PromptRewriter,
+            resolve_rewrite_llm,
+        )
+        from traigent.generation.models import PlanKind
+        from traigent.utils.example_id import (
+            compute_dataset_hash,
+            generate_stable_example_id,
+        )
+
+        kind = plan_kind if isinstance(plan_kind, PlanKind) else PlanKind(plan_kind)
+        llm = resolve_rewrite_llm(rewrite_llm)
+
+        def _coerce(spec: Any, cls: type) -> Any:
+            if spec is None:
+                return cls()
+            if isinstance(spec, cls):
+                return spec
+            return cls(**spec)
+
+        prompt_opts = _coerce(
+            (
+                prompt_rewrite
+                if prompt_rewrite is not None
+                else self.prompt_rewrite_options
+            ),
+            PromptRewriteOptions,
+        )
+        growth_opts = _coerce(
+            grow_dataset if grow_dataset is not None else self.grow_dataset_options,
+            DatasetGrowthOptions,
+        )
+
+        config_space = dict(self.configuration_space or {})
+        dataset = self._load_dataset()
+
+        is_rewrite = kind is PlanKind.PROMPT_REWRITE
+        rewriter = PromptRewriter(llm, prompt_opts) if is_rewrite else None
+        synthesizer = ExampleSynthesizer(llm, growth_opts) if not is_rewrite else None
+
+        # Best-effort stable-id -> example map for resolving plan seeds locally.
+        ds_hash = compute_dataset_hash(getattr(dataset, "name", "dataset"))
+        id_to_example = {
+            generate_stable_example_id(ds_hash, i): ex
+            for i, ex in enumerate(getattr(dataset, "examples", []))
+        }
+
+        def _seed_resolver(seed_ref: str) -> Any:
+            return id_to_example.get(seed_ref)
+
+        def _optimize_round(cs: dict[str, Any], ds: Any) -> Any:
+            self.set_eval_dataset_override(ds)
+            return self.optimize_sync(configuration_space=cs, **optimize_kwargs)
+
+        loop = GuidanceLoop(
+            provider=provider,
+            rewriter=rewriter,
+            synthesizer=synthesizer,
+            prompt_options=prompt_opts,
+            growth_options=growth_opts,
+        )
+        try:
+            outcome = loop.run(
+                optimize_round=_optimize_round,
+                config_space=config_space,
+                dataset=dataset,
+                plan_kind=kind,
+                prompt_param=prompt_param,
+                seed_resolver=None if is_rewrite else _seed_resolver,
+                weak_examples=weak_examples,
+            )
+        finally:
+            self.set_eval_dataset_override(None)
+        return outcome.best_result
+
     def _load_dataset(self) -> Dataset:
         """Load evaluation dataset.
 
@@ -2100,6 +2383,11 @@ class OptimizedFunction:
         Raises:
             ConfigurationError: If dataset cannot be loaded
         """
+        # A guided-generation round may have grown the dataset; the override takes
+        # precedence so synthesized examples persist across re-optimization rounds.
+        if self._dataset_override is not None:
+            return self._dataset_override
+
         if isinstance(self.eval_dataset, Dataset):
             return self.eval_dataset
 
@@ -2266,9 +2554,9 @@ class OptimizedFunction:
             directory, config_id=config_id, include_metadata=include_metadata
         )
 
-    def publish_best_config(self, *, target: str = "cloud") -> None:
+    def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
         """Publish the best config to a durable remote target when supported."""
-        self._csm.publish_best_config(target=target)
+        return self._csm.publish_best_config(target=target)
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""

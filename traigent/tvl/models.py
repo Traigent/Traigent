@@ -214,6 +214,44 @@ class BandTarget:
         )
 
 
+CTX_EXT_KEYS = frozenset(
+    {"stage_versions", "model_versions", "budget_assumptions", "cost_assumptions"}
+)
+
+
+@dataclass(slots=True)
+class RequireCalibration:
+    """TVL 1.1 strict evidence mode (RFC 0001 §3.5).
+
+    The mandatory freshness-context core is implicit and immutable;
+    ``hash_covered_context`` selects EXTENSION keys only — naming a core key
+    here is an error by construction.
+    """
+
+    enabled: bool = False
+    hash_covered_context: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        invalid = [k for k in self.hash_covered_context if k not in CTX_EXT_KEYS]
+        if invalid:
+            raise ValueError(
+                f"hash_covered_context keys {invalid!r} are not extension keys; "
+                "the mandatory core is not module-configurable"
+            )
+        if len(self.hash_covered_context) != len(set(self.hash_covered_context)):
+            raise ValueError("hash_covered_context keys must be unique")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RequireCalibration:
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("require_calibration.enabled must be a boolean")
+        context = data.get("hash_covered_context", [])
+        if not isinstance(context, list):
+            raise ValueError("hash_covered_context must be a list")
+        return cls(enabled=enabled, hash_covered_context=list(context))
+
+
 @dataclass(slots=True)
 class ChanceConstraint:
     """Chance constraint for promotion policy.
@@ -267,6 +305,7 @@ class PromotionPolicy:
     adjust: AdjustMethod = "none"
     chance_constraints: list[ChanceConstraint] = field(default_factory=list)
     tie_breakers: dict[str, TieBreaker] = field(default_factory=dict)
+    require_calibration: RequireCalibration | None = None  # TVL 1.1 strict mode
 
     def __post_init__(self) -> None:
         """Validate promotion policy."""
@@ -297,6 +336,12 @@ class PromotionPolicy:
         chance_constraints = [
             ChanceConstraint.from_dict(cc) for cc in data.get("chance_constraints", [])
         ]
+        require_calibration = None
+        if "require_calibration" in data:
+            raw = data["require_calibration"]
+            if not isinstance(raw, dict):
+                raise ValueError("require_calibration must be a mapping")
+            require_calibration = RequireCalibration.from_dict(raw)
 
         return cls(
             dominance=data.get("dominance", "epsilon_pareto"),
@@ -305,6 +350,7 @@ class PromotionPolicy:
             adjust=data.get("adjust", "none"),
             chance_constraints=chance_constraints,
             tie_breakers=data.get("tie_breakers", {}),
+            require_calibration=require_calibration,
         )
 
 

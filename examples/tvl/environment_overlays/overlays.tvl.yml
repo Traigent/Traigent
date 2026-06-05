@@ -1,9 +1,9 @@
 # TVL Legacy Format Example: Environment Overlays
 # Uses legacy format to test deprecation warnings
 
-spec:
-  id: environment-overlays-example
-  version: 0.0.1
+tvl:
+  module: examples.environment_overlays_example
+tvl_version: "0.0.1"
 
 metadata:
   owner: "team@example.com"
@@ -35,12 +35,13 @@ optimization:
       value: 30
     timeout_seconds: 900
 
-# Legacy constraints format (should emit deprecation warning)
+# Structural constraint (TVL 0.9 form; the pre-0.9 'type: expression'
+# legacy shape is no longer schema-valid)
 constraints:
-  - id: temperature-limit
-    type: expression
-    rule: 'params.temperature <= 0.8'
-    error_message: "Keep temperature reasonable"
+  structural:
+    - id: temperature-limit
+      expr: 'params.temperature <= 0.8'
+      error_message: "Keep temperature reasonable"
 
 environments:
   base:

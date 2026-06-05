@@ -10,6 +10,15 @@ from traigent.security.tenant import TenantStatus, TenantTier
 from traigent.utils.exceptions import AuthenticationError, TraigentConnectionError
 
 
+@pytest.fixture(autouse=True)
+def _online_backend(jwt_development_mode, monkeypatch):
+    """These tests exercise the online client request path, so they opt out of
+    the suite-wide TRAIGENT_OFFLINE_MODE=true default (#1068). The transport is
+    mocked, so no real egress occurs; depends on jwt_development_mode so this
+    override runs after it."""
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
+
 def test_enterprise_admin_client_manages_tenants_memberships_and_sso():
     calls: list[tuple[str, str, dict | None]] = []
 
@@ -43,7 +52,9 @@ def test_enterprise_admin_client_manages_tenants_memberships_and_sso():
                     },
                 }
             }
-        if method == "GET" and path.startswith("/api/v1beta/admin/tenants/tenant_1/memberships"):
+        if method == "GET" and path.startswith(
+            "/api/v1beta/admin/tenants/tenant_1/memberships"
+        ):
             return {
                 "data": {
                     "items": [
@@ -144,7 +155,9 @@ def test_enterprise_admin_client_manages_tenants_memberships_and_sso():
         }
 
     client = EnterpriseAdminClient(request_sender=request_sender)
-    tenants = client.list_tenants(search="acme", status=TenantStatus.ACTIVE, tier=TenantTier.PROFESSIONAL)
+    tenants = client.list_tenants(
+        search="acme", status=TenantStatus.ACTIVE, tier=TenantTier.PROFESSIONAL
+    )
     created_tenant = client.create_tenant(
         name="Acme Corp",
         slug="acme",
@@ -153,7 +166,9 @@ def test_enterprise_admin_client_manages_tenants_memberships_and_sso():
         quotas={"max_users": 25},
         metadata={"region": "us"},
     )
-    updated_tenant = client.update_tenant("tenant_1", status=TenantStatus.SUSPENDED, tier=TenantTier.ENTERPRISE)
+    updated_tenant = client.update_tenant(
+        "tenant_1", status=TenantStatus.SUSPENDED, tier=TenantTier.ENTERPRISE
+    )
     memberships = client.list_tenant_memberships(
         "tenant_1",
         status=TenantMembershipStatus.ACTIVE,

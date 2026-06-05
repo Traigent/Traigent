@@ -147,7 +147,7 @@ LLM outputs are non-deterministic. Per-configuration repetition aggregation is
 an **enterprise-only** feature in the current OSS SDK release. Constructing
 `ExecutionOptions` with any non-default value for `reps_per_trial` or
 `reps_aggregation` raises a `pydantic.ValidationError` at construction time
-(see issue #931) - the gate is enforced at the contract boundary instead of
+because the gate is enforced at the contract boundary instead of
 late in the optimization run.
 
 ```python

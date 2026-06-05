@@ -71,3 +71,10 @@ def block_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(socket, "create_connection", _blocked_create_connection)
     monkeypatch.setattr(socket, "getaddrinfo", _blocked_getaddrinfo)
     yield
+
+
+@pytest.fixture
+def cost_preflight_approved(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Approve run-cost preflight only for tests that explicitly opt in."""
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    yield

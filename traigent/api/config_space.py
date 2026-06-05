@@ -53,6 +53,7 @@ from traigent.api.validation_protocol import (
 )
 
 if TYPE_CHECKING:
+    from traigent.knobs import Knob
     from traigent.tvl.models import StructuralConstraint, TVarDecl
 
 
@@ -102,9 +103,12 @@ class ConfigSpace:
     the TVL ecosystem.
 
     Attributes:
-        tvars: Read-only mapping of parameter names to ParameterRange definitions
+        tvars: Read-only Tuned-only projection — parameter names to
+            ParameterRange definitions; exactly what dict-based optimizers see
         constraints: Immutable tuple of structural constraints on the space
         description: Optional description of the configuration space
+        knobs: Read-only canonical binding-aware surface (RFC 0001). Always
+            populated: derived from ``tvars`` as all-Tuned when not supplied
 
     Example:
         >>> from traigent import Range, Choices, implies
@@ -119,13 +123,58 @@ class ConfigSpace:
         ... )
     """
 
-    tvars: Mapping[str, ParameterRange]
+    tvars: Mapping[str, ParameterRange] = field(default_factory=dict)
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
     description: str | None = None
+    knobs: Mapping[str, Knob] | None = None
 
     def __post_init__(self) -> None:
-        """Validate the configuration space after initialization."""
-        object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+        """Validate the configuration space after initialization.
+
+        Knob/tvar coherence (RFC 0001, the one-Knob model):
+        - constructed with ``knobs`` -> ``tvars`` is DERIVED as the
+          Tuned-only projection (Fixed/Calibrated knobs are
+          optimizer-invisible, P2); passing both with a mismatch is an error;
+        - constructed with ``tvars`` only (every existing call site) ->
+          ``knobs`` is synthesized as all-Tuned via the adapter, so the two
+          surfaces can never drift apart.
+        """
+        from traigent.knobs import Knob as _Knob
+        from traigent.knobs import knob_to_parameter_range, parameter_range_to_knob
+
+        if self.knobs is not None:
+            knobs = dict(self.knobs)
+            for knob_name, knob in knobs.items():
+                if not isinstance(knob, _Knob):
+                    raise TypeError(f"knobs[{knob_name!r}] is not a Knob")
+                if knob.name != knob_name:
+                    raise ValueError(
+                        f"knob mapping key {knob_name!r} != knob.name {knob.name!r}"
+                    )
+            projected = {
+                name: knob_to_parameter_range(knob)
+                for name, knob in knobs.items()
+                if knob.is_tuned()
+            }
+            if self.tvars and dict(self.tvars) != projected:
+                raise ValueError(
+                    "tvars must be the Tuned-only projection of knobs; "
+                    "pass only knobs and let tvars be derived"
+                )
+            object.__setattr__(self, "tvars", MappingProxyType(projected))
+            object.__setattr__(self, "knobs", MappingProxyType(knobs))
+        else:
+            object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+            object.__setattr__(
+                self,
+                "knobs",
+                MappingProxyType(
+                    {
+                        name: parameter_range_to_knob(name, parameter_range)
+                        for name, parameter_range in self.tvars.items()
+                    }
+                ),
+            )
         object.__setattr__(self, "constraints", tuple(self.constraints))
 
         # Ensure all tvars have unique names
@@ -146,15 +195,25 @@ class ConfigSpace:
             "tvars": dict(self.tvars),
             "constraints": tuple(self.constraints),
             "description": self.description,
+            "knobs": dict(self.knobs) if self.knobs is not None else None,
         }
 
     def __setstate__(self, state: Mapping[str, Any]) -> None:
         """Restore immutable state after unpickling."""
+        from traigent.knobs import parameter_range_to_knob
+
         object.__setattr__(self, "tvars", MappingProxyType(dict(state["tvars"])))
         object.__setattr__(
             self, "constraints", tuple(cast(Sequence[Constraint], state["constraints"]))
         )
         object.__setattr__(self, "description", state.get("description"))
+        knobs = state.get("knobs")
+        if knobs is None:  # pickles from before the knobs surface
+            knobs = {
+                name: parameter_range_to_knob(name, parameter_range)
+                for name, parameter_range in state["tvars"].items()
+            }
+        object.__setattr__(self, "knobs", MappingProxyType(dict(knobs)))
 
     @classmethod
     def from_decorator_args(
@@ -272,7 +331,35 @@ class ConfigSpace:
             }
         elif isinstance(domain, Mapping):
             kind = domain.get("kind")
-            if kind == "enum":
+            if kind is None:
+                # canonical TVL mapping forms have no 'kind' discriminator
+                if "range" in domain:
+                    kind = "range"
+                elif "set" in domain:
+                    set_values = domain.get("set")
+                    if not isinstance(set_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' set domain must contain a list"
+                        )
+                    spec_dict = {
+                        "values": list(set_values),
+                        "default": entry.get("default"),
+                    }
+                    kind = "enum_resolved"
+                elif "values" in domain:
+                    enum_values = domain.get("values")
+                    if not isinstance(enum_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' values domain must contain a list"
+                        )
+                    spec_dict = {
+                        "values": list(enum_values),
+                        "default": entry.get("default"),
+                    }
+                    kind = "enum_resolved"
+            if kind == "enum_resolved":
+                pass  # spec_dict already built from canonical set/values form
+            elif kind == "enum":
                 spec_dict = {
                     "values": list(domain.get("values", [])),
                     "default": entry.get("default"),
@@ -816,24 +903,29 @@ class ConfigSpace:
             return "float"  # Default
 
     @staticmethod
-    def _tvar_to_domain(tvar: ParameterRange) -> dict[str, Any]:
-        """Convert ParameterRange to TVL 0.9 domain specification.
+    def _tvar_to_domain(tvar: ParameterRange) -> dict[str, Any] | list[Any]:
+        """Convert ParameterRange to the CANONICAL TVL domain form.
 
-        TVL 0.9 domains have explicit 'kind' field:
-        - enum: {"kind": "enum", "values": [...]}
-        - range: {"kind": "range", "range": [low, high], "resolution": step}
+        Canonical forms (tvl.schema.json DomainSpec):
+        - enum: literal array  ["a", "b", ...]
+        - range: {"range": [low, high], "resolution": step, "log": bool}
+
+        Ingestion (`_spec_entry_to_range`) accepts BOTH these canonical forms
+        and the legacy SDK `{"kind": ...}` forms for back-compatibility with
+        already-serialized specs.
 
         Args:
             tvar: The ParameterRange to convert
 
         Returns:
-            Domain specification dict in TVL 0.9 format
+            Canonical domain specification (list for enums, dict for ranges)
         """
         if isinstance(tvar, Choices):
-            return {"kind": "enum", "values": list(tvar.values)}
+            # canonical literal-array enum (tvl.schema.json EnumVals)
+            return list(tvar.values)
 
         if isinstance(tvar, LogRange):
-            return {"kind": "range", "range": [tvar.low, tvar.high], "log": True}
+            return {"range": [tvar.low, tvar.high], "log": True}
 
         if isinstance(tvar, (IntRange, Range)):
             return ConfigSpace._range_to_domain(tvar)
@@ -843,8 +935,8 @@ class ConfigSpace:
 
     @staticmethod
     def _range_to_domain(tvar: IntRange | Range) -> dict[str, Any]:
-        """Convert IntRange or Range to domain dict."""
-        domain: dict[str, Any] = {"kind": "range", "range": [tvar.low, tvar.high]}
+        """Convert IntRange or Range to the canonical TVL range domain."""
+        domain: dict[str, Any] = {"range": [tvar.low, tvar.high]}
         if tvar.step is not None:
             domain["resolution"] = tvar.step
         if tvar.log:

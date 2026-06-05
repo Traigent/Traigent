@@ -687,6 +687,13 @@ class TestWorkflowTracesTracker:
         """Default tracker backend should be cloud-first, not localhost."""
         monkeypatch.delenv("TRAIGENT_BACKEND_URL", raising=False)
         monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
+        # Isolate from stored CLI credentials (~/.traigent) so the test
+        # exercises the true no-env/no-credentials default branch.
+        from traigent.cloud.credential_manager import CredentialManager
+
+        monkeypatch.setattr(
+            CredentialManager, "get_stored_backend_url", staticmethod(lambda: None)
+        )
 
         tracker = WorkflowTracesTracker()
 
@@ -983,9 +990,7 @@ class TestEdgeCases:
 
         results = await asyncio.gather(*(run_task(i) for i in range(3)))
 
-        for index, (config_run_id, trace_id, span_count, context_run_id) in enumerate(
-            results
-        ):
+        for index, (config_run_id, trace_id, span_count, context_run_id) in enumerate(results):
             assert config_run_id == f"config_{index}"
             assert context_run_id == f"config_{index}"
             assert trace_id is not None

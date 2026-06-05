@@ -741,6 +741,39 @@ class TestOptimizationOrchestrator:
         assert ranking["non_successful_count"] == 1
         assert ranking["eligible_count"] == 1
 
+    def test_create_optimization_result_with_empty_objectives(self, orchestrator):
+        """RED before the fix: objectives-free runs (a supported BaseOptimizer
+        mode — weighted scoring disabled) hit an unguarded objectives[0] at
+        the terminal selection and crashed with IndexError (#1108 review NB).
+        The honest result is the selector's no-eligible shape."""
+        orchestrator.optimizer.objectives = []
+        orchestrator._trials = [
+            TrialResult(
+                trial_id="trial_no_obj",
+                config={"param1": 1},
+                metrics={"accuracy": 0.9},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=datetime.now(UTC),
+                metadata={},
+            )
+        ]
+        orchestrator._status = OptimizationStatus.COMPLETED
+
+        result = orchestrator._create_optimization_result()
+
+        assert result.best_config == {}
+        assert result.best_score is None
+        summary = result.metadata["session_summary"]
+        assert summary["reason_code"] == "NO_RANKING_ELIGIBLE_TRIALS"
+        assert "no objectives declared" in summary["reason"]
+        # the selector's full no-eligible shape, ranking summary included
+        ranking = summary["ranking"]
+        assert ranking["total_input_trials"] == 1
+        assert ranking["total_successful_trials"] == 1
+        assert ranking["eligible_count"] == 0
+        assert ranking["excluded_count"] == 1
+
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
     async def test_optimize_optimizer_exception(

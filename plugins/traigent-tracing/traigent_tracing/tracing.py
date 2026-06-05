@@ -23,12 +23,10 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from traigent.core.trace_env import is_trace_enabled
+
 # Check if tracing is enabled and OpenTelemetry is available
-TRACING_ENABLED = os.environ.get("TRAIGENT_TRACE_ENABLED", "false").lower() in (
-    "true",
-    "1",
-    "yes",
-)
+TRACING_ENABLED = is_trace_enabled()
 
 try:
     from opentelemetry import context as otel_context
@@ -658,9 +656,7 @@ def _serialize_output(output: Any, max_length: int) -> str:
     """
     scrubbed = _scrub_for_export(output)
     try:
-        output_str = (
-            json.dumps(scrubbed) if not isinstance(scrubbed, str) else scrubbed
-        )
+        output_str = json.dumps(scrubbed) if not isinstance(scrubbed, str) else scrubbed
     except (TypeError, ValueError):
         output_str = _scrub_pii_text(str(scrubbed))
     if len(output_str) > max_length:

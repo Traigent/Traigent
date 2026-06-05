@@ -20,6 +20,9 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+SelectionGrade = Literal["advisory"]
+ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
+
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
     import numpy as np
@@ -403,6 +406,87 @@ class TrialResult:
         return result
 
 
+@dataclass
+class PresetSelection:
+    """Advisory strategy-preset selection result.
+
+    Preset selection is deliberately separate from ``best_config``. It is a
+    task-local recommendation and never a statistical certificate.
+    """
+
+    preset_name: str
+    params: dict[str, Any]
+    selection_grade: SelectionGrade
+    selection_rationale: str
+    status: str
+    selected_config: dict[str, Any] | None = None
+    selected_configs: list[dict[str, Any]] = field(default_factory=list)
+    selected_trial_indices: list[int] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Ensure advisory preset records cannot carry certificate claims."""
+        if self.selection_grade != ADVISORY_SELECTION_GRADE:
+            raise ValueError("preset selection_grade must be 'advisory'.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        """Return the schema-shaped strategy_preset metadata payload."""
+        metadata: dict[str, Any] = {
+            "preset_name": self.preset_name,
+            "params": dict(self.params),
+            "selection_grade": self.selection_grade,
+        }
+        if self.selection_rationale:
+            metadata["selection_rationale"] = self.selection_rationale[:280]
+        return metadata
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-ready dictionary."""
+        return {
+            **self.to_metadata(),
+            "status": self.status,
+            "selected_config": (
+                dict(self.selected_config) if self.selected_config is not None else None
+            ),
+            "selected_configs": [dict(config) for config in self.selected_configs],
+            "selected_trial_indices": list(self.selected_trial_indices),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None) -> PresetSelection | None:
+        """Reconstruct a PresetSelection from persisted result metadata."""
+        if not isinstance(data, Mapping):
+            return None
+        selected_config_raw = data.get("selected_config")
+        selected_configs_raw = data.get("selected_configs")
+        selected_indices_raw = data.get("selected_trial_indices")
+        if data.get("selection_grade", ADVISORY_SELECTION_GRADE) != (
+            ADVISORY_SELECTION_GRADE
+        ):
+            return None
+        return cls(
+            preset_name=str(data.get("preset_name", "")),
+            params=dict(data.get("params") or {}),
+            selection_grade=ADVISORY_SELECTION_GRADE,
+            selection_rationale=str(data.get("selection_rationale", "")),
+            status=str(data.get("status", "selected")),
+            selected_config=(
+                dict(selected_config_raw)
+                if isinstance(selected_config_raw, Mapping)
+                else None
+            ),
+            selected_configs=[
+                dict(config)
+                for config in (selected_configs_raw or [])
+                if isinstance(config, Mapping)
+            ],
+            selected_trial_indices=[
+                int(index)
+                for index in (selected_indices_raw or [])
+                if isinstance(index, (int, float)) and not isinstance(index, bool)
+            ],
+        )
+
+
 def serialize_trials(
     trials: Sequence[TrialResult],
     *,
@@ -532,6 +616,7 @@ class OptimizationResult:
         algorithm: Name of the optimization algorithm used.
         timestamp: When the optimization completed.
         metadata: Additional metadata from the optimization run.
+        preset_selection: Advisory strategy-preset selection, when requested.
         total_cost: Total API cost incurred (if tracked).
         total_tokens: Total tokens consumed (if tracked).
         metrics: Aggregated metrics across all trials.
@@ -564,6 +649,7 @@ class OptimizationResult:
     algorithm: str
     timestamp: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
+    preset_selection: PresetSelection | None = None
 
     # Cost and token tracking
     total_cost: float | None = None
@@ -608,7 +694,15 @@ class OptimizationResult:
 
     @property
     def best_metrics(self) -> dict[str, float]:
-        """Get best metrics from the best trial."""
+        """Get best metrics from the best trial.
+
+        A result with NO WINNER — empty ``best_config`` AND ``best_score``
+        of ``None``, the NO_CERTIFIED_SELECTION shape from strict evidence
+        runs — makes no winner-metric claims. A valid winner whose config
+        happens to be empty still carries a score and keeps its metrics.
+        """
+        if not self.best_config and self.best_score is None:
+            return {}
         if not self.trials:
             return {}
         if not self.objectives:
@@ -1261,6 +1355,11 @@ class OptimizationResult:
         This method allows proper multi-objective scoring after the optimization has
         completed, using the full range of observed values for normalization.
 
+        Winner-claim note (FR-SDK-FAIL-CLOSED-PROMOTION-V1): the per-trial
+        weighted scores are DESCRIPTIVE statistics and always computed; the
+        ``best_weighted_config`` key is a winner claim and is omitted when the
+        result carries no certified winner (empty ``best_config``).
+
         Args:
             objective_weights: Dictionary of objective weights (defaults to equal weights)
             minimize_objectives: List of objectives to minimize (e.g., ["cost", "latency"])
@@ -1277,7 +1376,11 @@ class OptimizationResult:
         """
         if not self.successful_trials:
             return {
-                "best_weighted_config": self.best_config,
+                **(
+                    {"best_weighted_config": self.best_config}
+                    if (self.best_config or self.best_score is not None)
+                    else {}
+                ),
                 "best_weighted_score": 0.0,
                 "weighted_scores": [],
                 "normalization_ranges": {},
@@ -1305,7 +1408,11 @@ class OptimizationResult:
         )
 
         return {
-            "best_weighted_config": best_weighted_config,
+            **(
+                {"best_weighted_config": best_weighted_config}
+                if (self.best_config or self.best_score is not None)
+                else {}
+            ),
             "best_weighted_score": best_weighted_score,
             "weighted_scores": weighted_scores,
             "normalization_ranges": ranges,
@@ -1648,6 +1755,8 @@ class OptimizationResult:
         # Include best configuration information if available
         summary["best_config"] = self.best_config
         summary["best_score"] = self.best_score
+        if self.preset_selection is not None:
+            summary["preset_selection"] = self.preset_selection.to_dict()
 
         return summary
 
@@ -1762,7 +1871,7 @@ class ParetoFront:
             "chart today, read the public fields (configurations, "
             "objective_values, objectives, is_maximized) and pass them to "
             "matplotlib/plotly directly. "
-            "Tracking: https://github.com/Traigent/Traigent/issues/893"
+            "Tracking: internal tracking"
         )
 
 
@@ -1843,7 +1952,7 @@ class OptimizationJob:
             "API that has not shipped yet. Use OptimizedFunction.optimize() "
             "for synchronous optimization, or query .status / .is_complete() "
             f"on this job handle for non-blocking state.{timeout_note} "
-            "Tracking: https://github.com/Traigent/Traigent/issues/875"
+            "Tracking: internal tracking"
         )
 
 

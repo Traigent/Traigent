@@ -208,7 +208,7 @@ class PrivacyOperations:
                 return — capability unavailability is a structurally
                 different state from "no suggestion available" and should
                 route to a local optimizer or surface to the user. See
-                issue #888.
+                the tracked fix.
             CloudServiceError: For other typed backend failures (auth,
                 transient remote errors). Callers should treat these as
                 non-final and may retry or fail loud, but MUST NOT treat
@@ -241,7 +241,7 @@ class PrivacyOperations:
                 # but do NOT increment completed_trials — a suggestion is not a
                 # completion. The completion count advances in
                 # submit_privacy_trial_results when the result is accepted.
-                # See issue #889 for the reasoning (overcount on abandoned /
+                #  for the reasoning (overcount on abandoned /
                 # failed-before-result suggestions distorted progress, billing,
                 # and stop conditions).
                 with self.client._active_sessions_lock:
@@ -261,7 +261,7 @@ class PrivacyOperations:
             # apart so they can route to a local optimizer instead of
             # silently treating optimization as complete. Re-raise the typed
             # exception so the public boundary surfaces the capability gap.
-            # See issue #888.
+            #
             raise
         except CloudServiceError:
             # Other typed cloud failures (auth, transient remote errors) are
@@ -350,7 +350,7 @@ class PrivacyOperations:
                 return False
 
             # Advance the completion counter exactly once, on result acceptance.
-            # Moved here from get_next_privacy_trial per issue #889.
+            # Moved here from get_next_privacy_trial per the tracked fix.
             with self.client._active_sessions_lock:
                 session = self.client._active_sessions.get(session_id)
                 if session:

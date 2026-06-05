@@ -9,9 +9,9 @@
 #
 # Run with: traigent optimize --spec chatbot_optimization.tvl.yml
 
-spec:
-  id: chatbot-quickstart
-  version: "1.0"
+tvl:
+  module: examples.chatbot_quickstart
+tvl_version: "1.0"
 
 metadata:
   owner: team@example.com

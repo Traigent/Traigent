@@ -215,6 +215,9 @@ class TestOptimizationAnalyzer:
     )
     def test_plot_pareto_front(self):
         """Test Pareto front analysis."""
+        import matplotlib
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         experiments_df = self.analyzer.list_experiments()

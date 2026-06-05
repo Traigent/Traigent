@@ -54,7 +54,7 @@ class CredentialManager:
             if stored_creds.get("api_key"):
                 logger.debug("Using API key from CLI credentials")
                 return cast(str, stored_creds["api_key"])
-            # SDK#908 fix: previously this fell back to using the
+            # regression fix: previously this fell back to using the
             # stored `jwt_token` as if it were an API key. JWTs expire
             # within minutes; using one as a long-lived API key leaks
             # an expired token into request headers, which the

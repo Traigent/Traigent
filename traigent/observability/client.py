@@ -532,7 +532,7 @@ class ObservabilityClient:
 
     def flush(self, timeout: float | None = None) -> FlushResult:
         timeout = timeout or self.config.flush_timeout
-        if self.config.offline_mode and self._sender_override is None:
+        if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
             return self._offline_flush_result()
         with self._lock:
@@ -571,7 +571,7 @@ class ObservabilityClient:
                 warnings=[],
             )
 
-        if self.config.offline_mode and self._sender_override is None:
+        if self.config.offline_mode and not self._has_custom_trace_sender:
             self._log_offline_mode_once()
             self._closed = True
             return self._offline_flush_result()
@@ -754,6 +754,10 @@ class ObservabilityClient:
 
         return self._post_batch_sync(traces)
 
+    @property
+    def _has_custom_trace_sender(self) -> bool:
+        return self._sender_override is not None
+
     def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
         if self.config.offline_mode:
             self._log_offline_mode_once()
@@ -896,7 +900,7 @@ class ObservabilityClient:
         return data
 
     def _queue_trace_snapshot(self, trace_id: str) -> None:
-        if self.config.offline_mode and self._sender_override is None:
+        if self.config.offline_mode and not self._has_custom_trace_sender:
             return
         with self._lock:
             state = self._trace_states.get(trace_id)

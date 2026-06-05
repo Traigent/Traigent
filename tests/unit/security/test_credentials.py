@@ -1,11 +1,13 @@
 """Comprehensive unit tests for secure credential management."""
 
+import json
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from traigent.security import credentials as credentials_module
 from traigent.security.credentials import (
     CredentialType,
     EnhancedCredentialStore,
@@ -197,6 +199,42 @@ class TestEnhancedCredentialStore:
         # Verify credential exists
         assert store.get("meta-test") is not None
 
+    def test_structured_credential_weak_check_ignores_user_metadata(self, store):
+        """User metadata in a structured credential payload is not secret material."""
+        payload = {
+            "api_key": "sk_" + ("a" * 43),  # pragma: allowlist secret
+            "backend_url": "https://api.example.test/demo",
+            "tenant_id": "tenant_admin_demo",
+            "project_id": "project_example",
+            "user": {"id": "user_123", "email": "admin@dev.local"},
+        }
+
+        store.set(
+            name="cli_credentials",
+            value=json.dumps(payload, separators=(",", ":")),
+            credential_type=CredentialType.TOKEN,
+        )
+
+        saved = store.get("cli_credentials", check_env=False)
+        assert saved is not None
+        assert json.loads(saved)["user"]["email"] == "admin@dev.local"
+
+    def test_structured_credential_weak_check_names_secret_field(self, store):
+        """Weak structured credentials are rejected on the offending secret field."""
+        payload = {
+            "api_key": "your-api-key-here",  # pragma: allowlist secret
+            "user": {"email": "user@example.test"},
+        }
+
+        with pytest.raises(
+            AuthenticationError, match="api_key.*weak|api_key.*placeholder"
+        ):
+            store.set(
+                name="cli_credentials",
+                value=json.dumps(payload, separators=(",", ":")),
+                credential_type=CredentialType.TOKEN,
+            )
+
     def test_credential_with_expiration(self, store):
         """Test storing credential with expiration."""
         expires_at = datetime.now(UTC) + timedelta(hours=1)
@@ -217,6 +255,27 @@ class TestEnhancedCredentialStore:
 
         metrics = store.get_security_metrics()
         assert isinstance(metrics, dict)
+
+    def test_security_event_log_omits_details(self, store, monkeypatch):
+        """Security-event logs must not include caller-supplied detail payloads."""
+        messages: list[str] = []
+        monkeypatch.setattr(
+            credentials_module.logger,
+            "warning",
+            lambda message, *args: messages.append(message % args),
+        )
+
+        store._security_event(
+            "weak_credential_detected",
+            {"field": "credential_field", "raw": "visible-sensitive-material"},
+        )
+
+        assert len(messages) == 1
+        assert messages[0].startswith(
+            "Security event: type=weak_credential_detected security_level="
+        )
+        assert "visible-sensitive-material" not in messages[0]
+        assert "credential_field" not in messages[0]
 
     def test_credential_health_check(self, store):
         """Test credential health check."""

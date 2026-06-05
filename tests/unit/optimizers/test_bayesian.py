@@ -520,7 +520,7 @@ class TestBayesianOptimizer:
         info = optimizer.get_algorithm_info()
 
         assert info["name"] == "BayesianOptimizer"
-        assert "Bayesian optimization" in info["description"]
+        assert "Bayesian adaptive optimizer" in info["description"]
         assert info["config_space"] == config_space
         assert info["objectives"] == objectives
         # Check for key algorithm parameters in info

@@ -161,6 +161,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.api.functions",
         "get_available_strategies",
     ),
+    "list_recommendation_agent_types": (
+        "traigent.api.functions",
+        "list_recommendation_agent_types",
+    ),
+    "recommend_configuration_space": (
+        "traigent.api.functions",
+        "recommend_configuration_space",
+    ),
     "get_config": ("traigent.api.functions", "get_config"),
     "get_current_config": ("traigent.api.functions", "get_current_config"),
     "get_optimization_insights": (
@@ -201,11 +209,38 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "OptimizationResult": ("traigent.api.types", "OptimizationResult"),
     "OptimizationStatus": ("traigent.api.types", "OptimizationStatus"),
     "ParetoFront": ("traigent.api.types", "ParetoFront"),
+    "PresetSelection": ("traigent.api.types", "PresetSelection"),
     "SensitivityAnalysis": ("traigent.api.types", "SensitivityAnalysis"),
     "StrategyConfig": ("traigent.api.types", "StrategyConfig"),
     "TrialError": ("traigent.api.types", "TrialError"),
     "TrialResult": ("traigent.api.types", "TrialResult"),
     "serialize_trials": ("traigent.api.types", "serialize_trials"),
+    "ADVISORY_SELECTION_NOTICE": (
+        "traigent.api.strategy_presets",
+        "ADVISORY_SELECTION_NOTICE",
+    ),
+    "NormalizedStrategyPreset": (
+        "traigent.api.strategy_presets",
+        "NormalizedStrategyPreset",
+    ),
+    "StrategyPresetError": ("traigent.api.strategy_presets", "StrategyPresetError"),
+    "StrategyPresetValidationError": (
+        "traigent.api.strategy_presets",
+        "StrategyPresetValidationError",
+    ),
+    "UnknownStrategyPresetError": (
+        "traigent.api.strategy_presets",
+        "UnknownStrategyPresetError",
+    ),
+    "VALID_PRESET_NAMES": ("traigent.api.strategy_presets", "VALID_PRESET_NAMES"),
+    "normalize_strategy_preset": (
+        "traigent.api.strategy_presets",
+        "normalize_strategy_preset",
+    ),
+    "select_strategy_preset": (
+        "traigent.api.strategy_presets",
+        "select_strategy_preset",
+    ),
     "ConstraintValidator": (
         "traigent.api.validation_protocol",
         "ConstraintValidator",
@@ -451,6 +486,8 @@ __all__ = [
     "initialize",
     "override_config",
     "get_available_strategies",
+    "list_recommendation_agent_types",
+    "recommend_configuration_space",
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
@@ -576,6 +613,7 @@ __all__ = [
     "create_quick_plot",
     # Result types
     "OptimizationResult",
+    "PresetSelection",
     "TrialError",
     "TrialResult",
     "serialize_trials",
@@ -584,6 +622,14 @@ __all__ = [
     "ParetoFront",
     "OptimizationStatus",
     "StrategyConfig",
+    "ADVISORY_SELECTION_NOTICE",
+    "NormalizedStrategyPreset",
+    "StrategyPresetError",
+    "StrategyPresetValidationError",
+    "UnknownStrategyPresetError",
+    "VALID_PRESET_NAMES",
+    "normalize_strategy_preset",
+    "select_strategy_preset",
 ]
 
 if "AgentCostBreakdown" in globals():

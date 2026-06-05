@@ -20,6 +20,10 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
+from traigent.api.strategy_presets import (
+    NormalizedStrategyPreset,
+    select_strategy_preset,
+)
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -182,6 +186,9 @@ class OptimizationOrchestrator:
             kwargs.pop("tie_breakers", None) or {}
         )
         self._promotion_gate: PromotionGate | None = kwargs.pop("promotion_gate", None)
+        self.strategy_preset: NormalizedStrategyPreset | None = kwargs.pop(
+            "strategy_preset", None
+        )
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
 
@@ -246,6 +253,11 @@ class OptimizationOrchestrator:
             optimizer=self.optimizer,
             optimization_id=self._optimization_id,
             optimization_status=self._status,
+            strategy_preset_metadata=(
+                self.strategy_preset.to_metadata()
+                if self.strategy_preset is not None
+                else None
+            ),
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -402,13 +414,16 @@ class OptimizationOrchestrator:
             merged_agents.update(parameter_agents)
             parameter_agents = merged_agents
 
-        return build_agent_configuration(
-            configuration_space=self.optimizer.config_space,
-            explicit_agents=explicit_agents,
-            agent_prefixes=agent_prefixes,
-            agent_measures=agent_measures,
-            global_measures=global_measures,
-            parameter_agents=parameter_agents,
+        return cast(
+            AgentConfiguration | None,
+            build_agent_configuration(
+                configuration_space=self.optimizer.config_space,
+                explicit_agents=explicit_agents,
+                agent_prefixes=agent_prefixes,
+                agent_measures=agent_measures,
+                global_measures=global_measures,
+                parameter_agents=parameter_agents,
+            ),
         )
 
     def _compute_band_target(self) -> float | None:
@@ -638,6 +653,12 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # RFC 0001 (knob bindings): optional resolver injecting Fixed/CVAR
+        # values post-suggest, pre-validation. None => byte-identical legacy
+        # behavior. Set via `orchestrator.knob_resolver = KnobResolver(...)`.
+        self.knob_resolver: Any | None = None
+        self._strict_withheld_promotions: list[str] = []
+        self._certified_promotions = 0
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
@@ -776,6 +797,63 @@ class OptimizationOrchestrator:
             for obj in objectives
         )
 
+    def _is_strict_evidence_mode(self) -> bool:
+        """RFC 0001 §3.6 strict(M, c): the declared strict evidence modes.
+
+        Disjuncts: promotion_policy.require_calibration ∨ chance_constraints
+        ∨ a declared-governed CVAR in the resolved space (per-CVAR
+        require_calibration, declaration-pinned certificate, or a
+        certificate-backed / guaranteed-selection target). The per-CVAR
+        disjuncts are GATE-INDEPENDENT: declaring a governed CVAR demands
+        certificate-backed promotion evidence even when no promotion policy
+        was configured. Governance is read from the resolver's DECLARED
+        bindings (``has_governed_cvars``) — never inferred from runtime
+        evidence; a duck-typed custom resolver without that method
+        contributes no per-CVAR disjunct (declare strictness via the
+        promotion policy in that case).
+        """
+        resolver = getattr(self, "knob_resolver", None)
+        if resolver is not None:
+            has_governed = getattr(resolver, "has_governed_cvars", None)
+            if callable(has_governed) and has_governed():
+                return True
+        gate = self._promotion_gate
+        if gate is None:
+            return False
+        policy = getattr(gate, "policy", None)
+        if policy is None:
+            return False
+        if isinstance(policy, dict):
+            # Defensive normalization: a raw dict policy must not silently
+            # read as non-strict (it would then fail OPEN on gate errors).
+            raw_policy = policy
+            try:
+                from traigent.tvl.models import PromotionPolicy
+
+                policy = PromotionPolicy.from_dict(raw_policy)
+            except Exception:
+                # Unparseable policy declaring strict keys ⇒ fail CLOSED.
+                return bool(
+                    raw_policy.get("require_calibration")
+                    or raw_policy.get("chance_constraints")
+                )
+        require_calibration = getattr(policy, "require_calibration", None)
+        if require_calibration is not None and getattr(
+            require_calibration, "enabled", False
+        ):
+            return True
+        return bool(getattr(policy, "chance_constraints", None))
+
+    def _withhold_promotion(self, reason: str) -> bool:
+        """Fail closed: record + log a strict-mode withheld promotion."""
+        self._strict_withheld_promotions.append(reason)
+        logger.warning(
+            "Strict evidence mode: promotion withheld (%s); "
+            "no winner-by-objective fallback",
+            reason,
+        )
+        return False
+
     def _handle_promotion_decision(
         self,
         decision: Any,
@@ -794,7 +872,11 @@ class OptimizationOrchestrator:
                 decision.reason,
             )
             return False
-        # "no_decision" - fall back to simple comparison
+        # "no_decision": strict evidence modes fail CLOSED — insufficient
+        # evidence never promotes and never falls back to simple comparison
+        # (RFC 0001 P7). Non-strict keeps the legacy simple comparison.
+        if self._is_strict_evidence_mode():
+            return self._withhold_promotion(f"gate no_decision: {decision.reason}")
         logger.debug(
             "PromotionGate: no decision, using simple comparison (reason: %s)",
             decision.reason,
@@ -816,6 +898,16 @@ class OptimizationOrchestrator:
         """
         # If no promotion gate or no incumbent, use simple logic
         if self._promotion_gate is None:
+            if self._is_strict_evidence_mode():
+                # RFC 0001 §3.6: a declared-governed CVAR demands
+                # certificate-backed promotion evidence; with no promotion
+                # gate there is no certification machinery, so the raw
+                # comparison MUST NOT promote (it would otherwise be counted
+                # as a certified promotion by _update_best_trial_cache and
+                # launder an uncertified winner — fail open).
+                return self._withhold_promotion(
+                    "no promotion gate in strict evidence mode"
+                )
             return self._simple_is_better(candidate_trial)
         if self._incumbent_config_hash is None:
             return True
@@ -831,6 +923,10 @@ class OptimizationOrchestrator:
         if not has_data or not self._has_sufficient_samples(
             candidate_metrics, incumbent_metrics
         ):
+            if self._is_strict_evidence_mode():
+                return self._withhold_promotion(
+                    "insufficient samples for statistical comparison"
+                )
             return self._simple_is_better(candidate_trial)
 
         # Use PromotionGate for statistical evaluation
@@ -843,6 +939,16 @@ class OptimizationOrchestrator:
             )
             return self._handle_promotion_decision(decision, candidate_trial)
         except Exception as e:
+            if self._is_strict_evidence_mode():
+                # Gate exception fails CLOSED in strict modes (Rule 1: a
+                # failing policy surface denies; it never silently degrades
+                # to the permissive simple comparison).
+                logger.error(
+                    "PromotionGate evaluation failed in strict evidence "
+                    "mode; promotion withheld: %s",
+                    e,
+                )
+                return self._withhold_promotion(f"gate exception: {e}")
             logger.warning(
                 "PromotionGate evaluation failed, using simple comparison: %s", e
             )
@@ -894,6 +1000,13 @@ class OptimizationOrchestrator:
 
         # Evaluate if this trial should become the new best
         if self._evaluate_promotion(config_hash, trial_result):
+            if self._is_strict_evidence_mode():
+                # In strict mode a True here can only come from the gate's
+                # explicit "promote": the no-gate lane, the no-decision /
+                # insufficient-samples / exception lanes all withhold — so
+                # counting it is sound: only gate-certified promotions
+                # justify a certified winner.
+                self._certified_promotions += 1
             self._best_trial_cached = trial_result
             self._incumbent_config_hash = config_hash
 
@@ -1201,6 +1314,7 @@ class OptimizationOrchestrator:
         for _ in range(count):
             try:
                 config = self.optimizer.suggest_next_trial(self._trials)
+                config = self._apply_knob_resolution(config)
             except OptimizationError:
                 break
             except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -1230,7 +1344,9 @@ class OptimizationOrchestrator:
 
         baseline_config = self._consume_default_config()
         if baseline_config is not None:
-            configs.append(baseline_config)
+            # baseline trials get the same Fixed/CVAR injection as suggested
+            # ones — no bypass of R3/R6/R8 (RFC 0001)
+            configs.append(self._apply_knob_resolution(baseline_config))
             remaining -= 1
             if remaining <= 0:
                 return configs, False
@@ -1240,7 +1356,10 @@ class OptimizationOrchestrator:
         if self.traigent_config.execution_mode_enum is ExecutionMode.HYBRID:
             async_configs = await self._try_hybrid_batch_generation(dataset, remaining)
             if async_configs:
-                configs.extend(async_configs)
+                configs.extend(
+                    self._apply_knob_resolution(async_config)
+                    for async_config in async_configs
+                )
                 used_async_batch = True
 
         # Fall back to sequential generation
@@ -1248,6 +1367,38 @@ class OptimizationOrchestrator:
             configs.extend(self._generate_sequential_configs(remaining))
 
         return configs, used_async_batch
+
+    def _apply_knob_resolution(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Resolve knob bindings for one suggestion (RFC 0001 §3.4).
+
+        With no resolver configured this is an exact passthrough (legacy
+        behavior byte-identical). With a resolver, Fixed and Calibrated
+        values are injected fail-closed: any rejection (stale certificate,
+        evidence leakage, missing producer, ...) raises ResolutionError —
+        there is no silent fallback. Recorded fallback use is logged.
+        """
+        if self.knob_resolver is None:
+            return config
+        from traigent.knobs import ResolutionError, ResolutionRejection
+
+        try:
+            resolved = self.knob_resolver.resolve(config)
+        except ResolutionError:
+            raise
+        except Exception as exc:
+            # Internal resolver failures (ValueError, canonicalization, ...)
+            # MUST surface as the typed fail-closed error — the suggest-site
+            # except tuples catch ValueError and would silently break.
+            raise ResolutionError(
+                (ResolutionRejection.INFEASIBLE_VALUE,),
+                f"resolver internal failure: {exc}",
+            ) from exc
+        if resolved.used_fallbacks:
+            logger.warning(
+                "Knob resolution used declared fallbacks for: %s",
+                ", ".join(resolved.used_fallbacks),
+            )
+        return dict(resolved.config)
 
     def _build_trial_descriptors(
         self,
@@ -1718,6 +1869,8 @@ class OptimizationOrchestrator:
         self._successful_trials = 0
         self._failed_trials = 0
         self._best_trial_cached = None
+        self._strict_withheld_promotions = []
+        self._certified_promotions = 0
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -1824,19 +1977,23 @@ class OptimizationOrchestrator:
                 f"Creating session with max_trials={max_trials_value} (self.max_trials={self.max_trials})"
             )
 
+            metadata = {
+                "optimization_id": self._optimization_id,
+                "max_trials": max_trials_value,
+                "function_name": identifier,
+                "function_display_name": (
+                    descriptor.display_name if descriptor else identifier
+                ),
+                "evaluation_set": dataset_name or "default_evaluation",
+            }
+            if self.strategy_preset is not None:
+                metadata["strategy_preset"] = self.strategy_preset.to_metadata()
+
             raw_result = self.backend_client.create_session(
                 function_name=identifier,
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
-                metadata={
-                    "optimization_id": self._optimization_id,
-                    "max_trials": max_trials_value,
-                    "function_name": identifier,
-                    "function_display_name": (
-                        descriptor.display_name if descriptor else identifier
-                    ),
-                    "evaluation_set": dataset_name or "default_evaluation",
-                },
+                metadata=metadata,
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -2015,12 +2172,15 @@ class OptimizationOrchestrator:
                     remaining=remaining,
                     remaining_samples=remaining_samples,
                 )
-            return await self._trial_lifecycle.run_sequential_trial(
-                func=func,
-                dataset=dataset,
-                session_id=session_id,
-                function_name=function_identifier,
-                trial_count=trial_count,
+            return cast(
+                tuple[int, str],
+                await self._trial_lifecycle.run_sequential_trial(
+                    func=func,
+                    dataset=dataset,
+                    session_id=session_id,
+                    function_name=function_identifier,
+                    trial_count=trial_count,
+                ),
             )
         except VendorPauseError as e:
             decision = await self._handle_vendor_pause(e)
@@ -2270,8 +2430,16 @@ class OptimizationOrchestrator:
             self._status = OptimizationStatus.FAILED
             raise
         except Exception as e:
+            from traigent.knobs import ResolutionError
+
             self._status = OptimizationStatus.FAILED
             logger.error(f"Optimization {self._optimization_id} failed: {e}")
+            if isinstance(e, ResolutionError):
+                # RFC 0001 §3.4: the typed fail-closed governance rejection
+                # IS the public contract — callers distinguish a stale
+                # certificate / evidence leak from a generic optimization
+                # failure. Never dilute it into OptimizationError.
+                raise
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             await self._cleanup_backend_client()
@@ -2523,11 +2691,11 @@ class OptimizationOrchestrator:
 
     def _estimate_optimization_cost(self, dataset: Dataset) -> float:
         """Estimate optimization cost. Delegates to CostEstimator."""
-        return self._cost_estimator.estimate_optimization_cost(dataset)
+        return cast(float, self._cost_estimator.estimate_optimization_cost(dataset))
 
     def _extract_trial_cost(self, trial_result: TrialResult) -> float | None:
         """Extract cost from trial result. Delegates to CostEstimator."""
-        return CostEstimator.extract_trial_cost(trial_result)
+        return cast(float | None, CostEstimator.extract_trial_cost(trial_result))
 
     def _log_checkpoint(
         self,
@@ -2548,11 +2716,14 @@ class OptimizationOrchestrator:
         self,
         session_summary: dict[str, Any] | None,
         safeguards_telemetry: dict[str, Any],
+        strategy_preset_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
         }
+        if strategy_preset_metadata is not None:
+            metadata["strategy_preset"] = dict(strategy_preset_metadata)
 
         if self._function_descriptor is not None:
             descriptor = self._function_descriptor
@@ -2578,18 +2749,71 @@ class OptimizationOrchestrator:
         Returns:
             OptimizationResult with all trial data
         """
+        strict_mode = self._is_strict_evidence_mode()
+        certified_config: dict[str, Any] | None = None
+        certified_score: float | None = None
+        if (
+            strict_mode
+            and self._best_trial_cached is not None
+            and self._certified_promotions > 0
+        ):
+            # Only an incumbent that won at least one explicit gate
+            # promotion is a certified winner. The FIRST trial seeds the
+            # incumbent as comparison initialization, NOT as certification —
+            # a strict run with zero gate promotions returns
+            # NO_CERTIFIED_SELECTION (review finding: first-incumbent
+            # overclaim).
+            config_space_keys = set(getattr(self.optimizer, "config_space", {}).keys())
+            incumbent = self._best_trial_cached
+            certified_config = {
+                key: value
+                for key, value in (incumbent.config or {}).items()
+                if not config_space_keys or key in config_space_keys
+            }
+            primary = (
+                self.optimizer.objectives[0] if self.optimizer.objectives else None
+            )
+            certified_score = (
+                incumbent.get_metric(primary)
+                if primary and hasattr(incumbent, "get_metric")
+                else None
+            )
         selection = select_best_configuration(
             trials=self._trials,
-            primary_objective=self.optimizer.objectives[0],
+            # Objectives-free runs are supported (weighted scoring disabled,
+            # see BaseOptimizer); every sibling objectives[0] site in this
+            # module guards this and the terminal selection must too (#1108
+            # review NB). None ⇒ the selector's honest no-eligible shape;
+            # strict mode is certificate-driven and never reads it.
+            primary_objective=(
+                self.optimizer.objectives[0] if self.optimizer.objectives else None
+            ),
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,
             band_target=self._band_target,
             comparability_mode=self.traigent_config.get_comparability_mode(),
+            require_certified=strict_mode,
+            certified_config=certified_config,
+            certified_score=certified_score,
         )
         best_config = selection.best_config
         best_score = selection.best_score
         session_summary = selection.session_summary
+        preset_selection = (
+            select_strategy_preset(self.strategy_preset, self._trials)
+            if self.strategy_preset is not None
+            else None
+        )
+        strategy_preset_metadata = (
+            preset_selection.to_metadata()
+            if preset_selection is not None
+            else (
+                self.strategy_preset.to_metadata()
+                if self.strategy_preset is not None
+                else None
+            )
+        )
 
         # Calculate duration
         duration = time.time() - self._start_time if self._start_time else 0.0
@@ -2648,7 +2872,12 @@ class OptimizationOrchestrator:
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
-            metadata=self._build_result_metadata(session_summary, safeguards_telemetry),
+            metadata=self._build_result_metadata(
+                session_summary,
+                safeguards_telemetry,
+                strategy_preset_metadata,
+            ),
+            preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,
         )

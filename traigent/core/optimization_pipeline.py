@@ -22,6 +22,7 @@ from traigent.config.parallel import (
 )
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.logging import get_logger
@@ -550,7 +551,7 @@ def create_workflow_traces_tracker(
     if not backend_url or not api_key:
         return None
 
-    if os.environ.get("TRAIGENT_TRACES_ENABLED", "").lower() == "false":
+    if not is_trace_enabled():
         return None
 
     try:

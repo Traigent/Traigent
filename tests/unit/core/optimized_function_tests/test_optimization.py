@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.api.strategy_presets import QUALITY_FLOOR_MIN_COST
 from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
@@ -115,6 +116,53 @@ class TestOptimization:
 
             require(result == mock_result)
             require(result.best_config["temperature"] == pytest.approx(0.7))
+
+    @pytest.mark.asyncio
+    async def test_runtime_optimize_accepts_strategy_preset(
+        self, simple_function, sample_config_space, sample_dataset
+    ):
+        """Runtime optimize() should apply preset objectives and metadata."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            eval_dataset=sample_dataset,
+            max_trials=3,
+        )
+
+        from datetime import datetime
+
+        mock_result = OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.7},
+            best_score=0.9,
+            optimization_id="test-runtime-preset",
+            duration=10.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        with patch(
+            "traigent.core.optimized_function.OptimizationOrchestrator"
+        ) as MockOrchestrator:
+            mock_orchestrator = MockOrchestrator.return_value
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+
+            result = await opt_func.optimize(
+                strategy=QUALITY_FLOOR_MIN_COST,
+                strategy_params={"floor": 0.8},
+            )
+
+            orchestrator_kwargs = MockOrchestrator.call_args.kwargs
+            require(orchestrator_kwargs["objectives"] == ["accuracy", "cost"])
+            require(not orchestrator_kwargs["constraints"])
+            preset = orchestrator_kwargs["strategy_preset"]
+            require(preset.preset_name == QUALITY_FLOOR_MIN_COST)
+            require(preset.to_metadata()["selection_grade"] == "advisory")
+            require(result.status == OptimizationStatus.COMPLETED)
 
     @pytest.mark.asyncio
     async def test_optimization_with_custom_evaluator(

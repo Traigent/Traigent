@@ -65,6 +65,7 @@ class MockOrchestrator:
     def __init__(self):
         self.optimizer = MockOptimizer()
         self.evaluator = MockEvaluator()
+        self.knob_resolver = None
         self._optimization_id = "test-optimization-123"
         self._sample_budget_manager = None
         self._consumed_examples = 0
@@ -82,6 +83,14 @@ class MockOrchestrator:
         self._default_config_used = False
         self.objective_schema = None  # For band-based pruning support
 
+
+    def _apply_knob_resolution(self, config):
+        """Mirror of OptimizationOrchestrator._apply_knob_resolution (RFC 0001):
+        passthrough when no resolver is configured."""
+        if self.knob_resolver is None:
+            return config
+        resolved = self.knob_resolver.resolve(config)
+        return dict(resolved.config)
     def _consume_default_config(self):
         return None
 

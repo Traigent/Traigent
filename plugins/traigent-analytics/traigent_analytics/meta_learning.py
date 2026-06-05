@@ -7,14 +7,15 @@ from __future__ import annotations
 import json
 import statistics
 import threading
+import warnings
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-from ..core.constants import HISTORY_PRUNE_RATIO, MAX_OPTIMIZATION_HISTORY_SIZE
-from ..utils.logging import get_logger
+from traigent.core.constants import HISTORY_PRUNE_RATIO, MAX_OPTIMIZATION_HISTORY_SIZE
+from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -640,15 +641,15 @@ class PerformancePredictor:
         }
 
 
-class MetaLearningEngine:
-    """Main meta-learning engine that coordinates all components."""
+class HistoricalAnalyticsEngine:
+    """Main historical analytics engine that coordinates all components."""
 
     def __init__(self, storage_path: str | None = None) -> None:
-        """Initialize meta-learning engine."""
+        """Initialize historical analytics engine."""
         self.history = OptimizationHistory(storage_path)
         self.algorithm_selector = AlgorithmSelector(self.history)
         self.performance_predictor = PerformancePredictor(self.history)
-        logger.info("MetaLearningEngine initialized")
+        logger.info("HistoricalAnalyticsEngine initialized")
 
     def record_optimization(
         self,
@@ -664,7 +665,7 @@ class MetaLearningEngine:
         status: str = "completed",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Record optimization result for meta-learning."""
+        """Record optimization result for historical analytics."""
 
         try:
             algorithm_enum = AlgorithmType(algorithm.lower())
@@ -812,3 +813,15 @@ class MetaLearningEngine:
             ),
             "functions_optimized": len({r.function_name for r in records}),
         }
+
+
+class MetaLearningEngine(HistoricalAnalyticsEngine):
+    """Deprecated compatibility alias for HistoricalAnalyticsEngine."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        warnings.warn(
+            "MetaLearningEngine is deprecated; use HistoricalAnalyticsEngine instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

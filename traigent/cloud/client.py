@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -192,6 +193,63 @@ class CloudOptimizationResult:
     optimization_time: float
     subset_used: bool
     subset_size: int | None = None
+
+
+@dataclass(frozen=True)
+class RecommendationBundle:
+    """TVAR recommendation hints returned by ``GET /optimization/recommendations``."""
+
+    value_recommendations: tuple[dict[str, Any], ...] = ()
+    correlations: tuple[dict[str, Any], ...] = ()
+    generated_at: str | None = None
+
+    @classmethod
+    def empty(cls) -> RecommendationBundle:
+        """Return an empty, offline-safe recommendation bundle."""
+
+        return cls()
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> RecommendationBundle:
+        """Parse the backend response shape into immutable tuple fields."""
+
+        return cls(
+            value_recommendations=_dict_tuple(payload.get("value_recommendations")),
+            correlations=_dict_tuple(payload.get("correlations")),
+            generated_at=(
+                str(payload["generated_at"])
+                if payload.get("generated_at") is not None
+                else None
+            ),
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether the bundle carries no recommendation hints."""
+
+        return not self.value_recommendations and not self.correlations
+
+
+def _dict_tuple(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, Mapping))
+
+
+def _tvar_recommendations_params(
+    agent_type: str | None,
+    metric: str | None,
+    tvar_names: Sequence[str] | None,
+) -> dict[str, str]:
+    params: dict[str, str] = {}
+    if agent_type:
+        params["agent_type"] = str(agent_type)
+    if metric:
+        params["metric"] = str(metric)
+    names = [str(name).strip() for name in tvar_names or () if str(name).strip()]
+    if names:
+        params["tvar_names"] = ",".join(names)
+    return params
 
 
 class _DirectResponseContext:
@@ -821,6 +879,78 @@ class TraigentCloudClient(BaseTraigentClient):
     async def get_usage_stats(self) -> dict[str, Any]:
         """Get usage statistics for current billing period."""
         return cast(dict[str, Any], await self.usage_tracker.get_usage_stats())
+
+    async def fetch_tvar_recommendations(
+        self,
+        agent_type: str | None = None,
+        metric: str | None = None,
+        tvar_names: Sequence[str] | None = None,
+    ) -> RecommendationBundle:
+        """Fetch TVAR recommendation hints without blocking local recommendations.
+
+        The recommendation system treats backend responses as optional hints. Any
+        offline mode, missing credentials, transport issue, auth failure, or
+        malformed response therefore returns an empty bundle instead of raising.
+        """
+
+        if self._should_skip_tvar_recommendations_fetch():
+            return RecommendationBundle.empty()
+
+        try:
+            await self._ensure_session()
+            if self._aio_session is None:
+                return RecommendationBundle.empty()
+
+            url = f"{self.api_base_url}/optimization/recommendations"
+            params = _tvar_recommendations_params(agent_type, metric, tvar_names)
+            request = self._aio_session.get(
+                url,
+                params=params,
+                headers=await self._get_headers(),
+            )
+            response_candidate = (
+                await request if asyncio.iscoroutine(request) else request
+            )
+            manager = (
+                response_candidate
+                if hasattr(response_candidate, "__aenter__")
+                else _DirectResponseContext(response_candidate)
+            )
+
+            async with manager as response:
+                if _get_status_code(response) != 200:
+                    return RecommendationBundle.empty()
+                payload = await _get_json_response(response)
+                if not isinstance(payload, Mapping):
+                    return RecommendationBundle.empty()
+                return RecommendationBundle.from_payload(payload)
+        except aiohttp.ClientError as exc:
+            await self._reset_http_session("tvar_recommendations network error")
+            logger.debug("TVAR recommendations fetch failed: %s", exc)
+            return RecommendationBundle.empty()
+        except Exception as exc:
+            logger.debug("TVAR recommendations fetch skipped after error: %s", exc)
+            return RecommendationBundle.empty()
+
+    def _should_skip_tvar_recommendations_fetch(self) -> bool:
+        """Return True when recommendation fetches must stay local/offline."""
+
+        from traigent.utils.env_config import is_backend_offline
+
+        if is_backend_offline():
+            return True
+
+        edge_env_values = {
+            os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
+            os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
+        }
+        if edge_env_values & {"true", "1", "yes", "edge_analytics"}:
+            return True
+
+        try:
+            return not (self.auth.has_api_key() or BackendConfig.has_auth_credentials())
+        except Exception:
+            return not self.auth.has_api_key()
 
     async def check_service_status(self) -> dict[str, Any]:
         """Check Traigent backend service status."""

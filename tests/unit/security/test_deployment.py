@@ -598,7 +598,7 @@ class TestHealthCheckerCheckServiceHealth:
         mock_logger.warning.assert_called_once()
         log_message = mock_logger.warning.call_args[0][0]
         assert "no real probe is configured" in log_message
-        assert "SDK#918" in log_message
+        assert "returned UNKNOWN" in log_message
 
     @patch("traigent.security.deployment.logger")
     @patch("traigent.security.deployment.time.time")

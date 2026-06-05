@@ -43,7 +43,7 @@ dependencies = [
     "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
     "PyJWT[crypto]>=2.12.0,<3.0.0",  # CVE-2026-32597 floor; required by traigent.security.jwt_validator and traigent.cloud.auth at import time
     "backoff>=2.2.0",
-    "litellm>=1.84.0,<1.85.0",  # 1.84.x avoids the older python-dotenv/openai pins and permits the aiohttp 3.14.0 security floor.
+    "litellm==1.87.1",  # Stable pin: 1.83.x python-dotenv==1.0.1 and 1.83.14 openai==2.24.0 sub-pins are gone from stable 1.84+ (1.87.1 ships openai>=2.20,<3 and python-dotenv>=1.0,<2, compatible with langchain-openai>=1.1.14). Keep pinned + verified on bumps; no need for RC/dev builds anymore.
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
@@ -84,7 +84,7 @@ integrations = [
     "rank_bm25>=0.2.2",
     "mlflow>=3.11.1,<4.0",  # Defensive bump — Aikido flagged tarfile.extractall path-traversal in mlflow <3.9.0 (see #616)
     "wandb>=0.15.0",
-    "python-dotenv>=1.2.2",  # GHSA-mf9w-mj56-hr94 fix; keep aligned with the litellm 1.84.x floor above.
+    "python-dotenv>=1.2.2",  # GHSA-mf9w-mj56-hr94 fix. Compatible because litellm is pinned to >=1.84 above (litellm 1.83.7-1.83.13 incompatibly pinned python-dotenv==1.0.1).
     "boto3>=1.28.0",
     "botocore>=1.31.0",
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
@@ -124,6 +124,11 @@ hybrid = [
     "httpx[http2]>=0.24.0",
     "claude-code-sdk>=0.0.14",
     "mcp>=1.27.0",  # CVE-2025-66416, AIKIDO-2026-10472 fix (claude-code-sdk dependency)
+]
+
+# Local stdio MCP server for coding agents.
+mcp = [
+    "mcp>=1.27.0",
 ]
 
 # Internal schema validation support for DTO strict-validation paths.

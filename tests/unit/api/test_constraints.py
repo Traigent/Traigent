@@ -781,10 +781,12 @@ class TestNormalizeConstraints:
 
 
 class TestTVLExportFormat:
-    """Tests for TVL 0.9 export format compliance."""
+    """Tests for CANONICAL TVL export format compliance (RFC 0001 / 6-A:
+    enums are literal arrays, ranges are kind-less mappings; legacy
+    `{"kind": ...}` forms remain ACCEPTED on ingestion)."""
 
-    def test_domain_has_kind_field(self) -> None:
-        """Test that exported domains have explicit 'kind' field."""
+    def test_domains_are_canonical_forms(self) -> None:
+        """Exported domains use the canonical shapes, never 'kind'."""
         temp = Range(0.0, 2.0, name="temperature")
         model = Choices(["gpt-4", "gpt-3.5"], name="model")
 
@@ -793,29 +795,29 @@ class TestTVLExportFormat:
 
         for tvar in spec["tvars"]:
             assert "domain" in tvar
-            assert "kind" in tvar["domain"]
+            domain = tvar["domain"]
+            assert isinstance(domain, (list, dict))
+            if isinstance(domain, dict):
+                assert "kind" not in domain
 
     def test_range_domain_format(self) -> None:
-        """Test range domain has 'range' array."""
+        """Range domain is the canonical {'range': [low, high]} mapping."""
         temp = Range(0.0, 2.0, name="temperature")
         space = ConfigSpace(tvars={"temperature": temp})
         spec = space.to_tvl_spec()
 
         domain = spec["tvars"][0]["domain"]
-        assert domain["kind"] == "range"
-        assert "range" in domain
+        assert "kind" not in domain
         assert domain["range"] == [0.0, 2.0]
 
     def test_enum_domain_format(self) -> None:
-        """Test enum domain has 'values' array."""
+        """Enum domain is the canonical literal array."""
         model = Choices(["gpt-4", "gpt-3.5"], name="model")
         space = ConfigSpace(tvars={"model": model})
         spec = space.to_tvl_spec()
 
         domain = spec["tvars"][0]["domain"]
-        assert domain["kind"] == "enum"
-        assert "values" in domain
-        assert domain["values"] == ["gpt-4", "gpt-3.5"]
+        assert domain == ["gpt-4", "gpt-3.5"]
 
     def test_constraint_params_prefix(self) -> None:
         """Test constraint expressions use params.<name> prefix."""

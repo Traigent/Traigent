@@ -1,9 +1,9 @@
 # TVL 0.9 Example: Banded Objectives
 # Demonstrates banded objectives with TOST testing
 
-spec:
-  id: banded-objectives-example
-  version: 0.1.0
+tvl:
+  module: examples.banded_objectives_example
+tvl_version: "0.1.0"
 
 metadata:
   owner: "team@example.com"

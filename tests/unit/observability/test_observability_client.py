@@ -187,6 +187,73 @@ def test_observability_client_offline_mode_does_not_attempt_ingest(monkeypatch, 
     assert caplog.text.count("Observability transport in offline mode") == 1
 
 
+def test_observability_client_offline_mode_memory_sender_has_no_backend_egress(
+    monkeypatch,
+):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    sentinel = "offline-memory-canary-local-only"
+    sent_batches: list[list[dict]] = []
+    backend_attempts: list[tuple[str, str]] = []
+
+    def fake_urlopen(http_request, *args, **kwargs):
+        body = getattr(http_request, "data", b"")
+        body_text = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+        backend_attempts.append(("urlopen", body_text))
+        raise AssertionError("network attempted")
+
+    def memory_sender(traces):
+        sent_batches.append(traces)
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        backend_attempts.append(("request_sender", json.dumps([method, path, payload])))
+        raise AssertionError("request sender should not be called in offline mode")
+
+    monkeypatch.setattr(
+        "traigent.observability.client.request.urlopen",
+        fake_urlopen,
+    )
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=10,
+            enable_atexit_flush=False,
+        ),
+        sender=memory_sender,
+        request_sender=request_sender,
+    )
+
+    trace_id = client.start_trace(
+        "offline-memory-canary",
+        trace_id="trace_offline_memory_canary",
+        metadata={"sentinel": sentinel},
+        input_data={"sentinel": sentinel},
+    )
+    client.record_observation(
+        trace_id,
+        name="offline-memory-observation",
+        input_data={"sentinel": sentinel},
+    )
+    client.end_trace(trace_id, output_data={"sentinel": sentinel})
+
+    result = client.flush()
+    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+        client.list_sessions()
+    close_result = client.close()
+
+    memory_payload = json.dumps(sent_batches)
+    egress_payload = json.dumps(backend_attempts)
+    assert client.config.offline_mode is True
+    assert result.success is True
+    assert result.items_sent >= 1
+    assert close_result.success is True
+    assert sentinel in memory_payload
+    assert backend_attempts == []
+    assert sentinel not in egress_payload
+
+
 def test_observability_client_offline_mode_blocks_request_api():
     request_calls: list[tuple[str, str, dict | None]] = []
 

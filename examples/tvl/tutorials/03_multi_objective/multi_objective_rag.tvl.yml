@@ -10,9 +10,9 @@
 # - Epsilon-Pareto dominance
 # - Constraint handling
 
-spec:
-  id: multi-objective-rag
-  version: "1.0"
+tvl:
+  module: examples.multi_objective_rag
+tvl_version: "1.0"
 
 metadata:
   owner: team@example.com

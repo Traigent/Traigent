@@ -190,7 +190,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
 
         if eval_type == "exact_match":
             # Exact / case-insensitive match — must stay aligned with
-            # LocalEvaluator and the public docs (issue #891). Diverging
+            # LocalEvaluator and the public docs (the tracked fix). Diverging
             # here was how "Paris" vs "paris" silently scored 0.0.
             is_correct = str(output).strip().lower() == str(expected).strip().lower()
             result["correct"] = is_correct
@@ -218,7 +218,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             # semantic similarity. Historically this branch silently set
             # ``correct=None`` and quietly returned a 0% accuracy from the
             # aggregate metrics, which let paraphrased answers be scored as
-            # wrong without any visible failure signal (issue #891).
+            # wrong without any visible failure signal (the tracked fix).
             #
             # The honest contract is: semantic evaluation in this adapter
             # fails loudly. Callers who want semantic scoring must supply

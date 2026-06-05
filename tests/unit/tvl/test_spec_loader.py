@@ -180,10 +180,34 @@ def test_constraint_expression_allows_math_function_calls() -> None:
     assert evaluator({"value": 16.0}, None) is True
 
 
-def test_legacy_formats_emit_deprecation_warnings() -> None:
+def test_legacy_formats_emit_deprecation_warnings(tmp_path) -> None:
     """Legacy TVL formats emit DeprecationWarnings during spec loading."""
-    # Use the environment_overlays example which is intentionally legacy format
-    legacy_spec = Path("examples/tvl/environment_overlays/overlays.tvl.yml")
+    # Inline legacy fixture: doc examples are kept strict-valid, so the
+    # deprecated constructs live here, owned by the test.
+    legacy_spec = tmp_path / "legacy.tvl.yml"
+    legacy_spec.write_text(
+        """
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini", "gpt-4o"]
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+
+constraints:
+  - id: temperature-limit
+    type: expression
+    rule: 'params.temperature <= 0.8'
+    error_message: "Keep temperature reasonable"
+
+optimization:
+  objectives:
+    - name: accuracy
+      direction: maximize
+""",
+        encoding="utf-8",
+    )
     with pytest.warns(DeprecationWarning) as record:
         load_tvl_spec(spec_path=legacy_spec)
 

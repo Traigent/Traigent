@@ -102,6 +102,21 @@ class TestTrialsAllFailed:
         ]
         assert _trials_all_failed(trials) is True
 
+    def test_positive_quality_metric_overrides_zero_success_metadata(self) -> None:
+        trials = [
+            _trial(
+                {"model": "m1"},
+                {"accuracy": 0.65},
+                metadata={"successful_examples": 0},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"accuracy": 0.85},
+                metadata={"successful_examples": 0},
+            ),
+        ]
+        assert _trials_all_failed(trials) is False
+
     def test_non_numeric_metric_value_is_skipped(self) -> None:
         # Defensive: shouldn't crash on a stray non-numeric metric, and missing
         # success counts should still preserve legacy rankability.
@@ -171,6 +186,31 @@ class TestPrintResultsTableBanner:
         trials = [
             _trial({"model": "m1"}, {"accuracy": 0.0}),
             _trial({"model": "m2"}, {"accuracy": 0.0}),
+        ]
+        print_results_table(
+            self._build_results(trials),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "All trials failed" not in out
+        assert "Overall Best" in out
+
+    def test_positive_quality_metric_emits_legend_even_with_zero_success_metadata(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        trials = [
+            _trial(
+                {"model": "m1"},
+                {"accuracy": 0.65},
+                metadata={"successful_examples": 0},
+            ),
+            _trial(
+                {"model": "m2"},
+                {"accuracy": 0.85},
+                metadata={"successful_examples": 0},
+            ),
         ]
         print_results_table(
             self._build_results(trials),
