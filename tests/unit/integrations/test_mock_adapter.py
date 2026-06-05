@@ -177,6 +177,31 @@ class TestMockAdapterGetMockResponse:
         assert "meta" in response
         assert "billed_units" in response["meta"]
 
+    def test_litellm_mock_response_matches_model_response_shape(self) -> None:
+        """LiteLLM mock response supports production-style attribute access."""
+        response = MockAdapter.get_mock_response(
+            "litellm", response_text="LiteLLM mock text", model="gpt-4o"
+        )
+
+        assert response.model == "gpt-4o"
+        assert response.choices[0].message.content == "LiteLLM mock text"
+        assert response.usage.prompt_tokens == MockResponse.prompt_tokens
+        assert response["choices"][0]["message"]["content"] == "LiteLLM mock text"
+        assert response["usage"]["prompt_tokens"] == MockResponse.prompt_tokens
+
+    def test_litellm_mock_response_falls_back_to_duck_type(self) -> None:
+        """LiteLLM mock response keeps both access styles when LiteLLM is absent."""
+        with patch.dict("sys.modules", {"litellm": None}):
+            response = MockAdapter.get_mock_response(
+                "litellm", response_text="Fallback text", model="fallback-model"
+            )
+
+        assert response.model == "fallback-model"
+        assert response.choices[0].message.content == "Fallback text"
+        assert response.usage.prompt_tokens == MockResponse.prompt_tokens
+        assert response["choices"][0]["message"]["content"] == "Fallback text"
+        assert response["usage"]["prompt_tokens"] == MockResponse.prompt_tokens
+
     def test_unknown_provider_uses_generic(self) -> None:
         """Test unknown provider uses generic format."""
         response = MockAdapter.get_mock_response("unknown_provider")

@@ -2,6 +2,7 @@
 
 import asyncio
 import types
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -71,7 +72,9 @@ class TestPatchLiteLLM:
     """Patching litellm.completion and litellm.acompletion."""
 
     def test_patch_returns_true(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         result = patch_litellm_for_metadata_capture()
         assert result is True
@@ -86,7 +89,9 @@ class TestPatchLiteLLM:
         assert result is False
 
     def test_patch_is_idempotent(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         # Second call should skip (already patched)
@@ -102,7 +107,9 @@ class TestSyncCapture:
     """Sync litellm.completion response capture."""
 
     def test_captures_response(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = litellm_module.completion(model="gpt-4o", messages=[])
@@ -112,7 +119,9 @@ class TestSyncCapture:
         assert captured[0] is response
 
     def test_injects_timing(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = litellm_module.completion(model="gpt-4o", messages=[])
@@ -121,7 +130,9 @@ class TestSyncCapture:
         assert response.response_time_ms > 0
 
     def test_preserves_usage(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = litellm_module.completion(model="gpt-4o", messages=[])
@@ -131,7 +142,9 @@ class TestSyncCapture:
         assert response.usage.total_tokens == 150
 
     def test_preserves_return_value(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = litellm_module.completion(model="gpt-4o", messages=[])
@@ -140,7 +153,9 @@ class TestSyncCapture:
         assert response.choices[0].message.content == "Hello world"
 
     def test_multiple_calls_captured_in_order(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         litellm_module.completion(model="gpt-4o", messages=[])
@@ -150,12 +165,34 @@ class TestSyncCapture:
         captured = get_all_captured_responses()
         assert len(captured) == 3
 
+    def test_mock_mode_returns_litellm_response_shape(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        patch_litellm_for_metadata_capture()
+        with patch(
+            "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+            return_value=True,
+        ):
+            response = litellm_module.completion(model="gpt-4o", messages=[])
+
+        assert response.model == "gpt-4o"
+        assert response.choices[0].message.content == "This is a mock response for testing."
+        assert response.usage.prompt_tokens == 10
+        assert response["choices"][0]["message"]["content"] == (
+            "This is a mock response for testing."
+        )
+        assert response["usage"]["prompt_tokens"] == 10
+
 
 class TestAsyncCapture:
     """Async litellm.acompletion response capture."""
 
     def test_captures_response(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = asyncio.run(litellm_module.acompletion(model="gpt-4o", messages=[]))
@@ -165,13 +202,62 @@ class TestAsyncCapture:
         assert captured[0] is response
 
     def test_injects_timing(self, litellm_module):
-        from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
 
         patch_litellm_for_metadata_capture()
         response = asyncio.run(litellm_module.acompletion(model="gpt-4o", messages=[]))
 
         assert hasattr(response, "response_time_ms")
         assert response.response_time_ms > 0
+
+    def test_mock_mode_returns_litellm_response_shape(self, litellm_module):
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        patch_litellm_for_metadata_capture()
+        with patch(
+            "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+            return_value=True,
+        ):
+            response = asyncio.run(
+                litellm_module.acompletion(model="gpt-4o", messages=[])
+            )
+
+        assert response.model == "gpt-4o"
+        assert response.choices[0].message.content == "This is a mock response for testing."
+        assert response.usage.prompt_tokens == 10
+        assert response["choices"][0]["message"]["content"] == (
+            "This is a mock response for testing."
+        )
+        assert response["usage"]["prompt_tokens"] == 10
+
+    def test_mock_mode_optimize_async_user_code_reads_message_content(
+        self, litellm_module
+    ):
+        from traigent.api.decorators import optimize
+        from traigent.utils.litellm_interceptor import (
+            patch_litellm_for_metadata_capture,
+        )
+
+        patch_litellm_for_metadata_capture()
+
+        @optimize(configuration_space={"model": ["gpt-4o"]})
+        async def litellm_user_code() -> str:
+            import litellm
+
+            response = await litellm.acompletion(model="gpt-4o", messages=[])
+            return cast(str, response.choices[0].message.content)
+
+        with patch(
+            "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+            return_value=True,
+        ):
+            result = asyncio.run(litellm_user_code())
+
+        assert result == "This is a mock response for testing."
 
 
 class TestLiteLLMPlugin:

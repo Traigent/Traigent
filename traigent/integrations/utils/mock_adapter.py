@@ -28,7 +28,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,19 @@ class MockResponse:
     response_id: str = "mock-response-id"
 
 
+class _LiteLLMMockObject(dict[str, Any]):
+    """Dict with attribute access for LiteLLM fallback response objects."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+
 class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
@@ -111,7 +124,7 @@ class MockAdapter:
         del provider  # signature compatibility only
         from traigent.utils.env_config import is_mock_llm
 
-        return is_mock_llm()
+        return cast(bool, is_mock_llm())
 
     @classmethod
     def _apply_mock_delay(cls, provider: str) -> None:
@@ -184,6 +197,7 @@ class MockAdapter:
             "anthropic": cls._build_anthropic_mock,
             "gemini": cls._build_gemini_mock,
             "cohere": cls._build_cohere_mock,
+            "litellm": cls._build_litellm_mock,
         }
 
         builder = builders.get(provider.lower(), cls._build_generic_mock)
@@ -275,6 +289,61 @@ class MockAdapter:
                 }
             },
         }
+
+    @classmethod
+    def _build_litellm_mock(cls, data: MockResponse) -> Any:
+        """Build LiteLLM ModelResponse-compatible mock response."""
+        payload = cls._build_litellm_payload(data)
+
+        try:
+            from litellm import ModelResponse
+        except (AttributeError, ImportError):
+            return cls._build_litellm_duck_mock(payload)
+
+        return ModelResponse(**payload)
+
+    @classmethod
+    def _build_litellm_payload(cls, data: MockResponse) -> dict[str, Any]:
+        return {
+            "id": data.response_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": data.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": data.text,
+                    },
+                    "finish_reason": data.finish_reason,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": data.prompt_tokens,
+                "completion_tokens": data.completion_tokens,
+                "total_tokens": data.total_tokens,
+            },
+        }
+
+    @classmethod
+    def _build_litellm_duck_mock(cls, payload: dict[str, Any]) -> _LiteLLMMockObject:
+        choice = payload["choices"][0]
+        message = _LiteLLMMockObject(choice["message"])
+        return _LiteLLMMockObject(
+            {
+                **payload,
+                "choices": [
+                    _LiteLLMMockObject(
+                        {
+                            **choice,
+                            "message": message,
+                        }
+                    )
+                ],
+                "usage": _LiteLLMMockObject(payload["usage"]),
+            }
+        )
 
     @classmethod
     def _build_generic_mock(cls, data: MockResponse) -> dict[str, Any]:
