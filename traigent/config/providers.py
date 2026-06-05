@@ -19,7 +19,12 @@ from threading import Lock
 from typing import Any
 
 from traigent.config.ast_transformer import ConfigTransformer, SafeASTCompiler
-from traigent.config.context import ConfigurationContext, get_config, merge_with_context
+from traigent.config.context import (
+    ConfigurationContext,
+    applied_config_context,
+    get_config,
+    merge_with_context,
+)
 from traigent.config.runtime_injector import create_runtime_shim
 from traigent.config.types import TraigentConfig
 from traigent.utils.exceptions import ConfigurationError
@@ -271,12 +276,40 @@ class ParameterBasedProvider(ConfigurationProvider):
         # Create TraigentConfig from dict if needed
         config_obj = TraigentConfig.from_dict(config)
 
+        def _effective_config() -> TraigentConfig:
+            """Prefer an APPLIED configuration over the wrap-time snapshot.
+
+            During optimization the evaluator wraps every trial call in
+            ``ConfigurationContext(<per-trial config>)``; injecting the
+            wrap-time ``config_obj`` here would hand the function the SAME
+            default configuration on every trial — silently making
+            parameter-mode optimization results meaningless (#1109).
+
+            The discriminator is ``applied_config_context``: only a real
+            ``ConfigurationContext`` application sets it (the evaluator's
+            per-trial wrap, or an explicit user ``with ConfigurationContext``)
+            — a bare global ``set_config()`` does not, so direct calls keep
+            the wrap-time default.
+            """
+            try:
+                active = applied_config_context.get()
+            except LookupError:
+                active = None
+            if active is None:
+                return config_obj
+            if isinstance(active, TraigentConfig):
+                return active
+            if isinstance(active, dict):
+                return TraigentConfig.from_dict(active)
+            return config_obj
+
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            effective = _effective_config()
             # Only inject configuration if not already provided
             if param_name not in kwargs:
-                kwargs[param_name] = config_obj
-            with ConfigurationContext(config_obj):
+                kwargs[param_name] = effective
+            with ConfigurationContext(effective):
                 return func(*args, **kwargs)
 
         # For async functions
@@ -284,10 +317,11 @@ class ParameterBasedProvider(ConfigurationProvider):
 
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                effective = _effective_config()
                 # Only inject configuration if not already provided
                 if param_name not in kwargs:
-                    kwargs[param_name] = config_obj
-                with ConfigurationContext(config_obj):
+                    kwargs[param_name] = effective
+                with ConfigurationContext(effective):
                     return await func(*args, **kwargs)
 
             return async_wrapper
