@@ -7,6 +7,9 @@ title: Secure Secret Management
 This guide documents the SOC2/ISO-aligned process for handling Traigent
 credentials without baking cloud SDK logic into the `traigent` package.
 
+For the runtime boundary between provider credentials and Traigent backend
+credentials, see the [SDK credential and data trust model](../security/trust_model.md).
+
 ## Goals
 
 - Keep the SDK agnostic: it only reads `os.environ` (or injected config).
@@ -148,7 +151,10 @@ PY
 
 ## Best Practices & Notes
 
-- **SDK remains clean**: No boto3/aws-cli imports inside `traigent`.
+- **Provider credentials stay outside backend auth**: AWS credentials are read by
+  the AWS SDK for Bedrock integrations, while Traigent backend authentication
+  uses `TRAIGENT_API_KEY` / `sk_` credentials. See the
+  [SDK trust model](../security/trust_model.md).
 - **Principle of least privilege**: Use IAM policies that grant read
   access to the secret for CI and read/write for a small ops group.
 - **Auditing**: Secrets Manager tracks versions and rotation history.

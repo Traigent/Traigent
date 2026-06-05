@@ -1,12 +1,12 @@
 # Traigent Execution Modes Guide
 
-> **Current status:** Traigent executes trials locally. The default is `execution_mode="edge_analytics"` (local-only). Use `execution_mode="hybrid"` when you want local execution plus backend/portal tracking. `execution_mode="cloud"` is reserved for future remote execution and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
+> **Current status:** Traigent executes trials locally. The default is `execution_mode="edge_analytics"` (local execution). Use `execution_mode="hybrid"` when you want local execution plus backend/portal tracking. `execution_mode="cloud"` is reserved for future remote execution and fails with: “Cloud remote execution is not available yet; use hybrid for portal-tracked optimization.”
 
 ## Overview
 
-Use `edge_analytics` (default) to run locally. Use `hybrid` for website-visible results while keeping trials on your machine. Do not use `cloud` yet; remote agent execution is not implemented.
+Use `edge_analytics` (default) to run trials locally. Use `hybrid` for website-visible results while keeping trials on your machine. Do not use `cloud` yet; remote agent execution is not implemented.
 
-To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
+To run with no Traigent backend communication, set `TRAIGENT_OFFLINE_MODE=true`. For the credential and data boundary in each mode, see the [SDK trust model](../security/trust_model.md).
 
 ## Migration Note
 
@@ -23,7 +23,7 @@ If you want optimization results in the Traigent website, use `execution_mode="h
 ## Local Mode (`edge_analytics`)
 
 ### Overview
-Runs entirely on your infrastructure. Only your LLM provider sees requests made during trials.
+Runs trial execution on your infrastructure. Your user code may still call LLM providers with your provider keys, and the SDK can still perform backend tracking or analytics if a Traigent backend/API key is configured. Set `TRAIGENT_OFFLINE_MODE=true` when you require no Traigent backend communication.
 
 ### Configuration
 
@@ -47,10 +47,10 @@ def my_agent(query: str) -> str:
 
 ### Features
 
-- ✅ **Complete data privacy**: code and I/O stay local
+- ✅ **Local trial execution**: code and user I/O are not executed remotely by Traigent
 - ✅ **Local storage**: defaults to `~/.traigent/`; override with `local_storage_path`
 - ✅ **Fast iteration**: no orchestration latency; parallel trials supported
-- ✅ **No registration**: works offline/air-gapped (aside from your LLM API calls)
+- ✅ **No backend dependency when offline mode is set**: works without a Traigent backend when `TRAIGENT_OFFLINE_MODE=true` (aside from any provider calls your code makes)
 
 ### Limitations
 
@@ -68,7 +68,7 @@ def my_agent(query: str) -> str:
 
 Hybrid mode is the production path for portal-tracked SDK runs today. The SDK creates a backend session, runs each trial locally, and submits trial metrics to the backend session/result endpoints so the run appears in the portal.
 
-Use `hybrid` when you want results to appear in the Traigent website. Use `edge_analytics` when you want fully local runs with no backend dependency.
+Use `hybrid` when you want results to appear in the Traigent website. Use `edge_analytics` with `TRAIGENT_OFFLINE_MODE=true` when you want local runs with no Traigent backend dependency.
 
 ## Cloud Roadmap
 
@@ -76,6 +76,6 @@ Fully managed remote execution, including cloud-executed trials and remote agent
 
 ## Privacy-Safe Analytics
 
-Edge Analytics can submit aggregated, privacy-safe usage stats when a Traigent API key is configured. No prompts, inputs, outputs, or code are transmitted in OSS local mode. Set `TRAIGENT_OFFLINE_MODE=true` to disable any backend communication.
+Edge Analytics can submit aggregated, privacy-safe usage stats when a Traigent API key is configured. Backend session tracking can also send session metadata and deterministic example features when backend tracking is configured. Set `TRAIGENT_OFFLINE_MODE=true` to disable Traigent backend communication. The [SDK trust model](../security/trust_model.md) lists the exact SDK payloads and caveats.
 
 To disable usage analytics in managed setups, pass `enable_usage_analytics=False` via `traigent.initialize(config=TraigentConfig(...))`. In OSS, leave the Traigent API key unset to skip analytics submission entirely.

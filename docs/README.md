@@ -49,6 +49,9 @@ def answer_question(question: str) -> str:
 - **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
 - **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys
 
+### 🔐 [Security & Trust](security/trust_model.md)
+- **[Credential and Data Trust Model](security/trust_model.md)** - Provider credentials, Traigent backend tokens, execution-mode egress, and content logging
+
 ### 🔧 [API Reference](api-reference/)
 - **[Complete Function Specification](api-reference/complete-function-specification.md)** - Full API documentation
 - **[Interactive Optimizer](api-reference/interactive_optimizer.md)** - Hybrid optimization API surface
