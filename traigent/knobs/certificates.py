@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from .canonical import CTX_SCHEMA_VERSION, canonical_hash
@@ -42,7 +42,7 @@ CTX_EXT_KEYS = frozenset(
 )
 
 
-class CertificateDecision(str, Enum):
+class CertificateDecision(StrEnum):
     """Shared decision vocabulary (TraigentSchema guarantee certificates)."""
 
     CERTIFIED = "CERTIFIED_SELECTION"

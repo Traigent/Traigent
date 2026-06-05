@@ -9,12 +9,12 @@ and shared with the tvl repo's model-checking suite.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 __all__ = ["ResolutionError", "ResolutionNode", "ResolutionRejection"]
 
 
-class ResolutionRejection(str, Enum):
+class ResolutionRejection(StrEnum):
     """RFC 0001 §3.4 rejection conditions (R1–R8) + the no-decision verdict."""
 
     CYCLE = "cycle"  # R1 — unreachable in v1 (CVAR→TVAR only); kept for the deferred extension

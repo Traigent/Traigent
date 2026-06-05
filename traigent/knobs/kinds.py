@@ -15,9 +15,9 @@ __all__ = ["KnobKind"]
 try:  # pragma: no cover - exercised only once effectuation merges
     from traigent.effectuation.contracts import KnobKind  # type: ignore[no-redef]
 except (ImportError, ModuleNotFoundError):  # pragma: no cover - tested path today
-    from enum import Enum
+    from enum import StrEnum
 
-    class KnobKind(str, Enum):  # type: ignore[no-redef]
+    class KnobKind(StrEnum):  # type: ignore[no-redef]
         """What aspect of the agent a knob effectuates.
 
         Values mirror ``traigent.effectuation.contracts.KnobKind`` exactly.
