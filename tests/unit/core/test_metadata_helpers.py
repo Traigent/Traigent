@@ -6,16 +6,19 @@ for trial and session results.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.metadata_helpers import (
     _build_measures_full,
     _build_measures_privacy,
+    _validate_measure_dict,
     build_backend_metadata,
     merge_run_metrics_into_session_summary,
 )
@@ -163,7 +166,7 @@ class TestBuildBackendMetadataBasic:
 
         assert "duration" in metadata
         assert "trial_id" in metadata
-        assert "execution_mode" in metadata
+        assert "execution_mode" not in metadata
         assert metadata["trial_id"] == "trial_123"
         assert metadata["duration"] == 1.5
 
@@ -236,8 +239,23 @@ class TestBuildBackendMetadataSummaryStats:
 
         summary_stats = metadata["summary_stats"]
         assert "metadata" in summary_stats
-        assert summary_stats["metadata"]["sdk_version"] == "2.0.0"
+        assert summary_stats["metadata"]["sdk_version"] == get_version()
         assert summary_stats["metadata"]["aggregation_level"] == "trial"
+
+    def test_summary_stats_sdk_version_uses_package_version(
+        self,
+        mock_trial_result,
+        mock_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """summary_stats metadata uses the SDK version resolver, not a constant."""
+        monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "9.8.7")
+        mock_trial_result.summary_stats = {"mean": 0.85}
+        mock_config.execution_mode = "edge_analytics"
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert metadata["summary_stats"]["metadata"]["sdk_version"] == "9.8.7"
 
     def test_summary_stats_with_existing_metadata(self, mock_trial_result, mock_config):
         """Test summary_stats with existing metadata field."""
@@ -389,6 +407,112 @@ class TestBuildMeasuresFull:
         assert metrics["latency"] == 0.5
         # String values are excluded per MeasuresDict constraints
         assert "model" not in metrics
+
+    def test_per_example_numeric_metrics_flow_through(self, example_result):
+        """Numeric per-example evaluation results populate measure metrics."""
+        example_result.metrics = {
+            "accuracy": 0.91,
+            "latency_ms": 123.4,
+            "raw_output": "private text",
+        }
+
+        measures = _build_measures_full([example_result], "accuracy")
+
+        assert measures[0]["metrics"]["accuracy"] == 0.91
+        assert measures[0]["metrics"]["latency_ms"] == 123.4
+        assert "raw_output" not in measures[0]["metrics"]
+
+    def test_dict_payload_example_results_populate_measures(self):
+        """Redacted to_dict() example payloads (the real trial-metadata form)
+        must populate per-example metrics, not silently read as empty."""
+        payload = {
+            "example_id": "ex0",
+            "input_data": {"text": "hello"},
+            "expected_output": "hi",
+            "actual_output": "hi",
+            "metrics": {"accuracy": 1.0, "total_tokens": 15, "total_cost": 0.0015},
+            "execution_time": 0.01,
+            "success": True,
+            "error_message": None,
+            "metadata": {},
+        }
+
+        full = _build_measures_full([payload], "accuracy")
+        assert len(full) == 1
+        assert full[0]["metrics"]["accuracy"] == 1.0
+        assert full[0]["metrics"]["score"] == 1.0
+        assert full[0]["metrics"]["response_time_ms"] == 10.0
+
+        sanitized = _build_measures_privacy([payload], "accuracy")
+        assert len(sanitized) == 1
+        assert sanitized[0]["metrics"]["score"] == 1.0
+        assert sanitized[0]["metrics"]["total_tokens"] == 15
+        assert "input_data" not in sanitized[0]
+        assert "actual_output" not in json.dumps(sanitized)
+
+    def test_empty_metric_measure_entries_are_omitted(self):
+        """Examples with no numeric metrics do not produce empty measure stubs."""
+        empty_example = Mock()
+        empty_example.metrics = {"raw_output": "private text"}
+        empty_example.execution_time = None
+        empty_example.expected_output = None
+        empty_example.actual_output = None
+        populated_example = Mock()
+        populated_example.metrics = {"accuracy": 0.7}
+        populated_example.execution_time = None
+        populated_example.expected_output = None
+        populated_example.actual_output = None
+
+        measures = _build_measures_full(
+            [empty_example, populated_example],
+            "accuracy",
+        )
+
+        assert len(measures) == 1
+        assert measures[0]["metrics"] == {"accuracy": 0.7, "score": 0.7}
+        assert all(measure["metrics"] for measure in measures)
+
+    def test_validate_measure_dict_rejects_empty_metrics(self):
+        """Validation rejects hand-built measure stubs with an empty metrics dict."""
+        with pytest.raises(ValueError, match="must not be empty"):
+            _validate_measure_dict({"example_id": "ex_empty", "metrics": {}}, 0)
+
+    def test_measures_payload_drops_list_when_all_entries_empty(
+        self,
+        mock_trial_result,
+        mock_config,
+    ):
+        """Outgoing metadata omits measures entirely if every entry is empty."""
+        empty_example = Mock()
+        empty_example.metrics = {"raw_output": "private text"}
+        empty_example.execution_time = None
+        empty_example.expected_output = None
+        empty_example.actual_output = None
+        mock_trial_result.metadata = {"example_results": [empty_example]}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "measures" not in metadata
+
+    def test_measure_payload_privacy_canary_excludes_text_fields(self):
+        """Expected/actual/output sentinel text must never appear in measures."""
+        sentinel = "SDK_PRIVACY_SENTINEL_DO_NOT_EMIT"
+        example = Mock()
+        example.metrics = {
+            "accuracy": 0.88,
+            "raw_output": sentinel,
+            "model_output": sentinel,
+        }
+        example.execution_time = None
+        example.expected_output = sentinel
+        example.actual_output = sentinel
+        example.output = sentinel
+        example.raw_text = sentinel
+
+        measures = _build_measures_full([example], "accuracy")
+
+        assert measures[0]["metrics"]["accuracy"] == 0.88
+        assert sentinel not in json.dumps(measures)
 
     def test_include_execution_time(self, example_result):
         """Test execution_time is exported in explicit and legacy timing keys."""

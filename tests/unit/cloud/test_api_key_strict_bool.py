@@ -99,6 +99,17 @@ def _auth_manager_with_public_backend() -> AuthManager:
     return manager
 
 
+def _clear_backend_validation_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove policy env knobs that affect loopback backend validation."""
+    for key in (
+        "ENVIRONMENT",
+        "TRAIGENT_ENV",
+        "TRAIGENT_ENVIRONMENT",
+        "TRAIGENT_ALLOW_INSECURE_BACKEND",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.mark.asyncio
 async def test_validate_rejects_string_false_payload():
     """A backend returning ``{"valid": "false"}`` must NOT authenticate."""
@@ -149,8 +160,7 @@ async def test_validate_posts_json_payload_to_backend():
     assert _FakeSession.last_post_kwargs is not None
     assert _FakeSession.last_post_kwargs["json"] == {"api_key": api_key}
     assert (
-        _FakeSession.last_post_kwargs["headers"]["Content-Type"]
-        == "application/json"
+        _FakeSession.last_post_kwargs["headers"]["Content-Type"] == "application/json"
     )
 
 
@@ -223,6 +233,94 @@ async def test_validate_rejects_plaintext_backend_validation_url():
     post.assert_not_called()
 
 
+def test_backend_validation_url_default_denies_http_localhost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loopback HTTP remains denied by default."""
+    _clear_backend_validation_env(monkeypatch)
+
+    reason = AuthManager._validate_backend_validation_url(
+        "http://localhost:8006/api/v1/keys/validate"
+    )
+
+    assert reason is not None
+    assert "ENVIRONMENT=development" in reason
+    assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
+
+
+def test_backend_validation_url_override_without_environment_still_denies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Policy surface fails closed when the insecure override is set outside explicit dev."""
+    _clear_backend_validation_env(monkeypatch)
+    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
+
+    reason = AuthManager._validate_backend_validation_url(
+        "http://localhost:8006/api/v1/keys/validate"
+    )
+
+    assert reason is not None
+    assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
+
+
+def test_backend_validation_url_dev_override_allows_loopback_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit non-production plus override allows only loopback HTTP."""
+    _clear_backend_validation_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
+
+    assert (
+        AuthManager._validate_backend_validation_url(
+            "http://localhost:8006/api/v1/keys/validate"
+        )
+        is None
+    )
+    assert (
+        AuthManager._validate_backend_validation_url(
+            "http://127.42.0.1:8006/api/v1/keys/validate"
+        )
+        is None
+    )
+
+
+def test_backend_validation_url_dev_override_does_not_allow_non_loopback_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The insecure dev override does not widen private-range or public HTTP URLs."""
+    _clear_backend_validation_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_ALLOW_INSECURE_BACKEND", "true")
+
+    assert (
+        AuthManager._validate_backend_validation_url(
+            "http://192.168.1.10:8006/api/v1/keys/validate"
+        )
+        == "backend validation URL host is not allowed"
+    )
+    assert (
+        AuthManager._validate_backend_validation_url(
+            "http://example.com/api/v1/keys/validate"
+        )
+        == "backend validation URL must use HTTPS"
+    )
+
+
+def test_backend_validation_url_https_global_hosts_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTPS global hosts remain valid without the loopback override."""
+    _clear_backend_validation_env(monkeypatch)
+
+    assert (
+        AuthManager._validate_backend_validation_url(
+            "https://example.com/api/v1/keys/validate"
+        )
+        is None
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "backend_url",
@@ -244,5 +342,9 @@ async def test_validate_rejects_non_global_backend_validation_hosts(backend_url)
     ):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason == "backend validation URL host is not allowed"
+    if "127.0.0.1" in backend_url or "localhost" in backend_url:
+        assert reason is not None
+        assert "TRAIGENT_ALLOW_INSECURE_BACKEND=true" in reason
+    else:
+        assert reason == "backend validation URL host is not allowed"
     post.assert_not_called()

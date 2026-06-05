@@ -19,6 +19,7 @@ import logging
 import os
 import time
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -32,6 +33,7 @@ from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
+from traigent.utils.env_config import is_truthy, treat_as_production
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
 from traigent.utils.url_security import UnsafeUrlError
 
@@ -42,6 +44,33 @@ TOKEN_REFRESH_THRESHOLD = 300  # Refresh 5 minutes before expiry
 MAX_TOKEN_AGE = 86400  # Maximum token age in seconds (24 hours)
 MIN_TOKEN_LENGTH = 20  # Minimum acceptable token length
 API_KEY_TOKEN_TTL = 31536000  # 365 days
+_LOOPBACK_BACKEND_DEV_HINT = (
+    "backend validation URL host is not allowed for loopback HTTP. "
+    "For local backend development, set ENVIRONMENT=development and "
+    "TRAIGENT_ALLOW_INSECURE_BACKEND=true."
+)
+
+
+def _is_loopback_backend_host(normalized_host: str) -> bool:
+    """Return True for localhost names and loopback IP literals only."""
+    host_for_match = normalized_host.rstrip(".")
+    if host_for_match == "localhost" or host_for_match.endswith(".localhost"):
+        return True
+    try:
+        host_ip = ipaddress.ip_address(host_for_match)
+    except ValueError:
+        return False
+    return host_ip.is_loopback
+
+
+def _allow_insecure_loopback_backend_validation() -> bool:
+    """Permit loopback backend validation only for explicit non-prod dev opt-in."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        non_production = not treat_as_production()
+    return non_production and is_truthy(
+        os.environ.get("TRAIGENT_ALLOW_INSECURE_BACKEND")
+    )
 
 
 class _AsyncBool:
@@ -1499,10 +1528,10 @@ class AuthManager:
         if not hostname:
             return "backend validation URL is invalid"
         normalized_host = hostname.strip("[]").lower()
-        if normalized_host in {"localhost", "localhost."} or normalized_host.endswith(
-            ".localhost"
-        ):
-            return "backend validation URL host is not allowed"
+        if _is_loopback_backend_host(normalized_host):
+            if _allow_insecure_loopback_backend_validation():
+                return None
+            return _LOOPBACK_BACKEND_DEV_HINT
         try:
             host_ip = ipaddress.ip_address(normalized_host)
         except ValueError:

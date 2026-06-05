@@ -3,8 +3,10 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
 import json
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
@@ -35,6 +37,8 @@ def _validate_metrics_field(measure: dict[str, Any], example_index: int) -> dict
             f"Example {example_index}: 'metrics' must be dict, "
             f"got {type(measure['metrics']).__name__}"
         )
+    if not measure["metrics"]:
+        raise ValueError(f"Example {example_index}: 'metrics' must not be empty")
     return measure["metrics"]
 
 
@@ -158,7 +162,7 @@ def _add_summary_stats(
     if "metadata" not in enhanced_summary_stats:
         enhanced_summary_stats["metadata"] = {}
     enhanced_summary_stats["metadata"]["aggregation_level"] = "trial"
-    enhanced_summary_stats["metadata"]["sdk_version"] = "2.0.0"
+    enhanced_summary_stats["metadata"]["sdk_version"] = get_version()
     trial_metadata["summary_stats"] = enhanced_summary_stats
     logger.debug(
         "Adding summary_stats for %s mode with aggregation_level=trial",
@@ -190,22 +194,28 @@ def _add_measures_to_metadata(
         measures = _build_measures_full(
             example_results, primary_objective, dataset_name
         )
-        trial_metadata["measures"] = measures
-        logger.debug(
-            "Collected %s per-example MeasureResults for %s mode",
-            len(measures),
-            execution_mode,
-        )
-        _log_measures_debug(measures)
+        if measures:
+            trial_metadata["measures"] = measures
+            logger.debug(
+                "Collected %s per-example MeasureResults for %s mode",
+                len(measures),
+                execution_mode,
+            )
+            _log_measures_debug(measures)
+        else:
+            trial_metadata.pop("measures", None)
     elif privacy_on:
         measures = _build_measures_privacy(
             example_results, primary_objective, dataset_name
         )
-        trial_metadata["measures"] = measures
-        logger.debug(
-            "Using sanitized MeasureResults for privacy mode: %s examples",
-            len(measures),
-        )
+        if measures:
+            trial_metadata["measures"] = measures
+            logger.debug(
+                "Using sanitized MeasureResults for privacy mode: %s examples",
+                len(measures),
+            )
+        else:
+            trial_metadata.pop("measures", None)
     else:
         trial_metadata.pop("measures", None)
 
@@ -295,7 +305,10 @@ def _add_tvar_observation(
             config_space_id=source_metadata.get("config_space_id"),
             effectuation_events=source_metadata.get("effectuation_events"),
         )
-        return merge_tvar_observation_metadata(trial_metadata, observation)
+        return cast(
+            dict[str, Any],
+            merge_tvar_observation_metadata(trial_metadata, observation),
+        )
     except Exception as exc:
         logger.debug(
             "Skipping TVAR observation metadata for trial %s: %s",
@@ -339,7 +352,6 @@ def build_backend_metadata(
     trial_metadata: dict[str, Any] = {
         "duration": trial_result.duration,
         "trial_id": trial_result.trial_id,
-        "execution_mode": traigent_config.execution_mode,
     }
 
     if not traigent_config.minimal_logging:
@@ -400,10 +412,22 @@ def _extract_score_from_metrics(
     return None
 
 
+def _example_field(example_result: Any, name: str, default: Any = None) -> Any:
+    """Read a field from an example result object OR its dict payload form.
+
+    Trial metadata stores example results as redacted ``to_dict()`` payloads
+    (see ``trial_result_factory._to_redactable_payloads``), so the measure
+    builders must read plain dicts as well as ``ExampleResult`` objects.
+    """
+    if isinstance(example_result, Mapping):
+        return example_result.get(name, default)
+    return getattr(example_result, name, default)
+
+
 def _calculate_fallback_score(example_result: Any) -> float | None:
     """Calculate fallback score from expected vs actual output."""
-    expected = getattr(example_result, "expected_output", None)
-    actual = getattr(example_result, "actual_output", None)
+    expected = _example_field(example_result, "expected_output")
+    actual = _example_field(example_result, "actual_output")
     if expected is not None and actual is not None:
         return 1.0 if actual == expected else 0.0
     return None
@@ -418,7 +442,7 @@ def _add_execution_time_metrics(
     canonical optimization payload key is `response_time_ms`, but the legacy
     `response_time` key remains for one compatibility window.
     """
-    execution_time = getattr(example_result, "execution_time", None)
+    execution_time = _example_field(example_result, "execution_time")
     if execution_time is None or not isinstance(execution_time, (int, float)):
         return
 
@@ -427,22 +451,29 @@ def _add_execution_time_metrics(
     metrics_dict["response_time"] = response_time_seconds
 
 
+def _is_measure_metric_value(value: Any) -> bool:
+    """Return True for MeasuresDict metric values accepted by the SDK."""
+    return value is None or (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+    )
+
+
 def _build_single_measure_full(
     example_result: Any,
     idx: int,
     dataset_hash: str,
     primary_objective: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Build a single full measure for non-privacy mode."""
     example_id = generate_stable_example_id(dataset_hash, idx)
     metrics_dict: dict[str, Any] = {}
-    eval_metrics = getattr(example_result, "metrics", {}) or {}
+    eval_metrics = _example_field(example_result, "metrics") or {}
 
     if eval_metrics:
         logger.debug("Example %s metrics: %s", idx, eval_metrics)
         # Add all scalar metrics (numeric only per MeasuresDict constraints)
         for metric_key, metric_value in eval_metrics.items():
-            if isinstance(metric_value, (int, float)) or metric_value is None:
+            if _is_measure_metric_value(metric_value):
                 metrics_dict[metric_key] = metric_value
 
     # Extract or calculate score
@@ -453,6 +484,10 @@ def _build_single_measure_full(
         metrics_dict["score"] = float(example_score)
 
     _add_execution_time_metrics(metrics_dict, example_result)
+
+    if not metrics_dict:
+        logger.debug("Skipping measure %s because it has no numeric metrics", idx)
+        return None
 
     measure_result = {"example_id": example_id, "metrics": metrics_dict}
     _validate_measure_dict(measure_result, idx)
@@ -485,10 +520,14 @@ def _build_measures_full(
         ValueError: If measures violate MeasuresDict constraints
     """
     dataset_hash = compute_dataset_hash(dataset_name)
-    return [
-        _build_single_measure_full(example_result, idx, dataset_hash, primary_objective)
-        for idx, example_result in enumerate(example_results)
-    ]
+    measures: list[dict[str, Any]] = []
+    for idx, example_result in enumerate(example_results):
+        measure = _build_single_measure_full(
+            example_result, idx, dataset_hash, primary_objective
+        )
+        if measure is not None:
+            measures.append(measure)
+    return measures
 
 
 _PRIVACY_TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
@@ -500,10 +539,14 @@ def _add_privacy_safe_metrics(
 ) -> None:
     """Add token and cost metrics which are privacy-safe."""
     for token_key in _PRIVACY_TOKEN_KEYS:
-        if token_key in eval_metrics:
+        if token_key in eval_metrics and _is_measure_metric_value(
+            eval_metrics[token_key]
+        ):
             metrics_dict[token_key] = eval_metrics[token_key]
     for cost_key in _PRIVACY_COST_KEYS:
-        if cost_key in eval_metrics:
+        if cost_key in eval_metrics and _is_measure_metric_value(
+            eval_metrics[cost_key]
+        ):
             metrics_dict[cost_key] = eval_metrics[cost_key]
 
 
@@ -512,11 +555,11 @@ def _build_single_measure_privacy(
     idx: int,
     dataset_hash: str,
     primary_objective: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Build a single sanitized measure for privacy mode."""
     example_id = generate_stable_example_id(dataset_hash, idx)
     metrics_dict: dict[str, Any] = {}
-    eval_metrics = getattr(example_result, "metrics", {}) or {}
+    eval_metrics = _example_field(example_result, "metrics") or {}
 
     # Extract or calculate score
     example_score = _extract_score_from_metrics(eval_metrics, primary_objective)
@@ -530,6 +573,12 @@ def _build_single_measure_privacy(
     # Add privacy-safe token and cost metrics
     if eval_metrics:
         _add_privacy_safe_metrics(metrics_dict, eval_metrics)
+
+    if not metrics_dict:
+        logger.debug(
+            "Skipping sanitized measure %s because it has no numeric metrics", idx
+        )
+        return None
 
     measure_result = {"example_id": example_id, "metrics": metrics_dict}
     _validate_measure_dict(measure_result, idx)
@@ -564,9 +613,11 @@ def _build_measures_privacy(
         ValueError: If measures violate MeasuresDict constraints
     """
     dataset_hash = compute_dataset_hash(dataset_name)
-    return [
-        _build_single_measure_privacy(
+    measures: list[dict[str, Any]] = []
+    for idx, example_result in enumerate(example_results):
+        measure = _build_single_measure_privacy(
             example_result, idx, dataset_hash, primary_objective
         )
-        for idx, example_result in enumerate(example_results)
-    ]
+        if measure is not None:
+            measures.append(measure)
+    return measures
