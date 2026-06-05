@@ -78,7 +78,11 @@ repos:
         language: python
         files: '\.tvl\.ya?ml$'
         types: [file]
-        additional_dependencies: ['pyyaml>=6.0']
+        # The hook venv is isolated: `python -m traigent.tvl` resolves the
+        # package from the repo (cwd on sys.path), but every third-party
+        # import in that chain must be declared here or the hook dies on
+        # ImportError for ANY .tvl.yml change.
+        additional_dependencies: ['pyyaml>=6.0', 'pydantic>=2.0', 'packaging>=23.0']
 
   # Prevent committing gitignored files
   - repo: local

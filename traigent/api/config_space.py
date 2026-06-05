@@ -272,7 +272,35 @@ class ConfigSpace:
             }
         elif isinstance(domain, Mapping):
             kind = domain.get("kind")
-            if kind == "enum":
+            if kind is None:
+                # canonical TVL mapping forms have no 'kind' discriminator
+                if "range" in domain:
+                    kind = "range"
+                elif "set" in domain:
+                    set_values = domain.get("set")
+                    if not isinstance(set_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' set domain must contain a list"
+                        )
+                    spec_dict = {
+                        "values": list(set_values),
+                        "default": entry.get("default"),
+                    }
+                    kind = "enum_resolved"
+                elif "values" in domain:
+                    enum_values = domain.get("values")
+                    if not isinstance(enum_values, list):
+                        raise ValueError(
+                            f"TVAR '{name}' values domain must contain a list"
+                        )
+                    spec_dict = {
+                        "values": list(enum_values),
+                        "default": entry.get("default"),
+                    }
+                    kind = "enum_resolved"
+            if kind == "enum_resolved":
+                pass  # spec_dict already built from canonical set/values form
+            elif kind == "enum":
                 spec_dict = {
                     "values": list(domain.get("values", [])),
                     "default": entry.get("default"),
@@ -816,24 +844,29 @@ class ConfigSpace:
             return "float"  # Default
 
     @staticmethod
-    def _tvar_to_domain(tvar: ParameterRange) -> dict[str, Any]:
-        """Convert ParameterRange to TVL 0.9 domain specification.
+    def _tvar_to_domain(tvar: ParameterRange) -> dict[str, Any] | list[Any]:
+        """Convert ParameterRange to the CANONICAL TVL domain form.
 
-        TVL 0.9 domains have explicit 'kind' field:
-        - enum: {"kind": "enum", "values": [...]}
-        - range: {"kind": "range", "range": [low, high], "resolution": step}
+        Canonical forms (tvl.schema.json DomainSpec):
+        - enum: literal array  ["a", "b", ...]
+        - range: {"range": [low, high], "resolution": step, "log": bool}
+
+        Ingestion (`_spec_entry_to_range`) accepts BOTH these canonical forms
+        and the legacy SDK `{"kind": ...}` forms for back-compatibility with
+        already-serialized specs.
 
         Args:
             tvar: The ParameterRange to convert
 
         Returns:
-            Domain specification dict in TVL 0.9 format
+            Canonical domain specification (list for enums, dict for ranges)
         """
         if isinstance(tvar, Choices):
-            return {"kind": "enum", "values": list(tvar.values)}
+            # canonical literal-array enum (tvl.schema.json EnumVals)
+            return list(tvar.values)
 
         if isinstance(tvar, LogRange):
-            return {"kind": "range", "range": [tvar.low, tvar.high], "log": True}
+            return {"range": [tvar.low, tvar.high], "log": True}
 
         if isinstance(tvar, (IntRange, Range)):
             return ConfigSpace._range_to_domain(tvar)
@@ -843,8 +876,8 @@ class ConfigSpace:
 
     @staticmethod
     def _range_to_domain(tvar: IntRange | Range) -> dict[str, Any]:
-        """Convert IntRange or Range to domain dict."""
-        domain: dict[str, Any] = {"kind": "range", "range": [tvar.low, tvar.high]}
+        """Convert IntRange or Range to the canonical TVL range domain."""
+        domain: dict[str, Any] = {"range": [tvar.low, tvar.high]}
         if tvar.step is not None:
             domain["resolution"] = tvar.step
         if tvar.log:

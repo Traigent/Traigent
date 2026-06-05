@@ -782,8 +782,17 @@ def compile_constraint_expression(
     - Functions: `min`, `max`, `abs`, `len`, `sum`, `any`, `all`
 
     Note on Equality:
-    Constraint expressions are parsed as Python expressions, so equality must
-    be written as `==` (not `=`).
+    Both the SDK dialect (`==`) and canonical TVL (`=`) are accepted; the
+    translation step rewrites single `=` outside quoted strings.
+
+    Note on Names:
+    Canonical bare tvar names are bound from the config (dotted names are
+    FLAT keys). The reserved context names — `params`, `metrics`, `math`,
+    `len`, `min`, `max`, `sum`, `abs`, `any`, `all` — always win: a tvar
+    whose root collides with one of them cannot be referenced bare (use the
+    `params.<name>` form instead). When BOTH a nested mapping and a flat
+    dotted key exist for the same path, the nested mapping deterministically
+    wins (`_AttributeView` checks exact keys before the dotted fallback).
 
     Args:
         expression: The constraint expression string.
@@ -821,6 +830,17 @@ def compile_constraint_expression(
             "any": any,
             "all": all,
         }
+        # Canonical TVL atoms reference tvars by BARE name (`zero_shot`) and
+        # treat dotted names as FLAT keys (`retriever.k` is one name). Bind
+        # each config-key root into the context — reserved names always win.
+        for key, value in (config or {}).items():
+            root = key.split(".", 1)[0]
+            if root in context:
+                continue
+            if root == key:
+                context[root] = _AttributeView.wrap_value(value)
+            elif root not in (config or {}):
+                context[root] = _DottedPrefixView(config or {}, root)
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
@@ -2012,14 +2032,58 @@ def _merge_inherited_constraints(
 
 
 def _translate_expression(expression: str) -> str:
-    translated = expression
-    translated = re.sub(r"&&", " and ", translated)
-    translated = re.sub(r"\|\|", " or ", translated)
-    translated = re.sub(r"(?<![=!<>])!(?![=])", " not ", translated)
-    translated = re.sub(r"\btrue\b", "True", translated, flags=re.IGNORECASE)
-    translated = re.sub(r"\bfalse\b", "False", translated, flags=re.IGNORECASE)
-    translated = re.sub(r"\bnull\b", "None", translated, flags=re.IGNORECASE)
-    return translated
+    """Translate canonical/CEL-like surface syntax to the Python dialect.
+
+    ALL rewrites are quote-aware: quoted string spans pass through verbatim,
+    so values like "k=v-style", "a && b", or "true" are never corrupted.
+    Outside quotes the rewrites are: `&&`/`||`/`!` logicals, case-insensitive
+    `true`/`false`/`null` literals, and canonical TVL `=` equality -> `==`
+    (idempotent on `==`, `!=`, `<=`, `>=`).
+    """
+
+    def _rewrite_segment(segment: str) -> str:
+        segment = re.sub(r"&&", " and ", segment)
+        segment = re.sub(r"\|\|", " or ", segment)
+        segment = re.sub(r"(?<![=!<>])!(?![=])", " not ", segment)
+        segment = re.sub(r"\btrue\b", "True", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"\bfalse\b", "False", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"\bnull\b", "None", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"(?<![=!<>])=(?!=)", "==", segment)
+        return segment
+
+    out: list[str] = []
+    segment_start = 0
+    i = 0
+    n = len(expression)
+    quote: str | None = None
+    while i < n:
+        ch = expression[i]
+        if quote is None:
+            if ch in ("'", '"'):
+                out.append(_rewrite_segment(expression[segment_start:i]))
+                segment_start = i
+                quote = ch
+            i += 1
+            continue
+        # inside a quoted span: a quote closes it only if preceded by an
+        # EVEN number of backslashes (odd means the quote is escaped)
+        if ch == quote:
+            backslashes = 0
+            j = i - 1
+            while j >= 0 and expression[j] == "\\":
+                backslashes += 1
+                j -= 1
+            if backslashes % 2 == 0:
+                out.append(expression[segment_start : i + 1])
+                segment_start = i + 1
+                quote = None
+        i += 1
+    out.append(
+        expression[segment_start:]
+        if quote is not None
+        else _rewrite_segment(expression[segment_start:])
+    )
+    return "".join(out)
 
 
 _ALLOWED_AST_NODES = (
@@ -2151,7 +2215,13 @@ def _validate_expression_ast(node: ast.AST, source: str) -> None:
 
 
 class _AttributeView:
-    """Proxy that exposes dictionary keys as attributes."""
+    """Proxy that exposes dictionary keys as attributes.
+
+    Dotted tvar names are FLAT keys in canonical TVL (`retriever.k` is one
+    name), so a missing attribute falls back to a dotted-prefix view that
+    resolves attribute chains against the flat key set. Genuinely nested
+    mappings keep their attribute-chain semantics (checked first).
+    """
 
     __slots__ = ("_data",)
 
@@ -2161,6 +2231,9 @@ class _AttributeView:
     def __getattr__(self, item: str) -> Any:
         if item in self._data:
             return self._wrap(self._data[item])
+        prefix = item + "."
+        if any(isinstance(key, str) and key.startswith(prefix) for key in self._data):
+            return _DottedPrefixView(self._data, item)
         return None
 
     def __getitem__(self, key: str) -> Any:
@@ -2174,3 +2247,27 @@ class _AttributeView:
         if isinstance(value, dict):
             return _AttributeView(value)
         return value
+
+    @staticmethod
+    def wrap_value(value: Any) -> Any:
+        """Public wrapper used when binding bare config roots."""
+        return _AttributeView._wrap(value)
+
+
+class _DottedPrefixView:
+    """Resolves attribute chains against FLAT dotted keys (`a.b.c`)."""
+
+    __slots__ = ("_data", "_prefix")
+
+    def __init__(self, data: dict[str, Any], prefix: str):
+        self._data = data
+        self._prefix = prefix
+
+    def __getattr__(self, item: str) -> Any:
+        full = f"{self._prefix}.{item}"
+        if full in self._data:
+            return _AttributeView.wrap_value(self._data[full])
+        deeper = full + "."
+        if any(isinstance(key, str) and key.startswith(deeper) for key in self._data):
+            return _DottedPrefixView(self._data, full)
+        return None
