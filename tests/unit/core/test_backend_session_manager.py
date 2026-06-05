@@ -806,6 +806,56 @@ class TestStatisticalSignificanceWiring:
         assert "statistical_significance" in inner_metadata
         assert inner_metadata["statistical_significance"] == sig_data
 
+    def test_strategy_preset_metadata_included_in_aggregation_payload(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        """Aggregate submission includes the schema-shaped strategy_preset payload."""
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+        strategy_preset_metadata = {
+            "preset_name": "quality_floor_min_cost",
+            "params": {"floor": 0.82},
+            "selection_grade": "advisory",
+            "selection_rationale": (
+                "Selected the lowest-cost completed trial satisfying the preset "
+                "quality floor."
+            ),
+        }
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-preset-aggregation",
+            optimization_status=OptimizationStatus.COMPLETED,
+            strategy_preset_metadata=strategy_preset_metadata,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"gpt-4o": 5},
+            },
+        }
+
+        manager.submit_session_aggregation(result, "test-session-id")
+
+        mock_backend_client.submit_result.assert_called_once()
+        call_kwargs = mock_backend_client.submit_result.call_args
+        payload_metadata = call_kwargs.kwargs.get(
+            "metadata", call_kwargs[1].get("metadata", {})
+        )
+        assert payload_metadata["strategy_preset"] == strategy_preset_metadata
+
     def test_aggregation_works_without_significance(
         self, mock_backend_client, mock_optimizer, objective_schema
     ):

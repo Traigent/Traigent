@@ -35,12 +35,14 @@ def mock_result():
     trial1.config = {"temperature": 0.5, "model": "gpt-4"}
     trial1.metrics = {"accuracy": 0.85, "cost": 0.01, "overall": 0.85}
     trial1.status = "completed"
+    trial1.is_successful = True
 
     trial2 = Mock()
     trial2.trial_id = "trial_2"
     trial2.config = {"temperature": 0.7, "model": "gpt-3.5"}
     trial2.metrics = {"accuracy": 0.75, "cost": 0.005, "overall": 0.75}
     trial2.status = "completed"
+    trial2.is_successful = True
 
     mock = Mock()
     mock.trials = [trial1, trial2]
@@ -52,6 +54,7 @@ def mock_result():
     mock.duration = 10.5
     mock.algorithm = "tpe"
     mock.function_name = "test_func"
+    mock.preset_selection = None
     return mock
 
 
@@ -184,6 +187,49 @@ class TestResultsRerank:
 
         # Should fail gracefully with error message
         assert "Invalid" in result.output or result.exit_code != 0
+
+    def test_results_rerank_with_preset(self, runner, mock_result):
+        """Test reranking with an advisory strategy preset."""
+        with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
+            mock_persistence = Mock()
+            mock_persistence_class.return_value = mock_persistence
+            mock_persistence.load_result.return_value = mock_result
+
+            result = runner.invoke(
+                cli,
+                [
+                    "results",
+                    "rerank",
+                    "--preset",
+                    "max_accuracy_then_cheapest_within_epsilon",
+                    "--epsilon",
+                    "0.11",
+                    "test_run",
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "Advisory Preset Selection" in result.output
+            assert "advisory selection" in result.output
+            assert "gpt-3.5" in result.output
+
+    def test_results_rerank_rejects_weights_and_preset(self, runner):
+        """Weights and presets are alternative rerank modes."""
+        result = runner.invoke(
+            cli,
+            [
+                "results",
+                "rerank",
+                "test_run",
+                "--weights",
+                "accuracy=1",
+                "--preset",
+                "pareto_frontier",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "exactly one" in result.output
 
 
 class TestExportCommand:
