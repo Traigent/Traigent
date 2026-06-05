@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from traigent.core.cost_estimator import CostEstimator
+import traigent.utils.cost_calculator as cost_calculator
+from traigent.core.cost_estimator import (
+    ALLOW_UNPRICED_MODELS_ENV,
+    CUSTOM_PRICING_FILE_ENV,
+    CUSTOM_PRICING_JSON_ENV,
+    CostCoverageError,
+    CostEstimator,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,6 +37,28 @@ class _FakeDataset:
 class _FakeTrialResult:
     metrics: dict | None = None
     metadata: dict | None = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cost_pricing_state(monkeypatch):
+    """Keep custom-pricing env/cache and mock-mode state local to each test."""
+    from traigent import testing as traigent_testing
+
+    old_cache = cost_calculator._CUSTOM_PRICING_CACHE
+    old_key = cost_calculator._CUSTOM_PRICING_CACHE_KEY
+    cost_calculator._CUSTOM_PRICING_CACHE = None
+    cost_calculator._CUSTOM_PRICING_CACHE_KEY = None
+    traigent_testing._reset_for_tests()
+    monkeypatch.delenv(ALLOW_UNPRICED_MODELS_ENV, raising=False)
+    monkeypatch.delenv(CUSTOM_PRICING_JSON_ENV, raising=False)
+    monkeypatch.delenv(CUSTOM_PRICING_FILE_ENV, raising=False)
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    try:
+        yield
+    finally:
+        cost_calculator._CUSTOM_PRICING_CACHE = old_cache
+        cost_calculator._CUSTOM_PRICING_CACHE_KEY = old_key
+        traigent_testing._reset_for_tests()
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +119,38 @@ class TestEstimateOptimizationCost:
         # Total = 50 * 10 * 0.002 * 1.2 = 1.2
         assert cost == pytest.approx(1.2)
 
-    def test_unknown_model_falls_back_to_conservative_pricing(self) -> None:
-        """Unknown model should trigger conservative fallback pricing."""
+    def test_unknown_model_fails_closed_without_override(self) -> None:
+        """Unknown real-run model pricing should fail before estimation fallback."""
         from traigent.utils.cost_calculator import UnknownModelError
 
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=None,
+            max_total_examples=None,
+            model_name="unknown-private-model",
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=UnknownModelError("unknown model"),
+        ):
+            with pytest.raises(CostCoverageError) as exc_info:
+                estimator.estimate_optimization_cost(dataset)
+
+        assert "unknown-private-model" in str(exc_info.value)
+        assert CUSTOM_PRICING_JSON_ENV in str(exc_info.value)
+        assert ALLOW_UNPRICED_MODELS_ENV in str(exc_info.value)
+
+    def test_unknown_model_uses_conservative_pricing_with_override(
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Explicit override keeps the conservative fallback visible."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        monkeypatch.setenv(ALLOW_UNPRICED_MODELS_ENV, "true")
+        caplog.set_level(logging.WARNING, logger="traigent.core.cost_estimator")
         enforcer = MagicMock(is_mock_mode=False)
         estimator = CostEstimator(
             enforcer,
@@ -108,9 +167,40 @@ class TestEstimateOptimizationCost:
             cost = estimator.estimate_optimization_cost(dataset)
 
         assert cost == pytest.approx(40.5)
+        assert ALLOW_UNPRICED_MODELS_ENV in caplog.text
+        assert "conservative_fallback" in caplog.text
 
-    def test_model_pricing_exception_falls_back_to_conservative_pricing(self) -> None:
-        """Unexpected pricing lookup failures should preserve conservative approval."""
+    def test_unknown_model_uses_custom_pricing_json(self, monkeypatch) -> None:
+        """Custom rates satisfy coverage and drive the estimate."""
+        monkeypatch.setenv(
+            CUSTOM_PRICING_JSON_ENV,
+            json.dumps(
+                {
+                    "unknown-private-model": {
+                        "input_cost_per_token": 1e-6,
+                        "output_cost_per_token": 2e-6,
+                    }
+                }
+            ),
+        )
+
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=None,
+            max_total_examples=None,
+            model_name="unknown-private-model",
+        )
+        dataset = _FakeDataset()
+
+        cost = estimator.estimate_optimization_cost(dataset)
+
+        # Base = (2000 * 1e-6) + (500 * 2e-6) = 0.003
+        # Total = 50 * 10 * 0.003 * 1.2 = 1.8
+        assert cost == pytest.approx(1.8)
+
+    def test_model_pricing_exception_fails_closed_without_override(self) -> None:
+        """Unexpected pricing lookup failures should fail before fallback."""
         enforcer = MagicMock(is_mock_mode=False)
         estimator = CostEstimator(
             enforcer,
@@ -123,6 +213,28 @@ class TestEstimateOptimizationCost:
         with patch(
             "traigent.core.cost_estimator.get_model_token_pricing",
             side_effect=RuntimeError("pricing backend unavailable"),
+        ):
+            with pytest.raises(CostCoverageError, match="gpt-4o-mini"):
+                estimator.estimate_optimization_cost(dataset)
+
+    def test_unknown_model_in_mock_mode_does_not_fail_coverage(self) -> None:
+        """Mock runs can keep conservative estimates because no spend happens."""
+        from traigent import testing as traigent_testing
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        traigent_testing.enable_mock_mode_for_quickstart()
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=None,
+            max_total_examples=None,
+            model_name="unknown-private-model",
+        )
+        dataset = _FakeDataset()
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=UnknownModelError("unknown model"),
         ):
             cost = estimator.estimate_optimization_cost(dataset)
 
@@ -156,10 +268,41 @@ class TestEstimateOptimizationCost:
         # Total = 50 * 10 * 0.01 * 1.2 = 6.0
         assert cost == pytest.approx(6.0)
 
-    def test_unknown_candidate_model_falls_back_to_conservative_pricing(self) -> None:
-        """Unknown candidate pricing should keep approval conservative."""
+    def test_unknown_candidate_model_fails_closed_without_override(self) -> None:
+        """Unknown config-space model pricing should fail closed for real runs."""
         from traigent.utils.cost_calculator import UnknownModelError
 
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=10,
+            max_total_examples=None,
+            candidate_models=["gpt-4o-mini", "unknown-private-model"],
+        )
+        dataset = _FakeDataset()
+
+        def pricing(model: str) -> tuple[float, float, str]:
+            if model == "gpt-4o-mini":
+                return (0.15e-6, 0.6e-6, "litellm")
+            raise UnknownModelError(model)
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=pricing,
+        ):
+            with pytest.raises(CostCoverageError) as exc_info:
+                estimator.estimate_optimization_cost(dataset)
+
+        assert "unknown-private-model" in str(exc_info.value)
+
+    def test_unknown_candidate_model_uses_conservative_pricing_with_override(
+        self, monkeypatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Override-gated candidate fallback keeps the existing conservative math."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        monkeypatch.setenv(ALLOW_UNPRICED_MODELS_ENV, "true")
+        caplog.set_level(logging.WARNING, logger="traigent.core.cost_estimator")
         enforcer = MagicMock(is_mock_mode=False)
         estimator = CostEstimator(
             enforcer,
@@ -181,11 +324,13 @@ class TestEstimateOptimizationCost:
             cost = estimator.estimate_optimization_cost(dataset)
 
         assert cost == pytest.approx(40.5)
+        assert "unknown-private-model" in caplog.text
+        assert "conservative_fallback" in caplog.text
 
-    def test_candidate_model_pricing_exception_falls_back_to_conservative_pricing(
+    def test_candidate_model_pricing_exception_fails_closed_without_override(
         self,
     ) -> None:
-        """Unexpected candidate pricing failures should preserve conservative approval."""
+        """Unexpected candidate pricing failures should fail before fallback."""
         enforcer = MagicMock(is_mock_mode=False)
         estimator = CostEstimator(
             enforcer,
@@ -199,9 +344,8 @@ class TestEstimateOptimizationCost:
             "traigent.core.cost_estimator.get_model_token_pricing",
             side_effect=RuntimeError("pricing backend unavailable"),
         ):
-            cost = estimator.estimate_optimization_cost(dataset)
-
-        assert cost == pytest.approx(40.5)
+            with pytest.raises(CostCoverageError, match="gpt-4o"):
+                estimator.estimate_optimization_cost(dataset)
 
     def test_explicit_model_takes_precedence_over_candidate_models(self) -> None:
         """A fixed run model should override config-space candidates."""
@@ -262,10 +406,13 @@ class TestEstimateOptimizationCost:
         # Total = 50 * 10 * 0.00075 * 1.2 = 0.45
         assert cost == pytest.approx(0.45)
 
-    def test_estimated_tokens_apply_to_conservative_fallback_pricing(self) -> None:
+    def test_estimated_tokens_apply_to_override_gated_conservative_fallback_pricing(
+        self, monkeypatch
+    ) -> None:
         """Token estimate metadata should still improve the conservative fallback."""
         from traigent.utils.cost_calculator import UnknownModelError
 
+        monkeypatch.setenv(ALLOW_UNPRICED_MODELS_ENV, "true")
         enforcer = MagicMock(is_mock_mode=False)
         estimator = CostEstimator(
             enforcer,

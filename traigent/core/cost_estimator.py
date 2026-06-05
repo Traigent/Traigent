@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 
 from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
+from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +20,35 @@ _ESTIMATED_INPUT_TOKENS_PER_EXAMPLE = 2000
 _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE = 500
 _CONSERVATIVE_INPUT_COST_PER_TOKEN = 15.0e-6
 _CONSERVATIVE_OUTPUT_COST_PER_TOKEN = 75.0e-6
+ALLOW_UNPRICED_MODELS_ENV = "TRAIGENT_ALLOW_UNPRICED_MODELS"
+CUSTOM_PRICING_JSON_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_JSON"
+CUSTOM_PRICING_FILE_ENV = "TRAIGENT_CUSTOM_MODEL_PRICING_FILE"
+
+
+class CostCoverageError(ConfigurationError):
+    """Raised when a real optimization run includes unpriced model candidates."""
+
+    def __init__(self, unpriced_models: Sequence[str]) -> None:
+        self.unpriced_models = tuple(sorted(dict.fromkeys(unpriced_models)))
+        models = ", ".join(repr(model) for model in self.unpriced_models)
+        super().__init__(
+            "Cost coverage preflight failed: pricing could not be resolved for "
+            f"model(s): {models}. Provide explicit custom rates with "
+            f"{CUSTOM_PRICING_JSON_ENV} or {CUSTOM_PRICING_FILE_ENV}, or set "
+            f"{ALLOW_UNPRICED_MODELS_ENV}=true to allow conservative fallback "
+            "estimates for this run."
+        )
+
+
+def _is_truthy_env(name: str) -> bool:
+    value = os.getenv(name)
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_cost_coverage_mock_mode() -> bool:
+    from traigent.utils.env_config import is_mock_llm
+
+    return bool(is_mock_llm())
 
 
 class CostEstimator:
@@ -91,6 +122,57 @@ class CostEstimator:
                 else _ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE
             ),
         )
+
+    def _models_requiring_pricing(self) -> tuple[str, ...]:
+        """Return fixed and config-space model names that require pricing."""
+        models: list[str] = []
+        if self._model_name and self._model_name.strip():
+            models.append(self._model_name.strip())
+        models.extend(self._candidate_models)
+        return tuple(dict.fromkeys(models))
+
+    def _collect_unpriced_models(self) -> tuple[str, ...]:
+        """Return model names whose pricing cannot be resolved."""
+        unpriced_models: list[str] = []
+        for model_name in self._models_requiring_pricing():
+            try:
+                get_model_token_pricing(model_name)
+            except UnknownModelError:
+                unpriced_models.append(model_name)
+            except Exception:
+                logger.debug(
+                    "Pricing coverage preflight failed for model %r",
+                    model_name,
+                    exc_info=True,
+                )
+                unpriced_models.append(model_name)
+        return tuple(unpriced_models)
+
+    def _unpriced_models_allowed(self) -> bool:
+        """Return whether conservative fallback may cover unpriced models."""
+        return (
+            _is_truthy_env(ALLOW_UNPRICED_MODELS_ENV) or _is_cost_coverage_mock_mode()
+        )
+
+    def _check_pricing_coverage(self) -> None:
+        """Fail closed for unpriced real-run model candidates."""
+        unpriced_models = self._collect_unpriced_models()
+        if not unpriced_models:
+            return
+
+        if self._unpriced_models_allowed():
+            logger.warning(
+                "Proceeding with unpriced model(s) %s because %s=true or mock mode "
+                "is enabled; using conservative_fallback estimates. Configure %s "
+                "or %s for priced estimates.",
+                sorted(unpriced_models),
+                ALLOW_UNPRICED_MODELS_ENV,
+                CUSTOM_PRICING_JSON_ENV,
+                CUSTOM_PRICING_FILE_ENV,
+            )
+            return
+
+        raise CostCoverageError(unpriced_models)
 
     def _base_cost_for_rates(self, input_rate: float, output_rate: float) -> float:
         """Compute per-example base cost from token rates."""
@@ -230,6 +312,7 @@ class CostEstimator:
         Returns:
             Estimated cost in USD.
         """
+        self._check_pricing_coverage()
         base_cost_per_example, pricing_source = self._estimate_base_cost_per_example()
 
         # Get dataset size

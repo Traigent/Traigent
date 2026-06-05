@@ -28,6 +28,7 @@ import pytest
 
 from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
 from traigent.config.types import TraigentConfig
+from traigent.core.cost_estimator import CostCoverageError
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.orchestrator_helpers import allocate_parallel_ceilings
@@ -2357,6 +2358,45 @@ class TestCostEstimation:
 
         assert base_cost == pytest.approx(0.01)
         assert pricing_source == "litellm:config_space_max(gpt-4o)"
+
+    @pytest.mark.asyncio
+    async def test_optimize_fails_closed_on_unpriced_model_before_trials(
+        self,
+        monkeypatch,
+        mock_evaluator: MockEvaluator,
+        sample_dataset: Dataset,
+    ) -> None:
+        """Real optimization entrypoint must fail before running unpriced models."""
+        from traigent import testing as traigent_testing
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        traigent_testing._reset_for_tests()
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        monkeypatch.delenv("TRAIGENT_ALLOW_UNPRICED_MODELS", raising=False)
+
+        async def mock_function(input_data: dict[str, Any], **config: Any) -> Any:
+            return input_data.get("query", "default response")
+
+        optimizer = MockOptimizer(
+            config_space={"model": ["unknown-private-model"]},
+            objectives=["accuracy"],
+        )
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=mock_evaluator,
+            max_trials=1,
+            cost_approved=True,
+        )
+
+        with patch(
+            "traigent.core.cost_estimator.get_model_token_pricing",
+            side_effect=UnknownModelError("unknown model"),
+        ):
+            with pytest.raises(CostCoverageError) as exc_info:
+                await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert "unknown-private-model" in str(exc_info.value)
+        assert mock_evaluator.evaluation_count == 0
 
     def test_cost_estimator_uses_hybrid_token_estimate_metadata(
         self,
