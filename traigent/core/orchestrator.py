@@ -72,7 +72,12 @@ from traigent.core.parallel_execution_manager import (
     PermittedTrialResult,
 )
 from traigent.core.progress_manager import ProgressManager
-from traigent.core.result_selection import TieBreaker, select_best_configuration
+from traigent.core.result_selection import (
+    NO_RANKING_ELIGIBLE_TRIALS,
+    SelectionResult,
+    TieBreaker,
+    select_best_configuration,
+)
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
@@ -2753,18 +2758,43 @@ class OptimizationOrchestrator:
                 if primary and hasattr(incumbent, "get_metric")
                 else None
             )
-        selection = select_best_configuration(
-            trials=self._trials,
-            primary_objective=self.optimizer.objectives[0],
-            config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
-            aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
-            tie_breakers=self._tie_breakers or None,
-            band_target=self._band_target,
-            comparability_mode=self.traigent_config.get_comparability_mode(),
-            require_certified=strict_mode,
-            certified_config=certified_config,
-            certified_score=certified_score,
-        )
+        if not self.optimizer.objectives and not strict_mode:
+            # Objectives-free runs are supported (weighted scoring disabled,
+            # see BaseOptimizer) but have no primary metric to rank by —
+            # every sibling objectives[0] site in this module guards this;
+            # the terminal selection must too (#1108 review NB). Honest
+            # degenerate result, mirroring the selector's own no-eligible
+            # shape, instead of an IndexError at finalization. Strict runs
+            # bypass this: their selection is certificate-driven and never
+            # reads the primary objective.
+            selection = SelectionResult(
+                best_config={},
+                best_score=None,
+                session_summary={
+                    "reason": "no objectives declared; ranking disabled",
+                    "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
+                },
+                reason_code=NO_RANKING_ELIGIBLE_TRIALS,
+            )
+        else:
+            selection = select_best_configuration(
+                trials=self._trials,
+                # strict mode never reads the primary objective (certificate
+                # short-circuit), so "" is unreachable as a ranking key here
+                primary_objective=(
+                    self.optimizer.objectives[0] if self.optimizer.objectives else ""
+                ),
+                config_space_keys=set(
+                    getattr(self.optimizer, "config_space", {}).keys()
+                ),
+                aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
+                tie_breakers=self._tie_breakers or None,
+                band_target=self._band_target,
+                comparability_mode=self.traigent_config.get_comparability_mode(),
+                require_certified=strict_mode,
+                certified_config=certified_config,
+                certified_score=certified_score,
+            )
         best_config = selection.best_config
         best_score = selection.best_score
         session_summary = selection.session_summary
