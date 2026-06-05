@@ -28,6 +28,7 @@ semantics so that adapter is a documented, mechanical diff.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
@@ -111,7 +112,7 @@ class Gate:
             raise ValueError(
                 "Gate threshold is unset; calibrate the CVAR before routing."
             )
-        if threshold != threshold or threshold in (float("inf"), float("-inf")):
+        if not math.isfinite(threshold):
             # NaN comparisons are always False — a NaN threshold would
             # silently NEVER escalate (fail-open). Non-finite thresholds are
             # a calibration defect: fail closed.

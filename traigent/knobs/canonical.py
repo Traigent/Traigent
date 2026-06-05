@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import unicodedata
 from collections.abc import Mapping
 from typing import Any
@@ -40,7 +41,7 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        if not math.isfinite(value):
             raise CanonicalizationError("non-finite numbers are rejected, never hashed")
         if value.is_integer():
             # JCS/RFC 8785 number rule: integral floats serialize as the

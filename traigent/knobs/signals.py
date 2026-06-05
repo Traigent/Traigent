@@ -8,6 +8,7 @@ outside the persisted-signal surface.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .canonical import canonical_hash
@@ -65,7 +66,7 @@ class SignalObservation:
     split: str
 
     def __post_init__(self) -> None:
-        if self.value != self.value or self.value in (float("inf"), float("-inf")):
+        if not math.isfinite(self.value):
             raise ValueError("SignalObservation.value must be finite")
         if self.n < 0:
             raise ValueError("SignalObservation.n must be non-negative")
