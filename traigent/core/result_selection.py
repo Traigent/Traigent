@@ -558,7 +558,7 @@ def _trial_produced_outputs(trial: TrialResult) -> bool:
 
 def select_best_configuration(
     trials: Iterable[TrialResult],
-    primary_objective: str,
+    primary_objective: str | None,
     *,
     config_space_keys: Iterable[str],
     aggregate_configs: bool,
@@ -580,7 +580,10 @@ def select_best_configuration(
 
     Args:
         trials: Iterable of completed trial results.
-        primary_objective: Name of the primary objective to optimize.
+        primary_objective: Name of the primary objective to optimize, or
+            ``None`` for objectives-free runs (a supported BaseOptimizer
+            mode) — ranking is disabled and the selector returns its honest
+            no-eligible shape instead of a winner-by-score.
         config_space_keys: Keys that define the configuration space.
         aggregate_configs: Whether to aggregate results by config.
         tie_breakers: Optional dict mapping objectives to tie-breaker strategies.
@@ -615,6 +618,28 @@ def select_best_configuration(
     trial_list = list(trials)
     successful_trials = [t for t in trial_list if _trial_produced_outputs(t)]
     non_successful_count = len(trial_list) - len(successful_trials)
+
+    if primary_objective is None:
+        # Objectives-free run: nothing to rank by. The honest result is the
+        # same no-eligible shape as below — never a winner-by-score.
+        return SelectionResult(
+            best_config={},
+            best_score=None,
+            session_summary={
+                "reason": "no objectives declared; ranking disabled",
+                "reason_code": NO_RANKING_ELIGIBLE_TRIALS,
+                "ranking": _build_ranking_summary(
+                    total_input_trials=len(trial_list),
+                    total_successful=len(successful_trials),
+                    non_successful_count=non_successful_count,
+                    eligible_count=0,
+                    excluded_count=len(successful_trials),
+                    unknown_count=0,
+                    comparability_mode=comparability_mode,
+                ),
+            },
+            reason_code=NO_RANKING_ELIGIBLE_TRIALS,
+        )
     if not successful_trials:
         return SelectionResult(
             best_config={},

@@ -767,6 +767,12 @@ class TestOptimizationOrchestrator:
         summary = result.metadata["session_summary"]
         assert summary["reason_code"] == "NO_RANKING_ELIGIBLE_TRIALS"
         assert "no objectives declared" in summary["reason"]
+        # the selector's full no-eligible shape, ranking summary included
+        ranking = summary["ranking"]
+        assert ranking["total_input_trials"] == 1
+        assert ranking["total_successful_trials"] == 1
+        assert ranking["eligible_count"] == 0
+        assert ranking["excluded_count"] == 1
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
