@@ -202,6 +202,14 @@ def test_strategy_preset_metadata_shape_matches_schema_component():
         / "optimization"
         / "strategy_preset_schema.json"
     )
+    if not schema_path.exists():
+        import pytest
+
+        pytest.skip(
+            "Sibling TraigentSchema checkout not present "
+            f"({schema_path}); schema-shape consistency is verified in monorepo "
+            "CI, not in isolated/published-package environments."
+        )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     required_keys = {"preset_name", "params", "selection_grade"}
