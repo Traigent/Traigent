@@ -158,7 +158,7 @@ class TestOptimization:
 
             orchestrator_kwargs = MockOrchestrator.call_args.kwargs
             require(orchestrator_kwargs["objectives"] == ["accuracy", "cost"])
-            require(len(orchestrator_kwargs["constraints"]) == 1)
+            require(not orchestrator_kwargs["constraints"])
             preset = orchestrator_kwargs["strategy_preset"]
             require(preset.preset_name == QUALITY_FLOOR_MIN_COST)
             require(preset.to_metadata()["selection_grade"] == "advisory")

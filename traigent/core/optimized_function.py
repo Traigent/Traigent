@@ -1281,7 +1281,7 @@ class OptimizedFunction:
         list[Callable[..., bool]],
         NormalizedStrategyPreset | None,
     ]:
-        """Apply runtime preset objectives/constraints and return restore state."""
+        """Apply runtime preset objectives without adding search constraints."""
         original_constraints = list(self.constraints or [])
         original_preset = getattr(self, "strategy_preset", None)
         if preset is None:
@@ -1292,8 +1292,6 @@ class OptimizedFunction:
                 "Use either strategy=... or objectives=..., not both."
             )
         self.strategy_preset = preset
-        if preset.constraints:
-            self.constraints = original_constraints + list(preset.constraints)
         return list(preset.objectives), original_constraints, original_preset
 
     async def optimize(

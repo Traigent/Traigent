@@ -873,7 +873,7 @@ def _apply_strategy_preset_to_options(
     list[str] | ObjectiveSchema | None,
     list[Constraint | BoolExpr | Callable[..., Any]] | None,
 ]:
-    """Apply preset objectives and constraints without replacing user objectives."""
+    """Apply advisory preset objectives without adding search constraints."""
     if strategy_preset is None:
         return objectives, constraints
     if objectives is not None:
@@ -881,14 +881,7 @@ def _apply_strategy_preset_to_options(
             "strategy presets are mutually exclusive with explicit objectives. "
             "Use either strategy=... or objectives=..., not both."
         )
-    preset_constraints = list(strategy_preset.constraints)
-    if not preset_constraints:
-        return list(strategy_preset.objectives), constraints
-    merged_constraints: list[Constraint | BoolExpr | Callable[..., Any]] = list(
-        constraints or []
-    )
-    merged_constraints.extend(preset_constraints)
-    return list(strategy_preset.objectives), merged_constraints
+    return list(strategy_preset.objectives), constraints
 
 
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:

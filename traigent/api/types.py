@@ -20,6 +20,9 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+SelectionGrade = Literal["advisory"]
+ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
+
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
     import numpy as np
@@ -413,12 +416,17 @@ class PresetSelection:
 
     preset_name: str
     params: dict[str, Any]
-    selection_grade: str
+    selection_grade: SelectionGrade
     selection_rationale: str
     status: str
     selected_config: dict[str, Any] | None = None
     selected_configs: list[dict[str, Any]] = field(default_factory=list)
     selected_trial_indices: list[int] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Ensure advisory preset records cannot carry certificate claims."""
+        if self.selection_grade != ADVISORY_SELECTION_GRADE:
+            raise ValueError("preset selection_grade must be 'advisory'.")
 
     def to_metadata(self) -> dict[str, Any]:
         """Return the schema-shaped strategy_preset metadata payload."""
@@ -451,10 +459,14 @@ class PresetSelection:
         selected_config_raw = data.get("selected_config")
         selected_configs_raw = data.get("selected_configs")
         selected_indices_raw = data.get("selected_trial_indices")
+        if data.get("selection_grade", ADVISORY_SELECTION_GRADE) != (
+            ADVISORY_SELECTION_GRADE
+        ):
+            return None
         return cls(
             preset_name=str(data.get("preset_name", "")),
             params=dict(data.get("params") or {}),
-            selection_grade=str(data.get("selection_grade", "advisory")),
+            selection_grade=ADVISORY_SELECTION_GRADE,
             selection_rationale=str(data.get("selection_rationale", "")),
             status=str(data.get("status", "selected")),
             selected_config=(

@@ -951,15 +951,21 @@ class BackendSessionManager:
             logger.debug("Failed building overlay run metrics: %s", exc)
             overlay_metrics = {}
 
+        submission_metadata: dict[str, Any] = {
+            "summary_stats": summary_stats_with_aggregation,
+            "trial_id": aggregated_trial_id,
+            **overlay_metrics,
+        }
+        if self._strategy_preset_metadata is not None:
+            submission_metadata["strategy_preset"] = dict(
+                self._strategy_preset_metadata
+            )
+
         self._backend_client.submit_result(
             session_id=session_id,
             config=result.best_config,
             score=result.best_score,
-            metadata={
-                "summary_stats": summary_stats_with_aggregation,
-                "trial_id": aggregated_trial_id,
-                **overlay_metrics,
-            },
+            metadata=submission_metadata,
         )
         logger.debug(
             "Submitted session aggregation with overlay metrics: %s",

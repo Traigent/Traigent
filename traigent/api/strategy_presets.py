@@ -14,7 +14,7 @@ PresetName = Literal[
     "pareto_frontier",
 ]
 
-SELECTION_GRADE = "advisory"
+SELECTION_GRADE: Literal["advisory"] = "advisory"
 ADVISORY_SELECTION_NOTICE = (
     "advisory selection — no statistical certificate; results are task-local"
 )
@@ -46,6 +46,7 @@ _FAILED_FLOOR_RATIONALE = (
 _FAILED_PARETO_RATIONALE = (
     "No completed trial had both accuracy and cost metrics for the frontier."
 )
+_FLOAT_BOUNDARY_TOLERANCE = 1e-9
 
 
 class StrategyPresetError(ValueError):
@@ -130,22 +131,6 @@ def _coerce_number(value: Any, *, field_name: str, preset_name: str) -> float:
     return float(value)
 
 
-def _quality_floor_constraint(
-    floor: float,
-) -> Callable[[dict[str, Any], dict[str, Any]], bool]:
-    def constraint(_config: dict[str, Any], metrics: dict[str, Any]) -> bool:
-        value = _metric_value(metrics, "accuracy")
-        return value is not None and value >= floor
-
-    constraint.__name__ = "strategy_quality_floor_min_cost"
-    constraint.__dict__["__tvl_constraint__"] = {
-        "id": "strategy_preset.quality_floor_min_cost.floor",
-        "message": "Strategy preset quality_floor_min_cost quality floor unmet",
-        "requires_metrics": True,
-    }
-    return constraint
-
-
 def normalize_strategy_preset(
     preset_name: str | None,
     params: Mapping[str, Any] | None = None,
@@ -196,7 +181,6 @@ def normalize_strategy_preset(
             preset_name=preset_name,
             params={"floor": floor},
             objectives=list(_OBJECTIVES),
-            constraints=[_quality_floor_constraint(floor)],
             selection_rule=preset_name,
             selection_rationale=_QUALITY_FLOOR_RATIONALE,
         )
@@ -290,11 +274,10 @@ def _select_max_accuracy_then_cheapest(
         return _empty_selection(preset, _FAILED_EPSILON_RATIONALE)
 
     best_accuracy = max(accuracy for _, _, accuracy in accuracy_rows)
-    boundary = best_accuracy - epsilon
     candidates = [
         (index, trial, cost)
         for index, trial, accuracy in accuracy_rows
-        if accuracy >= boundary
+        if best_accuracy - accuracy <= epsilon + _FLOAT_BOUNDARY_TOLERANCE
         if (cost := _metric_value(trial.metrics, "cost")) is not None
     ]
     if not candidates:

@@ -1,6 +1,7 @@
 """Comprehensive tests for traigent.api.decorators module."""
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -174,6 +175,7 @@ class TestOptimizeDecorator:
 
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.objectives == ["accuracy", "cost"]
+        assert sample_function.constraints == []
         assert sample_function.strategy_preset.to_metadata() == {
             "preset_name": MAX_ACCURACY_THEN_CHEAPEST,
             "params": {"epsilon": 0.02},
@@ -238,6 +240,77 @@ class TestOptimizeDecorator:
         )
         assert result.metadata["strategy_preset"]["selection_grade"] == "advisory"
         assert result.best_config != result.preset_selection.selected_config
+
+    def test_quality_floor_preset_matches_no_preset_trial_outcomes_and_best_config(
+        self, monkeypatch, tmp_path
+    ):
+        """Floor preset selection must not constrain trials or exported best_config."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        configuration_space = {"model": ["accurate", "good-cheap", "bad-cheap"]}
+        metrics_by_model = {
+            "accurate": {"accuracy": 0.95, "cost": 0.20},
+            "good-cheap": {"accuracy": 0.91, "cost": 0.01},
+            "bad-cheap": {"accuracy": 0.70, "cost": 0.001},
+        }
+
+        def evaluator(func, config, example):
+            _ = func, example
+            return ExampleResult(
+                example_id="ex_1",
+                input_data={"prompt": "hello"},
+                expected_output="ok",
+                actual_output="ok",
+                metrics=dict(metrics_by_model[config["model"]]),
+                execution_time=0.01,
+                success=True,
+            )
+
+        @optimize(
+            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
+            configuration_space=configuration_space,
+            custom_evaluator=evaluator,
+            algorithm="grid",
+            max_trials=3,
+            objectives=["accuracy", "cost"],
+        )
+        def no_preset_function() -> str:
+            return "ok"
+
+        @optimize(
+            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
+            configuration_space=configuration_space,
+            custom_evaluator=evaluator,
+            algorithm="grid",
+            max_trials=3,
+            strategy=QUALITY_FLOOR_MIN_COST,
+            strategy_params={"floor": 0.9},
+        )
+        def floor_preset_function() -> str:
+            return "ok"
+
+        no_preset_result = no_preset_function.optimize_sync()
+        floor_result = floor_preset_function.optimize_sync()
+
+        def trial_outcomes(result):
+            return [
+                (dict(trial.config), trial.status, trial.error_message)
+                for trial in result.trials
+            ]
+
+        assert trial_outcomes(floor_result) == trial_outcomes(no_preset_result)
+        assert floor_result.best_config == no_preset_result.best_config
+        assert floor_preset_function.current_config == no_preset_result.best_config
+        assert floor_result.preset_selection is not None
+        assert floor_result.preset_selection.selected_config == {"model": "good-cheap"}
+        assert floor_result.preset_selection.selected_config != floor_result.best_config
+
+        export_path = floor_preset_function.export_config(
+            tmp_path / "floor-preset-config.json",
+            format="slim",
+        )
+        exported = json.loads(export_path.read_text(encoding="utf-8"))
+        assert exported["config"] == no_preset_result.best_config
+        assert exported["config"] != floor_result.preset_selection.selected_config
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""
@@ -691,7 +764,7 @@ class TestOptimizedFunctionIntegration:
 
         class MyClass:
             def __init__(self):
-                self.value = 2
+                self.value: int = 2
 
             @optimize(configuration_space={"x": [2, 3, 4]})
             def method(self, x: int) -> int:

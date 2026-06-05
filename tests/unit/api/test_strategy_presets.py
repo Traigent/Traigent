@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -14,14 +16,23 @@ from traigent.api.strategy_presets import (
     normalize_strategy_preset,
     select_strategy_preset,
 )
-from traigent.api.types import TrialResult, TrialStatus
+from traigent.api.types import PresetSelection, TrialResult, TrialStatus
 
 
-def _trial(index: int, accuracy: float, cost: float, *, completed: bool = True):
+def _trial(
+    index: int,
+    accuracy: float,
+    cost: float | None,
+    *,
+    completed: bool = True,
+):
+    metrics = {"accuracy": accuracy}
+    if cost is not None:
+        metrics["cost"] = cost
     return TrialResult(
         trial_id=f"trial_{index}",
         config={"candidate": index},
-        metrics={"accuracy": accuracy, "cost": cost},
+        metrics=metrics,
         status=TrialStatus.COMPLETED if completed else TrialStatus.FAILED,
         duration=0.1,
         timestamp=datetime.now(UTC),
@@ -95,6 +106,23 @@ def test_max_accuracy_epsilon_boundary_is_inclusive_and_tie_breaks_by_index():
     assert selection.selected_trial_indices == [1]
 
 
+def test_max_accuracy_epsilon_boundary_is_float_tolerant():
+    preset = normalize_strategy_preset(
+        MAX_ACCURACY_THEN_CHEAPEST,
+        {"epsilon": 0.7},
+    )
+    trials = [
+        _trial(0, 0.9, 0.5),
+        _trial(1, 0.2, 0.01),
+    ]
+
+    selection = select_strategy_preset(preset, trials)
+
+    assert selection.status == "selected"
+    assert selection.selected_config == {"candidate": 1}
+    assert selection.selected_trial_indices == [1]
+
+
 def test_quality_floor_unmet_fails_closed():
     preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.9})
     selection = select_strategy_preset(preset, [_trial(0, 0.89, 0.001)])
@@ -105,13 +133,46 @@ def test_quality_floor_unmet_fails_closed():
     assert selection.selection_grade == "advisory"
 
 
-def test_quality_floor_constraint_requires_metrics():
-    preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.8})
-    [constraint] = preset.constraints
+def test_quality_floor_empty_trials_fails_closed():
+    preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.9})
+    selection = select_strategy_preset(preset, [])
 
-    assert constraint({}, {"accuracy": 0.8}) is True
-    assert constraint({}, {"accuracy": 0.79}) is False
-    assert constraint.__dict__["__tvl_constraint__"]["requires_metrics"] is True
+    assert selection.status == "failed"
+    assert selection.selected_config is None
+    assert selection.selected_configs == []
+    assert selection.selection_grade == "advisory"
+
+
+def test_quality_floor_all_failed_trials_fails_closed():
+    preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.9})
+    selection = select_strategy_preset(
+        preset,
+        [
+            _trial(0, 0.95, 0.01, completed=False),
+            _trial(1, 0.97, 0.02, completed=False),
+        ],
+    )
+
+    assert selection.status == "failed"
+    assert selection.selected_config is None
+    assert selection.selected_configs == []
+    assert selection.selection_grade == "advisory"
+
+
+def test_quality_floor_missing_cost_metric_returns_failed_selection():
+    preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.8})
+    selection = select_strategy_preset(preset, [_trial(0, 0.9, None)])
+
+    assert selection.status == "failed"
+    assert selection.selected_config is None
+    assert selection.selected_configs == []
+    assert selection.selection_grade == "advisory"
+
+
+def test_quality_floor_preset_does_not_create_search_constraints():
+    preset = normalize_strategy_preset(QUALITY_FLOOR_MIN_COST, {"floor": 0.8})
+
+    assert preset.constraints == []
 
 
 def test_pareto_frontier_returns_frontier_set():
@@ -129,3 +190,49 @@ def test_pareto_frontier_returns_frontier_set():
     assert selection.selected_trial_indices == [0, 1]
     assert selection.selected_configs == [{"candidate": 0}, {"candidate": 1}]
     assert "statistical certificate" in ADVISORY_SELECTION_NOTICE
+
+
+def test_strategy_preset_metadata_shape_matches_schema_component():
+    repo_root = Path(__file__).resolve().parents[3]
+    schema_path = (
+        repo_root.parent
+        / "TraigentSchema"
+        / "traigent_schema"
+        / "schemas"
+        / "optimization"
+        / "strategy_preset_schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    required_keys = {"preset_name", "params", "selection_grade"}
+    assert set(schema["required"]) == required_keys
+    assert set(schema["properties"]) == {
+        "preset_name",
+        "params",
+        "selection_grade",
+        "selection_rationale",
+    }
+    assert schema["definitions"]["SelectionGrade"]["enum"] == ["advisory"]
+
+    metadata = normalize_strategy_preset(
+        QUALITY_FLOOR_MIN_COST,
+        {"floor": 0.8},
+    ).to_metadata()
+    assert required_keys <= set(metadata)
+    assert set(metadata) <= set(schema["properties"])
+    assert metadata["selection_grade"] == "advisory"
+
+
+def test_persisted_non_advisory_selection_grade_is_rejected():
+    selection = PresetSelection.from_dict(
+        {
+            "preset_name": PARETO_FRONTIER,
+            "params": {},
+            "selection_grade": "certified",
+            "selection_rationale": "should not render",
+            "status": "selected",
+            "selected_configs": [{"candidate": 0}],
+        }
+    )
+
+    assert selection is None
