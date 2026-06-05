@@ -902,7 +902,7 @@ def list_recommendation_agent_types() -> tuple[str, ...]:
     return _list_recommendation_agent_types()
 
 
-def recommend_config_space(
+def recommend_configuration_space(
     agent_type: str,
     *,
     min_impact: str | None = None,
@@ -927,13 +927,14 @@ def recommend_config_space(
             interval.
 
     Returns:
-        JSON-serializable dict with a caveat and recommendation rows.
+        JSON-serializable dict with version metadata, a caveat,
+        ``configuration_space``, and recommendation rows.
     """
     from traigent.config_generator.recommendations import (
-        recommend_config_space as _recommend_config_space,
+        recommend_configuration_space as _recommend_configuration_space,
     )
 
-    return _recommend_config_space(
+    return _recommend_configuration_space(
         agent_type,
         min_impact=min_impact,
         min_confidence=min_confidence,

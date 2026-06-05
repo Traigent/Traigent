@@ -165,9 +165,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.api.functions",
         "list_recommendation_agent_types",
     ),
-    "recommend_config_space": (
+    "recommend_configuration_space": (
         "traigent.api.functions",
-        "recommend_config_space",
+        "recommend_configuration_space",
     ),
     "get_config": ("traigent.api.functions", "get_config"),
     "get_current_config": ("traigent.api.functions", "get_current_config"),
@@ -460,7 +460,7 @@ __all__ = [
     "override_config",
     "get_available_strategies",
     "list_recommendation_agent_types",
-    "recommend_config_space",
+    "recommend_configuration_space",
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials

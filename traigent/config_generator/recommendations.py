@@ -13,15 +13,20 @@ import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from traigent.config_generator.catalog import catalog_entries, entry_to_recommendation
+from traigent.config_generator.catalog import (
+    catalog_entries,
+    catalog_version,
+    entry_to_recommendation,
+)
 from traigent.config_generator.types import EvidenceRef, TVarRecommendation
 
 __all__ = [
     "RECOMMENDATION_CAVEAT",
     "list_recommendation_agent_types",
-    "recommend_config_space",
+    "recommend_configuration_space",
 ]
 
+RECOMMENDATION_SCHEMA_VERSION = "1"
 RECOMMENDATION_CAVEAT = (
     "Recommendation impacts are task-dependent. The supporting evidence was "
     "measured on specific benchmark slices, models, and metrics; treat these "
@@ -31,6 +36,16 @@ RECOMMENDATION_CAVEAT = (
 _IMPACT_ORDER = {"low": 0, "medium": 1, "high": 2}
 _CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 _OBSERVATIONAL_LIMITATIONS = frozenset({"observational_not_causal"})
+_PUBLIC_EVIDENCE_FIELDS = (
+    "metric",
+    "delta",
+    "scope",
+    "n",
+    "model",
+    "baseline",
+    "candidate",
+    "limitations",
+)
 
 
 def list_recommendation_agent_types() -> tuple[str, ...]:
@@ -47,7 +62,7 @@ def list_recommendation_agent_types() -> tuple[str, ...]:
     )
 
 
-def recommend_config_space(
+def recommend_configuration_space(
     agent_type: str,
     *,
     min_impact: str | None = None,
@@ -66,10 +81,10 @@ def recommend_config_space(
             interval.
 
     Returns:
-        A JSON-serializable dict with the normalized agent type, filters,
-        caveat, and recommendation rows. Each row contains the knob name,
-        suggested range, impact, evidence note, effectuation status, and apply
-        guidance.
+        A JSON-serializable dict with schema/catalog versions, the normalized
+        agent type, filters, caveat, ready-to-use ``configuration_space``, and
+        recommendation rows. Each row contains the knob name, suggested range,
+        impact, evidence note, effectuation status, and apply guidance.
 
     Raises:
         ValueError: If ``agent_type`` or a filter value is unknown.
@@ -100,6 +115,8 @@ def recommend_config_space(
     ]
 
     return {
+        "schema_version": RECOMMENDATION_SCHEMA_VERSION,
+        "catalog_version": catalog_version(),
         "agent_type": normalized_agent_type,
         "valid_agent_types": list(list_recommendation_agent_types()),
         "filters": {
@@ -107,6 +124,7 @@ def recommend_config_space(
             "min_confidence": confidence_threshold,
         },
         "caveat": RECOMMENDATION_CAVEAT,
+        "configuration_space": _configuration_space_from_rows(filtered_rows),
         "recommendations": filtered_rows,
     }
 
@@ -177,6 +195,10 @@ def _recommendation_to_row(rec: TVarRecommendation) -> dict[str, Any]:
     }
 
 
+def _configuration_space_from_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {str(row["name"]): copy.deepcopy(row["range_kwargs"]) for row in rows}
+
+
 def _suggested_values(rec: TVarRecommendation) -> list[Any]:
     if rec.recommended_values:
         return list(rec.recommended_values)
@@ -214,7 +236,7 @@ def _is_causal_positive_ref(ref: EvidenceRef) -> bool:
         return False
     if set(ref.limitations) & _OBSERVATIONAL_LIMITATIONS:
         return False
-    return abs(float(ref.delta)) > 0.0
+    return float(ref.delta) > 0.0
 
 
 def _evidence_note(evidence_refs: Sequence[EvidenceRef]) -> str:
@@ -223,17 +245,39 @@ def _evidence_note(evidence_refs: Sequence[EvidenceRef]) -> str:
     return "; ".join(_format_evidence_ref(ref) for ref in evidence_refs)
 
 
-def _format_evidence_ref(ref: EvidenceRef) -> str:
-    limitations = _format_limitations(ref.limitations)
-    comparison = f"{_format_value(ref.baseline)} -> {_format_value(ref.candidate)}"
-    if ref.delta is None:
+def _format_evidence_ref(ref: EvidenceRef | Mapping[str, Any]) -> str:
+    public_ref = _project_public_evidence_ref(ref)
+    limitations = _format_limitations(public_ref["limitations"])
+    comparison = (
+        f"{_format_value(public_ref['baseline'])} -> "
+        f"{_format_value(public_ref['candidate'])}"
+    )
+    if public_ref["delta"] is None:
         summary = "observational support; no measured delta"
     else:
-        summary = f"{ref.metric} delta {_format_delta(ref.delta)}"
+        summary = (
+            f"{public_ref['metric']} delta "
+            f"{_format_delta(float(public_ref['delta']))}"
+        )
     return (
-        f"{summary} on {ref.scope} benchmark "
-        f"(n={ref.n}, model={ref.model}, {comparison}; limitations: {limitations})"
+        f"{summary} on {public_ref['scope']} benchmark "
+        f"(n={public_ref['n']}, model={public_ref['model']}, {comparison}; "
+        f"limitations: {limitations})"
     )
+
+
+def _project_public_evidence_ref(
+    ref: EvidenceRef | Mapping[str, Any],
+) -> dict[str, Any]:
+    # Benchmark-evidence fields are publishable by policy; proprietary
+    # tuning-signal taxonomy/values must never be added to this projection.
+    return {field: _evidence_ref_field(ref, field) for field in _PUBLIC_EVIDENCE_FIELDS}
+
+
+def _evidence_ref_field(ref: EvidenceRef | Mapping[str, Any], field: str) -> Any:
+    if isinstance(ref, Mapping):
+        return ref[field]
+    return getattr(ref, field)
 
 
 def _format_delta(delta: float) -> str:

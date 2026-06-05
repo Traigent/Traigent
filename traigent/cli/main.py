@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -17,7 +17,7 @@ from traigent import get_version_info
 from traigent.api.functions import (
     get_available_strategies,
     list_recommendation_agent_types,
-    recommend_config_space,
+    recommend_configuration_space,
 )
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
@@ -55,10 +55,13 @@ def _resolve_workspace_path(
 ) -> Path:
     """Resolve a path and ensure it lives within the repository workspace."""
     try:
-        return validate_path(
-            path.expanduser(),
-            WORKSPACE_ROOT,
-            must_exist=must_exist,
+        return cast(
+            Path,
+            validate_path(
+                path.expanduser(),
+                WORKSPACE_ROOT,
+                must_exist=must_exist,
+            ),
         )
     except FileNotFoundError as exc:
         raise click.ClickException(f"{description} does not exist: {exc}") from exc
@@ -523,7 +526,7 @@ def recommend(
         )
 
     try:
-        data = recommend_config_space(
+        data = recommend_configuration_space(
             agent_type,
             min_impact=min_impact,
             min_confidence=min_confidence,
