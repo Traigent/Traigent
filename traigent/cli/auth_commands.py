@@ -10,12 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import click
 from rich.console import Console
+from rich.panel import Panel
 
 # Try to import aiohttp for exception handling
 try:
@@ -61,6 +64,61 @@ SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
 MSG_CHECK_NETWORK = "Please check your network connection and try again.\n"
 MSG_RUN_LOGIN_AGAIN = "Please run [cyan]traigent auth login[/cyan] again.\n"
+
+_DEVICE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{43,}$")
+_USER_CODE_RE = re.compile(
+    r"^[BCDFGHJKMNPQRSTVWXYZ23456789]{4}-[BCDFGHJKMNPQRSTVWXYZ23456789]{4}$"
+)
+_DEVICE_ERROR_NAMES = {
+    "authorization_pending",
+    "slow_down",
+    "access_denied",
+    "expired_token",
+}
+_ENV_FILE_KEYS = (
+    "TRAIGENT_API_KEY",
+    TENANT_ENV_VAR,
+    PROJECT_ENV_VAR,
+    "TRAIGENT_BACKEND_URL",
+)
+
+
+async def _read_json_body(response: Any) -> dict[str, Any]:
+    """Read a JSON object response body, failing closed on malformed data."""
+    try:
+        response_text = await response.text()
+    except Exception as exc:
+        raise AuthenticationError("Unable to read backend response body") from exc
+
+    try:
+        data = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise AuthenticationError("Invalid JSON response from backend") from exc
+
+    if not isinstance(data, dict):
+        raise AuthenticationError("Backend response must be a JSON object")
+    return data
+
+
+def _require_non_empty_str(data: dict[str, Any], field: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise AuthenticationError(f"Malformed device auth response: missing {field}")
+    return value.strip()
+
+
+def _require_positive_int(data: dict[str, Any], field: str) -> int:
+    value = data.get(field)
+    if not isinstance(value, int) or value <= 0:
+        raise AuthenticationError(f"Malformed device auth response: invalid {field}")
+    return value
+
+
+def _format_env_value(value: str) -> str:
+    """Format a value for a dotenv assignment."""
+    if re.fullmatch(r"[A-Za-z0-9_./:@+-]+", value):
+        return value
+    return json.dumps(value)
 
 
 class TraigentAuthCLI:
@@ -194,6 +252,60 @@ class TraigentAuthCLI:
             )
         return resolved
 
+    def _save_api_key_to_env_file(
+        self,
+        api_key: str,
+        *,
+        tenant_id: str,
+        project_id: str,
+        backend_url: str,
+        path: str | Path = ".env",
+    ) -> Path:
+        """Persist auth environment values to a local .env file with 0600 perms."""
+        env_path = self._resolve_env_file_path(path)
+        existing_lines: list[str] = []
+        if env_path.exists():
+            existing_lines = env_path.read_text(encoding="utf-8").splitlines()
+
+        updates = {
+            "TRAIGENT_API_KEY": api_key,
+            TENANT_ENV_VAR: tenant_id,
+            PROJECT_ENV_VAR: project_id,
+            "TRAIGENT_BACKEND_URL": backend_url,
+        }
+        seen: set[str] = set()
+        next_lines: list[str] = []
+
+        for line in existing_lines:
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith("#") or "=" not in line:
+                next_lines.append(line)
+                continue
+
+            key = line.split("=", 1)[0].strip()
+            if key in updates:
+                next_lines.append(f"{key}={_format_env_value(updates[key])}")
+                seen.add(key)
+            else:
+                next_lines.append(line)
+
+        if next_lines and next_lines[-1] != "":
+            next_lines.append("")
+        for key in _ENV_FILE_KEYS:
+            if key not in seen:
+                next_lines.append(f"{key}={_format_env_value(updates[key])}")
+
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(
+            env_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(next_lines).rstrip() + "\n")
+        env_path.chmod(0o600)
+        return env_path
+
     async def _validate_api_key(
         self, api_key: str, verbose: bool = False
     ) -> dict[str, Any] | None:
@@ -242,6 +354,292 @@ class TraigentAuthCLI:
             if verbose:
                 console.print(f"[dim]Connection error: {e}[/dim]")
             return None
+
+    def _validate_device_authorize_payload(
+        self, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Validate the device authorization response contract."""
+        device_code = _require_non_empty_str(data, "device_code")
+        if not _DEVICE_CODE_RE.fullmatch(device_code):
+            raise AuthenticationError(
+                "Malformed device auth response: invalid device_code"
+            )
+
+        user_code = _require_non_empty_str(data, "user_code")
+        if not _USER_CODE_RE.fullmatch(user_code):
+            raise AuthenticationError(
+                "Malformed device auth response: invalid user_code"
+            )
+
+        verification_uri = _require_non_empty_str(data, "verification_uri")
+        verification_uri_complete = _require_non_empty_str(
+            data, "verification_uri_complete"
+        )
+        expires_in = _require_positive_int(data, "expires_in")
+        interval = _require_positive_int(data, "interval")
+
+        return {
+            "device_code": device_code,
+            "user_code": user_code,
+            "verification_uri": verification_uri,
+            "verification_uri_complete": verification_uri_complete,
+            "expires_in": expires_in,
+            "interval": interval,
+        }
+
+    async def _start_device_authorization(self, session: Any) -> dict[str, Any]:
+        """Start the RFC 8628 device authorization flow."""
+        url = f"{self.backend_api_url}/auth/device/authorize"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK-CLI/1.0",
+        }
+        async with session.post(
+            url,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=30) if aiohttp else None,
+        ) as response:
+            data = await _read_json_body(response)
+            if response.status != 200:
+                raise AuthenticationError(
+                    f"Device authorization failed (HTTP {response.status})"
+                )
+            return self._validate_device_authorize_payload(data)
+
+    def _validate_device_token_success(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize a successful device token envelope."""
+        if data.get("success") is not True:
+            raise AuthenticationError(
+                "Malformed device token response: success missing"
+            )
+        token_data = data.get("data")
+        if not isinstance(token_data, dict):
+            raise AuthenticationError("Malformed device token response: data missing")
+
+        api_key = _require_non_empty_str(token_data, "api_key")
+        if not api_key.startswith("sk_"):
+            raise AuthenticationError(
+                "Malformed device token response: invalid api_key"
+            )
+
+        tenant_id = _require_non_empty_str(token_data, "tenant_id")
+        project_id = _require_non_empty_str(token_data, "project_id")
+        subscription_tier = _require_non_empty_str(token_data, "subscription_tier")
+
+        user = token_data.get("user")
+        if not isinstance(user, dict):
+            raise AuthenticationError("Malformed device token response: user missing")
+        normalized_user = {
+            "id": _require_non_empty_str(user, "id"),
+            "email": _require_non_empty_str(user, "email"),
+        }
+
+        quota = token_data.get("quota")
+        if not isinstance(quota, dict):
+            raise AuthenticationError("Malformed device token response: quota missing")
+        trial_limit = quota.get("trial_limit")
+        api_call_limit = quota.get("api_call_limit")
+        if not isinstance(trial_limit, int) or not isinstance(api_call_limit, int):
+            raise AuthenticationError("Malformed device token response: invalid quota")
+
+        return {
+            "api_key": api_key,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "user": normalized_user,
+            "subscription_tier": subscription_tier,
+            "quota": {
+                "trial_limit": trial_limit,
+                "api_call_limit": api_call_limit,
+            },
+            "backend_url": self.backend_url,
+        }
+
+    @staticmethod
+    def _device_error_from_envelope(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Return a known RFC 8628 error name and details from an error envelope."""
+        raw_error = data.get("error")
+        raw_error_code = data.get("error_code")
+        if raw_error and raw_error_code and raw_error != raw_error_code:
+            raise AuthenticationError(
+                "Malformed device token error response: error mismatch"
+            )
+
+        error_name = raw_error_code or raw_error
+        if not isinstance(error_name, str) or error_name not in _DEVICE_ERROR_NAMES:
+            raise AuthenticationError("Unexpected device token response from backend")
+
+        details = data.get("details")
+        return error_name, details if isinstance(details, dict) else {}
+
+    async def _poll_device_token_once(
+        self, session: Any, device_code: str
+    ) -> tuple[str, dict[str, Any] | None, int | None]:
+        """Poll the token endpoint once."""
+        url = f"{self.backend_api_url}/auth/device/token"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Traigent-SDK-CLI/1.0",
+        }
+        async with session.post(
+            url,
+            json={"device_code": device_code},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=30) if aiohttp else None,
+        ) as response:
+            status_code = response.status
+            data = await _read_json_body(response)
+
+        if data.get("success") is True:
+            if status_code != 200:
+                raise AuthenticationError(
+                    f"Device token request failed (HTTP {status_code})"
+                )
+            return "success", self._validate_device_token_success(data), None
+
+        error_name, details = self._device_error_from_envelope(data)
+        if error_name == "slow_down":
+            new_interval = details.get("interval")
+            if not isinstance(new_interval, int) or new_interval < 6:
+                raise AuthenticationError(
+                    "Malformed slow_down response: details.interval must be >= 6"
+                )
+            return error_name, None, new_interval
+        return error_name, None, None
+
+    async def _poll_device_token(
+        self,
+        session: Any,
+        authorization: dict[str, Any],
+        sleep: Any,
+    ) -> dict[str, Any] | None:
+        """Poll the token endpoint until success, denial, or expiry."""
+        interval = int(authorization["interval"])
+        deadline = time.monotonic() + int(authorization["expires_in"])
+        device_code = str(authorization["device_code"])
+
+        while time.monotonic() < deadline:
+            status, credentials, new_interval = await self._poll_device_token_once(
+                session, device_code
+            )
+            if status == "success":
+                return credentials
+            if status == "access_denied":
+                console.print("[red]Device login was denied in the browser.[/red]")
+                return None
+            if status == "expired_token":
+                console.print(
+                    "[red]Device login expired. Please run login again.[/red]"
+                )
+                return None
+            if status == "slow_down":
+                if new_interval is None:
+                    raise AuthenticationError(
+                        "Malformed slow_down response: missing interval"
+                    )
+                interval = new_interval
+                console.print(
+                    f"[yellow]Backend requested slower polling; waiting {interval}s.[/yellow]"
+                )
+
+            await sleep(interval)
+
+        console.print("[red]Device login expired before authorization completed.[/red]")
+        return None
+
+    def _display_device_authorization(self, authorization: dict[str, Any]) -> None:
+        """Print the browser URL and user code prominently."""
+        body = (
+            f"Open this URL:\n[bold cyan]{authorization['verification_uri_complete']}[/bold cyan]\n\n"
+            f"Code:\n[bold yellow]{authorization['user_code']}[/bold yellow]"
+        )
+        console.print(
+            Panel.fit(body, title="Traigent Device Login", border_style="blue")
+        )
+
+    def _persist_device_credentials(
+        self,
+        credentials: dict[str, Any],
+        *,
+        save_env_file: bool,
+        env_file: str | Path,
+    ) -> str | None:
+        """Persist device credentials through existing credential machinery."""
+        storage_location = self._save_credentials(credentials)
+        if save_env_file:
+            try:
+                saved_path = self._save_api_key_to_env_file(
+                    str(credentials["api_key"]),
+                    tenant_id=str(credentials["tenant_id"]),
+                    project_id=str(credentials["project_id"]),
+                    backend_url=str(credentials["backend_url"]),
+                    path=env_file,
+                )
+                console.print(
+                    f"[green]✅ Project auth environment updated:[/green] {saved_path}"
+                )
+            except (OSError, ValueError) as exc:
+                console.print(
+                    "[yellow]Could not update local .env file; encrypted CLI "
+                    f"credentials were still attempted. Reason: {exc}[/yellow]"
+                )
+        return storage_location
+
+    async def device_login(
+        self,
+        *,
+        save_env_file: bool = True,
+        env_file: str | Path = ".env",
+        sleep: Any | None = None,
+    ) -> bool:
+        """Authenticate with the browser-based device-code flow."""
+        import aiohttp
+
+        poll_sleep = sleep or asyncio.sleep
+        console.print("\n[bold blue]Traigent Device Authentication[/bold blue]")
+        console.print(f"Authenticating with: [cyan]{self.backend_url}[/cyan]\n")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                authorization = await self._start_device_authorization(session)
+                self._display_device_authorization(authorization)
+                credentials = await self._poll_device_token(
+                    session, authorization, poll_sleep
+                )
+        except AuthenticationError as exc:
+            console.print(f"[red]❌ Device authentication failed: {exc}[/red]")
+            return False
+        except TimeoutError as exc:
+            console.print(f"[red]❌ Device authentication timed out: {exc}[/red]")
+            console.print(MSG_CHECK_NETWORK)
+            return False
+        except NETWORK_ERRORS as exc:
+            error_type = type(exc).__name__
+            console.print(f"[red]❌ Connection error ({error_type}): {exc}[/red]")
+            console.print(MSG_CHECK_NETWORK)
+            return False
+
+        if not credentials:
+            return False
+
+        storage_location = self._persist_device_credentials(
+            credentials,
+            save_env_file=save_env_file,
+            env_file=env_file,
+        )
+        if not storage_location:
+            self._display_storage_location(storage_location)
+            return False
+
+        user = credentials.get("user", {})
+        console.print(
+            f"[green]✅ Authenticated as {user.get('email', 'Traigent user')}[/green]"
+        )
+        console.print("[green]✅ API key received and stored securely[/green]")
+        self._display_storage_location(storage_location)
+        return True
 
     def _clear_credentials(self) -> bool:
         """Clear stored credentials.
@@ -938,6 +1336,40 @@ def login(
     """
     cli = TraigentAuthCLI(backend_url_override=backend_url)
     success = asyncio.run(cli.login(email, non_interactive))
+    sys.exit(0 if success else 1)
+
+
+@auth.command("device-login")
+@click.option(
+    "--backend-url",
+    default=None,
+    help="Backend URL to authenticate against",
+)
+@click.option(
+    "--env-file",
+    default=".env",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Local .env file to update with project-scoped credentials",
+)
+@click.option(
+    "--no-env-file",
+    is_flag=True,
+    help="Store encrypted CLI credentials only; do not update .env",
+)
+def device_login(
+    backend_url: str | None,
+    env_file: Path,
+    no_env_file: bool,
+) -> None:
+    """Authenticate through browser device-code login.
+
+    The command prints a browser URL and one-time code, then polls until
+    the backend returns a project-scoped API key or the request expires.
+    """
+    cli = TraigentAuthCLI(backend_url_override=backend_url)
+    success = asyncio.run(
+        cli.device_login(save_env_file=not no_env_file, env_file=env_file)
+    )
     sys.exit(0 if success else 1)
 
 
