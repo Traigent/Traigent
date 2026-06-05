@@ -138,10 +138,12 @@ def _compose_api_url(base_url: str, path: str) -> str:
     return f"{_resolve_api_base_url(base_url)}/{path.lstrip('/')}"
 
 
-def _require_non_empty_str(data: dict[str, Any], field: str) -> str:
+def _require_non_empty_str(
+    data: dict[str, Any], field: str, *, context: str = "device auth"
+) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise AuthenticationError(f"Malformed device auth response: missing {field}")
+        raise AuthenticationError(f"Malformed {context} response: missing {field}")
     return value.strip()
 
 
@@ -150,6 +152,18 @@ def _require_positive_int(data: dict[str, Any], field: str) -> int:
     if not isinstance(value, int) or value <= 0:
         raise AuthenticationError(f"Malformed device auth response: invalid {field}")
     return value
+
+
+def _require_success_envelope(data: dict[str, Any], *, context: str) -> dict[str, Any]:
+    """Return the data payload from a Traigent standard success envelope."""
+    if data.get("success") is not True:
+        raise AuthenticationError(f"Malformed {context} response: success missing")
+
+    _require_non_empty_str(data, "message", context=context)
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        raise AuthenticationError(f"Malformed {context} response: data missing")
+    return payload
 
 
 def _format_env_value(value: str) -> str:
@@ -185,15 +199,33 @@ class TraigentAuthCLI:
         self.credentials_file = CREDENTIALS_FILE
         self.auth_manager = AuthManager()
         if backend_url_override:
-            normalized = BackendConfig.normalize_backend_origin(backend_url_override)
+            origin, path = BackendConfig.split_api_url(backend_url_override)
+            normalized = origin or BackendConfig.normalize_backend_origin(
+                backend_url_override
+            )
             self.backend_url = normalized or backend_url_override
-            self.backend_api_url = BackendConfig.build_api_base(self.backend_url)
+            self.backend_api_url = (
+                f"{normalized}{path or BackendConfig.get_default_api_path()}"
+                if normalized
+                else BackendConfig.build_api_base(self.backend_url)
+            )
         else:
             self.backend_url = BackendConfig.get_cloud_backend_url()
             self.backend_api_url = BackendConfig.get_cloud_api_url()
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    @property
+    def device_login_target_url(self) -> str:
+        """URL displayed for device login; it matches the HTTP API base.
+
+        Device-login endpoint precedence follows the SDK cloud-client path:
+        an explicit CLI backend override wins; otherwise the configured API
+        base is used, so TRAIGENT_API_URL controls the called API host/path
+        when set and TRAIGENT_BACKEND_URL is only the backend origin fallback.
+        """
+        return _resolve_api_base_url(self.backend_api_url)
 
     def _api_url(self, path: str) -> str:
         """Compose an API endpoint URL from the resolved API base."""
@@ -416,24 +448,26 @@ class TraigentAuthCLI:
         self, data: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate the device authorization response contract."""
-        device_code = _require_non_empty_str(data, "device_code")
+        payload = _require_success_envelope(data, context="device auth")
+
+        device_code = _require_non_empty_str(payload, "device_code")
         if not _DEVICE_CODE_RE.fullmatch(device_code):
             raise AuthenticationError(
                 "Malformed device auth response: invalid device_code"
             )
 
-        user_code = _require_non_empty_str(data, "user_code")
+        user_code = _require_non_empty_str(payload, "user_code")
         if not _USER_CODE_RE.fullmatch(user_code):
             raise AuthenticationError(
                 "Malformed device auth response: invalid user_code"
             )
 
-        verification_uri = _require_non_empty_str(data, "verification_uri")
+        verification_uri = _require_non_empty_str(payload, "verification_uri")
         verification_uri_complete = _require_non_empty_str(
-            data, "verification_uri_complete"
+            payload, "verification_uri_complete"
         )
-        expires_in = _require_positive_int(data, "expires_in")
-        interval = _require_positive_int(data, "interval")
+        expires_in = _require_positive_int(payload, "expires_in")
+        interval = _require_positive_int(payload, "interval")
 
         return {
             "device_code": device_code,
@@ -469,30 +503,30 @@ class TraigentAuthCLI:
 
     def _validate_device_token_success(self, data: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalize a successful device token envelope."""
-        if data.get("success") is not True:
-            raise AuthenticationError(
-                "Malformed device token response: success missing"
-            )
-        token_data = data.get("data")
-        if not isinstance(token_data, dict):
-            raise AuthenticationError("Malformed device token response: data missing")
+        token_data = _require_success_envelope(data, context="device token")
 
-        api_key = _require_non_empty_str(token_data, "api_key")
+        api_key = _require_non_empty_str(token_data, "api_key", context="device token")
         if not api_key.startswith("sk_"):
             raise AuthenticationError(
                 "Malformed device token response: invalid api_key"
             )
 
-        tenant_id = _require_non_empty_str(token_data, "tenant_id")
-        project_id = _require_non_empty_str(token_data, "project_id")
-        subscription_tier = _require_non_empty_str(token_data, "subscription_tier")
+        tenant_id = _require_non_empty_str(
+            token_data, "tenant_id", context="device token"
+        )
+        project_id = _require_non_empty_str(
+            token_data, "project_id", context="device token"
+        )
+        subscription_tier = _require_non_empty_str(
+            token_data, "subscription_tier", context="device token"
+        )
 
         user = token_data.get("user")
         if not isinstance(user, dict):
             raise AuthenticationError("Malformed device token response: user missing")
         normalized_user = {
-            "id": _require_non_empty_str(user, "id"),
-            "email": _require_non_empty_str(user, "email"),
+            "id": _require_non_empty_str(user, "id", context="device token"),
+            "email": _require_non_empty_str(user, "email", context="device token"),
         }
 
         quota = token_data.get("quota")
@@ -519,6 +553,10 @@ class TraigentAuthCLI:
     @staticmethod
     def _device_error_from_envelope(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Return a known RFC 8628 error name and details from an error envelope."""
+        if data.get("success") is not False:
+            raise AuthenticationError("Unexpected device token response from backend")
+        _require_non_empty_str(data, "message", context="device token error")
+
         raw_error = data.get("error")
         raw_error_code = data.get("error_code")
         if raw_error and raw_error_code and raw_error != raw_error_code:
@@ -725,7 +763,9 @@ class TraigentAuthCLI:
 
         poll_sleep = sleep or asyncio.sleep
         console.print("\n[bold blue]Traigent Device Authentication[/bold blue]")
-        console.print(f"Authenticating with: [cyan]{self.backend_url}[/cyan]\n")
+        console.print(
+            f"Authenticating with: [cyan]{self.device_login_target_url}[/cyan]\n"
+        )
 
         try:
             async with aiohttp.ClientSession() as session:

@@ -17,6 +17,15 @@ API_KEY = "sk_" + "a" * 43  # pragma: allowlist secret
 DEVICE_CODE = "A" * 43
 DEVICE_LOGIN_CLIENT_ID = "traigent-sdk-cli"
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
+DEVICE_AUTHORIZE_ENVELOPE_REQUIRED_KEYS = ["success", "message", "data"]
+DEVICE_AUTHORIZE_DATA_REQUIRED_KEYS = [
+    "device_code",
+    "user_code",
+    "verification_uri",
+    "verification_uri_complete",
+    "expires_in",
+    "interval",
+]
 
 
 class _FakeSecureStore:
@@ -90,7 +99,7 @@ class _FakeSession:
         return response
 
 
-def _authorize_payload(interval: int = 1, expires_in: int = 600) -> dict[str, Any]:
+def _authorization_data(interval: int = 1, expires_in: int = 600) -> dict[str, Any]:
     return {
         "device_code": DEVICE_CODE,
         "user_code": "BCDF-2345",
@@ -101,7 +110,16 @@ def _authorize_payload(interval: int = 1, expires_in: int = 600) -> dict[str, An
     }
 
 
-# Required by TraigentSchema#94 device_token_success_schema.json.
+def _authorize_payload(interval: int = 1, expires_in: int = 600) -> dict[str, Any]:
+    return {
+        "success": True,
+        "message": "Device authorization created",
+        "data": _authorization_data(interval=interval, expires_in=expires_in),
+    }
+
+
+# Required by TraigentSchema#94 device_token_response_schema.json.
+DEVICE_TOKEN_SUCCESS_ENVELOPE_REQUIRED_KEYS = ["success", "message", "data"]
 DEVICE_TOKEN_SUCCESS_REQUIRED_KEYS = [
     "api_key",
     "tenant_id",
@@ -115,12 +133,13 @@ DEVICE_TOKEN_SUCCESS_REQUIRED_KEYS = [
 def _success_payload() -> dict[str, Any]:
     return {
         "success": True,
+        "message": "Device token issued",
         "data": {
             "api_key": API_KEY,
             "tenant_id": "tenant_123",
             "project_id": "project_456",
             "user": {"id": "user_1", "email": "dev@example.test"},
-            "subscription_tier": "trial",
+            "subscription_tier": "free",
             "quota": {"trial_limit": 25, "api_call_limit": 1000},
         },
     }
@@ -129,6 +148,7 @@ def _success_payload() -> dict[str, Any]:
 def _error_payload(error: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "success": False,
+        "message": error.replace("_", " "),
         "error": error,
         "error_code": error,
     }
@@ -162,21 +182,39 @@ def _install_device_test_fakes(
 
 
 def _make_cli(
-    backend_url_override: str = "https://backend.example.test",
+    backend_url_override: str | None = "https://backend.example.test",
 ) -> TraigentAuthCLI:
     return TraigentAuthCLI(backend_url_override=backend_url_override)
+
+
+def test_device_authorize_schema_contract_pins_success_envelope() -> None:
+    cli = TraigentAuthCLI.__new__(TraigentAuthCLI)
+
+    payload = _authorize_payload()
+    assert list(payload.keys()) == DEVICE_AUTHORIZE_ENVELOPE_REQUIRED_KEYS
+    assert list(payload["data"].keys()) == DEVICE_AUTHORIZE_DATA_REQUIRED_KEYS
+
+    validated = cli._validate_device_authorize_payload(payload)
+
+    assert validated["device_code"] == DEVICE_CODE
+    assert validated["user_code"] == "BCDF-2345"
+
+    with pytest.raises(auth_commands.AuthenticationError, match="success missing"):
+        cli._validate_device_authorize_payload(_authorization_data())
 
 
 def test_device_token_success_schema_contract_pins_subscription_tier() -> None:
     cli = TraigentAuthCLI.__new__(TraigentAuthCLI)
     cli.backend_url = "https://backend.example.test"
-    token_data = _success_payload()["data"]
+    payload = _success_payload()
+    assert list(payload.keys()) == DEVICE_TOKEN_SUCCESS_ENVELOPE_REQUIRED_KEYS
+    token_data = payload["data"]
     assert isinstance(token_data, dict)
     assert list(token_data.keys()) == DEVICE_TOKEN_SUCCESS_REQUIRED_KEYS
 
     validated = cli._validate_device_token_success(_success_payload())
 
-    assert validated["subscription_tier"] == "trial"
+    assert validated["subscription_tier"] == "free"
 
     missing_subscription_tier = _success_payload()
     missing_data = missing_subscription_tier["data"]
@@ -263,6 +301,38 @@ def test_device_flow_composes_authorize_and_token_urls_from_api_base(
         f"{expected_api_base}/auth/device/authorize",
         f"{expected_api_base}/auth/device/token",
     ]
+
+
+def test_device_flow_env_api_url_precedence_banner_matches_transport_host(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
+    monkeypatch.setenv("TRAIGENT_API_URL", "https://api.example.test/custom/v1")
+    _store, session = _install_device_test_fakes(
+        monkeypatch,
+        tmp_path,
+        [
+            _FakeResponse(200, _authorize_payload()),
+            _FakeResponse(200, _success_payload()),
+        ],
+    )
+
+    result = asyncio.run(
+        _make_cli(backend_url_override=None).device_login(
+            sleep=lambda _seconds: _noop_sleep()
+        )
+    )
+
+    assert result is True
+    assert [call["url"] for call in session.post_calls] == [
+        "https://api.example.test/custom/v1/auth/device/authorize",
+        "https://api.example.test/custom/v1/auth/device/token",
+    ]
+    output = capsys.readouterr().out
+    assert "Authenticating with: https://api.example.test/custom/v1" in output
+    assert "Authenticating with: http://localhost:5000" not in output
 
 
 def test_device_flow_env_file_consent_writes_with_0600(
