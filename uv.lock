@@ -6255,6 +6255,9 @@ integrations = [
 internal-schema = [
     { name = "traigent-schema" },
 ]
+mcp = [
+    { name = "mcp" },
+]
 ml = [
     { name = "matplotlib" },
     { name = "numpy" },
@@ -6368,6 +6371,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
     { name = "mcp", marker = "extra == 'hybrid'", specifier = ">=1.27.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.4.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.0" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.22.0" },
@@ -6425,7 +6429,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
 ]
-provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
 
 [[package]]
 name = "traigent-schema"
