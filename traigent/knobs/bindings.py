@@ -18,7 +18,7 @@ a knob effectuates, not how it binds).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from traigent.api.parameter_ranges import ParameterRange
 
@@ -26,7 +26,7 @@ from .certificates import Certificate, TargetProperty
 from .kinds import KnobKind
 from .signals import SignalSpec
 
-__all__ = ["Binding", "Calibrated", "Fixed", "Knob", "Ref", "Tuned"]
+__all__ = ["Binding", "Calibrated", "Fixed", "Knob", "Ref", "Tuned", "is_governed"]
 
 TValue = TypeVar("TValue")
 
@@ -83,6 +83,25 @@ class Calibrated(Generic[TValue]):
     certificate: Certificate | None = None
     require_calibration: bool = False
     target_epsilon: float | None = None  # chance-style level for the R8 floor
+
+
+def is_governed(binding: Calibrated[Any]) -> bool:
+    """RFC 0001 §3.6: is this Calibrated binding under DECLARED governance?
+
+    Governance is declared on the binding/target — per-CVAR
+    ``require_calibration``, a declaration-pinned certificate, or a
+    certificate-backed / guaranteed-selection target property. It is never
+    inferred from runtime-presented evidence (presenting a certificate at
+    resolution time is evidence, not an opt-in to strictness).
+
+    Shared by the resolver's per-CVAR resolution rules and the orchestrator's
+    strict-evidence-mode detection so the two can never drift.
+    """
+    return (
+        binding.require_calibration
+        or binding.certificate is not None
+        or binding.target.mode in ("certificate_backed", "guaranteed_selection")
+    )
 
 
 #: The binding union — isinstance-discriminated.

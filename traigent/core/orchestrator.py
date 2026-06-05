@@ -783,14 +783,25 @@ class OptimizationOrchestrator:
         )
 
     def _is_strict_evidence_mode(self) -> bool:
-        """RFC 0001 §3.6 strict(M): the declared strict evidence modes.
+        """RFC 0001 §3.6 strict(M, c): the declared strict evidence modes.
 
-        Detected from the promotion policy today: require_calibration enabled
-        or chance constraints present. The per-CVAR disjuncts (consumed
-        governed CVARs / certificate-backed targets via the knob resolver)
-        join this predicate when the knobs branches consolidate — tracked in
-        FR-SDK-FAIL-CLOSED-PROMOTION-V1's artifact trail.
+        Disjuncts: promotion_policy.require_calibration ∨ chance_constraints
+        ∨ a declared-governed CVAR in the resolved space (per-CVAR
+        require_calibration, declaration-pinned certificate, or a
+        certificate-backed / guaranteed-selection target). The per-CVAR
+        disjuncts are GATE-INDEPENDENT: declaring a governed CVAR demands
+        certificate-backed promotion evidence even when no promotion policy
+        was configured. Governance is read from the resolver's DECLARED
+        bindings (``has_governed_cvars``) — never inferred from runtime
+        evidence; a duck-typed custom resolver without that method
+        contributes no per-CVAR disjunct (declare strictness via the
+        promotion policy in that case).
         """
+        resolver = getattr(self, "knob_resolver", None)
+        if resolver is not None:
+            has_governed = getattr(resolver, "has_governed_cvars", None)
+            if callable(has_governed) and has_governed():
+                return True
         gate = self._promotion_gate
         if gate is None:
             return False
@@ -872,6 +883,16 @@ class OptimizationOrchestrator:
         """
         # If no promotion gate or no incumbent, use simple logic
         if self._promotion_gate is None:
+            if self._is_strict_evidence_mode():
+                # RFC 0001 §3.6: a declared-governed CVAR demands
+                # certificate-backed promotion evidence; with no promotion
+                # gate there is no certification machinery, so the raw
+                # comparison MUST NOT promote (it would otherwise be counted
+                # as a certified promotion by _update_best_trial_cache and
+                # launder an uncertified winner — fail open).
+                return self._withhold_promotion(
+                    "no promotion gate in strict evidence mode"
+                )
             return self._simple_is_better(candidate_trial)
         if self._incumbent_config_hash is None:
             return True
@@ -966,8 +987,10 @@ class OptimizationOrchestrator:
         if self._evaluate_promotion(config_hash, trial_result):
             if self._is_strict_evidence_mode():
                 # In strict mode a True here can only come from the gate's
-                # explicit "promote" (all other lanes withhold) — count it:
-                # only gate-certified promotions justify a certified winner.
+                # explicit "promote": the no-gate lane, the no-decision /
+                # insufficient-samples / exception lanes all withhold — so
+                # counting it is sound: only gate-certified promotions
+                # justify a certified winner.
                 self._certified_promotions += 1
             self._best_trial_cached = trial_result
             self._incumbent_config_hash = config_hash
@@ -2385,8 +2408,16 @@ class OptimizationOrchestrator:
             self._status = OptimizationStatus.FAILED
             raise
         except Exception as e:
+            from traigent.knobs import ResolutionError
+
             self._status = OptimizationStatus.FAILED
             logger.error(f"Optimization {self._optimization_id} failed: {e}")
+            if isinstance(e, ResolutionError):
+                # RFC 0001 §3.4: the typed fail-closed governance rejection
+                # IS the public contract — callers distinguish a stale
+                # certificate / evidence leak from a generic optimization
+                # failure. Never dilute it into OptimizationError.
+                raise
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             await self._cleanup_backend_client()

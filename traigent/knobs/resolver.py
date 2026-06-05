@@ -19,11 +19,12 @@ non-governed CVARs and are always recorded in the result — never silent.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .bindings import Calibrated, Fixed, Tuned
+from .bindings import Calibrated, Fixed, Tuned, is_governed
 from .certificates import Certificate, FreshnessContext, conformal_evidence_floor
 from .resolution import ResolutionError, ResolutionRejection
 from .signals import SignalObservation
@@ -98,6 +99,23 @@ class KnobResolver:
         self._runtime_fixed = dict(runtime_fixed or {})
         self._eval_split = eval_split
         self._eval_item_ids = eval_item_ids
+
+    # ------------------------------------------------------------------
+    def has_governed_cvars(self) -> bool:
+        """RFC 0001 §3.6: does the space declare any governed CVAR?
+
+        The strict-mode disjuncts quantify over CVARs *consumed by c*; every
+        accepted configuration contains every declared CVAR (R4 rejects
+        unproducible declarations outright), so declared-governed ⇔
+        consumed-governed for any configuration this resolver accepts. The
+        orchestrator consults this to enter strict evidence mode — custom
+        resolvers that hide declarations should expose the same method.
+        """
+        knobs = dict(self._space.knobs or {})
+        return any(
+            isinstance(k.binding, Calibrated) and is_governed(k.binding)
+            for k in knobs.values()
+        )
 
     # ------------------------------------------------------------------
     def resolve(self, suggestion: Mapping[str, Any]) -> ResolvedConfiguration:
@@ -180,6 +198,7 @@ class KnobResolver:
                 name,
                 binding,
                 self._calibrated_inputs[name],
+                suggestion,
                 values,
                 used_fallbacks,
                 reject,
@@ -202,18 +221,35 @@ class KnobResolver:
         name: str,
         binding: Calibrated,
         provided: CalibratedInput,
+        suggestion: Mapping[str, Any],
         values: dict[str, Any],
         used_fallbacks: list[str],
         reject: Any,
     ) -> None:
         # Governance is DECLARED (on the binding/target), never inferred
-        # from runtime-presented evidence — presenting a certificate is
-        # evidence, not an opt-in to strictness.
-        governed = (
-            binding.require_calibration
-            or binding.certificate is not None
-            or binding.target.mode in ("certificate_backed", "guaranteed_selection")
-        )
+        # from runtime-presented evidence — the shared predicate keeps this
+        # in lockstep with the orchestrator's strict-mode detection.
+        governed = is_governed(binding)
+
+        # ctx_now derivation (RFC 0001 §3.5): certificates are PARENT-SPECIFIC
+        # — tuned_parent_values must reflect the LIVE suggestion, not whatever
+        # the caller's static context said. Without this rebuild a certificate
+        # issued for one parent value would read fresh for every other value
+        # the optimizer explores (found by the consolidation e2e smoke).
+        # Skipped when a declared parent is absent from the suggestion: that
+        # is already an R2/R4 rejection and the run cannot accept.
+        live_context = provided.context
+        if (
+            live_context is not None
+            and binding.depends_on
+            and all(ref.knob in suggestion for ref in binding.depends_on)
+        ):
+            live_context = dataclasses.replace(
+                live_context,
+                tuned_parent_values=tuple(
+                    (ref.knob, suggestion[ref.knob]) for ref in binding.depends_on
+                ),
+            )
 
         # R7 evidence leakage — split tag or true item intersection
         for observation in provided.observations:
@@ -277,14 +313,14 @@ class KnobResolver:
         # R6 certificate validity for governed CVARs
         if governed:
             certificate = provided.certificate or binding.certificate
-            if certificate is None or provided.context is None:
+            if certificate is None or live_context is None:
                 reject(
                     ResolutionRejection.STALE_CERTIFICATE,
                     f"governed CVAR {name!r} lacks a certificate/context",
                 )
                 return
             if not certificate.valid_for(
-                name, binding.value_type, provided.value, provided.context
+                name, binding.value_type, provided.value, live_context
             ):
                 reject(
                     ResolutionRejection.STALE_CERTIFICATE,
@@ -295,9 +331,9 @@ class KnobResolver:
         elif (
             binding.fallback is not None
             and provided.certificate is not None
-            and provided.context is not None
+            and live_context is not None
             and not provided.certificate.valid_for(
-                name, binding.value_type, provided.value, provided.context
+                name, binding.value_type, provided.value, live_context
             )
         ):
             # non-governed CVAR whose optional certificate is PROVEN stale
