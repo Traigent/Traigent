@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,11 @@ _ENV_FILE_KEYS = (
     PROJECT_ENV_VAR,
     "TRAIGENT_BACKEND_URL",
 )
+_ENV_ASSIGNMENT_RE = re.compile(
+    r"^(?P<leading>\s*)(?P<export>export\s+)?" r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*="
+)
+MAX_DEVICE_POLL_TIMEOUT_SECONDS = 30.0
+MAX_DEVICE_POLL_TRANSPORT_ERRORS = 3
 
 
 async def _read_json_body(response: Any) -> dict[str, Any]:
@@ -119,6 +125,18 @@ def _format_env_value(value: str) -> str:
     if re.fullmatch(r"[A-Za-z0-9_./:@+-]+", value):
         return value
     return json.dumps(value)
+
+
+def _env_assignment_key(line: str) -> str | None:
+    match = _ENV_ASSIGNMENT_RE.match(line)
+    return match.group("key") if match else None
+
+
+def _format_env_assignment_from_existing(line: str, key: str, value: str) -> str:
+    match = _ENV_ASSIGNMENT_RE.match(line)
+    leading = match.group("leading") if match else ""
+    export_prefix = match.group("export") if match else None
+    return f"{leading}{export_prefix or ''}{key}={_format_env_value(value)}"
 
 
 class TraigentAuthCLI:
@@ -282,10 +300,13 @@ class TraigentAuthCLI:
                 next_lines.append(line)
                 continue
 
-            key = line.split("=", 1)[0].strip()
-            if key in updates:
-                next_lines.append(f"{key}={_format_env_value(updates[key])}")
-                seen.add(key)
+            key = _env_assignment_key(line)
+            if key is not None and key in updates:
+                if key not in seen:
+                    next_lines.append(
+                        _format_env_assignment_from_existing(line, key, updates[key])
+                    )
+                    seen.add(key)
             else:
                 next_lines.append(line)
 
@@ -474,7 +495,7 @@ class TraigentAuthCLI:
         return error_name, details if isinstance(details, dict) else {}
 
     async def _poll_device_token_once(
-        self, session: Any, device_code: str
+        self, session: Any, device_code: str, request_timeout: float
     ) -> tuple[str, dict[str, Any] | None, int | None]:
         """Poll the token endpoint once."""
         url = f"{self.backend_api_url}/auth/device/token"
@@ -487,7 +508,7 @@ class TraigentAuthCLI:
             url,
             json={"device_code": device_code},
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=30) if aiohttp else None,
+            timeout=aiohttp.ClientTimeout(total=request_timeout) if aiohttp else None,
         ) as response:
             status_code = response.status
             data = await _read_json_body(response)
@@ -514,16 +535,52 @@ class TraigentAuthCLI:
         session: Any,
         authorization: dict[str, Any],
         sleep: Any,
+        clock: Callable[[], float] | None = None,
     ) -> dict[str, Any] | None:
         """Poll the token endpoint until success, denial, or expiry."""
         interval = int(authorization["interval"])
-        deadline = time.monotonic() + int(authorization["expires_in"])
+        now = clock or time.monotonic
+        deadline = now() + int(authorization["expires_in"])
         device_code = str(authorization["device_code"])
+        consecutive_transport_errors = 0
 
-        while time.monotonic() < deadline:
-            status, credentials, new_interval = await self._poll_device_token_once(
-                session, device_code
-            )
+        while True:
+            remaining = deadline - now()
+            if remaining <= 0:
+                console.print(
+                    "[red]Device login expired before authorization completed.[/red]"
+                )
+                return None
+
+            try:
+                status, credentials, new_interval = await self._poll_device_token_once(
+                    session,
+                    device_code,
+                    min(MAX_DEVICE_POLL_TIMEOUT_SECONDS, remaining),
+                )
+                consecutive_transport_errors = 0
+            except NETWORK_ERRORS as exc:
+                consecutive_transport_errors += 1
+                if consecutive_transport_errors >= MAX_DEVICE_POLL_TRANSPORT_ERRORS:
+                    console.print(
+                        "[red]Device token polling failed after "
+                        f"{consecutive_transport_errors} consecutive transport "
+                        "errors. Please check your network and run login again.[/red]"
+                    )
+                    return None
+                sleep_seconds = min(float(interval), max(0.0, deadline - now()))
+                if sleep_seconds <= 0:
+                    console.print(
+                        "[red]Device login expired before authorization completed.[/red]"
+                    )
+                    return None
+                console.print(
+                    "[yellow]Device token polling transport error "
+                    f"({type(exc).__name__}); retrying in {sleep_seconds:g}s.[/yellow]"
+                )
+                await sleep(sleep_seconds)
+                continue
+
             if status == "success":
                 return credentials
             if status == "access_denied":
@@ -544,10 +601,13 @@ class TraigentAuthCLI:
                     f"[yellow]Backend requested slower polling; waiting {interval}s.[/yellow]"
                 )
 
-            await sleep(interval)
-
-        console.print("[red]Device login expired before authorization completed.[/red]")
-        return None
+            sleep_seconds = min(float(interval), max(0.0, deadline - now()))
+            if sleep_seconds <= 0:
+                console.print(
+                    "[red]Device login expired before authorization completed.[/red]"
+                )
+                return None
+            await sleep(sleep_seconds)
 
     def _display_device_authorization(self, authorization: dict[str, Any]) -> None:
         """Print the browser URL and user code prominently."""
@@ -565,34 +625,48 @@ class TraigentAuthCLI:
         *,
         save_env_file: bool,
         env_file: str | Path,
+        write_env_explicit: bool = False,
     ) -> str | None:
         """Persist device credentials through existing credential machinery."""
         storage_location = self._save_credentials(credentials)
         if save_env_file:
-            try:
-                saved_path = self._save_api_key_to_env_file(
-                    str(credentials["api_key"]),
-                    tenant_id=str(credentials["tenant_id"]),
-                    project_id=str(credentials["project_id"]),
-                    backend_url=str(credentials["backend_url"]),
-                    path=env_file,
-                )
+            if storage_location != STORAGE_SECURE and not write_env_explicit:
                 console.print(
-                    f"[green]✅ Project auth environment updated:[/green] {saved_path}"
+                    "[yellow]Skipping .env write because secure credential storage "
+                    "failed.[/yellow]"
                 )
-            except (OSError, ValueError) as exc:
-                console.print(
-                    "[yellow]Could not update local .env file; encrypted CLI "
-                    f"credentials were still attempted. Reason: {exc}[/yellow]"
-                )
+            else:
+                if storage_location != STORAGE_SECURE:
+                    console.print(
+                        "[yellow]Secure credential storage failed; writing .env "
+                        "because --write-env was explicitly passed.[/yellow]"
+                    )
+                try:
+                    saved_path = self._save_api_key_to_env_file(
+                        str(credentials["api_key"]),
+                        tenant_id=str(credentials["tenant_id"]),
+                        project_id=str(credentials["project_id"]),
+                        backend_url=str(credentials["backend_url"]),
+                        path=env_file,
+                    )
+                    console.print(
+                        f"[green]✅ Project auth environment updated:[/green] {saved_path}"
+                    )
+                except (OSError, ValueError) as exc:
+                    console.print(
+                        "[yellow]Could not update local .env file. Reason: "
+                        f"{exc}[/yellow]"
+                    )
         return storage_location
 
     async def device_login(
         self,
         *,
-        save_env_file: bool = True,
+        save_env_file: bool = False,
         env_file: str | Path = ".env",
+        write_env_explicit: bool = False,
         sleep: Any | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> bool:
         """Authenticate with the browser-based device-code flow."""
         import aiohttp
@@ -606,7 +680,7 @@ class TraigentAuthCLI:
                 authorization = await self._start_device_authorization(session)
                 self._display_device_authorization(authorization)
                 credentials = await self._poll_device_token(
-                    session, authorization, poll_sleep
+                    session, authorization, poll_sleep, clock=clock
                 )
         except AuthenticationError as exc:
             console.print(f"[red]❌ Device authentication failed: {exc}[/red]")
@@ -628,6 +702,7 @@ class TraigentAuthCLI:
             credentials,
             save_env_file=save_env_file,
             env_file=env_file,
+            write_env_explicit=write_env_explicit,
         )
         if not storage_location:
             self._display_storage_location(storage_location)
@@ -1349,16 +1424,22 @@ def login(
     "--env-file",
     default=".env",
     type=click.Path(dir_okay=False, path_type=Path),
-    help="Local .env file to update with project-scoped credentials",
+    help="Local .env file to update when --write-env is set.",
+)
+@click.option(
+    "--write-env",
+    is_flag=True,
+    help="Also write project-scoped credentials to a local .env file.",
 )
 @click.option(
     "--no-env-file",
     is_flag=True,
-    help="Store encrypted CLI credentials only; do not update .env",
+    hidden=True,
 )
 def device_login(
     backend_url: str | None,
     env_file: Path,
+    write_env: bool,
     no_env_file: bool,
 ) -> None:
     """Authenticate through browser device-code login.
@@ -1366,9 +1447,24 @@ def device_login(
     The command prints a browser URL and one-time code, then polls until
     the backend returns a project-scoped API key or the request expires.
     """
+    save_env_file = False
+    write_env_explicit = False
+    if write_env:
+        save_env_file = True
+        write_env_explicit = True
+    elif not no_env_file and sys.stdin.isatty():
+        save_env_file = click.confirm(
+            "Write project credentials to this directory's .env file?",
+            default=False,
+        )
+
     cli = TraigentAuthCLI(backend_url_override=backend_url)
     success = asyncio.run(
-        cli.device_login(save_env_file=not no_env_file, env_file=env_file)
+        cli.device_login(
+            save_env_file=save_env_file,
+            env_file=env_file,
+            write_env_explicit=write_env_explicit,
+        )
     )
     sys.exit(0 if success else 1)
 

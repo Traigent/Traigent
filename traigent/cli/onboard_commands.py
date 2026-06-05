@@ -34,6 +34,7 @@ FIRST_PROMPT_TOOL_LINE: dict[AgentName, str] = {
 PLAN_JSON_BEGIN = "BEGIN_TRAIGENT_ONBOARD_PLAN_JSON"
 PLAN_JSON_END = "END_TRAIGENT_ONBOARD_PLAN_JSON"
 SKILLS_COMMAND = ["npx", "skills", "add", "Traigent/agents-skills"]
+AUTH_STATUS_COMMAND = ["traigent", "auth", "status"]
 
 
 def _stdin_is_tty() -> bool:
@@ -42,6 +43,17 @@ def _stdin_is_tty() -> bool:
 
 def _command_text(command: list[str]) -> str:
     return shlex.join(command)
+
+
+def _onboard_login_command(
+    *, backend_url: str | None = None, write_env: bool = False
+) -> list[str]:
+    command = ["traigent", "onboard", "--login"]
+    if write_env:
+        command.append("--write-env")
+    if backend_url:
+        command.extend(["--backend-url", backend_url])
+    return command
 
 
 def _detect_python_project(cwd: Path) -> list[str]:
@@ -166,7 +178,7 @@ def _build_non_tty_plan(
     detected_agents: list[AgentName],
     auth_status: str,
     mcp_available: bool,
-    no_login: bool,
+    login_command: list[str],
 ) -> dict[str, Any]:
     commands: list[dict[str, object]] = []
     steps: list[dict[str, object]] = [_python_version_step()]
@@ -206,16 +218,7 @@ def _build_non_tty_plan(
                 "description": "Existing credentials validated successfully.",
             }
         )
-    elif no_login:
-        steps.append(
-            {
-                "id": "device_login",
-                "status": "skipped",
-                "description": "--no-login was set.",
-            }
-        )
     else:
-        login_command = ["traigent", "auth", "device-login"]
         commands.append(
             {
                 "id": "device_login",
@@ -229,7 +232,7 @@ def _build_non_tty_plan(
             {
                 "id": "device_login",
                 "status": "planned",
-                "description": "Start browser device login; the human approves in the browser.",
+                "description": "Run this explicit login command when ready; non-interactive onboarding does not start login by default.",
                 "commands": [_command_text(login_command)],
             }
         )
@@ -332,6 +335,9 @@ def _build_non_tty_plan(
         "project_markers": project_markers,
         "detected_agents": detected_agents,
         "auth_status": auth_status,
+        "auth_check_command": _command_text(AUTH_STATUS_COMMAND),
+        "login_command": _command_text(login_command),
+        "login_argv": login_command,
         "mcp_available": mcp_available,
         "steps": steps,
         "commands": commands,
@@ -346,7 +352,14 @@ def _print_non_tty_plan(plan: dict[str, Any]) -> None:
         "Detected agents: "
         + (", ".join(str(agent) for agent in agents) if agents else "none")
     )
-    console.print(f"Auth status: {plan['auth_status']}")
+    auth_status = plan["auth_status"]
+    if auth_status == "not_checked":
+        console.print(
+            f"Auth status: {auth_status} (run `{plan['auth_check_command']}`)"
+        )
+    else:
+        console.print(f"Auth status: {auth_status}")
+    console.print(f"Login command: {plan['login_command']}")
     console.print("Commands are listed below for a caller to run with human consent.")
     for command in plan["commands"]:
         if isinstance(command, dict):
@@ -389,7 +402,9 @@ def _run_quickstart_verification() -> bool:
     return True
 
 
-def _run_interactive_onboard(no_login: bool, backend_url: str | None) -> bool:
+def _run_interactive_onboard(
+    no_login: bool, backend_url: str | None, write_env: bool
+) -> bool:
     cwd = Path.cwd().resolve()
     project_markers = _detect_python_project(cwd)
     detected_agents = _detect_coding_agents(cwd)
@@ -418,7 +433,16 @@ def _run_interactive_onboard(no_login: bool, backend_url: str | None) -> bool:
         if no_login:
             console.print("Device login skipped because --no-login was set.")
         else:
-            if not asyncio.run(auth_cli.device_login()):
+            save_env_file = write_env or click.confirm(
+                "Write project credentials to this directory's .env file?",
+                default=False,
+            )
+            if not asyncio.run(
+                auth_cli.device_login(
+                    save_env_file=save_env_file,
+                    write_env_explicit=write_env,
+                )
+            ):
                 return False
 
     for agent in detected_agents:
@@ -454,35 +478,76 @@ def _run_interactive_onboard(no_login: bool, backend_url: str | None) -> bool:
 @click.command()
 @click.option("--no-login", is_flag=True, help="Skip device-code login.")
 @click.option(
+    "--login",
+    "run_login",
+    is_flag=True,
+    help="In non-TTY mode, execute device-code login after printing the plan.",
+)
+@click.option(
+    "--write-env",
+    is_flag=True,
+    help="Allow device login to write project credentials to .env.",
+)
+@click.option(
+    "--check-auth",
+    is_flag=True,
+    help="Validate current credentials while building the non-TTY plan.",
+)
+@click.option(
     "--backend-url",
     default=None,
     help="Backend URL to authenticate against during device login.",
 )
-def onboard(no_login: bool, backend_url: str | None) -> None:
+def onboard(
+    no_login: bool,
+    run_login: bool,
+    write_env: bool,
+    check_auth: bool,
+    backend_url: str | None,
+) -> None:
     """Run guided setup for Traigent in this project."""
     cwd = Path.cwd().resolve()
+    if no_login and run_login:
+        raise click.ClickException("--login and --no-login cannot be used together.")
 
     if not _stdin_is_tty():
         project_markers = _detect_python_project(cwd)
         detected_agents = _detect_coding_agents(cwd)
-        auth_cli = TraigentAuthCLI(backend_url_override=backend_url)
-        current_auth_status = asyncio.run(_auth_status(auth_cli))
+        auth_cli: TraigentAuthCLI | None = None
+        current_auth_status = "not_checked"
+        if check_auth:
+            auth_cli = TraigentAuthCLI(backend_url_override=backend_url)
+            current_auth_status = asyncio.run(_auth_status(auth_cli))
         mcp_available = _mcp_help_succeeds()
+        login_command = _onboard_login_command(
+            backend_url=backend_url,
+            write_env=write_env,
+        )
         plan = _build_non_tty_plan(
             cwd=cwd,
             project_markers=project_markers,
             detected_agents=detected_agents,
             auth_status=current_auth_status,
             mcp_available=mcp_available,
-            no_login=no_login,
+            login_command=login_command,
         )
         _print_non_tty_plan(plan)
-        if current_auth_status != "authenticated" and not no_login:
-            success = asyncio.run(auth_cli.device_login())
+        if run_login:
+            auth_cli = auth_cli or TraigentAuthCLI(backend_url_override=backend_url)
+            success = asyncio.run(
+                auth_cli.device_login(
+                    save_env_file=write_env,
+                    write_env_explicit=write_env,
+                )
+            )
             raise SystemExit(0 if success else 1)
         return
 
-    success = _run_interactive_onboard(no_login=no_login, backend_url=backend_url)
+    success = _run_interactive_onboard(
+        no_login=no_login,
+        backend_url=backend_url,
+        write_env=write_env,
+    )
     raise SystemExit(0 if success else 1)
 
 
