@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,18 @@ from traigent.utils.langchain_interceptor import (
     langchain_metadata_context,
     patch_langchain_for_metadata_capture,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_mock_mode(monkeypatch: pytest.MonkeyPatch):
+    from traigent.testing import _reset_for_tests
+
+    _reset_for_tests()
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    clear_captured_responses()
+    yield
+    _reset_for_tests()
+    clear_captured_responses()
 
 
 class TestLangChainMetadataCapture:
@@ -716,6 +729,125 @@ class TestPatchLangChainForMetadataCapture:
         result = patch_langchain_for_metadata_capture()
         # Result depends on whether LangChain is installed
         assert isinstance(result, bool)
+
+    def test_patch_captures_chat_bedrock_response(self) -> None:
+        """Test ChatBedrock invoke is patched and captured when langchain_aws exists."""
+        fake_aws: Any = ModuleType("langchain_aws")
+
+        class FakeChatBedrock:
+            invoke_calls = 0
+
+            def __init__(self) -> None:
+                self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+            def invoke(self, *args: Any, **kwargs: Any) -> Any:
+                type(self).invoke_calls += 1
+                return SimpleNamespace(
+                    content="real bedrock response",
+                    response_metadata={},
+                    usage_metadata={"input_tokens": 7, "output_tokens": 8},
+                )
+
+        fake_aws.ChatBedrock = FakeChatBedrock
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": None,
+                "langchain_openai": None,
+                "langchain_aws": fake_aws,
+            },
+        ):
+            assert patch_langchain_for_metadata_capture() is True
+            response = FakeChatBedrock().invoke("hello")
+
+        assert FakeChatBedrock.invoke_calls == 1
+        assert response.response_metadata["response_time_ms"] >= 0
+        assert response.response_metadata["model_name"] == (
+            "anthropic.claude-3-haiku-20240307-v1:0"
+        )
+        assert response.usage_metadata["input_tokens"] == 7
+        assert response.usage_metadata["output_tokens"] == 8
+        assert response.usage_metadata["total_tokens"] == 15
+        assert get_captured_response() is response
+
+    def test_patch_chat_bedrock_and_converse_mock_short_circuit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test Bedrock LangChain classes mock without calling original invoke."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        fake_aws: Any = ModuleType("langchain_aws")
+        fake_core: Any = ModuleType("langchain_core")
+        fake_messages: Any = ModuleType("langchain_core.messages")
+
+        class FakeAIMessage:
+            def __init__(
+                self,
+                *,
+                content: str,
+                response_metadata: dict[str, Any],
+                usage_metadata: dict[str, Any],
+            ) -> None:
+                self.content = content
+                self.response_metadata = response_metadata
+                self.usage_metadata = usage_metadata
+
+        class FakeChatBedrock:
+            invoke_calls = 0
+
+            def __init__(self) -> None:
+                self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+
+            def invoke(self, *args: Any, **kwargs: Any) -> Any:
+                type(self).invoke_calls += 1
+                raise AssertionError("original ChatBedrock.invoke should not run")
+
+        class FakeChatBedrockConverse:
+            invoke_calls = 0
+
+            def __init__(self) -> None:
+                self.model = "anthropic.claude-3-haiku-20240307-v1:0"
+
+            def invoke(self, *args: Any, **kwargs: Any) -> Any:
+                type(self).invoke_calls += 1
+                raise AssertionError(
+                    "original ChatBedrockConverse.invoke should not run"
+                )
+
+        fake_aws.ChatBedrock = FakeChatBedrock
+        fake_aws.ChatBedrockConverse = FakeChatBedrockConverse
+        fake_messages.AIMessage = FakeAIMessage
+        fake_core.messages = fake_messages
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "langchain_anthropic": None,
+                "langchain_openai": None,
+                "langchain_aws": fake_aws,
+                "langchain_core": fake_core,
+                "langchain_core.messages": fake_messages,
+            },
+        ):
+            assert patch_langchain_for_metadata_capture() is True
+            bedrock_response = FakeChatBedrock().invoke("hello")
+            converse_response = FakeChatBedrockConverse().invoke("hello")
+
+        assert FakeChatBedrock.invoke_calls == 0
+        assert FakeChatBedrockConverse.invoke_calls == 0
+        for response in (bedrock_response, converse_response):
+            assert response.content == "This is a mock response for testing."
+            assert response.response_metadata["provider"] == "bedrock"
+            assert response.usage_metadata == {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "total_tokens": 30,
+            }
+
+        assert get_all_captured_responses() == [
+            bedrock_response,
+            converse_response,
+        ]
 
     def test_clear_removes_storage_correctly(self) -> None:
         """Test that clear operation removes all stored responses."""

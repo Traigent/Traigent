@@ -9,7 +9,7 @@ that would otherwise be lost when functions return only strings.
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.logging import get_logger
 
@@ -173,6 +173,117 @@ def _create_astream_wrapper(original_meth: Any) -> Any:
             capture_langchain_response(last)
 
     return astream_wrapper
+
+
+def _extract_bedrock_model_name(instance: Any) -> str:
+    return str(
+        getattr(instance, "model_id", None)
+        or getattr(instance, "model", None)
+        or getattr(instance, "model_name", None)
+        or "mock-model"
+    )
+
+
+def _normalize_langchain_usage_metadata(response: Any) -> None:
+    """Normalize provider usage aliases into LangChain usage_metadata keys."""
+    usage = getattr(response, "usage_metadata", None)
+    if not isinstance(usage, dict):
+        metadata = getattr(response, "response_metadata", None)
+        if isinstance(metadata, dict):
+            candidate = metadata.get("usage") or metadata.get("token_usage")
+            usage = candidate if isinstance(candidate, dict) else None
+    if not isinstance(usage, dict):
+        return
+
+    input_tokens = (
+        usage.get("input_tokens")
+        if usage.get("input_tokens") is not None
+        else usage.get("prompt_tokens")
+    )
+    if input_tokens is None:
+        input_tokens = usage.get("inputTokens")
+    output_tokens = (
+        usage.get("output_tokens")
+        if usage.get("output_tokens") is not None
+        else usage.get("completion_tokens")
+    )
+    if output_tokens is None:
+        output_tokens = usage.get("outputTokens")
+    total_tokens = (
+        usage.get("total_tokens")
+        if usage.get("total_tokens") is not None
+        else usage.get("totalTokens")
+    )
+
+    normalized: dict[str, int] = {}
+    try:
+        if input_tokens is not None:
+            normalized["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            normalized["output_tokens"] = int(output_tokens)
+        if total_tokens is not None:
+            normalized["total_tokens"] = int(total_tokens)
+        elif normalized:
+            normalized["total_tokens"] = normalized.get(
+                "input_tokens", 0
+            ) + normalized.get("output_tokens", 0)
+    except (TypeError, ValueError):
+        return
+
+    if normalized:
+        response.usage_metadata = normalized
+
+
+def _create_bedrock_invoke_wrapper(original_invoke: Any) -> Any:
+    def invoke_with_capture_bedrock(self: Any, *args: Any, **kwargs: Any) -> Any:
+        """Wrapped invoke method that captures Bedrock responses with timing."""
+        from traigent.integrations.utils.mock_adapter import MockAdapter
+
+        model_name = _extract_bedrock_model_name(self)
+        if MockAdapter.is_mock_enabled("bedrock"):
+            from langchain_core.messages import AIMessage
+
+            mock_data = MockAdapter.get_mock_response("anthropic", model=model_name)
+            content = mock_data["content"][0]["text"]
+            input_tokens = int(mock_data["usage"]["input_tokens"])
+            output_tokens = int(mock_data["usage"]["output_tokens"])
+            response = AIMessage(
+                content=content,
+                response_metadata={
+                    "model_name": mock_data["model"],
+                    "provider": "bedrock",
+                    "stop_reason": mock_data["stop_reason"],
+                    "response_time_ms": 0.0,
+                },
+                usage_metadata={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                },
+            )
+            capture_langchain_response(response)
+            return response
+
+        start_time = time.perf_counter()
+        response = original_invoke(self, *args, **kwargs)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+
+        if not hasattr(response, "response_metadata"):
+            response.response_metadata = {}
+        response.response_metadata["response_time_ms"] = response_time_ms
+        if "model_name" not in response.response_metadata:
+            response.response_metadata["model_name"] = model_name
+        _normalize_langchain_usage_metadata(response)
+
+        capture_langchain_response(response)
+        logger.debug(
+            "Captured Bedrock LangChain invoke usage: %s, response_time_ms: %.2f",
+            getattr(response, "usage_metadata", None),
+            response_time_ms,
+        )
+        return response
+
+    return invoke_with_capture_bedrock
 
 
 def patch_langchain_for_metadata_capture() -> bool:
@@ -351,6 +462,57 @@ def patch_langchain_for_metadata_capture() -> bool:
         logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
         logger.error(f"Failed to patch ChatOpenAI: {e}")
+
+    # Patch ChatBedrock / ChatBedrockConverse
+    try:
+        import langchain_aws
+
+        bedrock_classes: list[tuple[str, Any]] = []
+        for name in ("ChatBedrock", "ChatBedrockConverse"):
+            chat_cls = getattr(langchain_aws, name, None)
+            if chat_cls is not None:
+                bedrock_classes.append((name, cast(Any, chat_cls)))
+
+        if not bedrock_classes:
+            logger.debug("LangChain AWS Bedrock chat models not available, skipping")
+
+        for class_name, chat_cls in bedrock_classes:
+            if getattr(chat_cls, "_traigent_patched_invoke", False) is False:
+                original_invoke_bedrock = chat_cls.invoke
+                chat_cls.invoke = _create_bedrock_invoke_wrapper(
+                    original_invoke_bedrock
+                )
+                chat_cls._traigent_patched_invoke = True
+                logger.info(f"✅ Patched {class_name}.invoke for metadata capture")
+                patched_any = True
+
+            for meth_name, flag in [
+                ("stream", "_traigent_patched_stream"),
+                ("astream", "_traigent_patched_astream"),
+            ]:
+                if hasattr(chat_cls, meth_name) and not getattr(chat_cls, flag, False):
+                    original_meth = getattr(chat_cls, meth_name)
+                    if meth_name == "stream":
+                        setattr(
+                            chat_cls,
+                            meth_name,
+                            _create_stream_wrapper(original_meth),
+                        )
+                    else:
+                        setattr(
+                            chat_cls,
+                            meth_name,
+                            _create_astream_wrapper(original_meth),
+                        )
+                    setattr(chat_cls, flag, True)
+                    logger.info(
+                        f"✅ Patched {class_name}.{meth_name} for metadata capture"
+                    )
+
+    except ImportError:
+        logger.debug("langchain_aws not available, skipping Bedrock chat models")
+    except Exception as e:
+        logger.error(f"Failed to patch LangChain AWS Bedrock models: {e}")
 
     if not patched_any:
         logger.debug("No LangChain models could be patched for metadata capture")

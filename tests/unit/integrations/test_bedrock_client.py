@@ -11,10 +11,13 @@ normalized response parsing and mocked boto3 interactions.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.integrations.bedrock_client import (
     BedrockChatClient,
     BedrockChatResponse,
@@ -24,6 +27,22 @@ from traigent.integrations.bedrock_client import (
     _require_boto3,
     resolve_default_bedrock_model_id,
 )
+from traigent.utils.langchain_interceptor import (
+    clear_captured_responses,
+    get_all_captured_responses,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_mock_mode(monkeypatch: pytest.MonkeyPatch):
+    from traigent.testing import _reset_for_tests
+
+    _reset_for_tests()
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    clear_captured_responses()
+    yield
+    _reset_for_tests()
+    clear_captured_responses()
 
 
 def _mock_invoke_client(payload: dict) -> MagicMock:
@@ -87,7 +106,7 @@ class TestHelperFunctions:
 
     def test_coerce_user_messages_with_list_of_dicts(self) -> None:
         """Test _coerce_user_messages passes through list of message dicts."""
-        messages = [
+        messages: list[Mapping[str, Any]] = [
             {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
             {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
         ]
@@ -150,6 +169,18 @@ class TestBedrockChatResponseDataclass:
         usage = {"input_tokens": 10, "output_tokens": 20}
         response = BedrockChatResponse(text="test", raw={}, usage=usage)
         assert response.usage == usage
+
+    def test_bedrock_chat_response_with_model_and_latency(self) -> None:
+        """Test BedrockChatResponse stores capture metadata."""
+        response = BedrockChatResponse(
+            text="test",
+            raw={},
+            usage=None,
+            model="anthropic.claude-3-haiku-20240307-v1:0",
+            response_time_ms=12.5,
+        )
+        assert response.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert response.response_time_ms == 12.5
 
 
 class TestBedrockChatClientInit:
@@ -237,6 +268,65 @@ class TestBedrockChatClientInvoke:
         assert response.usage["output_tokens"] == 10
         mock_client.invoke_model.assert_called_once()
 
+    def test_invoke_short_circuits_when_traigent_mock_llm_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test TRAIGENT_MOCK_LLM fabricates a response without AWS."""
+        clear_captured_responses()
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        mock_client = MagicMock()
+        client = BedrockChatClient(client=mock_client)
+
+        response = client.invoke(
+            model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+            messages="Hello world",
+            max_tokens=16,
+        )
+
+        assert response.text == "This is a mock response for testing."
+        assert response.raw["mock"] is True
+        assert response.usage is not None
+        assert response.usage["prompt_tokens"] == 10
+        assert response.usage["completion_tokens"] == 20
+        mock_client.invoke_model.assert_not_called()
+        assert get_all_captured_responses() == [response]
+        clear_captured_responses()
+
+    def test_invoke_captures_normalized_usage_for_cost(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test Bedrock input/output usage is captured with cost-capable keys."""
+        clear_captured_responses()
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        mock_client = _mock_invoke_client(
+            {
+                "content": [{"type": "text", "text": "Response text"}],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            }
+        )
+        client = BedrockChatClient(client=mock_client)
+
+        response = client.invoke(
+            model_id="anthropic.claude-3-haiku-20240307-v1:0",
+            messages="Hello world",
+        )
+
+        assert response.usage is not None
+        assert response.usage["prompt_tokens"] == 100
+        assert response.usage["completion_tokens"] == 50
+        assert response.usage["total_tokens"] == 150
+        captured = get_all_captured_responses()
+        assert captured == [response]
+
+        metrics = extract_llm_metrics(
+            captured[0],
+            model_name="claude-3-haiku-20240307",
+        )
+        assert metrics.tokens.input_tokens == 100
+        assert metrics.tokens.output_tokens == 50
+        assert metrics.cost.total_cost > 0
+        clear_captured_responses()
+
     def test_invoke_with_list_messages(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -246,7 +336,7 @@ class TestBedrockChatClientInvoke:
         )
         client = BedrockChatClient(client=mock_client)
 
-        messages = [
+        messages: list[Mapping[str, Any]] = [
             {"role": "user", "content": [{"type": "text", "text": "First"}]},
             {"role": "user", "content": [{"type": "text", "text": "Last message"}]},
         ]
@@ -330,6 +420,7 @@ class TestBedrockChatClientInvoke:
         )
 
         assert response.text == "Response text"
+        assert response.usage is not None
         assert response.usage["input_tokens"] == 5
         mock_client.invoke_model.assert_called_once()
 
@@ -446,7 +537,7 @@ class TestBedrockChatClientInvokeAI21:
         )
         client = BedrockChatClient(client=mock_client)
 
-        messages = [
+        messages: list[Mapping[str, Any]] = [
             {"role": "user", "content": [{"type": "text", "text": "First"}]},
             {"role": "user", "content": [{"type": "text", "text": "Second"}]},
         ]
@@ -500,6 +591,7 @@ class TestBedrockChatClientInvokeAI21:
         )
 
         assert response.text == "AI21 response"
+        assert response.usage is not None
         assert response.usage["input_tokens"] == 8
 
     @patch("traigent.integrations.bedrock_client._require_boto3")
@@ -547,7 +639,7 @@ class TestBedrockChatClientInvokeAI21:
         )
         client = BedrockChatClient(client=mock_client)
 
-        messages = [
+        messages: list[Mapping[str, Any]] = [
             {
                 "role": "user",
                 "content": [
@@ -594,6 +686,30 @@ class TestBedrockChatClientInvokeStream:
         assert chunks == ["Stream", "response"]
         assert not any("[MOCK:" in c for c in chunks)
         mock_client.invoke_model_with_response_stream.assert_called_once()
+
+    def test_invoke_stream_short_circuits_when_traigent_mock_llm_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test TRAIGENT_MOCK_LLM streams a mock chunk without AWS."""
+        clear_captured_responses()
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        mock_client = MagicMock()
+        client = BedrockChatClient(client=mock_client)
+
+        chunks = list(
+            client.invoke_stream(
+                model_id="anthropic.claude-3-opus-20240229-v1:0",
+                messages="Stream test",
+                max_tokens=512,
+            )
+        )
+
+        assert chunks == ["This is a mock response for testing."]
+        mock_client.invoke_model_with_response_stream.assert_not_called()
+        captured = get_all_captured_responses()
+        assert len(captured) == 1
+        assert captured[0].usage["prompt_tokens"] == 10
+        clear_captured_responses()
 
     def test_invoke_stream_sends_coerced_message(
         self, monkeypatch: pytest.MonkeyPatch
@@ -727,6 +843,30 @@ class TestBedrockChatClientAsyncInvoke:
         mock_invoke.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_ainvoke_short_circuits_when_traigent_mock_llm_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test TRAIGENT_MOCK_LLM async invoke avoids aioboto3 and sync AWS."""
+        clear_captured_responses()
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        client = BedrockChatClient()
+
+        with patch.object(client, "_ainvoke_aioboto3") as mock_aioboto3:
+            with patch.object(client, "invoke") as mock_sync_invoke:
+                response = await client.ainvoke(
+                    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+                    messages="Async test",
+                    max_tokens=32,
+                )
+
+        assert response.text == "This is a mock response for testing."
+        assert response.raw["mock"] is True
+        mock_aioboto3.assert_not_called()
+        mock_sync_invoke.assert_not_called()
+        assert get_all_captured_responses() == [response]
+        clear_captured_responses()
+
+    @pytest.mark.asyncio
     async def test_ainvoke_falls_back_to_sync_without_aioboto3(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -785,6 +925,7 @@ class TestBedrockChatClientAsyncInvoke:
             response = await client.ainvoke(model_id="test-model", messages="test")
 
         assert response.text == "Async response"
+        assert response.usage is not None
         assert response.usage["input_tokens"] == 7
 
 

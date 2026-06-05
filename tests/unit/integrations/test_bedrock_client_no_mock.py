@@ -1,44 +1,49 @@
-"""Regression tests proving BEDROCK_MOCK is ignored by production code."""
+"""Regression tests for native Bedrock mock interception."""
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+import pytest
 
 from traigent.integrations.bedrock_client import BedrockChatClient
+from traigent.utils.langchain_interceptor import (
+    clear_captured_responses,
+    get_all_captured_responses,
+)
 
 
-def test_bedrock_mock_env_does_not_short_circuit_invoke(monkeypatch) -> None:
-    """Setting BEDROCK_MOCK still uses the boto3 Bedrock Runtime client."""
-    monkeypatch.setenv("BEDROCK_MOCK", "true")
+@pytest.fixture(autouse=True)
+def _reset_mock_mode(monkeypatch: pytest.MonkeyPatch):
+    from traigent.testing import _reset_for_tests
 
-    mock_boto3 = MagicMock()
-    mock_session = MagicMock()
-    mock_client = MagicMock()
-    mock_client.invoke_model.return_value = {
-        "body": MagicMock(
-            read=lambda: json.dumps(
-                {"content": [{"type": "text", "text": "from mocked boto3"}]}
-            ).encode()
-        )
-    }
-    mock_session.client.return_value = mock_client
-    mock_boto3.session.Session.return_value = mock_session
+    _reset_for_tests()
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    clear_captured_responses()
+    yield
+    _reset_for_tests()
+    clear_captured_responses()
 
-    with patch(
-        "traigent.integrations.bedrock_client._require_boto3",
-        return_value=mock_boto3,
-    ) as mock_require_boto3:
+
+def test_traigent_mock_llm_short_circuits_bedrock_invoke(monkeypatch) -> None:
+    """TRAIGENT_MOCK_LLM returns a Bedrock-shaped mock without boto3/AWS."""
+    clear_captured_responses()
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+    with patch("traigent.integrations.bedrock_client._require_boto3") as mock_require:
         response = BedrockChatClient(region_name="us-east-1").invoke(
             model_id="anthropic.claude-3-sonnet-20240229-v1:0",
             messages="hello",
         )
 
-    mock_require_boto3.assert_called_once()
-    mock_session.client.assert_called_once_with(
-        "bedrock-runtime", region_name="us-east-1"
-    )
-    mock_client.invoke_model.assert_called_once()
-    assert response.text == "from mocked boto3"
-    assert "[MOCK:" not in response.text
-    assert response.raw.get("mock") is None
+    mock_require.assert_not_called()
+    assert response.text == "This is a mock response for testing."
+    assert response.raw["mock"] is True
+    assert response.raw["provider"] == "bedrock"
+    assert response.usage is not None
+    assert response.usage["prompt_tokens"] == 10
+    assert response.usage["completion_tokens"] == 20
+
+    captured = get_all_captured_responses()
+    assert captured == [response]
+    clear_captured_responses()

@@ -167,10 +167,28 @@ class LLMResponseProcessor:
         """
         try:
             # Extract token information
-            input_tokens = safe_get_nested_attr(response, "usage.prompt_tokens", 0)
-            output_tokens = safe_get_nested_attr(response, "usage.completion_tokens", 0)
-            total_tokens = safe_get_nested_attr(
-                response, "usage.total_tokens", input_tokens + output_tokens
+            input_tokens = self._extract_token_count(
+                response,
+                (
+                    "usage.prompt_tokens",
+                    "usage.input_tokens",
+                    "usage.inputTokens",
+                    "usage.input",
+                ),
+            )
+            output_tokens = self._extract_token_count(
+                response,
+                (
+                    "usage.completion_tokens",
+                    "usage.output_tokens",
+                    "usage.outputTokens",
+                    "usage.output",
+                ),
+            )
+            total_tokens = self._extract_token_count(
+                response,
+                ("usage.total_tokens", "usage.totalTokens"),
+                default=input_tokens + output_tokens,
             )
 
             # Extract cost information (if available)
@@ -202,6 +220,20 @@ class LLMResponseProcessor:
         except Exception as e:
             logger.debug(f"Failed to extract metrics from response: {e}")
             return None
+
+    @staticmethod
+    def _extract_token_count(
+        response: Any, paths: tuple[str, ...], default: int = 0
+    ) -> int:
+        for path in paths:
+            value = safe_get_nested_attr(response, path, None)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return default
 
     def enhance_example_result(
         self, example_result: Any, llm_metrics: LLMMetrics | None, execution_time: float

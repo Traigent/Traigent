@@ -18,9 +18,14 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from traigent.integrations.utils.mock_adapter import MockAdapter
+from traigent.testing import is_mock_mode_enabled
+from traigent.utils.env_config import is_production_strict_env, is_truthy
 
 if TYPE_CHECKING:
     pass
@@ -82,6 +87,8 @@ class BedrockChatResponse:
     text: str
     raw: Mapping[str, Any]
     usage: Mapping[str, Any] | None = None
+    model: str | None = None
+    response_time_ms: float = 0.0
 
 
 class BedrockChatClient:
@@ -112,6 +119,122 @@ class BedrockChatClient:
         )
         return self._client
 
+    @staticmethod
+    def _coerce_token_count(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _normalize_usage(cls, usage: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(usage, Mapping):
+            return None
+
+        normalized = dict(usage)
+        input_tokens = cls._coerce_token_count(
+            normalized.get("prompt_tokens")
+            if normalized.get("prompt_tokens") is not None
+            else normalized.get("input_tokens")
+        )
+        if input_tokens is None:
+            input_tokens = cls._coerce_token_count(
+                normalized.get("inputTokens")
+                if normalized.get("inputTokens") is not None
+                else normalized.get("input")
+            )
+
+        output_tokens = cls._coerce_token_count(
+            normalized.get("completion_tokens")
+            if normalized.get("completion_tokens") is not None
+            else normalized.get("output_tokens")
+        )
+        if output_tokens is None:
+            output_tokens = cls._coerce_token_count(
+                normalized.get("outputTokens")
+                if normalized.get("outputTokens") is not None
+                else normalized.get("output")
+            )
+
+        total_tokens = cls._coerce_token_count(
+            normalized.get("total_tokens")
+            if normalized.get("total_tokens") is not None
+            else normalized.get("totalTokens")
+        )
+
+        if input_tokens is not None:
+            normalized["input_tokens"] = input_tokens
+            normalized["prompt_tokens"] = input_tokens
+        if output_tokens is not None:
+            normalized["output_tokens"] = output_tokens
+            normalized["completion_tokens"] = output_tokens
+        if total_tokens is None and (
+            input_tokens is not None or output_tokens is not None
+        ):
+            total_tokens = (input_tokens or 0) + (output_tokens or 0)
+        if total_tokens is not None:
+            normalized["total_tokens"] = total_tokens
+
+        if not any(
+            key in normalized
+            for key in ("prompt_tokens", "completion_tokens", "input_tokens")
+        ):
+            return None
+        return normalized
+
+    @classmethod
+    def _extract_usage(cls, data: Any) -> dict[str, Any] | None:
+        if not isinstance(data, Mapping):
+            return None
+        for key in ("usage", "tokenUsage", "amazon-bedrock-invocationMetrics"):
+            value = data.get(key)
+            if isinstance(value, Mapping):
+                usage = cls._normalize_usage(value)
+                if usage is not None:
+                    return usage
+        return cls._normalize_usage(data)
+
+    @staticmethod
+    def _is_mock_enabled() -> bool:
+        if is_production_strict_env():
+            return False
+        return bool(
+            is_mock_mode_enabled() or is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
+        )
+
+    @classmethod
+    def _build_mock_response(cls, model_id: str) -> BedrockChatResponse:
+        mock_data = MockAdapter.get_mock_response("anthropic", model=model_id)
+        usage = cls._normalize_usage(mock_data.get("usage"))
+        raw = dict(mock_data)
+        raw["mock"] = True
+        raw["provider"] = "bedrock"
+        return BedrockChatResponse(
+            text=_extract_text_from_messages_response(raw),
+            raw=raw,
+            usage=usage,
+            model=model_id,
+            response_time_ms=0.0,
+        )
+
+    @classmethod
+    def _capture_response(
+        cls,
+        response: BedrockChatResponse,
+        start_time: float,
+    ) -> BedrockChatResponse:
+        response.response_time_ms = (time.perf_counter() - start_time) * 1000
+        response.usage = cls._normalize_usage(response.usage)
+        try:
+            from traigent.utils.langchain_interceptor import capture_langchain_response
+
+            capture_langchain_response(response)
+        except Exception:  # noqa: BLE001 - capture must not break the LLM call
+            pass
+        return response
+
     def invoke(
         self,
         *,
@@ -126,6 +249,12 @@ class BedrockChatClient:
 
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
+        start_time = time.perf_counter()
+        if self._is_mock_enabled():
+            return self._capture_response(
+                self._build_mock_response(model_id),
+                start_time,
+            )
 
         client = self._ensure_client()
 
@@ -164,8 +293,11 @@ class BedrockChatClient:
             data = json.loads(raw_body)
 
         text = _extract_text_from_messages_response(data)
-        usage = data.get("usage") if isinstance(data, Mapping) else None
-        return BedrockChatResponse(text=text, raw=data, usage=usage)
+        usage = self._extract_usage(data)
+        return self._capture_response(
+            BedrockChatResponse(text=text, raw=data, usage=usage, model=model_id),
+            start_time,
+        )
 
     def _invoke_ai21(
         self,
@@ -177,6 +309,7 @@ class BedrockChatClient:
         top_p: float | None,
     ) -> BedrockChatResponse:
         """Invoke an AI21 Jamba family model via Bedrock."""
+        start_time = time.perf_counter()
 
         if isinstance(messages, str):
             request_messages = [{"role": "user", "content": messages}]
@@ -224,11 +357,14 @@ class BedrockChatClient:
                     text = str(message.get("content", "")).strip()
             if not text:
                 text = str(data.get("outputText", "")).strip()
-            usage = data.get("usage") or data.get("tokenUsage")
+            usage = self._extract_usage(data)
         else:
             text = str(data)
             usage = None
-        return BedrockChatResponse(text=text, raw=data, usage=usage)
+        return self._capture_response(
+            BedrockChatResponse(text=text, raw=data, usage=usage, model=model_id),
+            start_time,
+        )
 
     def invoke_stream(
         self,
@@ -241,6 +377,14 @@ class BedrockChatClient:
         extra_params: Mapping[str, Any] | None = None,
     ) -> Generator[str, None, BedrockChatResponse]:  # pragma: no cover - streaming path
         """Stream chat invocation; yields text chunks and returns final response."""
+        start_time = time.perf_counter()
+        if self._is_mock_enabled():
+            response = self._capture_response(
+                self._build_mock_response(model_id),
+                start_time,
+            )
+            yield response.text
+            return response
 
         client = self._ensure_client()
 
@@ -256,6 +400,7 @@ class BedrockChatClient:
             payload.update(dict(extra_params))
 
         final_text_parts: list[str] = []
+        usage: dict[str, Any] | None = None
         resp = client.invoke_model_with_response_stream(
             modelId=model_id,
             accept="application/json",
@@ -273,6 +418,9 @@ class BedrockChatClient:
                     data = json.loads(chunk.get("bytes").decode("utf-8"))
                 except Exception:  # noqa: BLE001 - defensive
                     continue
+                event_usage = self._extract_usage(data)
+                if event_usage is not None:
+                    usage = event_usage
                 # Extract incremental text if present
                 text_piece = _extract_text_from_messages_response(data)
                 if text_piece:
@@ -280,7 +428,16 @@ class BedrockChatClient:
                     yield text_piece
 
         final = "".join(final_text_parts)
-        return BedrockChatResponse(text=final, raw={"streamed": True}, usage=None)
+        response = self._capture_response(
+            BedrockChatResponse(
+                text=final,
+                raw={"streamed": True},
+                usage=usage,
+                model=model_id,
+            ),
+            start_time,
+        )
+        return response
 
     async def ainvoke(
         self,
@@ -297,6 +454,13 @@ class BedrockChatClient:
         Uses aioboto3 for true async or falls back to an isolated sync worker.
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
+        start_time = time.perf_counter()
+        if self._is_mock_enabled():
+            return self._capture_response(
+                self._build_mock_response(model_id),
+                start_time,
+            )
+
         # Try aioboto3 for true async
         try:
             import aioboto3  # noqa: F401 - used for availability check and async method
@@ -335,6 +499,7 @@ class BedrockChatClient:
         extra_params: Mapping[str, Any] | None,
     ) -> BedrockChatResponse:
         """Internal async implementation using aioboto3."""
+        start_time = time.perf_counter()
         import aioboto3
 
         payload: dict[str, Any] = {
@@ -370,8 +535,11 @@ class BedrockChatClient:
                 data = json.loads(raw_body)
 
         text = _extract_text_from_messages_response(data)
-        usage = data.get("usage") if isinstance(data, Mapping) else None
-        return BedrockChatResponse(text=text, raw=data, usage=usage)
+        usage = self._extract_usage(data)
+        return self._capture_response(
+            BedrockChatResponse(text=text, raw=data, usage=usage, model=model_id),
+            start_time,
+        )
 
     async def ainvoke_stream(
         self,
@@ -388,6 +556,15 @@ class BedrockChatClient:
         Uses aioboto3 for true async streaming or falls back to sync streaming
         wrapped in an executor.
         """
+        start_time = time.perf_counter()
+        if self._is_mock_enabled():
+            response = self._capture_response(
+                self._build_mock_response(model_id),
+                start_time,
+            )
+            yield response.text
+            return
+
         # Try aioboto3 for true async streaming
         try:
             import aioboto3  # noqa: F401 - used for availability check and async stream
@@ -432,6 +609,7 @@ class BedrockChatClient:
         extra_params: Mapping[str, Any] | None,
     ) -> AsyncGenerator[str, None]:
         """Internal async streaming implementation using aioboto3."""
+        start_time = time.perf_counter()
         import aioboto3
 
         payload: dict[str, Any] = {
@@ -445,6 +623,8 @@ class BedrockChatClient:
         if extra_params:
             payload.update(dict(extra_params))
 
+        final_text_parts: list[str] = []
+        usage: dict[str, Any] | None = None
         session = (
             aioboto3.Session(profile_name=self._profile_name)
             if self._profile_name
@@ -469,9 +649,22 @@ class BedrockChatClient:
                         data = json.loads(chunk.get("bytes").decode("utf-8"))
                     except Exception:  # noqa: BLE001 - defensive
                         continue
+                    event_usage = self._extract_usage(data)
+                    if event_usage is not None:
+                        usage = event_usage
                     text_piece = _extract_text_from_messages_response(data)
                     if text_piece:
+                        final_text_parts.append(text_piece)
                         yield text_piece
+        self._capture_response(
+            BedrockChatResponse(
+                text="".join(final_text_parts),
+                raw={"streamed": True},
+                usage=usage,
+                model=model_id,
+            ),
+            start_time,
+        )
 
 
 def resolve_default_bedrock_model_id(model_hint: str | None) -> str:
