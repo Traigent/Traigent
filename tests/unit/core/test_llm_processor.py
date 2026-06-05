@@ -9,6 +9,7 @@ and response parsing logic.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -349,6 +350,24 @@ class TestExtractMetricsFromResponse:
         result = processor._extract_metrics_from_response(response, "test-model")
         assert result is not None
         assert result["total_tokens"] == 75  # 50 + 25
+
+    def test_extract_metrics_accepts_bedrock_usage_keys(
+        self, processor: LLMResponseProcessor
+    ) -> None:
+        """Test Bedrock input_tokens/output_tokens usage normalization."""
+        response = SimpleNamespace(
+            usage=SimpleNamespace(input_tokens=40, output_tokens=12),
+            cost=SimpleNamespace(input_cost=0.0, output_cost=0.0, total_cost=0.0),
+            response_time_ms=123.0,
+        )
+
+        result = processor._extract_metrics_from_response(response, "bedrock-model")
+
+        assert result is not None
+        assert result["input_tokens"] == 40
+        assert result["output_tokens"] == 12
+        assert result["total_tokens"] == 52
+        assert result["response_time_ms"] == 123.0
 
     def test_extract_metrics_calculates_total_cost(
         self, processor: LLMResponseProcessor
