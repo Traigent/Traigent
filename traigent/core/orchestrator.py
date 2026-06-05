@@ -20,6 +20,10 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
+from traigent.api.strategy_presets import (
+    NormalizedStrategyPreset,
+    select_strategy_preset,
+)
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -182,6 +186,9 @@ class OptimizationOrchestrator:
             kwargs.pop("tie_breakers", None) or {}
         )
         self._promotion_gate: PromotionGate | None = kwargs.pop("promotion_gate", None)
+        self.strategy_preset: NormalizedStrategyPreset | None = kwargs.pop(
+            "strategy_preset", None
+        )
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
 
@@ -246,6 +253,11 @@ class OptimizationOrchestrator:
             optimizer=self.optimizer,
             optimization_id=self._optimization_id,
             optimization_status=self._status,
+            strategy_preset_metadata=(
+                self.strategy_preset.to_metadata()
+                if self.strategy_preset is not None
+                else None
+            ),
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -402,13 +414,16 @@ class OptimizationOrchestrator:
             merged_agents.update(parameter_agents)
             parameter_agents = merged_agents
 
-        return build_agent_configuration(
-            configuration_space=self.optimizer.config_space,
-            explicit_agents=explicit_agents,
-            agent_prefixes=agent_prefixes,
-            agent_measures=agent_measures,
-            global_measures=global_measures,
-            parameter_agents=parameter_agents,
+        return cast(
+            AgentConfiguration | None,
+            build_agent_configuration(
+                configuration_space=self.optimizer.config_space,
+                explicit_agents=explicit_agents,
+                agent_prefixes=agent_prefixes,
+                agent_measures=agent_measures,
+                global_measures=global_measures,
+                parameter_agents=parameter_agents,
+            ),
         )
 
     def _compute_band_target(self) -> float | None:
@@ -1962,19 +1977,23 @@ class OptimizationOrchestrator:
                 f"Creating session with max_trials={max_trials_value} (self.max_trials={self.max_trials})"
             )
 
+            metadata = {
+                "optimization_id": self._optimization_id,
+                "max_trials": max_trials_value,
+                "function_name": identifier,
+                "function_display_name": (
+                    descriptor.display_name if descriptor else identifier
+                ),
+                "evaluation_set": dataset_name or "default_evaluation",
+            }
+            if self.strategy_preset is not None:
+                metadata["strategy_preset"] = self.strategy_preset.to_metadata()
+
             raw_result = self.backend_client.create_session(
                 function_name=identifier,
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
-                metadata={
-                    "optimization_id": self._optimization_id,
-                    "max_trials": max_trials_value,
-                    "function_name": identifier,
-                    "function_display_name": (
-                        descriptor.display_name if descriptor else identifier
-                    ),
-                    "evaluation_set": dataset_name or "default_evaluation",
-                },
+                metadata=metadata,
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -2153,12 +2172,15 @@ class OptimizationOrchestrator:
                     remaining=remaining,
                     remaining_samples=remaining_samples,
                 )
-            return await self._trial_lifecycle.run_sequential_trial(
-                func=func,
-                dataset=dataset,
-                session_id=session_id,
-                function_name=function_identifier,
-                trial_count=trial_count,
+            return cast(
+                tuple[int, str],
+                await self._trial_lifecycle.run_sequential_trial(
+                    func=func,
+                    dataset=dataset,
+                    session_id=session_id,
+                    function_name=function_identifier,
+                    trial_count=trial_count,
+                ),
             )
         except VendorPauseError as e:
             decision = await self._handle_vendor_pause(e)
@@ -2669,11 +2691,11 @@ class OptimizationOrchestrator:
 
     def _estimate_optimization_cost(self, dataset: Dataset) -> float:
         """Estimate optimization cost. Delegates to CostEstimator."""
-        return self._cost_estimator.estimate_optimization_cost(dataset)
+        return cast(float, self._cost_estimator.estimate_optimization_cost(dataset))
 
     def _extract_trial_cost(self, trial_result: TrialResult) -> float | None:
         """Extract cost from trial result. Delegates to CostEstimator."""
-        return CostEstimator.extract_trial_cost(trial_result)
+        return cast(float | None, CostEstimator.extract_trial_cost(trial_result))
 
     def _log_checkpoint(
         self,
@@ -2694,11 +2716,14 @@ class OptimizationOrchestrator:
         self,
         session_summary: dict[str, Any] | None,
         safeguards_telemetry: dict[str, Any],
+        strategy_preset_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
         }
+        if strategy_preset_metadata is not None:
+            metadata["strategy_preset"] = dict(strategy_preset_metadata)
 
         if self._function_descriptor is not None:
             descriptor = self._function_descriptor
@@ -2775,6 +2800,20 @@ class OptimizationOrchestrator:
         best_config = selection.best_config
         best_score = selection.best_score
         session_summary = selection.session_summary
+        preset_selection = (
+            select_strategy_preset(self.strategy_preset, self._trials)
+            if self.strategy_preset is not None
+            else None
+        )
+        strategy_preset_metadata = (
+            preset_selection.to_metadata()
+            if preset_selection is not None
+            else (
+                self.strategy_preset.to_metadata()
+                if self.strategy_preset is not None
+                else None
+            )
+        )
 
         # Calculate duration
         duration = time.time() - self._start_time if self._start_time else 0.0
@@ -2833,7 +2872,12 @@ class OptimizationOrchestrator:
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
-            metadata=self._build_result_metadata(session_summary, safeguards_telemetry),
+            metadata=self._build_result_metadata(
+                session_summary,
+                safeguards_telemetry,
+                strategy_preset_metadata,
+            ),
+            preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             run_label=run_label,
         )

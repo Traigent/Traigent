@@ -19,6 +19,15 @@ from traigent.api.functions import (
     list_recommendation_agent_types,
     recommend_configuration_space,
 )
+from traigent.api.strategy_presets import (
+    ADVISORY_SELECTION_NOTICE,
+    VALID_PRESET_NAMES,
+    StrategyPresetError,
+    calculate_weighted_trial_score,
+    normalize_strategy_preset,
+    select_strategy_preset,
+)
+from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
@@ -953,8 +962,16 @@ def _print_result_summary(result: Any) -> None:
     summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
     if hasattr(result, "duration") and result.duration:
         summary_table.add_row("Duration", f"{result.duration:.1f}s")
+    preset_selection = getattr(result, "preset_selection", None)
+    if preset_selection is not None:
+        summary_table.add_row(
+            "Preset Selection",
+            f"{preset_selection.preset_name} ({preset_selection.selection_grade})",
+        )
 
     console.print(summary_table)
+    if preset_selection is not None:
+        console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
 
 
 def _print_config_json(
@@ -980,6 +997,35 @@ def _print_metrics_table(metrics: dict[str, Any] | None) -> None:
     for metric in _visible_metric_names(metrics):
         metrics_table.add_row(metric, _format_metric_value(metrics.get(metric)))
     console.print(metrics_table)
+
+
+def _print_preset_selection(selection: PresetSelection | None) -> None:
+    """Print advisory preset selection details."""
+    if selection is None:
+        return
+
+    console.print("\n[bold]Preset Selection[/bold]")
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Preset", selection.preset_name)
+    table.add_row("Grade", selection.selection_grade)
+    table.add_row("Status", selection.status)
+    table.add_row("Rationale", selection.selection_rationale)
+    if selection.selected_trial_indices:
+        table.add_row(
+            "Trial Index",
+            ", ".join(str(index) for index in selection.selected_trial_indices),
+        )
+    console.print(table)
+    if selection.selected_config is not None:
+        _print_config_json(selection.selected_config, "Advisory Selected Configuration")
+    elif selection.selected_configs:
+        console.print("\n[bold]Advisory Selected Configurations[/bold]")
+        for index, config in enumerate(selection.selected_configs, 1):
+            console.print(f"[dim]#{index}[/dim]")
+            console.print(Syntax(json.dumps(config, indent=2), "json", theme="monokai"))
+    console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
 
 
 def _print_trials_table(trials: list[Any], max_display: int = 50) -> None:
@@ -1120,19 +1166,7 @@ def _parse_weights(weights_str: str) -> dict[str, float] | None:
 
 def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float | None:
     """Calculate weighted score for a trial. Returns None if no valid metrics."""
-    if not trial.metrics:
-        return None
-
-    score = 0.0
-    has_metrics = False
-    for metric, weight in weight_dict.items():
-        if metric in trial.metrics:
-            metric_value = trial.metrics[metric]
-            if isinstance(metric_value, (int, float)):
-                score += weight * metric_value
-                has_metrics = True
-
-    return score if has_metrics else None
+    return calculate_weighted_trial_score(trial, weight_dict)
 
 
 def _build_rerank_table(
@@ -1152,6 +1186,34 @@ def _build_rerank_table(
         orig_score_val = trial.metrics.get("overall") or trial.metrics.get("score")
         orig_score = f"{orig_score_val:.4f}" if orig_score_val is not None else "N/A"
         table.add_row(str(i), f"{new_score:.4f}", orig_score, config_str)
+
+    return table
+
+
+def _build_preset_rerank_table(
+    selection: PresetSelection,
+    trials: list[Any],
+) -> Table:
+    """Build a table showing advisory preset-selected configurations."""
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Rank", justify="right")
+    table.add_column("Trial Index", justify="right")
+    table.add_column("Accuracy", justify="right")
+    table.add_column("Cost", justify="right")
+    table.add_column("Config")
+
+    for rank, trial_index in enumerate(selection.selected_trial_indices, 1):
+        trial = trials[trial_index]
+        config_str = json.dumps(trial.config)
+        if len(config_str) > 50:
+            config_str = config_str[:47] + "..."
+        table.add_row(
+            str(rank),
+            str(trial_index),
+            _format_metric_value((trial.metrics or {}).get("accuracy")),
+            _format_metric_value((trial.metrics or {}).get("cost")),
+            config_str,
+        )
 
     return table
 
@@ -1232,6 +1294,7 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
         _print_result_summary(result)
         _print_config_json(result.best_config)
         _print_metrics_table(result.best_metrics)
+        _print_preset_selection(getattr(result, "preset_selection", None))
 
         if trials:
             _print_trials_table(result.trials)
@@ -1293,13 +1356,38 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
 @click.option(
     "--weights",
     "-w",
-    required=True,
+    required=False,
     help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
+)
+@click.option(
+    "--preset",
+    type=click.Choice(VALID_PRESET_NAMES),
+    required=False,
+    help="Advisory strategy preset to apply instead of custom weights",
+)
+@click.option(
+    "--epsilon",
+    type=float,
+    required=False,
+    help="Tolerance for max_accuracy_then_cheapest_within_epsilon",
+)
+@click.option(
+    "--floor",
+    type=float,
+    required=False,
+    help="Quality floor for quality_floor_min_cost",
 )
 @click.option(
     "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
 )
-def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
+def results_rerank(
+    result_name: str,
+    weights: str | None,
+    preset: str | None,
+    epsilon: float | None,
+    floor: float | None,
+    storage_dir: str,
+) -> None:
     """Recalculate best config with different objective weights.
 
     This re-scores all trials using new weights without re-running optimization.
@@ -1307,21 +1395,44 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
     Examples:
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
         traigent results rerank my_run -w "accuracy=0.5,latency=0.3,cost=0.2"
+        traigent results rerank --preset max_accuracy_then_cheapest_within_epsilon --epsilon 0.02 my_run
     """
-    console.print(
-        f"\n[bold blue]Re-ranking: {result_name} with custom weights[/bold blue]\n"
-    )
-
-    # Parse weights
-    weight_dict = _parse_weights(weights)
-    if weight_dict is None:
-        console.print("[red]Invalid weights format[/red]")
-        console.print("Use format: --weights accuracy=0.7,cost=0.3")
+    if bool(weights) == bool(preset):
+        console.print("[red]Use exactly one of --weights or --preset[/red]")
         return
 
-    console.print("[bold]Weights (normalized):[/bold]")
-    for k, v in weight_dict.items():
-        console.print(f"  {k}: {v:.2%}")
+    if preset:
+        console.print(
+            f"\n[bold blue]Re-ranking: {result_name} with preset {preset}[/bold blue]\n"
+        )
+    else:
+        console.print(
+            f"\n[bold blue]Re-ranking: {result_name} with custom weights[/bold blue]\n"
+        )
+
+    weight_dict: dict[str, float] | None = None
+    strategy_preset = None
+    if weights:
+        weight_dict = _parse_weights(weights)
+        if weight_dict is None:
+            console.print("[red]Invalid weights format[/red]")
+            console.print("Use format: --weights accuracy=0.7,cost=0.3")
+            return
+
+        console.print("[bold]Weights (normalized):[/bold]")
+        for k, v in weight_dict.items():
+            console.print(f"  {k}: {v:.2%}")
+    else:
+        params: dict[str, Any] = {}
+        if epsilon is not None:
+            params["epsilon"] = epsilon
+        if floor is not None:
+            params["floor"] = floor
+        try:
+            strategy_preset = normalize_strategy_preset(preset, params)
+        except StrategyPresetError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return
 
     try:
         persistence = PersistenceManager(storage_dir)
@@ -1331,10 +1442,23 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
+        if strategy_preset is not None:
+            selection = select_strategy_preset(strategy_preset, result.trials)
+            if selection.status != "selected":
+                console.print(f"[yellow]{selection.selection_rationale}[/yellow]")
+                console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
+                return
+
+            console.print("\n[bold]Advisory Preset Selection[/bold]")
+            console.print(_build_preset_rerank_table(selection, result.trials))
+            _print_preset_selection(selection)
+            return
+
         # Re-score trials using helper
         scored_trials = [
             (score, trial)
             for trial in result.trials
+            if weight_dict is not None
             if (score := _calculate_trial_score(trial, weight_dict)) is not None
         ]
 

@@ -403,6 +403,78 @@ class TrialResult:
         return result
 
 
+@dataclass
+class PresetSelection:
+    """Advisory strategy-preset selection result.
+
+    Preset selection is deliberately separate from ``best_config``. It is a
+    task-local recommendation and never a statistical certificate.
+    """
+
+    preset_name: str
+    params: dict[str, Any]
+    selection_grade: str
+    selection_rationale: str
+    status: str
+    selected_config: dict[str, Any] | None = None
+    selected_configs: list[dict[str, Any]] = field(default_factory=list)
+    selected_trial_indices: list[int] = field(default_factory=list)
+
+    def to_metadata(self) -> dict[str, Any]:
+        """Return the schema-shaped strategy_preset metadata payload."""
+        metadata: dict[str, Any] = {
+            "preset_name": self.preset_name,
+            "params": dict(self.params),
+            "selection_grade": self.selection_grade,
+        }
+        if self.selection_rationale:
+            metadata["selection_rationale"] = self.selection_rationale[:280]
+        return metadata
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-ready dictionary."""
+        return {
+            **self.to_metadata(),
+            "status": self.status,
+            "selected_config": (
+                dict(self.selected_config) if self.selected_config is not None else None
+            ),
+            "selected_configs": [dict(config) for config in self.selected_configs],
+            "selected_trial_indices": list(self.selected_trial_indices),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None) -> PresetSelection | None:
+        """Reconstruct a PresetSelection from persisted result metadata."""
+        if not isinstance(data, Mapping):
+            return None
+        selected_config_raw = data.get("selected_config")
+        selected_configs_raw = data.get("selected_configs")
+        selected_indices_raw = data.get("selected_trial_indices")
+        return cls(
+            preset_name=str(data.get("preset_name", "")),
+            params=dict(data.get("params") or {}),
+            selection_grade=str(data.get("selection_grade", "advisory")),
+            selection_rationale=str(data.get("selection_rationale", "")),
+            status=str(data.get("status", "selected")),
+            selected_config=(
+                dict(selected_config_raw)
+                if isinstance(selected_config_raw, Mapping)
+                else None
+            ),
+            selected_configs=[
+                dict(config)
+                for config in (selected_configs_raw or [])
+                if isinstance(config, Mapping)
+            ],
+            selected_trial_indices=[
+                int(index)
+                for index in (selected_indices_raw or [])
+                if isinstance(index, (int, float)) and not isinstance(index, bool)
+            ],
+        )
+
+
 def serialize_trials(
     trials: Sequence[TrialResult],
     *,
@@ -532,6 +604,7 @@ class OptimizationResult:
         algorithm: Name of the optimization algorithm used.
         timestamp: When the optimization completed.
         metadata: Additional metadata from the optimization run.
+        preset_selection: Advisory strategy-preset selection, when requested.
         total_cost: Total API cost incurred (if tracked).
         total_tokens: Total tokens consumed (if tracked).
         metrics: Aggregated metrics across all trials.
@@ -564,6 +637,7 @@ class OptimizationResult:
     algorithm: str
     timestamp: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
+    preset_selection: PresetSelection | None = None
 
     # Cost and token tracking
     total_cost: float | None = None
@@ -1669,6 +1743,8 @@ class OptimizationResult:
         # Include best configuration information if available
         summary["best_config"] = self.best_config
         summary["best_score"] = self.best_score
+        if self.preset_selection is not None:
+            summary["preset_selection"] = self.preset_selection.to_dict()
 
         return summary
 

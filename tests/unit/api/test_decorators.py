@@ -7,6 +7,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from traigent.api.decorators import optimize
+from traigent.api.strategy_presets import (
+    MAX_ACCURACY_THEN_CHEAPEST,
+    QUALITY_FLOOR_MIN_COST,
+)
+from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
@@ -155,6 +160,84 @@ class TestOptimizeDecorator:
 
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.algorithm == "grid"
+
+    def test_decorator_accepts_strategy_preset(self):
+        """Registered strategy names should configure advisory preset metadata."""
+
+        @optimize(
+            configuration_space={"model": ["cheap", "accurate"]},
+            strategy=MAX_ACCURACY_THEN_CHEAPEST,
+            strategy_params={"epsilon": 0.02},
+        )
+        def sample_function() -> str:
+            return "ok"
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.objectives == ["accuracy", "cost"]
+        assert sample_function.strategy_preset.to_metadata() == {
+            "preset_name": MAX_ACCURACY_THEN_CHEAPEST,
+            "params": {"epsilon": 0.02},
+            "selection_grade": "advisory",
+            "selection_rationale": (
+                "Selected the lowest-cost completed trial within the preset accuracy band."
+            ),
+        }
+
+    def test_decorator_rejects_strategy_preset_with_objectives(self):
+        """Preset business goals should not silently override hand-set objectives."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+
+            @optimize(
+                configuration_space={"model": ["cheap", "accurate"]},
+                objectives=["accuracy"],
+                strategy=QUALITY_FLOOR_MIN_COST,
+                strategy_params={"floor": 0.8},
+            )
+            def sample_function() -> str:
+                return "ok"
+
+    def test_decorator_strategy_preset_end_to_end_mock_mode(self, monkeypatch):
+        """Preset selection should be exposed without replacing best_config."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+        def evaluator(func, config, example):
+            _ = func, example
+            if config["model"] == "accurate":
+                metrics = {"accuracy": 0.9, "cost": 0.03}
+            else:
+                metrics = {"accuracy": 0.85, "cost": 0.01}
+            return ExampleResult(
+                example_id="ex_1",
+                input_data={"prompt": "hello"},
+                expected_output="ok",
+                actual_output="ok",
+                metrics=metrics,
+                execution_time=0.01,
+                success=True,
+            )
+
+        @optimize(
+            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
+            configuration_space={"model": ["accurate", "cheap"]},
+            custom_evaluator=evaluator,
+            algorithm="grid",
+            max_trials=2,
+            strategy=MAX_ACCURACY_THEN_CHEAPEST,
+            strategy_params={"epsilon": 0.05},
+        )
+        def sample_function() -> str:
+            return "ok"
+
+        result = sample_function.optimize_sync()
+
+        assert result.preset_selection is not None
+        assert result.preset_selection.selection_grade == "advisory"
+        assert result.preset_selection.selected_config == {"model": "cheap"}
+        assert result.metadata["strategy_preset"]["preset_name"] == (
+            MAX_ACCURACY_THEN_CHEAPEST
+        )
+        assert result.metadata["strategy_preset"]["selection_grade"] == "advisory"
+        assert result.best_config != result.preset_selection.selected_config
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""

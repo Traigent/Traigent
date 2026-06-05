@@ -58,6 +58,7 @@ class BackendSessionManager:
         optimizer: BaseOptimizer,
         optimization_id: str,
         optimization_status: OptimizationStatus,
+        strategy_preset_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Initialize backend session manager.
 
@@ -77,6 +78,9 @@ class BackendSessionManager:
         self._optimizer = optimizer
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
+        self._strategy_preset_metadata = (
+            dict(strategy_preset_metadata) if strategy_preset_metadata else None
+        )
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._backend_tracking_enabled: bool = True
@@ -116,7 +120,7 @@ class BackendSessionManager:
             self.disable_backend_tracking(reason)
 
             if not was_enabled:
-                return result.session_id
+                return str(result.session_id)
 
             if reason == SessionCreationFailureReason.AUTH:
                 logger.warning(
@@ -139,7 +143,7 @@ class BackendSessionManager:
         else:
             logger.info("Created backend session: %s", result.session_id)
 
-        return result.session_id
+        return str(result.session_id)
 
     @staticmethod
     def normalize_session_creation_result(
@@ -375,6 +379,10 @@ class BackendSessionManager:
             }
             if agent_configuration is not None:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
+            if self._strategy_preset_metadata is not None:
+                session_metadata["strategy_preset"] = dict(
+                    self._strategy_preset_metadata
+                )
 
             # Use human-readable name with disambiguating hash suffix
             # e.g. "answer_question (f282c9de)" instead of the full slug
@@ -477,6 +485,8 @@ class BackendSessionManager:
             dataset_name,
             session_id=session_id,
         )
+        if self._strategy_preset_metadata is not None:
+            trial_metadata["strategy_preset"] = dict(self._strategy_preset_metadata)
 
         await self._log_trial_to_backend(
             session_id=session_id,
