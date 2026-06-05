@@ -38,7 +38,7 @@ from traigent.utils.exceptions import AuthenticationError as SecurityError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-_SECRET_ENV_SUFFIX = "PASS" + "WORD"
+_SECRET_ENV_SUFFIX = "PASS" + "WORD"  # pragma: allowlist secret
 _MASTER_SECRET_ENV = f"TRAIGENT_MASTER_{_SECRET_ENV_SUFFIX}"
 _ALLOW_LEGACY_MASTER_SECRET_ENV = (
     f"TRAIGENT_ALLOW_LEGACY_LOCAL_MASTER_{_SECRET_ENV_SUFFIX}"
@@ -189,7 +189,18 @@ class EnhancedCredentialStore:
     NONCE_LENGTH = 12  # 96 bits for GCM
     MAX_CREDENTIAL_AGE_DAYS = 90  # Force rotation after 90 days
     MAX_ACCESS_COUNT = 10000  # Force rotation after 10k accesses
+    MIN_CREDENTIAL_VALUE_LENGTH = 8
     MASTER_PASSWORD_FILENAME = ".master_password"
+    WEAK_CREDENTIAL_PATTERNS = (
+        "password123",
+        "12345",
+        "admin",
+        "demo",
+        "your-",
+        "xxx",
+        "placeholder",
+        "example",
+    )
 
     def __init__(
         self,
@@ -657,6 +668,73 @@ class EnhancedCredentialStore:
                 self._security_event("get_failed", {"name": name, "error": str(e)})
                 raise SecurityError(f"Failed to retrieve credential: {e}") from e
 
+    @staticmethod
+    def _is_test_credential_value(lower_value: str) -> bool:
+        return (
+            lower_value.startswith(("test_", "test-"))
+            or lower_value.endswith(("_test", "-test"))
+            or lower_value.startswith(("dummy", "sample"))
+        )
+
+    def _validate_secret_field_strength(
+        self,
+        *,
+        name: str,
+        field: str,
+        field_value: str,
+        flags: Any,
+    ) -> None:
+        if field_value is None:
+            raise ValueError(f"Credential field '{field}' cannot be None")
+        if len(field_value) == 0:
+            raise ValueError(f"Credential field '{field}' cannot be empty")
+        if len(field_value) < self.MIN_CREDENTIAL_VALUE_LENGTH:
+            with self._lock:
+                self._access_metrics["short_value_blocked"] += 1
+            self._security_event(
+                "rejected_short_credential_value",
+                {
+                    "name": name,
+                    "field": field,
+                    "length": len(field_value),
+                    "profile": flags.profile.value,
+                    "minimum_length": self.MIN_CREDENTIAL_VALUE_LENGTH,
+                },
+            )
+            logger.warning(
+                "Rejecting short credential field %s for %s (length=%d) under profile %s",
+                field,
+                name,
+                len(field_value),
+                flags.profile.value,
+            )
+            raise ValueError(
+                f"Credential field '{field}' too short; minimum length is "
+                f"{self.MIN_CREDENTIAL_VALUE_LENGTH} characters"
+            )
+
+        lower_value = field_value.lower()
+        weak_pattern = next(
+            (
+                pattern
+                for pattern in self.WEAK_CREDENTIAL_PATTERNS
+                if pattern in lower_value
+            ),
+            None,
+        )
+        if weak_pattern and (
+            not flags.allow_weak_credentials
+            or not self._is_test_credential_value(lower_value)
+        ):
+            self._security_event(
+                "weak_credential_detected",
+                {"name": name, "field": field, "reason": f"contains {weak_pattern}"},
+            )
+            raise SecurityError(
+                f"Credential field '{field}' appears to be weak or a placeholder: "
+                f"contains '{weak_pattern}'"
+            )
+
     def set(
         self,
         name: str,
@@ -664,6 +742,7 @@ class EnhancedCredentialStore:
         credential_type: CredentialType = CredentialType.SECRET,
         *,
         metadata: dict[str, Any] | None = None,
+        secret_fields: dict[str, str] | None = None,
         expires_in_days: int | None = None,
         expires_at: datetime | None = None,
         **kwargs: Any,
@@ -675,6 +754,8 @@ class EnhancedCredentialStore:
             value: Credential value (will be encrypted)
             credential_type: Type of credential
             metadata: Optional metadata
+            secret_fields: Secret-bearing fields to check for weak values when
+                value is a structured credential blob
             expires_in_days: Optional expiration in days
         """
         if "cred_type" in kwargs:
@@ -690,51 +771,18 @@ class EnhancedCredentialStore:
             raise ValueError("Credential value cannot be None")
         if len(value) == 0:
             raise ValueError("Credential value cannot be empty")
-        reference_length = 8
-        if len(value) < reference_length:
-            with self._lock:
-                self._access_metrics["short_value_blocked"] += 1
-            self._security_event(
-                "rejected_short_credential_value",
-                {
-                    "name": name,
-                    "length": len(value),
-                    "profile": flags.profile.value,
-                    "minimum_length": reference_length,
-                },
-            )
-            logger.warning(
-                "Rejecting short credential value for %s (length=%d) under profile %s",
-                name,
-                len(value),
-                flags.profile.value,
-            )
-            raise ValueError(
-                f"Credential value too short; minimum length is {reference_length} characters"
-            )
 
-        # Check for weak/placeholder values (relaxed for testing)
-        weak_patterns = [
-            "password123",
-            "12345",
-            "admin",
-            "demo",
-            "your-",
-            "xxx",
-            "placeholder",
-            "example",
-        ]
-        lower_value = value.lower()
-        is_test_value = (
-            lower_value.startswith(("test_", "test-"))
-            or lower_value.endswith(("_test", "-test"))
-            or lower_value.startswith(("dummy", "sample"))
-        )
-        if (not flags.allow_weak_credentials or not is_test_value) and any(
-            pattern in value.lower() for pattern in weak_patterns
-        ):
-            self._security_event("weak_credential_detected", {"name": name})
-            raise SecurityError("Credential appears to be weak or a placeholder")
+        # Structured credential blobs may include non-secret metadata such as
+        # emails, URLs, ids, and display names. Apply weak-value heuristics only
+        # to the fields that contain actual secret material.
+        validation_fields = secret_fields or {"value": value}
+        for field, field_value in validation_fields.items():
+            self._validate_secret_field_strength(
+                name=name,
+                field=field,
+                field_value=field_value,
+                flags=flags,
+            )
 
         # Encrypt the value
         ciphertext, nonce, associated_data = self._encrypt_value(value)

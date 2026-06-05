@@ -35,6 +35,7 @@ class _FakeSecureStore:
         self.saved: tuple[str, str, CredentialType, dict[str, str] | None] | None = None
         self.set_calls: list[tuple[str, str, CredentialType, dict[str, str] | None]] = []
         self.deleted: list[str] = []
+        self.secret_fields: dict[str, str] | None = None
 
     def get(self, name: str, check_env: bool = True) -> str | None:
         assert name == SECURE_CLI_CREDENTIAL_NAME
@@ -47,10 +48,12 @@ class _FakeSecureStore:
         value: str,
         credential_type: CredentialType,
         metadata: dict[str, str] | None = None,
+        secret_fields: dict[str, str] | None = None,
     ) -> None:
         if self.fail_on_set:
             raise auth_commands.SecurityError("secure store unavailable")
         self.set_calls.append((name, value, credential_type, metadata))
+        self.secret_fields = secret_fields
         if name == SECURE_CLI_CREDENTIAL_NAME:
             self.saved = (name, value, credential_type, metadata)
 

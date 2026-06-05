@@ -86,12 +86,33 @@ _ENV_FILE_KEYS = (
     PROJECT_ENV_VAR,
     "TRAIGENT_BACKEND_URL",
 )
+_CLI_SECRET_CREDENTIAL_FIELDS = (
+    "api_key",
+    "jwt_token",
+    "access_token",
+    "refresh_token",
+    "token",
+    "password",
+    "client_secret",
+    "service_key",
+    "private_key",
+)
 _ENV_ASSIGNMENT_RE = re.compile(
     r"^(?P<leading>\s*)(?P<export>export\s+)?" r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*="
 )
 MAX_DEVICE_POLL_TIMEOUT_SECONDS = 30.0
 MAX_DEVICE_POLL_TRANSPORT_ERRORS = 3
 MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER = 10
+
+
+def _credential_secret_fields(credentials: dict[str, Any]) -> dict[str, str]:
+    """Return only secret-bearing credential fields for strength checks."""
+    secret_fields: dict[str, str] = {}
+    for field in _CLI_SECRET_CREDENTIAL_FIELDS:
+        value = credentials.get(field)
+        if isinstance(value, str) and value:
+            secret_fields[field] = value
+    return secret_fields
 
 
 async def _read_json_body(response: Any) -> dict[str, Any]:
@@ -327,6 +348,7 @@ class TraigentAuthCLI:
         Returns:
             Storage location string if saved successfully, None if failed
         """
+        self._last_credential_save_error = None
         try:
             store = get_secure_credential_store()
             store.set(
@@ -334,15 +356,25 @@ class TraigentAuthCLI:
                 json.dumps(credentials, separators=(",", ":")),
                 CredentialType.TOKEN,
                 metadata={"source": "traigent-cli"},
+                secret_fields=_credential_secret_fields(credentials),
             )
             logger.debug("Credentials saved to secure credential store")
             return STORAGE_SECURE
-        except (OSError, SecurityError) as e:
+        except OSError as e:
+            self._last_credential_save_error = (
+                f"{e}. Set TRAIGENT_MASTER_PASSWORD before running auth commands "
+                "or fix credential-store file permissions."
+            )
             logger.error(
                 "Failed to save credentials securely: %s. Set "
-                "TRAIGENT_MASTER_PASSWORD before running auth commands.",
+                "TRAIGENT_MASTER_PASSWORD before running auth commands or fix "
+                "credential-store file permissions.",
                 e,
             )
+            return None
+        except (SecurityError, ValueError) as e:
+            self._last_credential_save_error = str(e)
+            logger.error("Failed to save credentials securely: %s", e)
             return None
 
     def _preflight_secure_credential_store(self) -> bool:
@@ -1226,10 +1258,17 @@ class TraigentAuthCLI:
                 f"[cyan]{self.credentials_file}[/cyan]"
             )
         else:
-            console.print(
-                "\n[yellow]Could not save credentials securely. Set "
-                "TRAIGENT_MASTER_PASSWORD and rerun the command.[/yellow]"
-            )
+            reason = getattr(self, "_last_credential_save_error", None)
+            if reason:
+                console.print(
+                    "\n[yellow]Could not save credentials securely. "
+                    f"Reason: {reason}[/yellow]"
+                )
+            else:
+                console.print(
+                    "\n[yellow]Could not save credentials securely. Set "
+                    "TRAIGENT_MASTER_PASSWORD and rerun the command.[/yellow]"
+                )
 
     async def login(
         self, email: str | None = None, non_interactive: bool = False

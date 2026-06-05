@@ -1,5 +1,6 @@
 """Comprehensive unit tests for secure credential management."""
 
+import json
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from traigent.security.credentials import (
     EnhancedCredentialStore,
     SecureCredential,
     SecureString,
+    SecurityError,
     SecurityLevel,
 )
 from traigent.utils.exceptions import AuthenticationError
@@ -196,6 +198,49 @@ class TestEnhancedCredentialStore:
 
         # Verify credential exists
         assert store.get("meta-test") is not None
+
+    def test_structured_credential_ignores_non_secret_metadata_weak_words(self, store):
+        """Metadata values such as emails and URLs must not trip secret heuristics."""
+        strong_key = "sk_" + "a" * 43  # pragma: allowlist secret
+        payload = {
+            "api_key": strong_key,
+            "tenant_id": "tenant_demo",
+            "project_id": "project_example",
+            "user": {"id": "user_admin", "email": "admin@dev.local"},
+            "backend_url": "https://api.example.com",
+        }
+
+        store.set(
+            name="cli_credentials",
+            value=json.dumps(payload, separators=(",", ":")),
+            credential_type=CredentialType.TOKEN,
+            secret_fields={"api_key": strong_key},
+        )
+
+        retrieved = store.get("cli_credentials", check_env=False)
+        assert retrieved is not None
+        assert json.loads(retrieved)["user"]["email"] == "admin@dev.local"
+
+    def test_structured_credential_rejects_weak_secret_field_by_name(self, store):
+        """Weak checks still apply to actual secret fields and name the field."""
+        weak_key = "sk_demo_placeholder_value_abcdefghi"  # pragma: allowlist secret
+        payload = {
+            "api_key": weak_key,
+            "user": {"email": "user@safe.local"},
+            "backend_url": "https://api.safe.local",
+        }
+
+        with pytest.raises(SecurityError) as exc_info:
+            store.set(
+                name="cli_credentials",
+                value=json.dumps(payload, separators=(",", ":")),
+                credential_type=CredentialType.TOKEN,
+                secret_fields={"api_key": weak_key},
+            )
+
+        message = str(exc_info.value)
+        assert "api_key" in message
+        assert "demo" in message
 
     def test_credential_with_expiration(self, store):
         """Test storing credential with expiration."""
