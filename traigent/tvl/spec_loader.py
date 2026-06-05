@@ -104,6 +104,10 @@ class TVLSpecArtifact:
     # TVL 0.9 additions
     tvl_header: TVLHeader | None = None
     environment_snapshot: EnvironmentSnapshot | None = None
+    # TVL 1.1 additions (RFC 0001) — raw declarations; typed knob bindings
+    # are constructed by the traigent.knobs surface, not the loader
+    cvars: list[dict[str, Any]] | None = None
+    policies: list[dict[str, Any]] | None = None
     evaluation_set: EvaluationSet | None = None
     tvl_version: str | None = None
     convergence: ConvergenceCriteria | None = None
@@ -223,6 +227,8 @@ _KNOWN_TVL_SECTIONS = frozenset(
         "promotion_policy",
         "extends",  # Spec-level inheritance
         "safety_constraints",  # Safety constraint definitions
+        "cvars",  # TVL 1.1 (RFC 0001): calibrated variables — governed, NOT searched
+        "policies",  # TVL 1.1 (RFC 0001): operational policy declarations
         "datasets",  # Dataset references for evaluation
         "evaluators",  # Evaluator definitions
         # Legacy sections (deprecated but still valid)
@@ -252,6 +258,8 @@ _SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
     "evaluators": dict,  # Evaluator definitions
     "configuration_space": dict,
     "optimization": dict,
+    "cvars": list,
+    "policies": list,
 }
 
 
@@ -722,6 +730,11 @@ def load_tvl_spec(
     # Parse promotion policy (TVL 0.9)
     promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
 
+    # Parse TVL 1.1 sections (RFC 0001) — cvars are governed but NOT
+    # searched: they never enter configuration_space (P2/P5)
+    cvars_decls = _parse_cvar_decls(resolved.get("cvars"), config_space)
+    policy_decls = _parse_policy_decls(resolved.get("policies"))
+
     metadata = _build_metadata(
         resolved,
         path,
@@ -745,6 +758,8 @@ def load_tvl_spec(
         derived_constraints=derived_constraints,
         tvl_header=tvl_header,
         environment_snapshot=environment_snapshot,
+        cvars=cvars_decls,
+        policies=policy_decls,
         evaluation_set=evaluation_set,
         tvl_version=tvl_version,
         convergence=convergence,
@@ -1057,6 +1072,66 @@ def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:
         return PromotionPolicy.from_dict(policy_data)
     except (ValueError, KeyError) as exc:
         raise TVLValidationError(f"Invalid promotion_policy: {exc}") from exc
+
+
+def _parse_cvar_decls(
+    cvars_data: Any, configuration_space: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """Parse TVL 1.1 ``cvars`` declarations (RFC 0001 §3.3).
+
+    Returns the RAW declaration dicts (typed knob bindings are built by the
+    ``traigent.knobs`` surface). Enforces: list-of-dicts shape, unique names,
+    and the shared-namespace rule — a CVAR shadowing a TVAR is an error.
+    CVARs are NEVER added to the configuration space (optimizer-invisible).
+    """
+    if cvars_data is None:
+        return None
+    if not isinstance(cvars_data, list):
+        raise TVLValidationError("cvars must be a list of declarations")
+    seen: set[str] = set()
+    for index, decl in enumerate(cvars_data):
+        if not isinstance(decl, dict) or not isinstance(decl.get("name"), str):
+            raise TVLValidationError(
+                f"cvars[{index}] must be a mapping with a string name"
+            )
+        name = decl["name"]
+        if name in seen:
+            raise TVLValidationError(f"CVAR {name!r} is declared multiple times")
+        seen.add(name)
+        if name in configuration_space:
+            raise TVLValidationError(
+                f"CVAR {name!r} shadows a TVAR — tvars, cvars, and policies "
+                "share one namespace (RFC 0001 §3.7)"
+            )
+        calibration = decl.get("calibration")
+        if not isinstance(calibration, dict) or not isinstance(
+            calibration.get("source"), str
+        ):
+            raise TVLValidationError(f"CVAR {name!r} requires calibration.source")
+    return [dict(decl) for decl in cvars_data]
+
+
+def _parse_policy_decls(policies_data: Any) -> list[dict[str, Any]] | None:
+    """Parse TVL 1.1 ``policies`` declarations (RFC 0001 §3.8) — raw dicts."""
+    if policies_data is None:
+        return None
+    if not isinstance(policies_data, list):
+        raise TVLValidationError("policies must be a list of declarations")
+    seen: set[str] = set()
+    for index, decl in enumerate(policies_data):
+        if not isinstance(decl, dict) or not isinstance(decl.get("name"), str):
+            raise TVLValidationError(
+                f"policies[{index}] must be a mapping with a string name"
+            )
+        name = decl["name"]
+        if name in seen:
+            raise TVLValidationError(f"policy {name!r} is declared multiple times")
+        seen.add(name)
+        if decl.get("kind") != "policy":
+            raise TVLValidationError(
+                f"policy {name!r} kind must be the literal 'policy'"
+            )
+    return [dict(decl) for decl in policies_data]
 
 
 def _parse_tvl_header(header_data: Any) -> TVLHeader | None:
