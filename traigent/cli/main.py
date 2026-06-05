@@ -2086,5 +2086,10 @@ from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
 
+from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
+
+cli.add_command(onboard)
+cli.add_command(first_prompt)
+
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter
