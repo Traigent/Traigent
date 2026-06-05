@@ -33,6 +33,8 @@ class _FakeSecureStore:
     def __init__(self, *, fail_on_set: bool = False) -> None:
         self.fail_on_set = fail_on_set
         self.saved: tuple[str, str, CredentialType, dict[str, str] | None] | None = None
+        self.set_calls: list[tuple[str, str, CredentialType, dict[str, str] | None]] = []
+        self.deleted: list[str] = []
 
     def get(self, name: str, check_env: bool = True) -> str | None:
         assert name == SECURE_CLI_CREDENTIAL_NAME
@@ -48,10 +50,12 @@ class _FakeSecureStore:
     ) -> None:
         if self.fail_on_set:
             raise auth_commands.SecurityError("secure store unavailable")
-        self.saved = (name, value, credential_type, metadata)
+        self.set_calls.append((name, value, credential_type, metadata))
+        if name == SECURE_CLI_CREDENTIAL_NAME:
+            self.saved = (name, value, credential_type, metadata)
 
     def delete_secure(self, name: str) -> bool:
-        assert name == SECURE_CLI_CREDENTIAL_NAME
+        self.deleted.append(name)
         return True
 
 
@@ -385,17 +389,15 @@ def test_device_flow_env_file_consent_writes_with_0600(
     assert "TRAIGENT_BACKEND_URL=https://backend.example.test" in env_text
 
 
-def test_device_flow_secure_store_failure_without_explicit_flag_skips_env_file(
+def test_device_flow_secure_store_preflight_failure_never_authorizes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, _session = _install_device_test_fakes(
+    store, session = _install_device_test_fakes(
         monkeypatch,
         tmp_path,
-        [
-            _FakeResponse(200, _authorize_payload()),
-            _FakeResponse(200, _success_payload()),
-        ],
+        [],
         fail_secure_store=True,
     )
 
@@ -408,7 +410,11 @@ def test_device_flow_secure_store_failure_without_explicit_flag_skips_env_file(
 
     assert result is False
     assert store.saved is None
+    assert session.post_calls == []
     assert not (tmp_path / ".env").exists()
+    output = capsys.readouterr().out
+    assert "TRAIGENT_MASTER_PASSWORD" in output
+    assert "No device authorization request was sent" in output
 
 
 def test_env_file_rewrite_replaces_export_prefixed_api_key(

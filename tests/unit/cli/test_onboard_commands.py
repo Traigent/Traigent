@@ -21,14 +21,24 @@ from traigent.cli.onboard_commands import (
 
 
 class _RecordingSecureStore:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_on_set: bool = False) -> None:
+        self.fail_on_set = fail_on_set
         self.saved: list[tuple[object, ...]] = []
+        self.deleted: list[str] = []
 
     def get(self, name: str, check_env: bool = True) -> str | None:
         return None
 
     def set(self, *args: object, **_kwargs: object) -> None:
+        if self.fail_on_set:
+            from traigent.cli import auth_commands
+
+            raise auth_commands.SecurityError("secure store unavailable")
         self.saved.append(args)
+
+    def delete_secure(self, name: str) -> bool:
+        self.deleted.append(name)
+        return True
 
 
 class _RecordingSession:
@@ -207,6 +217,34 @@ def test_onboard_non_tty_login_flag_runs_device_flow(
     assert isinstance(kwargs, dict)
     assert kwargs["save_env_file"] is True
     assert kwargs["write_env_explicit"] is True
+
+
+def test_onboard_login_store_preflight_failure_never_calls_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.cli import auth_commands
+
+    session = _RecordingSession()
+    store = _RecordingSecureStore(fail_on_set=True)
+    assert auth_commands.aiohttp is not None
+    monkeypatch.setattr(
+        auth_commands.aiohttp,
+        "ClientSession",
+        lambda *args, **kwargs: session,
+    )
+    monkeypatch.setattr(auth_commands, "get_secure_credential_store", lambda: store)
+    monkeypatch.setattr(onboard_commands, "_detect_coding_agents", lambda _cwd: [])
+    monkeypatch.setattr(onboard_commands, "_mcp_help_succeeds", lambda: False)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ["onboard", "--login"])
+
+    assert result.exit_code == 1
+    assert session.post_calls == []
+    assert store.saved == []
+    assert "TRAIGENT_MASTER_PASSWORD" in result.output
+    assert "No device authorization request was sent" in result.output
 
 
 @pytest.mark.parametrize(

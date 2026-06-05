@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from collections.abc import Callable
@@ -61,6 +62,7 @@ BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 STORAGE_FILE = "file"
 STORAGE_SECURE = "secure"
 SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
+SECURE_STORE_PREFLIGHT_NAME = "__traigent_cli_store_preflight__"
 
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
 MSG_CHECK_NETWORK = "Please check your network connection and try again.\n"
@@ -342,6 +344,34 @@ class TraigentAuthCLI:
                 e,
             )
             return None
+
+    def _preflight_secure_credential_store(self) -> bool:
+        """Verify secure credential storage before starting a device grant."""
+        sentinel_value = "traigent-cli-store-preflight-" + secrets.token_urlsafe(24)
+        try:
+            store = get_secure_credential_store()
+            store.set(
+                SECURE_STORE_PREFLIGHT_NAME,
+                sentinel_value,
+                CredentialType.TOKEN,
+                metadata={"source": "traigent-cli-preflight"},
+            )
+            if not store.delete_secure(SECURE_STORE_PREFLIGHT_NAME):
+                raise SecurityError(
+                    "credential-store preflight cleanup did not delete the sentinel"
+                )
+        except (OSError, SecurityError, ValueError) as exc:
+            logger.error("Secure credential store preflight failed: %s", exc)
+            console.print("[red]❌ Secure credential storage is unavailable.[/red]")
+            console.print(f"[yellow]Reason:[/yellow] {exc}")
+            console.print(
+                "[yellow]Set TRAIGENT_MASTER_PASSWORD before running auth commands, "
+                "or fix permissions on the Traigent credential-store files. "
+                "No device authorization request was sent; rerun login after "
+                "secure storage is working.[/yellow]"
+            )
+            return False
+        return True
 
     @staticmethod
     def _resolve_env_file_path(path: str | Path = ".env") -> Path:
@@ -826,6 +856,9 @@ class TraigentAuthCLI:
         console.print(
             f"Authenticating with: [cyan]{self.device_login_target_url}[/cyan]\n"
         )
+
+        if not self._preflight_secure_credential_store():
+            return False
 
         try:
             async with aiohttp.ClientSession() as session:
