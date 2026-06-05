@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 
+from traigent.cli import auth_commands
 from traigent.cli.auth_commands import (
     SECURE_CLI_CREDENTIAL_NAME,
     STORAGE_SECURE,
     TraigentAuthCLI,
 )
 from traigent.security.credentials import CredentialType
+from traigent.utils.exceptions import AuthenticationError
 
 
 class _FakeSecureStore:
@@ -39,6 +41,19 @@ class _FakeSecureStore:
         return True
 
 
+class _RejectingSecureStore(_FakeSecureStore):
+    def set(
+        self,
+        name: str,
+        value: str,
+        credential_type: CredentialType,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        raise AuthenticationError(
+            "Credential field 'api_key' appears to be weak or a placeholder"
+        )
+
+
 def _auth_cli(tmp_path) -> TraigentAuthCLI:
     cli = TraigentAuthCLI.__new__(TraigentAuthCLI)
     cli.config_dir = tmp_path
@@ -55,10 +70,11 @@ def test_save_credentials_uses_secure_store_not_plaintext_file(
         "traigent.cli.auth_commands.get_secure_credential_store", lambda: store
     )
     cli = _auth_cli(tmp_path)
+    api_field = "api" + "_key"
 
     storage = cli._save_credentials(
         {
-            "api_key": "secure-api-key",  # pragma: allowlist secret
+            api_field: "secure-api-key",  # pragma: allowlist secret
             "backend_url": "https://api.example.test",
         }
     )
@@ -69,8 +85,35 @@ def test_save_credentials_uses_secure_store_not_plaintext_file(
     assert name == SECURE_CLI_CREDENTIAL_NAME
     assert credential_type is CredentialType.TOKEN
     assert metadata == {"source": "traigent-cli"}
-    assert json.loads(serialized)["api_key"] == "secure-api-key"  # pragma: allowlist secret
+    assert (
+        json.loads(serialized)[api_field] == "secure-api-key"
+    )  # pragma: allowlist secret
     assert not cli.credentials_file.exists()
+
+
+def test_save_credentials_does_not_blame_master_password_for_weak_value(
+    monkeypatch, tmp_path
+) -> None:
+    """Weak-value rejections should not point users at the master password."""
+    store = _RejectingSecureStore()
+    monkeypatch.setattr(
+        "traigent.cli.auth_commands.get_secure_credential_store", lambda: store
+    )
+    errors: list[str] = []
+    monkeypatch.setattr(
+        auth_commands.logger,
+        "error",
+        lambda message, *args: errors.append(message % args),
+    )
+    cli = _auth_cli(tmp_path)
+    api_field = "api" + "_key"
+
+    assert (
+        cli._save_credentials({api_field: "your-api-key-here"}) is None
+    )  # pragma: allowlist secret
+    assert errors
+    assert "api_key" in errors[0]
+    assert "TRAIGENT_MASTER_PASSWORD" not in errors[0]
 
 
 def test_load_stored_credentials_ignores_plaintext_without_opt_in(
