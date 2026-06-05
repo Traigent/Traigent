@@ -1073,3 +1073,92 @@ class TestTVLSpecWithStandaloneConstraint:
         assert constraint["id"] == "c1"
         assert constraint["description"] == "Min temp"
         assert constraint["error_message"] == "Min temp"
+
+
+class TestKnobsSurface:
+    """ConfigSpace.knobs — the canonical binding-aware surface (6-C1)."""
+
+    def _knob_set(self):
+        from traigent.knobs import (
+            Calibrated,
+            Fixed,
+            Knob,
+            SignalSpec,
+            TargetProperty,
+            Tuned,
+        )
+
+        signal = SignalSpec(
+            name="vote_margin",
+            version="1",
+            score_function="exact_match",
+            score_function_version="1",
+            comparator="key_eq",
+            comparator_version="1",
+        )
+        target = TargetProperty(name="floor", mode="require_calibration")
+        return {
+            "model": Knob(name="model", binding=Tuned(range=Choices(["a", "b"]))),
+            "k": Knob(name="k", binding=Fixed(value=4)),
+            "theta": Knob(
+                name="theta", binding=Calibrated(signal=signal, target=target)
+            ),
+        }
+
+    def test_knobs_derive_tuned_only_tvars(self):
+        """P2: tvars is EXACTLY the Tuned projection."""
+        space = ConfigSpace(knobs=self._knob_set())
+        assert set(space.tvars) == {"model"}
+        assert isinstance(space.tvars["model"], Choices)
+        assert set(space.knobs) == {"model", "k", "theta"}
+
+    def test_legacy_tvars_synthesize_all_tuned_knobs(self):
+        space = ConfigSpace(tvars={"temp": Range(0.0, 1.0)})
+        assert set(space.knobs) == {"temp"}
+        assert space.knobs["temp"].is_tuned()
+        # object identity through the adapter
+        assert space.knobs["temp"].binding.range is space.tvars["temp"]
+
+    def test_mismatched_tvars_and_knobs_rejected(self):
+        with pytest.raises(ValueError, match="Tuned-only projection"):
+            ConfigSpace(tvars={"other": Range(0.0, 1.0)}, knobs=self._knob_set())
+
+    def test_knob_name_key_mismatch_rejected(self):
+        from traigent.knobs import Fixed, Knob
+
+        with pytest.raises(ValueError, match="!= knob.name"):
+            ConfigSpace(knobs={"a": Knob(name="b", binding=Fixed(value=1))})
+
+    def test_non_knob_value_rejected(self):
+        with pytest.raises(TypeError, match="is not a Knob"):
+            ConfigSpace(knobs={"a": Range(0.0, 1.0)})  # type: ignore[dict-item]
+
+    def test_pickle_round_trip_carries_knobs(self):
+        import pickle
+
+        space = ConfigSpace(knobs=self._knob_set())
+        rebuilt = pickle.loads(pickle.dumps(space))
+        assert set(rebuilt.knobs) == {"model", "k", "theta"}
+        assert rebuilt.knobs["theta"].is_calibrated()
+        assert set(rebuilt.tvars) == {"model"}
+
+    def test_legacy_pickle_without_knobs_state(self):
+        """Pickles created before the knobs surface restore with synthesized
+        all-Tuned knobs."""
+        space = ConfigSpace(tvars={"temp": Range(0.0, 1.0)})
+        state = space.__getstate__()
+        del state["knobs"]
+        fresh = ConfigSpace.__new__(ConfigSpace)
+        fresh.__setstate__(state)
+        assert set(fresh.knobs) == {"temp"}
+        assert fresh.knobs["temp"].is_tuned()
+
+    def test_optimizer_dict_surface_unchanged(self):
+        """Dict-based optimizers consume tvars exactly as before — Fixed and
+        Calibrated knobs never appear."""
+        space = ConfigSpace(knobs=self._knob_set())
+        config_space_dict = {
+            name: parameter_range.to_config_value()
+            for name, parameter_range in space.tvars.items()
+        }
+        assert set(config_space_dict) == {"model"}
