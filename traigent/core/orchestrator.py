@@ -2755,7 +2755,14 @@ class OptimizationOrchestrator:
             )
         selection = select_best_configuration(
             trials=self._trials,
-            primary_objective=self.optimizer.objectives[0],
+            # Objectives-free runs are supported (weighted scoring disabled,
+            # see BaseOptimizer); every sibling objectives[0] site in this
+            # module guards this and the terminal selection must too (#1108
+            # review NB). None ⇒ the selector's honest no-eligible shape;
+            # strict mode is certificate-driven and never reads it.
+            primary_objective=(
+                self.optimizer.objectives[0] if self.optimizer.objectives else None
+            ),
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
             tie_breakers=self._tie_breakers or None,

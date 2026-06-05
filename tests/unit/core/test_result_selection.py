@@ -567,6 +567,57 @@ def test_legacy_mode_keeps_historic_unknown_trials_rankable():
     assert result.best_score == pytest.approx(0.8)
 
 
+def test_none_primary_objective_returns_no_eligible_shape():
+    """Objectives-free runs (#1108 review NB): ranking is disabled — the
+    selector returns its honest no-eligible shape, never a winner-by-score."""
+    trial = FakeTrial(metrics={"accuracy": 0.8}, config={"model": "candidate"})
+
+    result = select_best_configuration(
+        trials=[trial],
+        primary_objective=None,
+        config_space_keys={"model"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config == {}
+    assert result.best_score is None
+    assert result.reason_code == "NO_RANKING_ELIGIBLE_TRIALS"
+    ranking = result.session_summary["ranking"]
+    assert ranking["total_input_trials"] == 1
+    assert ranking["total_successful_trials"] == 1
+    assert ranking["eligible_count"] == 0
+    assert ranking["excluded_count"] == 1
+
+
+def test_none_primary_objective_strict_mode_stays_certificate_driven():
+    """Strict mode never reads the primary objective: a certified incumbent
+    is honored, and its absence fails closed — regardless of objectives."""
+    trial = FakeTrial(metrics={"accuracy": 0.8}, config={"model": "candidate"})
+
+    certified = select_best_configuration(
+        trials=[trial],
+        primary_objective=None,
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        require_certified=True,
+        certified_config={"model": "incumbent"},
+        certified_score=0.7,
+    )
+    assert certified.best_config == {"model": "incumbent"}
+    assert certified.best_score == pytest.approx(0.7)
+
+    uncertified = select_best_configuration(
+        trials=[trial],
+        primary_objective=None,
+        config_space_keys={"model"},
+        aggregate_configs=False,
+        require_certified=True,
+        certified_config=None,
+    )
+    assert uncertified.best_config == {}
+    assert uncertified.reason_code == "NO_CERTIFIED_SELECTION"
+
+
 class TestMinimizationObjectiveTieBreaker:
     """Tests for tie-breaker with minimization objectives."""
 
