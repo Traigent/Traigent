@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.core.optimization_pipeline import collect_orchestrator_kwargs
+from traigent.core.optimization_pipeline import (
+    collect_orchestrator_kwargs,
+    create_workflow_traces_tracker,
+)
 
 # ---------------------------------------------------------------------------
 # collect_orchestrator_kwargs: invocations_per_example
@@ -77,3 +81,82 @@ class TestCollectOrchestratorKwargsInvocations:
             promotion_gate=None,
         )
         assert result["invocations_per_example"] == 1
+
+
+@pytest.fixture
+def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example")
+    monkeypatch.setenv("TRAIGENT_API_KEY", "api-key")
+    monkeypatch.delenv("TRAIGENT_TRACE_ENABLED", raising=False)
+    monkeypatch.delenv("TRAIGENT_TRACES_ENABLED", raising=False)
+
+
+def _patch_workflow_traces_tracker(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
+    tracker = object()
+    tracker_factory = MagicMock(return_value=tracker)
+    monkeypatch.setattr(
+        "traigent.integrations.observability.workflow_traces.WorkflowTracesTracker",
+        tracker_factory,
+    )
+    return tracker, tracker_factory
+
+
+class TestCreateWorkflowTracesTrackerTraceEnv:
+    """Workflow trace tracker follows the same trace enablement env contract."""
+
+    def test_canonical_only_enabled_creates_tracker(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        workflow_trace_backend_env: None,
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_TRACE_ENABLED", "true")
+        tracker, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
+
+        result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
+
+        assert result is tracker
+        tracker_factory.assert_called_once_with(
+            backend_url="https://backend.example",
+            auth_token="api-key",
+        )
+
+    def test_alias_only_enabled_warns_and_creates_tracker(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        workflow_trace_backend_env: None,
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
+        tracker, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
+
+        with pytest.warns(DeprecationWarning, match="TRAIGENT_TRACES_ENABLED"):
+            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
+
+        assert result is tracker
+        tracker_factory.assert_called_once()
+
+    def test_both_set_canonical_takes_precedence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        workflow_trace_backend_env: None,
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_TRACE_ENABLED", "false")
+        monkeypatch.setenv("TRAIGENT_TRACES_ENABLED", "true")
+        _, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
+
+        with pytest.warns(DeprecationWarning, match="ignored"):
+            result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
+
+        assert result is None
+        tracker_factory.assert_not_called()
+
+    def test_neither_set_defaults_off(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        workflow_trace_backend_env: None,
+    ) -> None:
+        _, tracker_factory = _patch_workflow_traces_tracker(monkeypatch)
+
+        result = create_workflow_traces_tracker(None)  # type: ignore[arg-type]
+
+        assert result is None
+        tracker_factory.assert_not_called()
