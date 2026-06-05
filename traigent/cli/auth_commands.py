@@ -335,12 +335,23 @@ class TraigentAuthCLI:
             )
             logger.debug("Credentials saved to secure credential store")
             return STORAGE_SECURE
-        except (OSError, SecurityError) as e:
+        except OSError as e:
             logger.error(
                 "Failed to save credentials securely: %s. Set "
                 "TRAIGENT_MASTER_PASSWORD before running auth commands.",
                 e,
             )
+            return None
+        except SecurityError as e:
+            message = str(e).lower()
+            if "weak" in message or "placeholder" in message:
+                logger.error("Failed to save credentials securely: %s.", e)
+            else:
+                logger.error(
+                    "Failed to save credentials securely: %s. Set "
+                    "TRAIGENT_MASTER_PASSWORD before running auth commands.",
+                    e,
+                )
             return None
 
     @staticmethod
