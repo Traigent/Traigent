@@ -148,7 +148,9 @@ PY
 
 ## Best Practices & Notes
 
-- **SDK remains clean**: No boto3/aws-cli imports inside `traigent`.
+- **SDK remains dependency-light**: Core optimization and backend paths do not
+  import AWS SDKs. The optional Bedrock integration imports `boto3`/`aioboto3`
+  lazily only when that integration is used.
 - **Principle of least privilege**: Use IAM policies that grant read
   access to the secret for CI and read/write for a small ops group.
 - **Auditing**: Secrets Manager tracks versions and rotation history.

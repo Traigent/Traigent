@@ -7,7 +7,7 @@ tvl_version: "0.0.1"
 
 metadata:
   owner: "team@example.com"
-  # Legacy operational promotion hints (pre-0.9 'promotion:' block); the
+  # Legacy operational promotion hints preserved under metadata; the
   # statistical gate lives in promotion_policy.
   legacy_promotion:
     gate: manual_review
