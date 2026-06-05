@@ -4,11 +4,13 @@ Tests backend client integration using mocked HTTP responses to avoid
 requiring a running backend server during test execution.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
+from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 
 
 @pytest.mark.integration
@@ -25,12 +27,21 @@ class TestBackendIntegrationMocked:
     @pytest.fixture
     def backend_client(self, backend_config):
         """Create backend client instance."""
-        return BackendIntegratedClient(
+        client = BackendIntegratedClient(
             api_key="tg_"
             + "a" * 61,  # Valid 64-char format  # pragma: allowlist secret
             backend_config=backend_config,
             enable_fallback=True,
         )
+        client.auth_manager.auth.get_headers = AsyncMock(
+            return_value={
+                "Authorization": "Bearer test-token",
+                "X-API-Key": "tg_" + "a" * 61,
+            }
+        )
+        client._update_config_run_status = AsyncMock(return_value=False)
+        client._update_config_run_measures = AsyncMock(return_value=True)
+        return client
 
     @pytest.fixture
     def mock_aiohttp_session(self):
@@ -122,9 +133,10 @@ class TestBackendIntegrationMocked:
 
     @pytest.mark.asyncio
     async def test_submit_trial_result_with_mock(
-        self, backend_client, mock_aiohttp_session
+        self, backend_client, mock_aiohttp_session, monkeypatch
     ):
         """Test submitting trial results with mocked responses."""
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         mock_session_class, mock_response = mock_aiohttp_session
 
         with (
@@ -138,6 +150,19 @@ class TestBackendIntegrationMocked:
             # Set up mock response for trial submission
             mock_response.status = 200
             mock_response.json.return_value = {"status": "success"}
+            with backend_client._active_sessions_lock:
+                backend_client._active_sessions["test_session_123"] = (
+                    OptimizationSession(
+                        session_id="test_session_123",
+                        function_name="test_function",
+                        configuration_space={"temperature": [0.7]},
+                        objectives=["score"],
+                        max_trials=1,
+                        status=OptimizationSessionStatus.ACTIVE,
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
 
             # Should not raise exception
             result = await backend_client.submit_privacy_trial_results(
