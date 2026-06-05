@@ -186,6 +186,8 @@ def validate_measure_results(measure: Any) -> bool:
         metrics = measure.get("metrics")
         if not isinstance(metrics, dict):
             raise ValueError(f"metrics must be a dict, got {type(metrics)}")
+        if not metrics:
+            raise ValueError("metrics must contain at least one entry")
 
         _validate_metric_entries(metrics, "metric", "Metric")
     else:

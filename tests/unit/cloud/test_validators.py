@@ -172,13 +172,16 @@ class TestValidateMeasureResults:
         }
         assert validate_measure_results(measure) is True
 
-    def test_nested_format_with_empty_metrics(self) -> None:
-        """Test nested format with empty metrics dict."""
+    def test_nested_format_with_empty_metrics_raises_error(self) -> None:
+        """Nested per-example measures must include at least one metric."""
         measure = {
             "example_id": "example_1",
             "metrics": {},
         }
-        assert validate_measure_results(measure) is True
+        with pytest.raises(
+            ValueError, match="metrics must contain at least one entry"
+        ):
+            validate_measure_results(measure)
 
     def test_nested_format_with_mixed_metric_types(self) -> None:
         """Test nested format with mixed metric value types."""
@@ -347,6 +350,15 @@ class TestValidateComparabilityMetadata:
         """Test validation of array containing empty dicts."""
         measures = [{}, {}, {}]
         assert validate_measures_array(measures) is True
+
+    def test_measures_array_with_empty_nested_metrics_raises_error(self) -> None:
+        """Nested per-example measures with empty metrics are invalid."""
+        measures = [
+            {"example_id": "example_1", "metrics": {"accuracy": 0.95}},
+            {"example_id": "example_2", "metrics": {}},
+        ]
+        with pytest.raises(ValueError, match="Invalid measure at index 1"):
+            validate_measures_array(measures)
 
     def test_measures_array_not_list_raises_error(self) -> None:
         """Test that non-list measures array raises ValueError."""

@@ -189,6 +189,8 @@ class ExampleMeasure:
             raise ValueError(
                 f"metrics must be a dict, got {type(self.metrics).__name__}"
             )
+        if not self.metrics:
+            raise ValueError("metrics must contain at least one entry")
 
         # Check max keys
         if len(self.metrics) > self.MAX_METRICS:

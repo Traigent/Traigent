@@ -1047,16 +1047,16 @@ class TestExampleMeasure:
 
         assert measure.example_id is None
 
-    def test_accepts_empty_metrics(self):
-        """Should accept empty metrics dict."""
+    def test_rejects_empty_metrics(self):
+        """Nested per-example measures must include at least one metric."""
         data = {
             "example_id": "ex_test_2",
             "metrics": {},
         }
-        measure = ExampleMeasure(data)
-
-        assert measure.example_id == "ex_test_2"
-        assert measure.metrics == {}
+        with pytest.raises(
+            ValueError, match="metrics must contain at least one entry"
+        ):
+            ExampleMeasure(data)
 
     def test_accepts_none_metric_values(self):
         """Should accept None values in metrics."""

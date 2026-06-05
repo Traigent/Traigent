@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent._version import get_version
 from traigent.cloud.trial_operations import TrialOperations
 
 
@@ -185,6 +186,7 @@ class TestMeasuresDictValidationInSubmission:
                 metrics={"accuracy": 0.95},
                 status="completed",
                 execution_mode="hybrid",
+                metadata={"execution_mode": "hybrid", "caller": "test"},
             )
 
         assert result is True
@@ -193,6 +195,11 @@ class TestMeasuresDictValidationInSubmission:
             == "https://api.example.com/api/v1/sessions/session_123/results"
         )
         mock_client._normalize_execution_mode.assert_called_once_with("hybrid")
+        payload = mock_session.post.call_args.kwargs["json"]
+        assert payload["metadata"]["mode"] == "local"
+        assert payload["metadata"]["execution_mode"] == "local"
+        assert payload["metadata"]["sdk_version"] == get_version()
+        assert payload["metadata"]["caller"] == "test"
 
     @pytest.mark.asyncio
     async def test_invalid_configuration_run_submission_does_not_post(self) -> None:

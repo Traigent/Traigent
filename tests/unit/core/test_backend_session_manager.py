@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.config.types import TraigentConfig
@@ -897,6 +898,7 @@ class TestStatisticalSignificanceWiring:
         summary_stats = payload_metadata.get("summary_stats", {})
         inner_metadata = summary_stats.get("metadata", {})
         assert "statistical_significance" not in inner_metadata
+        assert inner_metadata["sdk_version"] == get_version()
 
 
 class TestHandleSessionCreationResult:

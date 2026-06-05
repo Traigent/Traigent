@@ -7,15 +7,19 @@ for trial and session results.
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
+from traigent.cloud.validators import validate_measures_array
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.metadata_helpers import (
     _build_measures_full,
     _build_measures_privacy,
+    _validate_measure_dict,
     build_backend_metadata,
     merge_run_metrics_into_session_summary,
 )
@@ -236,7 +240,7 @@ class TestBuildBackendMetadataSummaryStats:
 
         summary_stats = metadata["summary_stats"]
         assert "metadata" in summary_stats
-        assert summary_stats["metadata"]["sdk_version"] == "2.0.0"
+        assert summary_stats["metadata"]["sdk_version"] == get_version()
         assert summary_stats["metadata"]["aggregation_level"] == "trial"
 
     def test_summary_stats_with_existing_metadata(self, mock_trial_result, mock_config):
@@ -306,6 +310,11 @@ class TestBuildBackendMetadataPrivacy:
 
 class TestBuildMeasuresFull:
     """Test _build_measures_full function."""
+
+    def test_validate_measure_dict_rejects_empty_metrics(self):
+        """Nested per-example measures must not contain empty metrics."""
+        with pytest.raises(ValueError, match="metrics must contain at least one entry"):
+            _validate_measure_dict({"example_id": "ex_1", "metrics": {}}, 0)
 
     def test_generates_nested_format(self, example_result):
         """Should generate {example_id, metrics: {...}} structure."""
@@ -423,6 +432,22 @@ class TestBuildMeasuresFull:
         assert "cost" in measures[0]["metrics"]
         assert measures[0]["metrics"]["cost"] is None
 
+    def test_mixed_examples_drop_empty_metrics_and_pass_validator(self):
+        """Hybrid-safe measures should include only examples with real metrics."""
+        empty = SimpleNamespace(metrics={})
+        with_metrics = SimpleNamespace(metrics={"accuracy": 0.91})
+        non_numeric_only = SimpleNamespace(metrics={"model": "gpt-4o"})
+
+        measures = _build_measures_full(
+            [empty, with_metrics, non_numeric_only],
+            "accuracy",
+        )
+
+        assert len(measures) == 1
+        assert measures[0]["metrics"] == {"accuracy": 0.91, "score": 0.91}
+        assert all(measure["metrics"] for measure in measures)
+        assert validate_measures_array(measures) is True
+
 
 class TestBuildMeasuresPrivacy:
     """Test _build_measures_privacy function."""
@@ -529,6 +554,40 @@ class TestBuildMeasuresPrivacy:
 
 class TestBuildBackendMetadataIntegration:
     """Test integration scenarios for build_backend_metadata."""
+
+    def test_hybrid_metadata_drops_empty_per_example_measures(
+        self, mock_trial_result, mock_config
+    ):
+        """Hybrid submissions must not carry per-example empty metrics stubs."""
+        mock_config.execution_mode = "hybrid"
+        mock_config.execution_mode_enum = ExecutionMode.HYBRID
+        mock_trial_result.metadata = {
+            "example_results": [
+                SimpleNamespace(metrics={}),
+                SimpleNamespace(metrics={"accuracy": 0.93}),
+            ]
+        }
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "measures" in metadata
+        assert len(metadata["measures"]) == 1
+        assert all(measure["metrics"] for measure in metadata["measures"])
+        assert validate_measures_array(metadata["measures"]) is True
+
+    def test_omits_measures_when_all_examples_have_no_metrics(
+        self, mock_trial_result, mock_config
+    ):
+        """If every example lacks metrics, omit the measures field entirely."""
+        mock_config.execution_mode = "hybrid"
+        mock_config.execution_mode_enum = ExecutionMode.HYBRID
+        mock_trial_result.metadata = {
+            "example_results": [SimpleNamespace(metrics={})]
+        }
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert "measures" not in metadata
 
     def test_complete_metadata_pipeline(
         self, mock_trial_result, mock_config, example_result
