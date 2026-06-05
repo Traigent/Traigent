@@ -25,6 +25,7 @@ def estimate_tokens(text: str) -> int:
 def setup_mock_mode() -> bool:
     """Setup mock mode for testing."""
     os.environ["TRAIGENT_MOCK_LLM"] = "true"
+    os.environ["TRAIGENT_GENERATE_MOCKS"] = "true"
     os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"
     os.environ["ANTHROPIC_API_KEY"] = "mock-key-for-demos"
     return True
@@ -126,9 +127,12 @@ class TestMockModeMetrics:
     def mock_environment(self):
         """Set up mock environment variables."""
         original_mock = os.environ.get("MOCK_MODE", "")
+        original_generate_mocks = os.environ.get("TRAIGENT_GENERATE_MOCKS", "")
         os.environ["MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_GENERATE_MOCKS"] = "true"
         yield
         os.environ["MOCK_MODE"] = original_mock
+        os.environ["TRAIGENT_GENERATE_MOCKS"] = original_generate_mocks
 
     @pytest.mark.asyncio
     async def test_mock_mode_basic_function(
@@ -542,6 +546,7 @@ class TestMockModeIntegrationWithDemos:
     def test_setup_mock_mode_integration(self):
         """Test that setup_mock_mode works correctly."""
         original_mock = os.environ.get("TRAIGENT_MOCK_LLM", "")
+        original_generate_mocks = os.environ.get("TRAIGENT_GENERATE_MOCKS", "")
         original_openai = os.environ.get("OPENAI_API_KEY", "")
         original_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -559,10 +564,12 @@ class TestMockModeIntegrationWithDemos:
             # Should have set dummy API keys
             assert os.environ.get("OPENAI_API_KEY") == "mock-key-for-demos"
             assert os.environ.get("ANTHROPIC_API_KEY") == "mock-key-for-demos"
+            assert os.environ.get("TRAIGENT_GENERATE_MOCKS") == "true"
 
         finally:
             # Restore environment
             os.environ["TRAIGENT_MOCK_LLM"] = original_mock
+            os.environ["TRAIGENT_GENERATE_MOCKS"] = original_generate_mocks
             if original_openai:
                 os.environ["OPENAI_API_KEY"] = original_openai
             if original_anthropic:
@@ -577,7 +584,9 @@ class TestMockModeIntegrationWithDemos:
 
         # Simulate demo environment setup
         original_mock = os.environ.get("MOCK_MODE", "")
+        original_generate_mocks = os.environ.get("TRAIGENT_GENERATE_MOCKS", "")
         os.environ["MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_GENERATE_MOCKS"] = "true"
 
         try:
             # Create a demo-like function
@@ -646,3 +655,4 @@ class TestMockModeIntegrationWithDemos:
 
         finally:
             os.environ["MOCK_MODE"] = original_mock
+            os.environ["TRAIGENT_GENERATE_MOCKS"] = original_generate_mocks

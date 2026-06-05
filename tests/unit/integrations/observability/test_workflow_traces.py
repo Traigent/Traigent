@@ -693,6 +693,7 @@ class TestWorkflowTracesTracker:
         monkeypatch.setattr(
             CredentialManager, "get_stored_backend_url", staticmethod(lambda: None)
         )
+        monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
 
         tracker = WorkflowTracesTracker()
 
@@ -989,7 +990,9 @@ class TestEdgeCases:
 
         results = await asyncio.gather(*(run_task(i) for i in range(3)))
 
-        for index, (config_run_id, trace_id, span_count, context_run_id) in enumerate(results):
+        for index, (config_run_id, trace_id, span_count, context_run_id) in enumerate(
+            results
+        ):
             assert config_run_id == f"config_{index}"
             assert context_run_id == f"config_{index}"
             assert trace_id is not None

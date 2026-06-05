@@ -11,7 +11,7 @@ mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
    regardless of how configurations are injected (CONTEXT, PARAMETER, SEAMLESS)
-   or which supported runtime is selected (EDGE_ANALYTICS, HYBRID).
+   or where optimization runs (EDGE_ANALYTICS, HYBRID, HYBRID_API, PRIVACY alias).
 
 2. **InjectionMode affects decorator → user function**, NOT orchestrator → CostEnforcer:
    - TraigentConfig has no injection_mode field
@@ -224,10 +224,13 @@ INJECTION_MODES = [
     # SEAMLESS requires source code rewriting, skip for unit test
 ]
 
-# Supported execution modes to test in success matrices.
+# Currently supported execution modes to test. ``privacy`` is a legacy alias for
+# ``hybrid``; ``cloud`` is reserved; ``standard`` is removed.
 EXECUTION_MODES = [
     ExecutionMode.EDGE_ANALYTICS,
     ExecutionMode.HYBRID,
+    ExecutionMode.HYBRID_API,
+    ExecutionMode.PRIVACY,
 ]
 
 UNSUPPORTED_EXECUTION_MODES = [
@@ -347,9 +350,11 @@ class TestCostEnforcerModeMatrix:
         "execution_mode,injection_mode",
         [
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.CONTEXT),
-            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
-            (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
             (ExecutionMode.HYBRID, InjectionMode.PARAMETER),
+            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
+            (ExecutionMode.HYBRID_API, InjectionMode.CONTEXT),
+            (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
+            (ExecutionMode.PRIVACY, InjectionMode.CONTEXT),  # Alias for HYBRID
         ],
     )
     @pytest.mark.asyncio

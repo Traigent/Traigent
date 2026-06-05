@@ -61,9 +61,7 @@ async def cleanup_lingering_asyncio_tasks():
 
     current = asyncio.current_task()
     pending = [
-        task
-        for task in asyncio.all_tasks()
-        if task is not current and not task.done()
+        task for task in asyncio.all_tasks() if task is not current and not task.done()
     ]
     if not pending:
         return
@@ -176,14 +174,35 @@ _GENERATE_MOCKS_TEST_PATHS: tuple[str, ...] = (
     "tests/integration/test_ctd_execution_modes",
 )
 
+_CI_APPROVAL_POLICY_TEST_PATHS: tuple[str, ...] = ("tests/unit/test_safeguards.py",)
+
+_COST_APPROVAL_POLICY_TEST_PATHS: tuple[str, ...] = (
+    "tests/unit/core/test_cost_enforcement",
+    "tests/integration/test_cost_enforcement",
+    "tests/unit/test_safeguards.py",
+)
+
+
+def _test_path(node) -> str:
+    try:
+        return str(node.fspath).replace(os.sep, "/")
+    except Exception:  # noqa: BLE001 — defensive; pytest internals vary by version
+        return ""
+
 
 def _test_needs_generate_mocks(node) -> bool:
     """Return True if the test's path matches a known cost-fixture-recording test."""
-    try:
-        path_str = str(node.fspath).replace(os.sep, "/")
-    except Exception:  # noqa: BLE001 — defensive; pytest internals vary by version
+    path_str = _test_path(node)
+    if not path_str:
         return False
     return any(marker in path_str for marker in _GENERATE_MOCKS_TEST_PATHS)
+
+
+def _test_exercises_policy(node, paths: tuple[str, ...]) -> bool:
+    path_str = _test_path(node)
+    if not path_str:
+        return False
+    return any(marker in path_str for marker in paths)
 
 
 # Set JWT validation to development mode for all tests
@@ -196,6 +215,11 @@ def jwt_development_mode(monkeypatch, request):
     # Ensure offline mode to avoid real backend calls during tests
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
+    if not _test_exercises_policy(request.node, _CI_APPROVAL_POLICY_TEST_PATHS):
+        monkeypatch.setenv("TRAIGENT_RUN_APPROVED", "1")
+        monkeypatch.setenv("TRAIGENT_APPROVED_BY", "pytest")
+    if not _test_exercises_policy(request.node, _COST_APPROVAL_POLICY_TEST_PATHS):
+        monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
     # TRAIGENT_GENERATE_MOCKS is an internal fixture-recording knob (NOT a
     # user-facing mock-LLM toggle). Setting it globally leaked into unrelated
     # paths such as credential_manager._is_development_mode, so it is now

@@ -194,9 +194,8 @@ class StreamingInvoker(LocalInvoker):
             while True:
                 try:
                     if self.chunk_timeout:
-                        chunk = await asyncio.wait_for(
-                            async_iter.__anext__(), timeout=self.chunk_timeout
-                        )
+                        async with asyncio.timeout(self.chunk_timeout):
+                            chunk = await async_iter.__anext__()
                     else:
                         chunk = await async_iter.__anext__()
                 except StopAsyncIteration:

@@ -511,17 +511,17 @@ def test_decorator_passes_cloud_cache_ttl_options(tmp_path):
 
 def streaming_context_answer(text: str):
     config = traigent.get_config()
-    yield f"{text}:{config.get("temperature")}"
+    yield f"{text}:{config.get('temperature')}"
 
 
 async def async_context_answer(text: str):
     config = traigent.get_config()
-    return f"{text}:{config.get("temperature")}"
+    return f"{text}:{config.get('temperature')}"
 
 
 async def async_streaming_context_answer(text: str):
     config = traigent.get_config()
-    yield f"{text}:{config.get("temperature")}"
+    yield f"{text}:{config.get('temperature')}"
 
 
 def test_repo_best_config_source_survives_stream_iteration(tmp_path, monkeypatch):
