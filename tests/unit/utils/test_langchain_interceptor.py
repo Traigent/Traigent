@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import threading
 import time
+import types
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.langchain_interceptor import (
     LangChainMetadataCapture,
     _create_astream_wrapper,
@@ -27,6 +29,74 @@ from traigent.utils.langchain_interceptor import (
     langchain_metadata_context,
     patch_langchain_for_metadata_capture,
 )
+
+
+class _FakeAIMessage:
+    def __init__(
+        self,
+        content: str,
+        response_metadata: dict[str, Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.content = content
+        self.response_metadata = response_metadata or {}
+        self.usage_metadata = usage_metadata or {}
+
+
+def _make_fake_bedrock_class(class_name: str) -> type:
+    class _FakeBedrock:
+        _traigent_patched_invoke = False
+        _traigent_patched_stream = False
+        _traigent_patched_astream = False
+        calls = 0
+
+        def __init__(
+            self, model_id: str = "claude-3-5-sonnet-20241022", **kwargs: Any
+        ) -> None:
+            self.model_id = model_id
+            self.model = kwargs.get("model", model_id)
+
+        def invoke(self, *args: Any, **kwargs: Any) -> _FakeAIMessage:
+            del args, kwargs
+            type(self).calls += 1
+            return _FakeAIMessage(
+                content="bedrock response",
+                response_metadata={"model_name": self.model_id},
+                usage_metadata={
+                    "input_tokens": 11,
+                    "output_tokens": 7,
+                    "total_tokens": 18,
+                },
+            )
+
+        def stream(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            yield _FakeAIMessage("stream chunk")
+
+        async def astream(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            yield _FakeAIMessage("astream chunk")
+
+    _FakeBedrock.__name__ = class_name
+    return _FakeBedrock
+
+
+def _make_fake_langchain_modules() -> dict[str, Any]:
+    langchain_aws = types.ModuleType("langchain_aws")
+    langchain_aws.ChatBedrock = _make_fake_bedrock_class("ChatBedrock")
+    langchain_aws.ChatBedrockConverse = _make_fake_bedrock_class("ChatBedrockConverse")
+
+    langchain_core = types.ModuleType("langchain_core")
+    messages = types.ModuleType("langchain_core.messages")
+    messages.AIMessage = _FakeAIMessage
+
+    return {
+        "langchain_anthropic": None,
+        "langchain_openai": None,
+        "langchain_aws": langchain_aws,
+        "langchain_core": langchain_core,
+        "langchain_core.messages": messages,
+    }
 
 
 class TestLangChainMetadataCapture:
@@ -859,3 +929,70 @@ class TestPatchLangChainForMetadataCapture:
 
         # Each thread should retrieve its own response
         assert len(results) == 5
+
+
+class TestPatchLangChainBedrock:
+    """LangChain AWS Bedrock interception."""
+
+    def teardown_method(self) -> None:
+        clear_captured_responses()
+
+    @pytest.mark.parametrize("class_name", ["ChatBedrock", "ChatBedrockConverse"])
+    def test_bedrock_invoke_captures_tokens_cost_and_latency(
+        self, class_name: str
+    ) -> None:
+        modules = _make_fake_langchain_modules()
+        langchain_aws = modules["langchain_aws"]
+        target_cls = getattr(langchain_aws, class_name)
+
+        with (
+            patch.dict("sys.modules", modules),
+            patch(
+                "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+                return_value=False,
+            ),
+        ):
+            assert patch_langchain_for_metadata_capture() is True
+            llm = target_cls(model_id="claude-3-5-sonnet-20241022")
+            response = llm.invoke("hello")
+
+        assert response.content == "bedrock response"
+        assert target_cls.calls == 1
+
+        captured = get_captured_response()
+        assert captured is response
+        metrics = extract_llm_metrics(captured, model_name="claude-3-5-sonnet-20241022")
+        assert metrics.tokens.input_tokens == 11
+        assert metrics.tokens.output_tokens == 7
+        assert metrics.tokens.total_tokens == 18
+        assert metrics.cost.total_cost > 0
+        assert metrics.response.response_time_ms > 0
+
+    @pytest.mark.parametrize("class_name", ["ChatBedrock", "ChatBedrockConverse"])
+    def test_bedrock_mock_mode_short_circuits_underlying_invoke(
+        self, class_name: str
+    ) -> None:
+        modules = _make_fake_langchain_modules()
+        langchain_aws = modules["langchain_aws"]
+        target_cls = getattr(langchain_aws, class_name)
+
+        with (
+            patch.dict("sys.modules", modules),
+            patch(
+                "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+                return_value=True,
+            ),
+        ):
+            assert patch_langchain_for_metadata_capture() is True
+            llm = target_cls(model_id="anthropic.claude-3-sonnet-20240229-v1:0")
+            response = llm.invoke("hello")
+
+        assert target_cls.calls == 0
+        assert response.content == "This is a mock response for testing."
+        assert response.usage_metadata == {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30,
+        }
+        captured = get_captured_response()
+        assert captured is response

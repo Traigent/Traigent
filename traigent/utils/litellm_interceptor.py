@@ -54,6 +54,8 @@ def patch_litellm_for_metadata_capture() -> bool:
                         "litellm",
                         model=kwargs.get("model", args[0] if args else "mock-model"),
                     )
+                    mock_data.response_time_ms = 0.0
+                    capture_langchain_response(mock_data)
                     return mock_data
 
                 start_time = time.perf_counter()
@@ -101,6 +103,8 @@ def patch_litellm_for_metadata_capture() -> bool:
                         "litellm",
                         model=kwargs.get("model", args[0] if args else "mock-model"),
                     )
+                    mock_data.response_time_ms = 0.0
+                    capture_langchain_response(mock_data)
                     return mock_data
 
                 start_time = time.perf_counter()
