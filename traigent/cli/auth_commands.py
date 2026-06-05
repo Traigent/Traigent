@@ -89,6 +89,7 @@ _ENV_ASSIGNMENT_RE = re.compile(
 )
 MAX_DEVICE_POLL_TIMEOUT_SECONDS = 30.0
 MAX_DEVICE_POLL_TRANSPORT_ERRORS = 3
+MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER = 10
 
 
 async def _read_json_body(response: Any) -> dict[str, Any]:
@@ -122,6 +123,25 @@ def _format_backend_error_message(
 
     suffix = f": {' - '.join(parts)}" if parts else ""
     return f"{prefix} (HTTP {status_code}){suffix}"
+
+
+def _retry_after_seconds(headers: Any) -> int | None:
+    """Return a positive Retry-After delay in seconds, if one was supplied."""
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return None
+
+    raw_value = getter("Retry-After")
+    if raw_value is None:
+        raw_value = getter("retry-after")
+    if raw_value is None:
+        return None
+
+    try:
+        seconds = int(str(raw_value).strip())
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None
 
 
 def _resolve_api_base_url(base_url: str) -> str:
@@ -592,6 +612,8 @@ class TraigentAuthCLI:
             timeout=aiohttp.ClientTimeout(total=request_timeout) if aiohttp else None,
         ) as response:
             status_code = response.status
+            if status_code == 429:
+                return "rate_limited", None, _retry_after_seconds(response.headers)
             data = await _read_json_body(response)
 
         if data.get("success") is True:
@@ -633,6 +655,7 @@ class TraigentAuthCLI:
         deadline = now() + int(authorization["expires_in"])
         device_code = str(authorization["device_code"])
         consecutive_transport_errors = 0
+        consecutive_rate_limits_without_retry_after = 0
 
         while True:
             remaining = deadline - now()
@@ -651,6 +674,7 @@ class TraigentAuthCLI:
                 consecutive_transport_errors = 0
             except NETWORK_ERRORS as exc:
                 consecutive_transport_errors += 1
+                consecutive_rate_limits_without_retry_after = 0
                 if consecutive_transport_errors >= MAX_DEVICE_POLL_TRANSPORT_ERRORS:
                     console.print(
                         "[red]Device token polling failed after "
@@ -670,6 +694,42 @@ class TraigentAuthCLI:
                 )
                 await sleep(sleep_seconds)
                 continue
+
+            if status == "rate_limited":
+                if new_interval is None:
+                    consecutive_rate_limits_without_retry_after += 1
+                    if (
+                        consecutive_rate_limits_without_retry_after
+                        >= MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER
+                    ):
+                        console.print(
+                            "[red]Device token polling is still rate-limited after "
+                            f"{consecutive_rate_limits_without_retry_after} "
+                            "consecutive 429 responses without Retry-After. "
+                            "Please run login again later.[/red]"
+                        )
+                        return None
+                    retry_after = interval + 5
+                    reason = "without Retry-After"
+                else:
+                    consecutive_rate_limits_without_retry_after = 0
+                    retry_after = new_interval
+                    reason = "per Retry-After"
+
+                sleep_seconds = min(float(retry_after), max(0.0, deadline - now()))
+                if sleep_seconds <= 0:
+                    console.print(
+                        "[red]Device login expired before authorization completed.[/red]"
+                    )
+                    return None
+                console.print(
+                    "[yellow]Device token polling rate-limited "
+                    f"({reason}); retrying in {sleep_seconds:g}s.[/yellow]"
+                )
+                await sleep(sleep_seconds)
+                continue
+
+            consecutive_rate_limits_without_retry_after = 0
 
             if status == "success":
                 return credentials

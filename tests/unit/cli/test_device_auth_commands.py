@@ -55,10 +55,15 @@ class _FakeSecureStore:
 
 
 class _FakeResponse:
-    def __init__(self, status: int, payload: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        status: int,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status = status
         self.payload = payload
-        self.headers: dict[str, str] = {}
+        self.headers = headers or {}
 
     async def __aenter__(self) -> _FakeResponse:
         return self
@@ -155,6 +160,19 @@ def _error_payload(error: str, details: dict[str, Any] | None = None) -> dict[st
     if details is not None:
         payload["details"] = details
     return payload
+
+
+def _rate_limit_response(retry_after: str | None = None) -> _FakeResponse:
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    return _FakeResponse(
+        429,
+        {
+            "success": False,
+            "message": "Rate limit exceeded",
+            "error": "rate_limit_exceeded",
+        },
+        headers=headers,
+    )
 
 
 def _install_device_test_fakes(
@@ -447,6 +465,70 @@ def test_device_flow_pending_then_slow_down_honors_authoritative_interval(
 
     assert result is True
     assert sleeps == [1, 7]
+
+
+def test_device_poll_rate_limit_retry_after_continues_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, session = _install_device_test_fakes(
+        monkeypatch,
+        tmp_path,
+        [
+            _FakeResponse(200, _authorize_payload(interval=1)),
+            _rate_limit_response(retry_after="2"),
+            _FakeResponse(200, _success_payload()),
+        ],
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    result = asyncio.run(_make_cli().device_login(sleep=fake_sleep))
+
+    assert result is True
+    assert sleeps == [2]
+    token_calls = [
+        call for call in session.post_calls if call["url"].endswith("/auth/device/token")
+    ]
+    assert len(token_calls) == 2
+
+
+def test_device_poll_rate_limit_retry_after_still_honors_expiry_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, session = _install_device_test_fakes(
+        monkeypatch,
+        tmp_path,
+        [
+            _FakeResponse(200, _authorize_payload(interval=1, expires_in=3)),
+            _rate_limit_response(retry_after="10"),
+            _FakeResponse(200, _success_payload()),
+        ],
+    )
+    now = 0.0
+    sleeps: list[float] = []
+
+    def fake_clock() -> float:
+        return now
+
+    async def fake_sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    result = asyncio.run(
+        _make_cli().device_login(sleep=fake_sleep, clock=fake_clock)
+    )
+
+    assert result is False
+    assert sleeps == [3]
+    token_calls = [
+        call for call in session.post_calls if call["url"].endswith("/auth/device/token")
+    ]
+    assert len(token_calls) == 1
 
 
 def test_device_poll_caps_sleep_and_timeout_to_expiry_deadline(
