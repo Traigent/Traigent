@@ -132,6 +132,32 @@ class TestBackendDescription:
 class TestMeasuresDictValidationInSubmission:
     """Test MeasuresDict validation warning path in submit_trial_result_via_session."""
 
+    def test_trial_result_metadata_uses_sdk_version_and_drops_execution_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Trial result metadata uses SDK version and does not emit raw execution_mode."""
+        monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "9.8.6")
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.auth_manager = Mock()
+        ops = TrialOperations(mock_client)
+
+        result_data = ops._build_trial_result_data(
+            trial_id="trial_001",
+            config={"temperature": 0.2},
+            clean_metrics={"accuracy": 0.95},
+            backend_status="COMPLETED",
+            mode="local",
+            metadata={"execution_mode": "edge_analytics", "custom": "value"},
+        )
+
+        metadata = result_data["metadata"]
+        assert metadata["mode"] == "local"
+        assert metadata["sdk_version"] == "9.8.6"
+        assert metadata["custom"] == "value"
+        assert "execution_mode" not in metadata
+
     @pytest.mark.asyncio
     async def test_hybrid_trial_submission_uses_session_results_endpoint(self) -> None:
         """Hybrid/backend tracking posts trial metrics to the session results API."""
@@ -390,6 +416,66 @@ class TestMeasuresDictValidationInSubmission:
             call_args = ops._handle_trial_success_response.call_args
             assert call_args is not None
             assert call_args.args[5] == {"accuracy": 0.95}
+
+    @pytest.mark.asyncio
+    async def test_summary_stats_metadata_uses_sdk_version_without_execution_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Summary stats submission metadata uses package version and omits execution_mode."""
+        monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "8.7.6")
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+
+        ops = TrialOperations(mock_client)
+
+        mock_response = Mock()
+        mock_response.status = 201
+
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await ops.submit_summary_stats(
+                session_id="test-session",
+                trial_id="test-trial",
+                config={"model": "gpt-4"},
+                summary_stats={"metrics": {"accuracy": 0.95}},
+                status="completed",
+            )
+
+        assert result is True
+        payload = mock_session.post.call_args.kwargs["json"]
+        metadata = payload["metadata"]
+        assert metadata["mode"] == "privacy"
+        assert metadata["sdk_version"] == "8.7.6"
+        assert "execution_mode" not in metadata
 
 
 class TestSummaryStatsValidation:

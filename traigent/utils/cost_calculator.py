@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -1146,6 +1147,28 @@ def cost_from_tokens(
         _CUSTOM_PRICING_JSON_ENV,
     )
     return 0.0, 0.0
+
+
+def model_has_nonzero_price_coverage(model_name: str) -> bool:
+    """Return whether a model resolves to non-zero pricing via the real path."""
+    try:
+        input_cost, output_cost = cost_from_tokens(1, 1, model_name, strict=True)
+    except (RuntimeError, UnknownModelError):
+        return False
+    return (input_cost + output_cost) > 0.0
+
+
+def find_models_missing_price_coverage(models: Iterable[str]) -> list[str]:
+    """Return deduplicated model IDs without non-zero pricing coverage."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    for model_name in models:
+        if model_name in seen:
+            continue
+        seen.add(model_name)
+        if not model_has_nonzero_price_coverage(model_name):
+            missing.append(model_name)
+    return missing
 
 
 # Convenience functions for simple usage

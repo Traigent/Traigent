@@ -175,6 +175,84 @@ def _create_astream_wrapper(original_meth: Any) -> Any:
     return astream_wrapper
 
 
+def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
+    """Patch one langchain_aws Bedrock chat class for response capture."""
+    patched_any = False
+
+    if getattr(model_cls, "_traigent_patched_invoke", False) is False:
+        original_invoke = model_cls.invoke
+
+        def invoke_with_capture_bedrock(self: Any, *args: Any, **kwargs: Any) -> Any:
+            """Wrapped invoke method that captures Bedrock usage metadata."""
+            from traigent.integrations.utils.mock_adapter import MockAdapter
+
+            if MockAdapter.is_mock_enabled("bedrock"):
+                from langchain_core.messages import AIMessage
+
+                model_name = (
+                    getattr(self, "model_id", None)
+                    or getattr(self, "model", None)
+                    or "mock-model"
+                )
+                mock_data = MockAdapter.get_mock_response(
+                    "bedrock", model=str(model_name)
+                )
+                usage = mock_data["usage"]
+                response = AIMessage(
+                    content=mock_data["content"][0]["text"],
+                    response_metadata={
+                        "model_name": mock_data["model"],
+                        "stop_reason": mock_data["stop_reason"],
+                        "response_time_ms": 0.0,
+                    },
+                    usage_metadata={
+                        "input_tokens": usage["input_tokens"],
+                        "output_tokens": usage["output_tokens"],
+                        "total_tokens": usage["total_tokens"],
+                    },
+                )
+                capture_langchain_response(response)
+                return response
+
+            start_time = time.perf_counter()
+            response = original_invoke(self, *args, **kwargs)
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            if not hasattr(response, "response_metadata"):
+                response.response_metadata = {}
+            response.response_metadata["response_time_ms"] = response_time_ms
+
+            capture_langchain_response(response)
+            logger.debug(
+                "Captured %s invoke usage: %s, response_time_ms: %.2f",
+                class_name,
+                getattr(response, "usage_metadata", None),
+                response_time_ms,
+            )
+            return response
+
+        model_cls.invoke = invoke_with_capture_bedrock
+        model_cls._traigent_patched_invoke = True
+        logger.info("✅ Patched %s.invoke for metadata capture", class_name)
+        patched_any = True
+
+    for meth_name, flag in [
+        ("stream", "_traigent_patched_stream"),
+        ("astream", "_traigent_patched_astream"),
+    ]:
+        if hasattr(model_cls, meth_name) and not getattr(model_cls, flag, False):
+            original_meth = getattr(model_cls, meth_name)
+            if meth_name == "stream":
+                setattr(model_cls, meth_name, _create_stream_wrapper(original_meth))
+            else:
+                setattr(model_cls, meth_name, _create_astream_wrapper(original_meth))
+            setattr(model_cls, flag, True)
+            logger.info("✅ Patched %s.%s for metadata capture", class_name, meth_name)
+            patched_any = True
+
+    return patched_any
+
+
 def patch_langchain_for_metadata_capture() -> bool:
     """Monkey-patch LangChain to automatically capture response metadata.
 
@@ -351,6 +429,23 @@ def patch_langchain_for_metadata_capture() -> bool:
         logger.debug("ChatOpenAI not available, skipping")
     except Exception as e:
         logger.error(f"Failed to patch ChatOpenAI: {e}")
+
+    # Patch langchain_aws Bedrock chat models
+    try:
+        import langchain_aws
+
+        for class_name in ("ChatBedrock", "ChatBedrockConverse"):
+            model_cls = getattr(langchain_aws, class_name, None)
+            if model_cls is None:
+                logger.debug("langchain_aws.%s not available, skipping", class_name)
+                continue
+            if _patch_langchain_bedrock_model(model_cls, f"langchain_aws.{class_name}"):
+                patched_any = True
+
+    except ImportError:
+        logger.debug("langchain_aws not available, skipping Bedrock")
+    except Exception as e:
+        logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")
 
     if not patched_any:
         logger.debug("No LangChain models could be patched for metadata capture")

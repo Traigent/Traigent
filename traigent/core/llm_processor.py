@@ -167,11 +167,29 @@ class LLMResponseProcessor:
         """
         try:
             # Extract token information
-            input_tokens = safe_get_nested_attr(response, "usage.prompt_tokens", 0)
-            output_tokens = safe_get_nested_attr(response, "usage.completion_tokens", 0)
-            total_tokens = safe_get_nested_attr(
-                response, "usage.total_tokens", input_tokens + output_tokens
+            def _first_numeric_token(*paths: str) -> int:
+                for path in paths:
+                    value = safe_get_nested_attr(response, path, None)
+                    if isinstance(value, (int, float)):
+                        return int(value)
+                return 0
+
+            input_tokens = _first_numeric_token(
+                "usage.prompt_tokens",
+                "usage.input_tokens",
+                "usage.inputTokens",
             )
+            output_tokens = _first_numeric_token(
+                "usage.completion_tokens",
+                "usage.output_tokens",
+                "usage.outputTokens",
+            )
+            total_tokens = _first_numeric_token(
+                "usage.total_tokens",
+                "usage.totalTokens",
+            )
+            if total_tokens == 0:
+                total_tokens = input_tokens + output_tokens
 
             # Extract cost information (if available)
             input_cost = safe_get_nested_attr(response, "cost.input_cost", 0.0)

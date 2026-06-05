@@ -82,7 +82,11 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.env_config import is_mock_llm
+from traigent.utils.cost_calculator import (
+    UnknownModelError,
+    find_models_missing_price_coverage,
+)
+from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
@@ -160,6 +164,60 @@ _COST_WARNING_EMITTED = False
 _CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
 
 _CLOUD_FALLBACK_POLICIES = frozenset({"auto", "warn", "never"})
+_MODEL_CONFIG_KEYS = frozenset({"model", "model_name", "model_id", "engine"})
+
+
+def _is_model_config_key(key: object) -> bool:
+    return isinstance(key, str) and key.strip().lower() in _MODEL_CONFIG_KEYS
+
+
+def _iter_config_model_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, Mapping):
+        choices = value.get("values") or value.get("choices")
+        if choices is not None:
+            return _iter_config_model_values(choices)
+        fixed_value = value.get("value")
+        if isinstance(fixed_value, str):
+            return [fixed_value]
+        return []
+
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [item for item in value if isinstance(item, str) and item.strip()]
+
+    range_values = getattr(value, "values", None)
+    if isinstance(range_values, Sequence) and not isinstance(
+        range_values, (str, bytes, bytearray)
+    ):
+        return [item for item in range_values if isinstance(item, str) and item.strip()]
+
+    return []
+
+
+def _dedupe_model_ids(model_ids: list[str]) -> list[str]:
+    return list(dict.fromkeys(model_ids))
+
+
+def _extract_config_space_model_ids(config_space: Mapping[str, Any]) -> list[str]:
+    model_ids: list[str] = []
+    for key, value in config_space.items():
+        if _is_model_config_key(key):
+            model_ids.extend(_iter_config_model_values(value))
+    return _dedupe_model_ids(model_ids)
+
+
+def _extract_config_model_ids(config: Mapping[str, Any]) -> list[str]:
+    model_ids: list[str] = []
+    for key, value in config.items():
+        if _is_model_config_key(key) and isinstance(value, str) and value.strip():
+            model_ids.append(value)
+    return _dedupe_model_ids(model_ids)
+
+
+def _format_model_id_list(model_ids: Sequence[str]) -> str:
+    return ", ".join(f"`{model_id}`" for model_id in model_ids)
 
 
 def _emit_cost_warning_once() -> None:
@@ -1862,6 +1920,50 @@ class OptimizedFunction:
         """
         return algorithm
 
+    def _preflight_model_cost_coverage(
+        self, effective_config_space: Mapping[str, Any]
+    ) -> None:
+        """Warn or fail before trials when a real run includes unpriced models."""
+        if is_mock_llm():
+            return
+
+        model_ids = _extract_config_space_model_ids(effective_config_space)
+        if not model_ids:
+            model_ids = _dedupe_model_ids(
+                _extract_config_model_ids(getattr(self, "_current_config", {}))
+                + _extract_config_model_ids(getattr(self, "default_config", {}))
+            )
+        if not model_ids:
+            return
+
+        missing = find_models_missing_price_coverage(model_ids)
+        if not missing:
+            return
+
+        formatted = _format_model_id_list(missing)
+        if is_strict_cost_accounting():
+            raise UnknownModelError(
+                "Cost coverage preflight failed before any optimization trial "
+                f"started: pricing is unavailable for {formatted}. "
+                "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                "pricing, or contact Traigent to add coverage."
+            )
+
+        if len(missing) == 1:
+            message = (
+                f"Cost for {formatted} is unavailable — results will report $0 "
+                "for it. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+                "Traigent to add coverage."
+            )
+        else:
+            message = (
+                f"Costs for {formatted} are unavailable — results will report $0 "
+                "for them. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
+                "Traigent to add coverage."
+            )
+        warnings.warn(message, UserWarning, stacklevel=3)
+
     async def _execute_optimization(
         self,
         *,
@@ -1957,6 +2059,9 @@ class OptimizedFunction:
         )
         if max_total_examples_value is not None:
             self.max_total_examples = max_total_examples_value
+
+        # Phase 3.5: cost coverage preflight before any cloud or local trial dispatch.
+        self._preflight_model_cost_coverage(effective_config_space)
 
         # Phase 4: Try cloud execution if applicable
         cloud_result = await self._try_cloud_execution(
