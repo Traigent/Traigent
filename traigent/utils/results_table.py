@@ -133,6 +133,26 @@ def _find_best_trial(trials: list, metric_names: list[str]) -> Any:
     return best_trial
 
 
+def _has_positive_quality_metric(trial: Any) -> bool:
+    """Return True when the displayed metrics prove at least one scored example."""
+    quality_metric_names = {"accuracy", "score", "success_rate"}
+    metrics = getattr(trial, "metrics", {}) or {}
+
+    for raw_name, raw_value in metrics.items():
+        metric_name = str(raw_name).lower()
+        if metric_name not in quality_metric_names and not metric_name.endswith(
+            "_accuracy"
+        ):
+            continue
+        try:
+            if float(raw_value) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+
+    return False
+
+
 def _trials_all_failed(trials: list) -> bool:
     """True iff every completed trial explicitly recorded zero successful examples.
 
@@ -140,10 +160,16 @@ def _trials_all_failed(trials: list) -> bool:
     because no winner can be honestly named. When older/external evaluators do
     not report ``metadata["successful_examples"]``, fall back to the completed
     trial status so honest 0.0 quality scores and cost-only runs remain rankable.
+    If the table is displaying positive quality metrics, treat that as scored
+    evidence too; otherwise mock/demo runs can show accuracy values and then
+    contradict themselves with a failed-trials banner.
     """
     for trial in trials:
         if not getattr(trial, "is_successful", False):
             continue
+
+        if _has_positive_quality_metric(trial):
+            return False
 
         metadata = getattr(trial, "metadata", {}) or {}
         successful = metadata.get("successful_examples")

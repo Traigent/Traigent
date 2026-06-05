@@ -27,7 +27,7 @@ website funnel is broken before a user has any chance to see value.
 from __future__ import annotations
 
 import os
-import shutil
+import site as python_site
 import subprocess
 import sys
 from pathlib import Path
@@ -90,6 +90,7 @@ def hermetic_subprocess_env(tmp_path: Path) -> dict[str, str]:
     env: dict[str, str] = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(tmp_path),
+        "PYTHONUSERBASE": python_site.getuserbase(),
         # PYTHONPATH: site (for sitecustomize) + worktree (so `import
         # traigent` finds my changes, not the editable install).
         "PYTHONPATH": f"{site}:{Path(__file__).resolve().parents[2]}",
@@ -192,6 +193,13 @@ def test_python_dash_m_runs_with_no_keys(
     # And the optimization actually ranked a winner.
     assert "Trial Results" in combined or "Best" in combined, (
         "Expected a results table or best-config line. Got:\n" + combined
+    )
+    assert "All trials failed" not in combined, (
+        "Quickstart showed scored trial rows but ended with the failed-trials "
+        "summary:\n" + combined
+    )
+    assert "Legend:" in combined and "Overall Best" in combined, (
+        "Expected the successful final summary legend. Got:\n" + combined
     )
 
 
