@@ -122,6 +122,8 @@ class CloudPublishUnavailableReason(StrEnum):
 
     DISABLED_BY_CONFIG = "disabled_by_config"
     BACKEND_NOT_IMPLEMENTED = "backend_not_implemented"
+    REQUEST_FAILED = "request_failed"
+    INTEGRITY_FAILED = "integrity_failed"
 
 
 class CloudPublishUnavailable(ConfigurationError):
@@ -453,6 +455,57 @@ def write_repo_best_config(
     return spec_path
 
 
+def write_cloud_cache_best_config(
+    directory: str | Path,
+    spec: dict[str, Any],
+    *,
+    etag: str | None = None,
+    version: int | str | None = None,
+    loaded_at: datetime | None = None,
+) -> Path:
+    """Write a fetched cloud best-config spec into the local cloud cache."""
+
+    if not etag and version is None:
+        raise ConfigurationError("Cloud cache metadata requires etag or version")
+
+    snapshot = snapshot_from_spec(spec, source=BestConfigSource.CLOUD_CACHE.value)
+    safe_config_id = _validate_config_id(snapshot.config_id)
+    output_dir = Path(directory)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    normalized_spec = _normalize_json_value(copy.deepcopy(spec))
+    if not isinstance(normalized_spec, dict):
+        raise ConfigurationError("Best config spec must be a JSON object")
+    config_hash = sha256_digest(canonical_json(normalized_spec["config"]))
+    spec_hash = compute_spec_hash(normalized_spec)
+    spec_path = output_dir / f"{safe_config_id}.json"
+    _write_json_atomic(spec_path, normalized_spec)
+
+    manifest_path = output_dir / "manifest.json"
+    loaded_manifest = load_manifest(output_dir) if manifest_path.exists() else None
+    manifest: dict[str, Any] = loaded_manifest or {
+        "schema_version": BEST_CONFIG_MANIFEST_SCHEMA_VERSION,
+        "configs": {},
+    }
+    configs = manifest["configs"]
+    if not isinstance(configs, dict):
+        raise ConfigurationError("Best config manifest requires a configs object")
+
+    entry: dict[str, Any] = {
+        "path": spec_path.name,
+        "spec_hash": spec_hash,
+        "config_hash": config_hash,
+        "loaded_at": (loaded_at or datetime.now(UTC)).isoformat(),
+    }
+    if etag:
+        entry["etag"] = etag
+    if version is not None:
+        entry["version"] = version
+    configs[safe_config_id] = entry
+    _write_json_atomic(manifest_path, manifest)
+    return spec_path
+
+
 def resolve_repo_best_config(
     *,
     config_id: str | None,
@@ -751,5 +804,6 @@ __all__ = [
     "snapshot_from_spec",
     "source_order_for_mode",
     "thaw_config",
+    "write_cloud_cache_best_config",
     "write_repo_best_config",
 ]
