@@ -55,6 +55,7 @@ from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import TrialOperations
 from traigent.config.backend_config import BackendConfig
+from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.logging import get_logger
@@ -805,6 +806,9 @@ class BackendIntegratedClient:
         merged_headers = dict(headers or {})
         merged_headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
         merged_headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        project_id = read_optional_project_env()
+        if project_id:
+            merged_headers.setdefault("X-Project-Id", project_id)
         return merged_headers
 
     def _build_feature_upload_url(self, experiment_run_id: str) -> str | None:
@@ -840,6 +844,137 @@ class BackendIntegratedClient:
                 parsed._replace(path=upload_path, params="", query="", fragment="")
             ),
         )
+
+    def _build_best_config_url(self, config_id: str | None = None) -> str | None:
+        """Return a sanitized best-config URL for the configured backend API."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+
+        best_config_path = f"{parsed.path.rstrip('/')}/best-configs"
+        if config_id:
+            best_config_path = f"{best_config_path}/{quote(config_id, safe='')}"
+        return cast(
+            str,
+            urlunparse(
+                parsed._replace(path=best_config_path, params="", query="", fragment="")
+            ),
+        )
+
+    @staticmethod
+    def _extract_backend_data(response: Any) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise CloudServiceError("Backend returned a non-JSON response") from exc
+        if not isinstance(payload, dict):
+            raise CloudServiceError("Backend returned an invalid JSON response")
+        data = payload.get("data", payload)
+        if not isinstance(data, dict):
+            raise CloudServiceError("Backend response data was not an object")
+        return data
+
+    def publish_best_config_sync(
+        self,
+        spec: dict[str, Any],
+        *,
+        environment: str | None = None,
+        if_match: str | None = None,
+    ) -> dict[str, Any]:
+        """Publish a canonical best-config spec to the backend."""
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        url = self._build_best_config_url()
+        if not url:
+            raise CloudServiceError("Backend best-config URL is invalid")
+
+        headers = self._get_sync_auth_headers(target="backend")
+        if if_match:
+            headers["If-Match"] = if_match
+        payload: dict[str, Any] = {"spec": spec}
+        if environment:
+            payload["environment"] = environment
+
+        try:
+            response = requests.post(  # nosec B113 - timeout is provided
+                url,
+                json=payload,
+                headers=headers,
+                timeout=min(self.timeout, 30.0),
+            )
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            raise CloudServiceError(f"Best-config publish failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise CloudServiceError(
+                f"Best-config publish rejected with HTTP {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        return self._extract_backend_data(response)
+
+    def fetch_best_config_sync(
+        self,
+        config_id: str,
+        *,
+        environment: str | None = None,
+        function_ref: str | None = None,
+        etag: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Fetch the current backend best config, returning None on 304/404."""
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        url = self._build_best_config_url(config_id)
+        if not url:
+            raise CloudServiceError("Backend best-config URL is invalid")
+
+        headers = self._get_sync_auth_headers(target="backend")
+        if etag:
+            headers["If-None-Match"] = etag
+        params = {
+            key: value
+            for key, value in {
+                "environment": environment,
+                "function_ref": function_ref,
+            }.items()
+            if value
+        }
+
+        try:
+            response = requests.get(  # nosec B113 - timeout is provided
+                url,
+                params=params or None,
+                headers=headers,
+                timeout=min(self.timeout, 30.0),
+            )
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            raise CloudServiceError(f"Best-config fetch failed: {exc}") from exc
+
+        if response.status_code in {304, 404}:
+            return None
+        if response.status_code >= 400:
+            raise CloudServiceError(
+                f"Best-config fetch rejected with HTTP {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        return self._extract_backend_data(response)
 
     def upload_example_features(
         self,

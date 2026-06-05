@@ -26,12 +26,17 @@ from traigent.core.best_config_runtime import (
     BestConfigSourceMode,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
+    canonical_json,
+    compute_spec_hash,
     function_ref_for,
     load_best_config_spec,
     resolve_cloud_cache_best_config,
     resolve_repo_best_config,
+    sha256_digest,
+    snapshot_from_spec,
     source_order_for_mode,
     thaw_config,
+    write_cloud_cache_best_config,
     write_repo_best_config,
 )
 from traigent.utils.exceptions import ConfigurationError, OptimizationStateError
@@ -46,6 +51,10 @@ from traigent.utils.secure_path import (
 logger = get_logger(__name__)
 
 DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
+
+
+class CloudBestConfigIntegrityError(ConfigurationError):
+    """Raised when a cloud best-config response fails hash integrity checks."""
 
 
 class OptimizationState(Enum):
@@ -87,6 +96,7 @@ class ConfigStateManager:
         best_config_cache_dir: str | None = None,
         best_config_cache_ttl_seconds: int = 24 * 60 * 60,
         best_config_stale_ok_ttl_seconds: int | None = None,
+        best_config_environment: str | None = None,
         enable_auto_load_dev_logs: bool | None = None,
         optimization_history_limit: int = DEFAULT_OPTIMIZATION_HISTORY_LIMIT,
     ) -> None:
@@ -116,6 +126,9 @@ class ConfigStateManager:
         self.best_config_cache_dir = best_config_cache_dir
         self.best_config_cache_ttl_seconds = best_config_cache_ttl_seconds
         self.best_config_stale_ok_ttl_seconds = best_config_stale_ok_ttl_seconds
+        self.best_config_environment = self._resolve_best_config_environment(
+            best_config_environment
+        )
         self.enable_auto_load_dev_logs = (
             auto_load_best
             if enable_auto_load_dev_logs is None
@@ -322,32 +335,173 @@ class ConfigStateManager:
             )
             return None
 
+    @staticmethod
+    def _resolve_best_config_environment(explicit: str | None) -> str:
+        raw = (
+            explicit or os.environ.get("TRAIGENT_BEST_CONFIG_ENVIRONMENT") or "default"
+        )
+        normalized = raw.strip().lower()
+        return normalized or "default"
+
+    @staticmethod
+    def _verify_cloud_response_hashes(
+        data: dict[str, Any], spec: dict[str, Any]
+    ) -> None:
+        response_spec_hash = data.get("spec_hash")
+        response_config_hash = data.get("config_hash")
+        if not isinstance(response_spec_hash, str) or not response_spec_hash:
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config response did not include spec_hash"
+            )
+        if not isinstance(response_config_hash, str) or not response_config_hash:
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config response did not include config_hash"
+            )
+        config = spec.get("config")
+        if not isinstance(config, dict):
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config spec.config must be an object"
+            )
+
+        actual_spec_hash = compute_spec_hash(spec)
+        actual_config_hash = sha256_digest(canonical_json(config))
+        if response_spec_hash != actual_spec_hash:
+            raise CloudBestConfigIntegrityError("Cloud best-config spec_hash mismatch")
+        if response_config_hash != actual_config_hash:
+            raise CloudBestConfigIntegrityError(
+                "Cloud best-config config_hash mismatch"
+            )
+
+    def _is_pure_cloud_source_mode(self) -> bool:
+        mode_value = (
+            self.best_config_source.value
+            if isinstance(self.best_config_source, BestConfigSourceMode)
+            else str(self.best_config_source)
+        )
+        return mode_value == BestConfigSourceMode.CLOUD.value
+
+    def _resolve_cloud_fetch_best_config(self) -> BestConfigSnapshot | None:
+        if not self.config_id:
+            return None
+
+        from traigent.cloud.backend_client import get_backend_client
+
+        client = get_backend_client(enable_fallback=False)
+        data = client.fetch_best_config_sync(
+            self.config_id,
+            environment=self.best_config_environment,
+            function_ref=function_ref_for(self.func),
+        )
+        if not data:
+            if self._is_pure_cloud_source_mode():
+                raise CloudPublishUnavailable(
+                    CloudPublishUnavailableReason.REQUEST_FAILED,
+                    "Cloud best-config fetch returned no active config",
+                )
+            return None
+        spec = data.get("spec")
+        if not isinstance(spec, dict):
+            raise ConfigurationError(
+                "Cloud best-config response did not include a spec"
+            )
+        self._verify_cloud_response_hashes(data, spec)
+
+        if self.best_config_cache_dir:
+            try:
+                write_cloud_cache_best_config(
+                    self.best_config_cache_dir,
+                    spec,
+                    etag=(
+                        data.get("etag") if isinstance(data.get("etag"), str) else None
+                    ),
+                    version=data.get("version"),
+                )
+            except Exception as cache_exc:
+                if self.best_config_strict:
+                    raise ConfigurationError(
+                        f"Failed to update cloud best-config cache: {cache_exc}"
+                    ) from cache_exc
+                logger.warning(
+                    "Fetched cloud best config but failed to update cache: %s",
+                    cache_exc,
+                )
+
+        snapshot = snapshot_from_spec(
+            spec,
+            configuration_space=self.configuration_space,
+            expected_config_id=self.config_id,
+            expected_function_ref=function_ref_for(self.func),
+            source=BestConfigSource.CLOUD_FETCH.value,
+        )
+        merged = {**self.default_config, **thaw_config(snapshot.config)}
+        return BestConfigSnapshot.from_config(
+            merged,
+            config_id=snapshot.config_id,
+            source=BestConfigSource.CLOUD_FETCH.value,
+            spec_hash=snapshot.spec_hash,
+            loaded_at=snapshot.loaded_at,
+            provenance=thaw_config(snapshot.provenance),
+        )
+
     def _resolve_mode_snapshot(self) -> BestConfigSnapshot | None:
         for source in source_order_for_mode(self.best_config_source):
-            if source is BestConfigSource.REPO:
-                snapshot = resolve_repo_best_config(
-                    config_id=self.config_id,
-                    repo_root=Path.cwd(),
-                    configuration_space=self.configuration_space,
-                    expected_function_ref=function_ref_for(self.func),
-                    strict=self.best_config_strict,
+            try:
+                if source is BestConfigSource.REPO:
+                    snapshot = resolve_repo_best_config(
+                        config_id=self.config_id,
+                        repo_root=Path.cwd(),
+                        configuration_space=self.configuration_space,
+                        expected_function_ref=function_ref_for(self.func),
+                        strict=self.best_config_strict,
+                    )
+                elif source is BestConfigSource.CLOUD_CACHE:
+                    snapshot = resolve_cloud_cache_best_config(
+                        config_id=self.config_id,
+                        cache_dir=self.best_config_cache_dir,
+                        configuration_space=self.configuration_space,
+                        ttl_seconds=self.best_config_cache_ttl_seconds,
+                        stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
+                        strict=self.best_config_strict,
+                    )
+                elif source is BestConfigSource.CLOUD_FETCH:
+                    snapshot = self._resolve_cloud_fetch_best_config()
+                else:
+                    snapshot = None
+            except Exception as exc:
+                mode_value = (
+                    self.best_config_source.value
+                    if isinstance(self.best_config_source, BestConfigSourceMode)
+                    else str(self.best_config_source)
                 )
-            elif source is BestConfigSource.CLOUD_CACHE:
-                snapshot = resolve_cloud_cache_best_config(
-                    config_id=self.config_id,
-                    cache_dir=self.best_config_cache_dir,
-                    configuration_space=self.configuration_space,
-                    ttl_seconds=self.best_config_cache_ttl_seconds,
-                    stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
-                    strict=self.best_config_strict,
-                )
-            elif source is BestConfigSource.CLOUD_FETCH:
-                logger.warning(
-                    "Cloud best-config fetch is not implemented in this SDK build; "
-                    "falling through to the next configured source."
-                )
-                snapshot = None
-            else:
+                if source is BestConfigSource.CLOUD_FETCH and (
+                    mode_value == BestConfigSourceMode.CLOUD.value
+                    or self.best_config_strict
+                ):
+                    if isinstance(exc, CloudPublishUnavailable):
+                        raise
+                    if isinstance(exc, CloudBestConfigIntegrityError):
+                        raise CloudPublishUnavailable(
+                            CloudPublishUnavailableReason.INTEGRITY_FAILED,
+                            f"Cloud best-config integrity check failed: {exc}",
+                        ) from exc
+                    raise CloudPublishUnavailable(
+                        CloudPublishUnavailableReason.REQUEST_FAILED,
+                        f"Cloud best-config fetch failed: {exc}",
+                    ) from exc
+                if self.best_config_strict:
+                    raise
+                if isinstance(exc, CloudBestConfigIntegrityError):
+                    logger.error(
+                        "Cloud best-config integrity failure; ignoring %s source: %s",
+                        source.value,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Ignoring %s best-config source after failure: %s",
+                        source.value,
+                        exc,
+                    )
                 snapshot = None
             if snapshot is not None:
                 merged = {**self.default_config, **thaw_config(snapshot.config)}
@@ -745,23 +899,71 @@ class ConfigStateManager:
             config=self._best_config,
             function_ref=function_ref_for(self.func),
             provenance=provenance,
+            environment=self.best_config_environment,
         )
 
-    def publish_best_config(self, *, target: str = "cloud") -> None:
-        """Fail closed until durable cloud best-config publishing is implemented."""
-        if self.best_config_source in {
-            BestConfigSourceMode.OFF.value,
-            BestConfigSourceMode.REPO.value,
-        }:
+    def publish_best_config(self, *, target: str = "cloud") -> dict[str, Any]:
+        """Publish the active best config to durable backend cloud storage."""
+        if target != "cloud":
             raise CloudPublishUnavailable(
                 CloudPublishUnavailableReason.DISABLED_BY_CONFIG,
-                "Cloud best-config publish is disabled by best_config_source.",
+                "Only target='cloud' is reserved for best-config publishing. "
+                "Use export_best_config() for local repo artifacts.",
             )
-        raise CloudPublishUnavailable(
-            CloudPublishUnavailableReason.BACKEND_NOT_IMPLEMENTED,
-            "Cloud best-config publish is not implemented in this SDK build; "
-            "use export_best_config() to write a repo spec.",
-        )
+        if not self._best_config:
+            raise ConfigurationError(
+                "No best configuration available to publish. "
+                "Please run optimization first using .optimize() or load a config."
+            )
+
+        from traigent.cloud.backend_client import get_backend_client
+
+        effective_config_id = self.config_id or self.func.__name__
+        provenance: dict[str, Any] = {
+            "source": self._best_config_snapshot.source,
+            "published_at": datetime.now(UTC).isoformat(),
+        }
+        if self._optimization_results:
+            provenance["optimization_id"] = self._optimization_results.optimization_id
+        spec = {
+            "schema_version": BEST_CONFIG_SCHEMA_VERSION,
+            "config_id": effective_config_id,
+            "function_ref": function_ref_for(self.func),
+            "environment": self.best_config_environment,
+            "config": thaw_config(self._best_config),
+            "provenance": provenance,
+        }
+        try:
+            client = get_backend_client(enable_fallback=False)
+            current = client.fetch_best_config_sync(
+                effective_config_id,
+                environment=self.best_config_environment,
+                function_ref=function_ref_for(self.func),
+            )
+            if_match = (
+                current.get("etag")
+                if isinstance(current, dict) and isinstance(current.get("etag"), str)
+                else None
+            )
+            result = client.publish_best_config_sync(
+                spec,
+                environment=self.best_config_environment,
+                if_match=if_match,
+            )
+            self._verify_cloud_response_hashes(result, spec)
+            return result
+        except CloudPublishUnavailable:
+            raise
+        except CloudBestConfigIntegrityError as exc:
+            raise CloudPublishUnavailable(
+                CloudPublishUnavailableReason.INTEGRITY_FAILED,
+                f"Cloud best-config publish integrity check failed: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise CloudPublishUnavailable(
+                CloudPublishUnavailableReason.REQUEST_FAILED,
+                f"Cloud best-config publish failed: {exc}",
+            ) from exc
 
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""
