@@ -17,6 +17,7 @@ API_KEY = "sk_" + "a" * 43  # pragma: allowlist secret
 DEVICE_CODE = "A" * 43
 DEVICE_LOGIN_CLIENT_ID = "traigent-sdk-cli"
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
+# Contract source: TraigentSchema#94 device_authorization_response_schema.json
 DEVICE_AUTHORIZE_ENVELOPE_REQUIRED_KEYS = ["success", "message", "data"]
 DEVICE_AUTHORIZE_DATA_REQUIRED_KEYS = [
     "device_code",
