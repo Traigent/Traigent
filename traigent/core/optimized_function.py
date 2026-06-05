@@ -1594,6 +1594,14 @@ class OptimizedFunction:
         )
 
         orchestrator.samples_include_pruned = samples_include_pruned_value
+        # RFC 0001 §3.4: forward the user-attached knob resolver so the
+        # public optimize() path resolves Fixed/CVAR bindings in-trial.
+        # Attribute seam (like promotion_gate): set
+        # ``wrapped.knob_resolver = KnobResolver(...)`` before optimizing;
+        # absent ⇒ byte-identical legacy behavior.
+        knob_resolver = getattr(self, "knob_resolver", None)
+        if knob_resolver is not None:
+            orchestrator.knob_resolver = knob_resolver
         return orchestrator
 
     async def _run_and_finalize_optimization(
@@ -1900,7 +1908,14 @@ class OptimizedFunction:
         except OptimizationError:
             raise
         except Exception as e:
+            from traigent.knobs import ResolutionError
+
             logger.error(f"Optimization failed: {e}")
+            if isinstance(e, ResolutionError):
+                # RFC 0001 §3.4: the typed fail-closed governance rejection
+                # IS the public contract — never dilute it into a generic
+                # OptimizationError.
+                raise
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)

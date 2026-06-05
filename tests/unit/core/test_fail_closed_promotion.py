@@ -38,6 +38,8 @@ def _trial(score: float = 0.9, config=None) -> TrialResult:
 
 def _orchestrator(policy: PromotionPolicy | None) -> OptimizationOrchestrator:
     orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+    orchestrator.knob_resolver = None
+    orchestrator._certified_promotions = 0
     orchestrator._strict_withheld_promotions = []
     orchestrator._promotion_gate = (
         None if policy is None else SimpleNamespace(policy=policy)
@@ -258,6 +260,7 @@ class TestCertifiedPromotionChain:
         """B2: a raw dict policy (discovered specs) must not silently read
         as non-strict."""
         orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator.knob_resolver = None
         orchestrator._promotion_gate = SimpleNamespace(
             policy={
                 "dominance": "epsilon_pareto",
@@ -268,6 +271,7 @@ class TestCertifiedPromotionChain:
 
     def test_unparseable_dict_policy_with_strict_keys_fails_closed(self):
         orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator.knob_resolver = None
         orchestrator._promotion_gate = SimpleNamespace(
             policy={
                 "require_calibration": {"enabled": "not-a-bool"},  # from_dict raises
@@ -277,6 +281,7 @@ class TestCertifiedPromotionChain:
 
     def test_plain_dict_policy_without_strict_keys_is_not_strict(self):
         orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+        orchestrator.knob_resolver = None
         orchestrator._promotion_gate = SimpleNamespace(
             policy={"dominance": "epsilon_pareto", "alpha": 0.05}
         )
@@ -480,3 +485,98 @@ class TestBestConfigRuntimeInterplay:
         assert fn.get_best_config() == {"model": "b"}
         exported = fn.export_best_config(tmp_path / "best-configs")
         assert exported.exists()
+
+
+class _GovernedResolverStub:
+    """Duck-typed resolver declaring a governed CVAR (consolidation seam)."""
+
+    def __init__(self, governed: bool = True):
+        self._governed = governed
+
+    def has_governed_cvars(self) -> bool:
+        return self._governed
+
+    def resolve(self, suggestion):  # pragma: no cover - not exercised here
+        raise AssertionError("resolution is not under test")
+
+
+class _OpaqueResolverStub:
+    """A custom resolver WITHOUT governance introspection."""
+
+    def resolve(self, suggestion):  # pragma: no cover - not exercised here
+        raise AssertionError("resolution is not under test")
+
+
+class TestPerCvarStrictDisjuncts:
+    """RFC 0001 §3.6 consolidation: declared-governed CVARs make the run
+    strict, gate-independently."""
+
+    def test_governed_resolver_is_strict_without_any_gate(self):
+        orchestrator = _orchestrator(None)
+        orchestrator.knob_resolver = _GovernedResolverStub(governed=True)
+        assert orchestrator._is_strict_evidence_mode()
+
+    def test_governed_resolver_is_strict_with_non_strict_policy(self):
+        orchestrator = _orchestrator(NON_STRICT_POLICY)
+        orchestrator.knob_resolver = _GovernedResolverStub(governed=True)
+        assert orchestrator._is_strict_evidence_mode()
+
+    def test_ungoverned_resolver_alone_is_not_strict(self):
+        orchestrator = _orchestrator(NON_STRICT_POLICY)
+        orchestrator.knob_resolver = _GovernedResolverStub(governed=False)
+        assert not orchestrator._is_strict_evidence_mode()
+
+    def test_opaque_custom_resolver_contributes_no_disjunct(self):
+        """Documented degradation: a duck-typed resolver without
+        has_governed_cvars cannot opt the run into strictness — declare via
+        the promotion policy instead."""
+        orchestrator = _orchestrator(NON_STRICT_POLICY)
+        orchestrator.knob_resolver = _OpaqueResolverStub()
+        assert not orchestrator._is_strict_evidence_mode()
+        strict = _orchestrator(STRICT_POLICIES["require_calibration"])
+        strict.knob_resolver = _OpaqueResolverStub()
+        assert strict._is_strict_evidence_mode()
+
+
+class TestNoGateStrictClosure:
+    """The no-gate lane must not promote under strict mode: a raw
+    _simple_is_better win would be counted as a certified promotion by
+    _update_best_trial_cache (fail open). Found during consolidation."""
+
+    def test_no_gate_strict_withholds_and_never_consults_simple(self):
+        orchestrator = _orchestrator(None)
+        orchestrator.knob_resolver = _GovernedResolverStub(governed=True)
+        orchestrator._simple_is_better = MagicMock(return_value=True)
+
+        assert orchestrator._evaluate_promotion("candidate", _trial(0.99)) is False
+        orchestrator._simple_is_better.assert_not_called()
+        assert any(
+            "no promotion gate" in reason
+            for reason in orchestrator._strict_withheld_promotions
+        )
+
+    def test_no_gate_strict_full_cache_flow_certifies_nothing(self):
+        orchestrator = _orchestrator(None)
+        orchestrator.knob_resolver = _GovernedResolverStub(governed=True)
+        orchestrator._best_trial_cached = None
+        orchestrator._incumbent_config_hash = None
+        orchestrator._simple_is_better = MagicMock(return_value=True)
+
+        first = _trial(0.5, config={"model": "a"})
+        second = _trial(0.99, config={"model": "b"})
+        orchestrator._update_best_trial_cache(first)
+        # first trial seeds the incumbent: initialization, not certification
+        assert orchestrator._best_trial_cached is first
+        assert orchestrator._certified_promotions == 0
+
+        orchestrator._update_best_trial_cache(second)
+        # the higher-scoring trial must NOT displace the incumbent rawly
+        assert orchestrator._best_trial_cached is first
+        assert orchestrator._certified_promotions == 0
+        orchestrator._simple_is_better.assert_not_called()
+
+    def test_no_gate_non_strict_keeps_legacy_simple_lane(self):
+        orchestrator = _orchestrator(None)
+        orchestrator._simple_is_better = MagicMock(return_value=True)
+        assert orchestrator._evaluate_promotion("candidate", _trial(0.9)) is True
+        orchestrator._simple_is_better.assert_called_once()

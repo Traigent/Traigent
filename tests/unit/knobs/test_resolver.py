@@ -459,3 +459,59 @@ def test_unverifiable_optional_certificate_is_ignored_not_fallbacked():
     result = resolver.resolve({"model": "a"})
     assert result.config["theta"] == 0.5
     assert result.used_fallbacks == ()
+
+
+class TestGovernedIntrospection:
+    """RFC 0001 §3.6: has_governed_cvars feeds the orchestrator's
+    strict-evidence-mode detection from DECLARED bindings only."""
+
+    def test_governed_via_per_cvar_require_calibration(self):
+        assert KnobResolver(_space(governed=True)).has_governed_cvars()
+
+    def test_not_governed_when_nothing_declares_governance(self):
+        assert not KnobResolver(_space(governed=False)).has_governed_cvars()
+
+    def test_governed_via_certificate_backed_target(self):
+        space = ConfigSpace(
+            knobs={
+                "model": Knob(name="model", binding=Tuned(range=Choices(["a"]))),
+                "theta": Knob(
+                    name="theta",
+                    binding=Calibrated(
+                        signal=_signal(),
+                        target=TargetProperty(
+                            name="margin_floor", mode="certificate_backed"
+                        ),
+                    ),
+                ),
+            }
+        )
+        assert KnobResolver(space).has_governed_cvars()
+
+    def test_governed_via_declaration_pinned_certificate(self):
+        ctx = _ctx()
+        cert = issue_certificate("theta", "float", 0.5, ctx)
+        space = ConfigSpace(
+            knobs={
+                "model": Knob(name="model", binding=Tuned(range=Choices(["a"]))),
+                "theta": Knob(
+                    name="theta",
+                    binding=Calibrated(
+                        signal=_signal(), target=_target(), certificate=cert
+                    ),
+                ),
+            }
+        )
+        assert KnobResolver(space).has_governed_cvars()
+
+    def test_all_tuned_space_is_not_governed(self):
+        space = ConfigSpace(
+            knobs={"model": Knob(name="model", binding=Tuned(range=Choices(["a"])))}
+        )
+        assert not KnobResolver(space).has_governed_cvars()
+
+    def test_runtime_presented_certificate_does_not_opt_in(self):
+        """Presenting a certificate at resolution time is evidence, not an
+        opt-in to strictness — only DECLARED governance counts."""
+        resolver = _happy_resolver(_space(governed=False))
+        assert not resolver.has_governed_cvars()

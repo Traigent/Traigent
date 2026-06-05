@@ -21,7 +21,7 @@ Testing, arXiv:2210.07913).
 from __future__ import annotations
 
 from .adapters import knob_to_parameter_range, parameter_range_to_knob
-from .bindings import Binding, Calibrated, Fixed, Knob, Ref, Tuned
+from .bindings import Binding, Calibrated, Fixed, Knob, Ref, Tuned, is_governed
 from .canonical import CTX_SCHEMA_VERSION, CanonicalizationError, canonical_hash
 from .cascade import (
     CascadePolicy,
@@ -64,6 +64,7 @@ __all__ = [
     "Gate",
     "GateKind",
     "Knob",
+    "is_governed",
     "KnobKind",
     "KnobResolver",
     "Ref",
