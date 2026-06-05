@@ -159,6 +159,18 @@ Credentials saved by `traigent auth login` and `traigent auth configure` are wri
 - `TRAIGENT_API_KEY`
 - Useful for CI/CD environments
 
+## Backend vs provider credentials
+
+This guide covers Traigent backend authentication: the API key that lets the
+SDK and CLI talk to the Traigent portal/backend. Model-provider credentials
+such as `OPENAI_API_KEY` or AWS credentials for Bedrock are separate customer
+credentials resolved by the provider SDKs on the local machine. They are not
+Traigent API keys and are not sent to Traigent backend endpoints.
+
+For the full boundary, including Bedrock and telemetry/content logging, see
+the [Credential & data trust model](../../SECURITY.md#credential--data-trust-model)
+and the [telemetry documentation](../api-reference/telemetry.md).
+
 ## Priority Order
 
 The SDK checks for credentials in this order:
