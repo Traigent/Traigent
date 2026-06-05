@@ -15,7 +15,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -76,6 +76,8 @@ _DEVICE_ERROR_NAMES = {
     "access_denied",
     "expired_token",
 }
+DEVICE_LOGIN_CLIENT_ID = "traigent-sdk-cli"
+DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _ENV_FILE_KEYS = (
     "TRAIGENT_API_KEY",
     TENANT_ENV_VAR,
@@ -87,6 +89,7 @@ _ENV_ASSIGNMENT_RE = re.compile(
 )
 MAX_DEVICE_POLL_TIMEOUT_SECONDS = 30.0
 MAX_DEVICE_POLL_TRANSPORT_ERRORS = 3
+MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER = 10
 
 
 async def _read_json_body(response: Any) -> dict[str, Any]:
@@ -106,10 +109,61 @@ async def _read_json_body(response: Any) -> dict[str, Any]:
     return data
 
 
-def _require_non_empty_str(data: dict[str, Any], field: str) -> str:
+def _format_backend_error_message(
+    prefix: str, status_code: int, data: dict[str, Any]
+) -> str:
+    """Format a backend error envelope without losing HTTP status context."""
+    parts: list[str] = []
+    for field in ("message", "error", "error_code"):
+        value = data.get(field)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized and normalized not in parts:
+                parts.append(normalized)
+
+    suffix = f": {' - '.join(parts)}" if parts else ""
+    return f"{prefix} (HTTP {status_code}){suffix}"
+
+
+def _retry_after_seconds(headers: Any) -> int | None:
+    """Return a positive Retry-After delay in seconds, if one was supplied."""
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return None
+
+    raw_value = getter("Retry-After")
+    if raw_value is None:
+        raw_value = getter("retry-after")
+    if raw_value is None:
+        return None
+
+    try:
+        seconds = int(str(raw_value).strip())
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None
+
+
+def _resolve_api_base_url(base_url: str) -> str:
+    """Return an API base URL with a version path, without duplicating it."""
+    origin, path = BackendConfig.split_api_url(base_url)
+    if not origin:
+        return cast(str, BackendConfig.build_api_base(base_url))
+    if path:
+        return f"{origin}{path.rstrip('/')}"
+    return cast(str, BackendConfig.build_api_base(origin))
+
+
+def _compose_api_url(base_url: str, path: str) -> str:
+    return f"{_resolve_api_base_url(base_url)}/{path.lstrip('/')}"
+
+
+def _require_non_empty_str(
+    data: dict[str, Any], field: str, *, context: str = "device auth"
+) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise AuthenticationError(f"Malformed device auth response: missing {field}")
+        raise AuthenticationError(f"Malformed {context} response: missing {field}")
     return value.strip()
 
 
@@ -118,6 +172,18 @@ def _require_positive_int(data: dict[str, Any], field: str) -> int:
     if not isinstance(value, int) or value <= 0:
         raise AuthenticationError(f"Malformed device auth response: invalid {field}")
     return value
+
+
+def _require_success_envelope(data: dict[str, Any], *, context: str) -> dict[str, Any]:
+    """Return the data payload from a Traigent standard success envelope."""
+    if data.get("success") is not True:
+        raise AuthenticationError(f"Malformed {context} response: success missing")
+
+    _require_non_empty_str(data, "message", context=context)
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        raise AuthenticationError(f"Malformed {context} response: data missing")
+    return payload
 
 
 def _format_env_value(value: str) -> str:
@@ -153,15 +219,37 @@ class TraigentAuthCLI:
         self.credentials_file = CREDENTIALS_FILE
         self.auth_manager = AuthManager()
         if backend_url_override:
-            normalized = BackendConfig.normalize_backend_origin(backend_url_override)
+            origin, path = BackendConfig.split_api_url(backend_url_override)
+            normalized = origin or BackendConfig.normalize_backend_origin(
+                backend_url_override
+            )
             self.backend_url = normalized or backend_url_override
-            self.backend_api_url = BackendConfig.build_api_base(self.backend_url)
+            self.backend_api_url = (
+                f"{normalized}{path or BackendConfig.get_default_api_path()}"
+                if normalized
+                else BackendConfig.build_api_base(self.backend_url)
+            )
         else:
             self.backend_url = BackendConfig.get_cloud_backend_url()
             self.backend_api_url = BackendConfig.get_cloud_api_url()
 
         # Ensure config directory exists
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    @property
+    def device_login_target_url(self) -> str:
+        """URL displayed for device login; it matches the HTTP API base.
+
+        Device-login endpoint precedence follows the SDK cloud-client path:
+        an explicit CLI backend override wins; otherwise the configured API
+        base is used, so TRAIGENT_API_URL controls the called API host/path
+        when set and TRAIGENT_BACKEND_URL is only the backend origin fallback.
+        """
+        return _resolve_api_base_url(self.backend_api_url)
+
+    def _api_url(self, path: str) -> str:
+        """Compose an API endpoint URL from the resolved API base."""
+        return _compose_api_url(self.backend_api_url, path)
 
     def _load_stored_credentials(self) -> dict[str, Any] | None:
         """Load stored credentials from local file.
@@ -341,7 +429,7 @@ class TraigentAuthCLI:
         """
         import aiohttp
 
-        url = f"{self.backend_api_url}/keys/validate"
+        url = self._api_url("keys/validate")
         headers = {"X-API-Key": api_key}
 
         if verbose:
@@ -380,24 +468,26 @@ class TraigentAuthCLI:
         self, data: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate the device authorization response contract."""
-        device_code = _require_non_empty_str(data, "device_code")
+        payload = _require_success_envelope(data, context="device auth")
+
+        device_code = _require_non_empty_str(payload, "device_code")
         if not _DEVICE_CODE_RE.fullmatch(device_code):
             raise AuthenticationError(
                 "Malformed device auth response: invalid device_code"
             )
 
-        user_code = _require_non_empty_str(data, "user_code")
+        user_code = _require_non_empty_str(payload, "user_code")
         if not _USER_CODE_RE.fullmatch(user_code):
             raise AuthenticationError(
                 "Malformed device auth response: invalid user_code"
             )
 
-        verification_uri = _require_non_empty_str(data, "verification_uri")
+        verification_uri = _require_non_empty_str(payload, "verification_uri")
         verification_uri_complete = _require_non_empty_str(
-            data, "verification_uri_complete"
+            payload, "verification_uri_complete"
         )
-        expires_in = _require_positive_int(data, "expires_in")
-        interval = _require_positive_int(data, "interval")
+        expires_in = _require_positive_int(payload, "expires_in")
+        interval = _require_positive_int(payload, "interval")
 
         return {
             "device_code": device_code,
@@ -410,7 +500,7 @@ class TraigentAuthCLI:
 
     async def _start_device_authorization(self, session: Any) -> dict[str, Any]:
         """Start the RFC 8628 device authorization flow."""
-        url = f"{self.backend_api_url}/auth/device/authorize"
+        url = self._api_url("auth/device/authorize")
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -418,42 +508,45 @@ class TraigentAuthCLI:
         }
         async with session.post(
             url,
+            json={"client_id": DEVICE_LOGIN_CLIENT_ID},
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=30) if aiohttp else None,
         ) as response:
             data = await _read_json_body(response)
             if response.status != 200:
                 raise AuthenticationError(
-                    f"Device authorization failed (HTTP {response.status})"
+                    _format_backend_error_message(
+                        "Device authorization failed", response.status, data
+                    )
                 )
             return self._validate_device_authorize_payload(data)
 
     def _validate_device_token_success(self, data: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalize a successful device token envelope."""
-        if data.get("success") is not True:
-            raise AuthenticationError(
-                "Malformed device token response: success missing"
-            )
-        token_data = data.get("data")
-        if not isinstance(token_data, dict):
-            raise AuthenticationError("Malformed device token response: data missing")
+        token_data = _require_success_envelope(data, context="device token")
 
-        api_key = _require_non_empty_str(token_data, "api_key")
+        api_key = _require_non_empty_str(token_data, "api_key", context="device token")
         if not api_key.startswith("sk_"):
             raise AuthenticationError(
                 "Malformed device token response: invalid api_key"
             )
 
-        tenant_id = _require_non_empty_str(token_data, "tenant_id")
-        project_id = _require_non_empty_str(token_data, "project_id")
-        subscription_tier = _require_non_empty_str(token_data, "subscription_tier")
+        tenant_id = _require_non_empty_str(
+            token_data, "tenant_id", context="device token"
+        )
+        project_id = _require_non_empty_str(
+            token_data, "project_id", context="device token"
+        )
+        subscription_tier = _require_non_empty_str(
+            token_data, "subscription_tier", context="device token"
+        )
 
         user = token_data.get("user")
         if not isinstance(user, dict):
             raise AuthenticationError("Malformed device token response: user missing")
         normalized_user = {
-            "id": _require_non_empty_str(user, "id"),
-            "email": _require_non_empty_str(user, "email"),
+            "id": _require_non_empty_str(user, "id", context="device token"),
+            "email": _require_non_empty_str(user, "email", context="device token"),
         }
 
         quota = token_data.get("quota")
@@ -480,6 +573,10 @@ class TraigentAuthCLI:
     @staticmethod
     def _device_error_from_envelope(data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Return a known RFC 8628 error name and details from an error envelope."""
+        if data.get("success") is not False:
+            raise AuthenticationError("Unexpected device token response from backend")
+        _require_non_empty_str(data, "message", context="device token error")
+
         raw_error = data.get("error")
         raw_error_code = data.get("error_code")
         if raw_error and raw_error_code and raw_error != raw_error_code:
@@ -498,7 +595,7 @@ class TraigentAuthCLI:
         self, session: Any, device_code: str, request_timeout: float
     ) -> tuple[str, dict[str, Any] | None, int | None]:
         """Poll the token endpoint once."""
-        url = f"{self.backend_api_url}/auth/device/token"
+        url = self._api_url("auth/device/token")
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -506,11 +603,17 @@ class TraigentAuthCLI:
         }
         async with session.post(
             url,
-            json={"device_code": device_code},
+            json={
+                "grant_type": DEVICE_CODE_GRANT_TYPE,
+                "device_code": device_code,
+                "client_id": DEVICE_LOGIN_CLIENT_ID,
+            },
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=request_timeout) if aiohttp else None,
         ) as response:
             status_code = response.status
+            if status_code == 429:
+                return "rate_limited", None, _retry_after_seconds(response.headers)
             data = await _read_json_body(response)
 
         if data.get("success") is True:
@@ -520,7 +623,16 @@ class TraigentAuthCLI:
                 )
             return "success", self._validate_device_token_success(data), None
 
-        error_name, details = self._device_error_from_envelope(data)
+        try:
+            error_name, details = self._device_error_from_envelope(data)
+        except AuthenticationError as exc:
+            if status_code != 200:
+                raise AuthenticationError(
+                    _format_backend_error_message(
+                        "Device token request failed", status_code, data
+                    )
+                ) from exc
+            raise
         if error_name == "slow_down":
             new_interval = details.get("interval")
             if not isinstance(new_interval, int) or new_interval < 6:
@@ -543,6 +655,7 @@ class TraigentAuthCLI:
         deadline = now() + int(authorization["expires_in"])
         device_code = str(authorization["device_code"])
         consecutive_transport_errors = 0
+        consecutive_rate_limits_without_retry_after = 0
 
         while True:
             remaining = deadline - now()
@@ -561,6 +674,7 @@ class TraigentAuthCLI:
                 consecutive_transport_errors = 0
             except NETWORK_ERRORS as exc:
                 consecutive_transport_errors += 1
+                consecutive_rate_limits_without_retry_after = 0
                 if consecutive_transport_errors >= MAX_DEVICE_POLL_TRANSPORT_ERRORS:
                     console.print(
                         "[red]Device token polling failed after "
@@ -580,6 +694,42 @@ class TraigentAuthCLI:
                 )
                 await sleep(sleep_seconds)
                 continue
+
+            if status == "rate_limited":
+                if new_interval is None:
+                    consecutive_rate_limits_without_retry_after += 1
+                    if (
+                        consecutive_rate_limits_without_retry_after
+                        >= MAX_DEVICE_POLL_RATE_LIMITS_WITHOUT_RETRY_AFTER
+                    ):
+                        console.print(
+                            "[red]Device token polling is still rate-limited after "
+                            f"{consecutive_rate_limits_without_retry_after} "
+                            "consecutive 429 responses without Retry-After. "
+                            "Please run login again later.[/red]"
+                        )
+                        return None
+                    retry_after = interval + 5
+                    reason = "without Retry-After"
+                else:
+                    consecutive_rate_limits_without_retry_after = 0
+                    retry_after = new_interval
+                    reason = "per Retry-After"
+
+                sleep_seconds = min(float(retry_after), max(0.0, deadline - now()))
+                if sleep_seconds <= 0:
+                    console.print(
+                        "[red]Device login expired before authorization completed.[/red]"
+                    )
+                    return None
+                console.print(
+                    "[yellow]Device token polling rate-limited "
+                    f"({reason}); retrying in {sleep_seconds:g}s.[/yellow]"
+                )
+                await sleep(sleep_seconds)
+                continue
+
+            consecutive_rate_limits_without_retry_after = 0
 
             if status == "success":
                 return credentials
@@ -673,7 +823,9 @@ class TraigentAuthCLI:
 
         poll_sleep = sleep or asyncio.sleep
         console.print("\n[bold blue]Traigent Device Authentication[/bold blue]")
-        console.print(f"Authenticating with: [cyan]{self.backend_url}[/cyan]\n")
+        console.print(
+            f"Authenticating with: [cyan]{self.device_login_target_url}[/cyan]\n"
+        )
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -1631,7 +1783,7 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
         )
         return False
 
-    url = f"{backend_api_url}/keys/validate"
+    url = _compose_api_url(backend_api_url, "keys/validate")
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
