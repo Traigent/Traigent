@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from collections.abc import Callable
@@ -61,6 +62,7 @@ BACKEND_RESPONSE_HEADER = "\n[red]--- Backend Response ---[/red]"
 STORAGE_FILE = "file"
 STORAGE_SECURE = "secure"
 SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
+SECURE_CLI_PREFLIGHT_NAME = "__cli_device_login_preflight__"
 
 # Common user-facing messages (avoid duplication per SonarCloud S1192)
 MSG_CHECK_NETWORK = "Please check your network connection and try again.\n"
@@ -353,6 +355,37 @@ class TraigentAuthCLI:
                     e,
                 )
             return None
+
+    def _preflight_secure_credential_store(self) -> bool:
+        """Verify secure CLI credential storage is writable before auth starts."""
+        try:
+            store = get_secure_credential_store()
+            probe = json.dumps(
+                {"token": secrets.token_urlsafe(32)}, separators=(",", ":")
+            )
+            store.set(
+                SECURE_CLI_PREFLIGHT_NAME,
+                probe,
+                CredentialType.TOKEN,
+                metadata={
+                    "source": "traigent-cli",
+                    "purpose": "device-login-preflight",
+                },
+            )
+            store.delete_secure(SECURE_CLI_PREFLIGHT_NAME)
+            return True
+        except (OSError, SecurityError, ValueError) as exc:
+            logger.error(
+                "Secure credential store preflight failed: %s. Set "
+                "TRAIGENT_MASTER_PASSWORD before running device login.",
+                exc,
+            )
+            console.print(
+                "[red]❌ Secure credential storage is not ready.[/red]\n"
+                "[yellow]Set TRAIGENT_MASTER_PASSWORD and run "
+                "`traigent auth device-login` again.[/yellow]"
+            )
+            return False
 
     @staticmethod
     def _resolve_env_file_path(path: str | Path = ".env") -> Path:
@@ -837,6 +870,9 @@ class TraigentAuthCLI:
         console.print(
             f"Authenticating with: [cyan]{self.device_login_target_url}[/cyan]\n"
         )
+
+        if not self._preflight_secure_credential_store():
+            return False
 
         try:
             async with aiohttp.ClientSession() as session:
