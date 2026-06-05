@@ -9,9 +9,9 @@
 #
 # This is a RAG (Retrieval-Augmented Generation) optimization example.
 
-spec:
-  id: rag-advanced-tvars
-  version: "1.0"
+tvl:
+  module: examples.rag_advanced_tvars
+tvl_version: "1.0"
 
 metadata:
   owner: team@example.com

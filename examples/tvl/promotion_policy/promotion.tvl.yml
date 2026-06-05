@@ -1,9 +1,9 @@
 # TVL 0.9 Example: Promotion Policy
 # Demonstrates statistical promotion with multiple objectives
 
-spec:
-  id: promotion-policy-example
-  version: 0.1.0
+tvl:
+  module: examples.promotion_policy_example
+tvl_version: "0.1.0"
 
 metadata:
   owner: "team@example.com"
